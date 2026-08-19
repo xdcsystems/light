@@ -15,7 +15,7 @@ A compact, memory‑safe sensor node for ambient light measurement (BH1750) with
 
 ## Supported Sensors
 
-- **BH1750 (GY‑302)** – primary ambient light sensor.
+- **BH1750FVI (GY‑302)** – primary ambient light sensor (ESP32 I2C; host builds keep a compile stub in the same file).
 - **Stub sensor** – mock implementation for CI and unit‑style tests.
 
 ## Supported Transports
@@ -47,13 +47,23 @@ Uses stub sensor and null transport to validate logic without real hardware.
     make -j$(nproc)
     ./light_sensor
 
-### ESP32 (Wi‑Fi Transport)
+### ESP32 (Wi‑Fi + BH1750FVI)
 
-    mkdir build_esp32 && cd build_esp32
-    cmake .. -DPLATFORM_ESP32=ON -DPLATFORM_LINUX=OFF -DPLATFORM_TEST=OFF
-    make -j$(nproc)
+Host CMake cannot cross-compile this target. Use ESP-IDF **5.2+** (`idf.py set-target esp32`) for ESP32-WROOM-32 / ESP32-D0WD-V3:
 
->Note: The ESP32 build assumes a toolchain and environment suitable for ESP32; adjust paths/flags as needed for your setup.
+1. Set `WIFI_SSID` and `WIFI_PASS` in [`include/config.hpp`](include/config.hpp). Placeholder values refuse to start.
+2. Default I2C: **SDA GPIO21**, **SCL GPIO22**, address **0x23** (ADDR to GND). 3.3 V only.
+3. Build and flash (client board talks on `/dev/ttyUSB0` via CH340C):
+
+```sh
+cd esp32
+. $IDF_PATH/export.sh
+idf.py set-target esp32
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+The IDF wrapper lives in [`esp32/`](esp32/) and compiles `src/main.cpp`, `src/sensors/bh1750.cpp`, `src/transports/wifi_esp32.cpp`. UDP payload is still 3 bytes `[id][lux_hi][lux_lo]` to `CONTROLLER_IP:CONTROLLER_PORT`.
 
 ## Project Structure
     src/ – implementation files (.cpp).
@@ -64,7 +74,11 @@ Uses stub sensor and null transport to validate logic without real hardware.
 ### Example layout:
 
     light_sensor/
-    ├── CMakeLists.txt
+    ├── CMakeLists.txt          # host: LINUX / TEST only
+    ├── esp32/                  # ESP-IDF project (idf.py), not host CMake
+    │   ├── CMakeLists.txt
+    │   ├── sdkconfig.defaults
+    │   └── main/CMakeLists.txt
     ├── .gitignore
     ├── README.md
     ├── include/
@@ -97,9 +111,9 @@ Runtime behavior and platform specifics are controlled via CMake options and inc
 
 Platform macros injected by CMake:
 
-- PLATFORM_LINUX – for POSIX UDP builds.
-- PLATFORM_TEST – for test builds with stubs.
-- PLATFORM_ESP32 – for ESP32 Wi‑Fi builds.
+- PLATFORM_LINUX – for POSIX UDP builds (host CMake).
+- PLATFORM_TEST – for test builds with stubs (host CMake).
+- PLATFORM_ESP32 – for ESP32 Wi‑Fi builds (set by `esp32/main/CMakeLists.txt`, not host CMake).
 
 These macros are used in headers/sources to enable appropriate implementations without cluttering core logic.
 

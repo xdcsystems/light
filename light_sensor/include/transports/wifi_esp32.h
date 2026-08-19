@@ -1,14 +1,11 @@
 #pragma once
 
 #include "base.h"
+
 #include <cstdint>
 #include <cstddef>
 
-// ESP-IDF заголовки: подключаем здесь, чтобы тип sockaddr_in был полным
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>      // close
+#include "lwip/sockets.h"
 
 class WifiEsp32Transport : public Transport {
 private:

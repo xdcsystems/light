@@ -1,0 +1,17 @@
+{
+	"luci-app-light-control": {
+		"description": "Grant access to Light Control",
+		"read": {
+			"ubus": {
+				"light_control": [ "get_stats", "get_status", "get_config" ]
+			},
+			"uci": [ "light_control" ]
+		},
+		"write": {
+			"ubus": {
+				"light_control": [ "reload", "set_brightness" ]
+			},
+			"uci": [ "light_control" ]
+		}
+	}
+}

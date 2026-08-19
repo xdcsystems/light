@@ -1,13 +1,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=light_control
-PKG_VERSION:=1.0.19
+PKG_VERSION:=1.0.23
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=xdcsystems
 
-PKG_SOURCE_PATH:=../../../light_control
+# Absolute path to the CMake project. Override with LIGHT_CONTROL_SRC=...
+PKG_SOURCE_PATH:=$(if $(LIGHT_CONTROL_SRC),$(LIGHT_CONTROL_SRC),/mnt/c/Dev/light_control/light/light_control)
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
 include $(INCLUDE_DIR)/package.mk

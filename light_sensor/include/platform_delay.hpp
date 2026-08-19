@@ -1,8 +1,8 @@
 #pragma once
 
 #if defined(PLATFORM_ESP32)
-    #include "FreeRTOS.h"
-    #include "task.h"
+    #include "freertos/FreeRTOS.h"
+    #include "freertos/task.h"
 
     inline void platform_delay_ms(int ms) {
         vTaskDelay(pdMS_TO_TICKS(ms));

@@ -4,30 +4,45 @@
     #include <iostream>
 #endif
 
+#if defined(PLATFORM_ESP32)
+    #include "esp_log.h"
+#endif
+
 #include "sensors/base.h"
-#include "sensors/stub.h"
+#if defined(PLATFORM_ESP32)
+    #include "sensors/bh1750.h"
+#else
+    #include "sensors/stub.h"
+#endif
 
 #include "transports/transport_wrapper.hpp"
-#include "config.hpp"      // <-- тут определяется TransportType и флаги
+#include "config.hpp"
 #include "platform_delay.hpp"
 
-int compute_dim_value(int lux) {
-    if (lux < 200) return 100;
-    if (lux < 400) return 60;
-    return 30;
-}
+#if defined(PLATFORM_ESP32)
+static const char* TAG = "light_sensor";
+#endif
 
-int main() {
+#if defined(PLATFORM_ESP32)
+extern "C" void app_main(void)
+#else
+int main()
+#endif
+{
 #if defined(PLATFORM_LINUX) || defined(PLATFORM_TEST)
     std::cout << "[INIT] Light sensor node started\n";
+#elif defined(PLATFORM_ESP32)
+    ESP_LOGI(TAG, "node start id=%u -> %s:%u",
+             static_cast<unsigned>(DEVICE_ID), CONTROLLER_IP,
+             static_cast<unsigned>(CONTROLLER_PORT));
 #endif
 
     // ВАЖНО: создаём объект сразу с нужными параметрами.
     // Никаких operator= и лишних присваиваний.
-#if defined(TRANSPORT_HAS_PORT)
-    TransportType transport(5005);
+#if defined(TRANSPORT_HAS_WIFI)
+    TransportType transport(WIFI_SSID, WIFI_PASS, CONTROLLER_IP, CONTROLLER_PORT);
 #elif defined(TRANSPORT_HAS_IP_AND_PORT)
-    TransportType transport("192.168.1.1", 5005);
+    TransportType transport(CONTROLLER_IP, CONTROLLER_PORT);
 #else
     // Для NullTransport (и любых других без параметров) — конструктор по умолчанию
     TransportType transport;
@@ -36,31 +51,61 @@ int main() {
     if (!transport.init()) {
 #if defined(PLATFORM_LINUX) || defined(PLATFORM_TEST)
         std::cerr << "[ERROR] Transport initialization failed\n";
-#else
-        // На ESP32 логирование уже внутри wifi_esp32.cpp (ESP_LOG*)
-#endif
         return 1;
+#else
+        ESP_LOGE(TAG, "transport init failed");
+        while (true) {
+            platform_delay_ms(1000);
+        }
+#endif
     }
 
-    Stub stub(SensorScenario::Evening);
-    stub.init(0x23);
+    // ESP32: BH1750FVI по I2C. Linux/TEST без железа: Stub Evening (220 lux).
+#if defined(PLATFORM_ESP32)
+    Bh1750 sensor;
+#else
+    Stub sensor(SensorScenario::Evening);
+#endif
+    if (!sensor.init(BH1750_I2C_ADDR)) {
+#if defined(PLATFORM_LINUX) || defined(PLATFORM_TEST)
+        std::cerr << "[ERROR] Sensor initialization failed\n";
+        return 1;
+#else
+        ESP_LOGE(TAG, "BH1750 init failed at 0x%02X SDA=%d SCL=%d",
+                 static_cast<unsigned>(BH1750_I2C_ADDR), I2C_SDA_GPIO, I2C_SCL_GPIO);
+        while (true) {
+            platform_delay_ms(1000);
+        }
+#endif
+    }
 
-    // Фиксированный буфер на стеке: ровно 2 байта
-    uint8_t packet[2];
-
-    int lux {0};
-    int dim {0};
+    uint8_t packet[3];
 
     while (true) {
-        lux = stub.readLux();
-        dim = compute_dim_value(lux);
+        const int lux = sensor.readLux();
+        uint16_t lux16 = 0;
+        if (lux > 0) {
+            lux16 = (lux > 65535) ? 65535 : static_cast<uint16_t>(lux);
+        }
 
-        // Заполняем пакет строго по формату light_control: [ID][level]
         packet[0] = DEVICE_ID;
-        packet[1] = static_cast<uint8_t>(dim);  // 0–100;
+        packet[1] = static_cast<uint8_t>(lux16 >> 8);
+        packet[2] = static_cast<uint8_t>(lux16 & 0xFF);
 
-        transport.send(packet, sizeof(packet));
+#if defined(PLATFORM_LINUX) || defined(PLATFORM_TEST)
+        std::cout << "[SENSOR] device_id=" << static_cast<int>(DEVICE_ID)
+                  << " lux=" << static_cast<unsigned>(lux16) << '\n';
+#elif defined(PLATFORM_ESP32)
+        ESP_LOGI(TAG, "device_id=%u lux=%u",
+                 static_cast<unsigned>(DEVICE_ID), static_cast<unsigned>(lux16));
+#endif
 
-        platform_delay_ms(1000);
+        if (!transport.send(packet, sizeof(packet))) {
+#if defined(PLATFORM_ESP32)
+            ESP_LOGW(TAG, "UDP send failed");
+#endif
+        }
+
+        platform_delay_ms(SAMPLE_PERIOD_MS);
     }
 }

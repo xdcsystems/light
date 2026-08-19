@@ -1,9 +1,13 @@
 # CMake
 build/
+build_wsl/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
 compile_commands.json
+
+# OpenWrt SDK lives on the WSL disk; this path is a local symlink only.
+externals/openwrt
 
 # OpenWrt build
 externals/openwrt/bin/
