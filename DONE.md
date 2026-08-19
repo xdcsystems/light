@@ -393,6 +393,8 @@ cmake -S light_sensor -B light_sensor/build_linux -DPLATFORM_LINUX=ON -DPLATFORM
 
 Первая попытка упала на `wifi_esp32.cpp`: `sta.scan_method` в IDF 5.5 ждёт `wifi_scan_method_t` (`WIFI_FAST_SCAN`), стояло `WIFI_SCAN_TYPE_ACTIVE`. Исправлено.
 
+Клиент собирает на **IDF 6.0.2**: без `-D_GNU_SOURCE` падает сам `esp_libc/realpath.c` (`strchrnul` спрятан в newlib). В [`esp32/CMakeLists.txt`](light_sensor/esp32/CMakeLists.txt) флаг добавлен глобально; на 5.x безвреден.
+
 Размеры образа: bootloader 26 КБ @ `0x1000`, таблица разделов 3 КБ @ `0x8000`, приложение **704 КБ** @ `0x10000` (слот 1 МБ, ~31% свободно). Flash 4 MB, 40 МГц, DIO. `.bin` в git **не** кладём: в него запечены плейсхолдеры Wi-Fi.
 
 > **Ещё раз: перед `flash` правь [`include/config.hpp`](light_sensor/include/config.hpp) (`WIFI_SSID` / `WIFI_PASS` / при необходимости `CONTROLLER_IP`) и пересобери.**

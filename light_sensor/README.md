@@ -49,7 +49,7 @@ Uses stub sensor and null transport to validate logic without real hardware.
 
 ### ESP32 (Wi‑Fi + BH1750FVI)
 
-Host CMake cannot cross-compile this target. Use ESP-IDF **5.2+** (`idf.py set-target esp32`) for ESP32-WROOM-32 / ESP32-D0WD-V3:
+Host CMake cannot cross-compile this target. Use ESP-IDF **5.2+** (`idf.py set-target esp32`) for ESP32-WROOM-32 / ESP32-D0WD-V3. IDF 6.x needs the wrapper's `-D_GNU_SOURCE` (already in `esp32/CMakeLists.txt`; harmless on 5.x).
 
 1. Set `WIFI_SSID` and `WIFI_PASS` in [`include/config.hpp`](include/config.hpp). Placeholder values refuse to start.
 2. Default I2C: **SDA GPIO21**, **SCL GPIO22**, address **0x23** (ADDR to GND). 3.3 V only.

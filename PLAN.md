@@ -136,7 +136,7 @@ logread | grep light_control | tail -n 30
 
 Порядок. Пункты 1–5 — сенсор; 6–7 — если на том же стенде уже есть WDR4300.
 
-1. **ESP-IDF 5.2+** (лучше 5.3/5.4) и `idf.py set-target esp32`. IDF 4.x / Arduino / PlatformIO этот `CMakeLists` не возьмут (`esp_driver_i2c`).
+1. **ESP-IDF 5.2+** (у нас 5.5.5; у клиента бывает **6.0.2** — в `esp32/CMakeLists.txt` уже есть `-D_GNU_SOURCE`). `idf.py set-target esp32`. IDF 4.x / Arduino / PlatformIO этот `CMakeLists` не возьмут (`esp_driver_i2c`).
 2. **Разводка:** VCC→3V3, GND, SDA GPIO21, SCL GPIO22, ADDR на GND (`0x23`). Только 3.3 V.
 3. **Прописать** в [`include/config.hpp`](light_sensor/include/config.hpp) **до** `flash` (без этого Wi-Fi не поднимется):
    - `WIFI_SSID` / `WIFI_PASS` сети, куда ходит роутер (открытая: `WIFI_PASS = ""`);
