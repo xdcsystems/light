@@ -11,6 +11,16 @@ build_linux/
 build_test/
 build/
 cmake-build-*/
+esp32/build/
+esp32/sdkconfig
+esp32/sdkconfig.old
+esp32/managed_components/
+esp32/dependencies.lock
+esp32/flash_args
+esp32/bootloader-flash_args
+esp32/firmware/
+
+# CMake generated files (в корне, если появятся)
 
 # CMake generated files (в корне, если появятся)
 CMakeCache.txt

@@ -11,11 +11,13 @@
 
 #include "logger.h"
 #include "stats_collector.h"
+#include "last_status.h"
 #include "udp_server.h"
 #include "protocol_parser.h"
+#include "uci_settings.h"
 
-UdpServer::UdpServer(StatsCollector& stats, Logger& logger)
-    : stats_(stats), logger_(logger) {}
+UdpServer::UdpServer(StatsCollector& stats, LastStatus& last_status, Logger& logger)
+    : stats_(stats), last_status_(last_status), logger_(logger), dimmer_(logger) {}
 
 UdpServer::~UdpServer() {
     close_socket();
@@ -55,8 +57,100 @@ bool UdpServer::bind_to(const char* addr, uint16_t port) {
         return false;
     }
 
+    bound_port_ = port;
     logger_.debug("UDP server bound to %s:%u", addr, port);
     return true;
+}
+
+void UdpServer::reapply_output_locked() {
+    if (override_.active()) {
+        dimmer_.set_brightness(override_.value());
+        last_status_.set_manual(override_.value(), true);
+        return;
+    }
+
+    LastStatusSnapshot snap = last_status_.snapshot();
+    if (!snap.has_packet) {
+        last_status_.set_manual(snap.brightness, false);
+        return;
+    }
+
+    char scene_name[16] = {0};
+    const uint8_t brightness = cfg_.policy.apply(snap.lux, scene_name, sizeof(scene_name));
+    last_status_.update(snap.device_id, snap.lux, brightness, scene_name,
+                        snap.source_ip, snap.source_port, false);
+    dimmer_.set_brightness(brightness);
+}
+
+void UdpServer::apply_settings(const UciSettings& cfg) {
+    std::lock_guard<std::mutex> lock(mu_);
+    cfg_ = cfg;
+    reapply_output_locked();
+}
+
+void UdpServer::set_policy(const BrightnessPolicy& policy) {
+    std::lock_guard<std::mutex> lock(mu_);
+    cfg_.policy = policy;
+    reapply_output_locked();
+}
+
+bool UdpServer::reload_from_uci() {
+    UciSettings cfg;
+    const bool loaded = load_uci_settings(cfg);
+    apply_settings(cfg);
+
+    const BrightnessCurve& curve = cfg.policy.default_curve();
+    logger_.info("reload: uci %s, port %u (bound %u), map %u, scenes %u",
+                 loaded ? "ok" : "defaults",
+                 static_cast<unsigned>(cfg.port),
+                 static_cast<unsigned>(bound_port_),
+                 static_cast<unsigned>(curve.size()),
+                 static_cast<unsigned>(cfg.policy.scheduler().size()));
+
+    if (!cfg.enabled) {
+        logger_.warn("reload: enabled=0 in UCI; process still running until restart");
+    }
+    if (bound_port_ != 0 && cfg.port != bound_port_) {
+        logger_.warn("reload: UCI port %u differs from bound %u; restart to apply",
+                     static_cast<unsigned>(cfg.port),
+                     static_cast<unsigned>(bound_port_));
+    }
+
+    return true;
+}
+
+void UdpServer::set_brightness_override(uint8_t brightness) {
+    std::lock_guard<std::mutex> lock(mu_);
+    override_.set(brightness);
+    dimmer_.set_brightness(override_.value());
+    last_status_.set_manual(override_.value(), true);
+    logger_.info("brightness override %u", static_cast<unsigned>(override_.value()));
+}
+
+void UdpServer::clear_brightness_override() {
+    std::lock_guard<std::mutex> lock(mu_);
+    override_.clear();
+    logger_.info("brightness override cleared");
+    reapply_output_locked();
+}
+
+UciSettings UdpServer::copy_settings() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return cfg_;
+}
+
+bool UdpServer::has_override() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return override_.active();
+}
+
+uint8_t UdpServer::override_value() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return override_.value();
+}
+
+uint16_t UdpServer::bound_port() const {
+    return bound_port_;
 }
 
 void UdpServer::run(std::atomic<bool>& stop_flag) {
@@ -93,11 +187,24 @@ void UdpServer::run(std::atomic<bool>& stop_flag) {
                 auto res = ProtocolParser::parse(buf, static_cast<size_t>(n));
 
                 if (res.is_valid) {
-                    logger_.debug("Device %d setting dimmer to: %d",
+                    char scene_name[16] = {0};
+                    uint8_t brightness = 0;
+                    bool override_active = false;
+                    {
+                        std::lock_guard<std::mutex> lock(mu_);
+                        brightness = cfg_.policy.apply(res.lux, scene_name, sizeof(scene_name));
+                        override_active = override_.active();
+                        brightness = override_.apply(brightness);
+                        last_status_.update(res.device_id, res.lux, brightness, scene_name,
+                                            ip, port, override_active);
+                        dimmer_.set_brightness(brightness);
+                    }
+                    logger_.debug("Device %d lux=%u brightness=%u scene=%s%s",
                                 static_cast<int>(res.device_id),
-                                static_cast<int>(res.value));
-                    // Здесь будет вызов реального диммера
-                    // dimmer_control.set_brightness(res.value);
+                                static_cast<unsigned>(res.lux),
+                                static_cast<unsigned>(brightness),
+                                scene_name[0] != '\0' ? scene_name : "-",
+                                override_active ? " override" : "");
                 } else {
                     stats_.increment_errors(1);
                     logger_.warn("Protocol error from %s:%u: %s",

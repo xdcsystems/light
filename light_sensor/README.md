@@ -1,210 +1,152 @@
 # light_sensor
 
-A compact, memory‑safe sensor node for ambient light measurement (BH1750) with UDP reporting. Designed for embedded platforms (ESP32, Linux) under strict memory constraints: no dynamic/static allocation, no raw pointers.
+A compact, memory-safe sensor node for ambient light measurement (BH1750) with UDP reporting. Designed for embedded platforms (ESP32, Linux) under strict memory constraints: no dynamic/static allocation, no raw pointers.
+
+UDP payload is **3 bytes** `[device_id][lux_hi][lux_lo]` (lux as `uint16` big-endian). Brightness mapping lives on the controller, not on the sensor.
 
 ## Key Features
 
-- **Memory discipline**: strictly avoids dynamic and static memory allocation; uses stack variables and fixed‑size buffers only.
-- **Modular architecture**: sensors and transports are decoupled into separate subsystems.
-- **Multiple transport backends**:
-  - UDP (POSIX) for Linux/OpenWrt targets.
-  - Null transport for isolated testing.
-  - ESP32 Wi‑Fi transport for ESP32 platforms.
-- **Test‑friendly**: dedicated test build mode with stubbed hardware (no real sensor or network required).
-- **Clean build configuration**: single source file list in CMake, minimal conditional compilation in core code.
+- **Memory discipline**: stack variables and fixed-size buffers only.
+- **Modular architecture**: sensors and transports are decoupled.
+- **Multiple transport backends**: UDP POSIX (Linux), Null (tests), ESP32 Wi-Fi.
+- **ESP32 config via ESP-IDF Kconfig**: SSID/password/controller IP are set in `menuconfig` / local `sdkconfig` (gitignored). `sdkconfig.defaults` is a small overlay, not a dumped sdkconfig.
 
 ## Supported Sensors
 
-- **BH1750 (GY‑302)** – primary ambient light sensor.
-- **Stub sensor** – mock implementation for CI and unit‑style tests.
-
-## Supported Transports
-
-- **UDP (POSIX)** – sends readings over UDP on Linux systems.
-- **Null transport** – no network activity; useful for logic validation and CI.
-- **ESP32 Wi‑Fi** – Wi‑Fi based transport tailored for ESP32.
+- **BH1750FVI (GY-302)** – I2C on ESP32; host builds keep a compile stub in the same file.
+- **Stub sensor** – mock for CI and Linux/TEST.
 
 ## Build Requirements
 
 - CMake ≥ 3.16
-- C++17 compatible compiler (e.g., GCC 12.3.0 with musl)
+- C++17
 - POSIX environment for Linux builds
+- ESP-IDF **5.2+** for ESP32 (client uses **6.0.2**; wrapper already defines `_GNU_SOURCE`)
 
 ## Building the Project
 
 ### Linux (UDP POSIX transport)
 
-#### Using build script
+    bash ./build_linux.sh
 
-To build the project for Linux, use the provided build script:
-
-    bash /home/xdcsystems/Projects/light/light_sensor/build_linux.sh
-
-#### Manual Build Instructions
-
-If you prefer manual build:
+Or manually:
 
     mkdir build_linux && cd build_linux
-    cmake .. -DPLATFORM_LINUX=ON -DPLATFORM_TEST=OFF -DPLATFORM_ESP32=OFF
-    make -j$(nproc)
-    ./light_sensor
-
-#### Automated Build Script Details
-The build script performs the following actions:
-
-- Cleans up existing build directory
-- Creates new build directory
-- Configures project with Ninja generator
-- Builds the project
-- Displays path to the resulting binary
+    cmake .. -DPLATFORM_LINUX=ON -DPLATFORM_TEST=OFF
+    cmake --build .
 
 ### Test Build (No Hardware Required)
-Uses stub sensor and null transport to validate logic without real hardware.
 
-#### Using build script
+    bash ./build_test_linux.sh
 
-To build the project for Linux, use the provided build script:
-
-    bash /home/xdcsystems/Projects/light/light_sensor/build_test_linux.sh
-
-#### Manual Build Instructions
-
-If you prefer manual build:
+Or manually:
 
     mkdir build_test && cd build_test
-    cmake .. -DPLATFORM_TEST=ON -DPLATFORM_LINUX=OFF -DPLATFORM_ESP32=OFF
-    make -j$(nproc)
-    ./light_sensor
+    cmake .. -DPLATFORM_TEST=ON -DPLATFORM_LINUX=OFF
+    cmake --build .
 
-#### Automated Build Script Details
-The build script performs the following actions:
+### ESP32 (Wi-Fi + BH1750FVI)
 
-- Cleans up existing build directory
-- Creates new build directory
-- Configures project with Ninja generator
-- Builds the project
-- Displays path to the resulting binary
-
-
-### ESP32 (Wi‑Fi Transport)
-
-#### Prerequisites
-- Python 3.7+ with required packages
-- Git for repository management
-- CMake ≥ 3.16
-- ESP32 toolchain properly configured
+Host CMake cannot cross-compile this target. Use the ESP-IDF project in `esp32/`.
 
 #### Installing ESP-IDF
 
-1. Navigate to externals directory:
+IDF is expected at `light_sensor/externals/esp-idf` (gitignored). Example for the client's 6.0.2:
 
-        cd externals
+    cd externals
+    git clone --recursive -b release/v6.0.2 https://github.com/espressif/esp-idf.git
+    cd esp-idf
+    ./install.sh esp32
+    . ./export.sh
 
-2. Clone ESP-IDF repository:
+#### Wi-Fi / controller (do not put secrets in git)
 
-        git clone --recursive -b release/v6.0.2 https://github.com/espressif/esp-idf.git
+SSID, password, controller IP and UDP port are **not** C++ literals in `config.hpp`. They come from ESP-IDF Kconfig:
 
-        cd esp-idf
+```
+esp32/main/Kconfig.projbuild   # menu "Light Sensor Configuration"
+        ↓
+esp32/sdkconfig.defaults       # overlay in git: empty SSID/PASS, IP 192.168.1.1:5005
+        ↓
+esp32/sdkconfig                # generated by idf.py, gitignored — set secrets here
+        ↓
+sdkconfig.h                    # CONFIG_LIGHT_SENSOR_* macros
+        ↓
+include/config.hpp             # WIFI_SSID / WIFI_PASS / CONTROLLER_IP / PORT
+```
 
-        git submodule update --init --recursive
+`sdkconfig.defaults` is a **short overlay** (4 MB flash, 240 MHz, plus empty `CONFIG_LIGHT_SENSOR_*`). Do **not** replace it with a dumped `sdkconfig` from IDF 6: that dump is thousands of lines and pins the wrong flash size / CPU clock.
 
-        # install toolchain
-        ./install.sh esp32    
+Before flashing:
 
-        # set environment
-        . ./export.sh
+    cd esp32
+    . $IDF_PATH/export.sh
+    idf.py set-target esp32
+    idf.py menuconfig
+    # Light Sensor Configuration:
+    #   Wi-Fi SSID
+    #   Wi-Fi Password
+    #   Controller IP Address
+    #   Controller UDP Port
 
-3. Verify installation:
+Then rebuild. Changing SSID later is the same: menuconfig (or edit local `sdkconfig`) → build → flash. Never commit `esp32/sdkconfig`.
 
-        idf.py --version
-        idf.py check-python-dependencies
+How STA behaves (`src/transports/wifi_esp32.cpp`):
 
-#### Building Process
+- Empty SSID (the git default) **refuses to connect** — firmware will not join a network until menuconfig is filled in.
+- Non-empty password → minimum **WPA2-PSK**. Empty password → **open** network.
+- Config is applied with `WIFI_STORAGE_RAM` (not stored in NVS). NVS is still initialized in `main_esp32.cpp` for the Wi-Fi stack.
+- ESP32 is **2.4 GHz only**. A 5 GHz-only or WPA3-only AP will not work.
+- On disconnect: retry up to 20 times, wait up to 30 s for DHCP. Failed `sendto` is logged; the lux loop keeps running.
 
-To build the project for ESP32, use the provided build script:
+Typical serial errors:
+
+- `Missing SSID or controller IP` / `Set CONFIG_LIGHT_SENSOR_WIFI_SSID` — menuconfig not done.
+- `Wi-Fi connect timeout` — wrong SSID/password, 5 GHz, or WPA3-only AP.
+- `UDP send failed` with a live lux reading — no route to `CONTROLLER_IP:PORT` (router, firewall, daemon not listening).
+
+I2C pins stay in `config.hpp`: **SDA GPIO21**, **SCL GPIO22**, address **0x23** (ADDR to GND). 3.3 V only.
+
+#### Build and flash
 
     bash ./build_esp32.sh
 
-The script performs the following actions:
+Or:
 
-- Checks for ESP-IDF presence
-- Sets up build environment
-- Cleans previous build artifacts
-- Configures target to ESP32
-- Initiates build process
-- Deployment
+    cd esp32
+    . $IDF_PATH/export.sh
+    idf.py set-target esp32
+    idf.py build
+    idf.py -p /dev/ttyUSB0 flash monitor
 
-After successful build, you can flash the device:
-
-    cd esp32/build
-
-    # Flash the application
-    idf.py -p <PORT> flash
-
-    # Monitor output
-    idf.py -p <PORT> monitor
-
-Replace <PORT> with your actual ESP32 serial port (e.g., /dev/ttyUSB0).
-
-#### Build Artifacts
-After successful build, you will find:
-
-- Bootloader: esp32/build/bootloader/bootloader.bin
-- Application image: esp32/build/*.bin
-
-#### Troubleshooting
-
-- Build errors - check idf.py check-python-dependencies
-- Missing tools - verify toolchain installation
-- Path issues - ensure correct IDF_PATH setup
-
->Note: The ESP32 build assumes a toolchain and environment suitable for ESP32; adjust paths/flags as needed for your setup.
+The wrapper compiles `src/main_esp32.cpp`, `src/app_core.cpp`, `src/sensors/bh1750.cpp`, `src/transports/wifi_esp32.cpp`.
 
 ## Project Structure
-    src/ – implementation files (.cpp).
-    include/ – header files (.h, .hpp).
-    CMakeLists.txt – build configuration.
-    .gitignore – excludes build artifacts and IDE files.
-
-### Example layout:
 
     light_sensor/
-    ├── CMakeLists.txt
-    ├── .gitignore
-    ├── README.md
+    ├── CMakeLists.txt              # host: LINUX / TEST only
+    ├── build_linux.sh
+    ├── build_test_linux.sh
+    ├── build_esp32.sh
+    ├── esp32/                      # ESP-IDF project (idf.py)
+    │   ├── CMakeLists.txt
+    │   ├── sdkconfig.defaults      # overlay + CONFIG_LIGHT_SENSOR_*
+    │   └── main/
+    │       ├── CMakeLists.txt
+    │       └── Kconfig.projbuild   # SSID / pass / controller IP:port
     ├── include/
-    │   ├── config.hpp
-    │   ├── platform_delay.hpp
+    │   ├── app_core.h
+    │   ├── config.hpp              # maps CONFIG_* on ESP32
     │   ├── sensors/
-    │   │   ├── base.h
-    │   │   ├── bh1750.h
-    │   │   ├── scenario.h
-    │   │   └── stub.h
     │   └── transports/
-    │       ├── base.h
-    │       ├── null.h
-    │       ├── transport_wrapper.hpp
-    │       ├── udp_posix.h
-    │       └── wifi_esp32.h
     └── src/
-        ├── main.cpp
+        ├── main.cpp                # host entry
+        ├── main_esp32.cpp          # ESP32 entry (NVS + Wi-Fi transport)
+        ├── app_core.cpp            # 3-byte lux loop
         ├── sensors/
-        │   ├── bh1750.cpp
-        │   └── stub.cpp
         └── transports/
-            ├── null.cpp
-            ├── udp_posix.cpp
-            └── wifi_esp32.cpp
 
-## Configuration
+Platform macros:
 
-Runtime behavior and platform specifics are controlled via CMake options and include/config.hpp. Avoid modifying main.cpp for platform selection; use CMake flags instead.
-
-Platform macros injected by CMake:
-
-- PLATFORM_LINUX – for POSIX UDP builds.
-- PLATFORM_TEST – for test builds with stubs.
-- PLATFORM_ESP32 – for ESP32 Wi‑Fi builds.
-
-These macros are used in headers/sources to enable appropriate implementations without cluttering core logic.
-
+- `PLATFORM_LINUX` / `PLATFORM_TEST` — host CMake
+- `PLATFORM_ESP32` — set by `esp32/CMakeLists.txt`, not host CMake

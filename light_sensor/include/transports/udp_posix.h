@@ -1,21 +1,22 @@
 #pragma once
 
-#include <netinet/in.h>   // определение struct sockaddr_in
+#include <cstddef>
+#include <cstdint>
+#include <netinet/in.h>
 
-class UdpPosixTransport 
-{
-    public:
-        UdpPosixTransport() = default;
-        explicit UdpPosixTransport(const char* ip, uint16_t port);
-        ~UdpPosixTransport();
+class UdpPosixTransport {
+public:
+    UdpPosixTransport() = default;
+    explicit UdpPosixTransport(const char* ip, uint16_t port);
+    ~UdpPosixTransport();
 
-        bool init();
-        bool send(const unsigned char* data, std::size_t len);
+    bool init();
+    bool send(const unsigned char* data, std::size_t len);
 
-    private:
-        struct sockaddr_in _addr{};
+private:
+    struct sockaddr_in _addr{};
 
-        int _fd = -1;
-        const char* _ip = nullptr;
-        uint16_t _port = 0;
+    int _fd = -1;
+    const char* _ip = nullptr;
+    uint16_t _port = 0;
 };

@@ -1,0 +1,29 @@
+{
+	"admin/services/light_control": {
+		"title": "Light Control",
+		"order": 90,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-light-control" ],
+			"uci": { "light_control": true }
+		}
+	},
+	"admin/services/light_control/status": {
+		"title": "Status",
+		"order": 1,
+		"action": {
+			"type": "view",
+			"path": "light_control/status"
+		}
+	},
+	"admin/services/light_control/settings": {
+		"title": "Settings",
+		"order": 2,
+		"action": {
+			"type": "view",
+			"path": "light_control/settings"
+		}
+	}
+}

@@ -1,7 +1,8 @@
 #pragma once
 
-class NullTransport 
-{
+#include <cstddef>
+
+class NullTransport {
 public:
     NullTransport() = default;
     ~NullTransport() = default;

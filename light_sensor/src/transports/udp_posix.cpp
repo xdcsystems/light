@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/socket.h>
 
 #include "transports/udp_posix.h"
 
