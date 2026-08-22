@@ -6,10 +6,10 @@
 
 Актуальная версия контроллера: исходники и ipk **1.0.23**. Сенсор: исходники + **собранный** образ ESP-IDF **v5.5.5** (на плату не лили).
 
-> **Перед прошивкой ESP32 обязательно замени данные в [`light_sensor/include/config.hpp`](light_sensor/include/config.hpp).**
-> Сейчас там плейсхолдеры `WIFI_SSID = "YOUR_SSID"` / `WIFI_PASS = "YOUR_PASSWORD"` и `CONTROLLER_IP = "192.168.1.1"`.
-> С этими значениями прошивка **намеренно не поднимает Wi‑Fi** (в мониторе: `Set WIFI_SSID / WIFI_PASS …` и вечный delay).
-> Готовый `.bin` с плейсхолдерами **лить нельзя** — сначала SSID/пароль (и IP роутера, если не `192.168.1.1`), затем пересборка, затем `flash`. Открытая сеть: `WIFI_PASS = ""`.
+> **Перед прошивкой ESP32 задай SSID/пароль через ESP-IDF Kconfig**, не через C++.
+> `idf.py menuconfig` → Light Sensor Configuration (`CONFIG_LIGHT_SENSOR_WIFI_SSID` / `_PASS` / `_CONTROLLER_IP` / `_PORT`).
+> В git `sdkconfig.defaults` оставляет SSID/пароль **пустыми** — с ними прошивка **намеренно не поднимает Wi‑Fi**.
+> Готовый `.bin` с пустым SSID **лить нельзя**. Открытая сеть: пустой пароль. Локальный `esp32/sdkconfig` в git **не** кладём.
 
 ```
   ESP32 (BH1750FVI) / Linux Stub     OpenWrt (роутер)
@@ -250,7 +250,7 @@ export PYTHONPATH="$HOME/openwrt/pyshim"
 
 # Часть 2. ESP32 (`light_sensor`)
 
-Плата к нам не приедет. Пишем прошивку под конкретные модели клиента; **собираем мы, льёт он** — после правки `config.hpp`. Контроллер 1.0.23 в сенсорном шаге **не менялся**: тот же UDP, кривая/сцены/диммер на роутере. Менялась только прошивка узла `light_sensor`. Хостовые TEST/LINUX после правок пересобраны и линкуются.
+Плата к нам не приедет. Пишем прошивку под конкретные модели клиента; **собираем мы, льёт он** — после `idf.py menuconfig` (SSID/пароль). Контроллер 1.0.23 в сенсорном шаге **не менялся**: тот же UDP, кривая/сцены/диммер на роутере. Менялась только прошивка узла `light_sensor`. Хостовые TEST/LINUX после правок пересобраны и линкуются.
 
 ## 2.1 Зачем три контура и «тупой» сенсор
 
@@ -266,9 +266,9 @@ export PYTHONPATH="$HOME/openwrt/pyshim"
 
 Хостовый CMake умеет **только** LINUX и TEST. `-DPLATFORM_ESP32=ON` — `FATAL_ERROR` с подсказкой идти в `esp32/`. Раньше флаг притворялся desktop-CMake и не собирал IDF.
 
-ESP32-обёртка **не дублирует** исходники: [`esp32/main/CMakeLists.txt`](light_sensor/esp32/main/CMakeLists.txt) компилирует файлы из `../src`, `PLATFORM_ESP32=1`, компоненты `nvs_flash`, `esp_wifi`, `esp_event`, `esp_netif`, `esp_driver_i2c`. Точка входа на чипе — `app_main`, не `int main`.
+ESP32-обёртка **не дублирует** исходники: [`esp32/main/CMakeLists.txt`](light_sensor/esp32/main/CMakeLists.txt) компилирует файлы из `../src`, `PLATFORM_ESP32=1`, компоненты `nvs_flash`, `esp_wifi`, `esp_event`, `esp_netif`, `esp_driver_i2c`. Точка входа на чипе — `app_main` в [`main_esp32.cpp`](light_sensor/src/main_esp32.cpp); цикл узла — [`app_core.cpp`](light_sensor/src/app_core.cpp).
 
-На ESP32 в прошивку не попадают `stub.cpp` и `udp_posix.cpp`. На LINUX/TEST не попадает `wifi_esp32.cpp`; `bh1750.cpp` компилируется, но ветка I2C выключена (`#else` → 250 lux). В `main` на хосте датчик всё равно `Stub`, не `Bh1750`.
+На ESP32 в прошивку не попадают `stub.cpp` и `udp_posix.cpp`. На LINUX/TEST не попадает `wifi_esp32.cpp`; `bh1750.cpp` компилируется, но ветка I2C выключена (`#else` → 250 lux). В `app_core` на хосте датчик всё равно `Stub`, не `Bh1750`.
 
 ## 2.2 Цикл узла и протокол
 
@@ -315,41 +315,43 @@ UDP с шага протокола на контроллере не менялс
 
 **Что сделано** в [`wifi_esp32.cpp`](light_sensor/src/transports/wifi_esp32.cpp):
 
-1. Отказ, если SSID/IP пустые или оставлены плейсхолдеры `YOUR_SSID` / `YOUR_PASSWORD`. Прошивка без правки конфига **намеренно не поднимает Wi-Fi** — иначе уйдёт в чужую сеть или зависнет на пустом SSID без понятного лога.
-2. NVS (`nvs_flash_erase` при `NO_FREE_PAGES` / `NEW_VERSION`).
+1. Отказ, если SSID/IP пустые (Kconfig default в git — пустая строка). Прошивка без `menuconfig` **намеренно не поднимает Wi-Fi**.
+2. NVS в `main_esp32` (`nvs_flash_erase` при `NO_FREE_PAGES` / `NEW_VERSION`). Wi-Fi-конфиг в RAM (`WIFI_STORAGE_RAM`), не в NVS.
 3. `esp_netif_init` + default event loop + default STA netif.
-4. `esp_wifi_init` / `WIFI_MODE_STA` / `set_config` / `start`.
+4. `esp_wifi_init` / `WIFI_MODE_STA` / `set_config` / `start`. Пароль непустой → минимум WPA2-PSK; пустой → OPEN.
 5. По `STA_START` — `esp_wifi_connect`; до 20 повторных попыток; ждать `IP_EVENT_STA_GOT_IP` до 30 с.
 6. UDP socket, `sendto` на `CONTROLLER_IP:CONTROLLER_PORT`.
 
-Пароль непустой → минимум WPA2-PSK. Пустой `WIFI_PASS` (`""`) → открытая сеть. После обрыва Wi-Fi обработчик снова вызывает `connect`. Неудачный `sendto` только предупреждение в лог: цикл измерений не останавливается (датчик жив, сеть может вернуться).
+Пароль непустой → минимум WPA2-PSK. Пустой пароль → открытая сеть. После обрыва Wi-Fi обработчик снова вызывает `connect`. Неудачный `sendto` только предупреждение в лог: цикл измерений не останавливается (датчик жив, сеть может вернуться).
 
 ## 2.5 Compile-time конфиг
 
-[`include/config.hpp`](light_sensor/include/config.hpp). Runtime-конфига на ESP32 нет: сменить SSID/пины = правка + пересборка + прошивка. Для маленького узла без экрана это проще NVS-UI; плейсхолдеры всё равно обязан прописать клиент.
+На ESP32 SSID/пароль/IP/порт контроллера приходят из ESP-IDF Kconfig ([`esp32/main/Kconfig.projbuild`](light_sensor/esp32/main/Kconfig.projbuild) → `sdkconfig.h` → [`include/config.hpp`](light_sensor/include/config.hpp)). Это механизм клиента: `idf.py menuconfig` или локальный `esp32/sdkconfig`. В git секретов нет. `sdkconfig.defaults` — **короткий overlay** (плата 4 MB / 240 МГц + пустые `CONFIG_LIGHT_SENSOR_*`), не дамп `sdkconfig` из IDF 6.
+
+Пины I2C и `DEVICE_ID` по-прежнему в `config.hpp`. Сменить SSID = menuconfig + пересборка + прошивка.
 
 | Константа | Сейчас | Зачем |
 |---|---|---|
 | `DEVICE_ID` | `1` | поле в 3-байтном пакете; несколько узлов — разные id |
-| `CONTROLLER_IP` | `"192.168.1.1"` | LAN-адрес роутера с демоном; для хостовой петли временно `127.0.0.1` |
-| `CONTROLLER_PORT` | `5005` | должен совпасть с UCI `option port` |
+| `CONTROLLER_IP` / `PORT` | Kconfig, default `192.168.1.1:5005` | LAN-адрес роутера; порт = UCI `option port` |
 | `SAMPLE_PERIOD_MS` | `1000` | период UDP; диммер на роутере глушит повтор того же N |
 | `BH1750_I2C_ADDR` | `0x23` | `0x5C`, если ADDR на VCC |
-| `WIFI_SSID` / `WIFI_PASS` | **`YOUR_SSID` / `YOUR_PASSWORD`** | **обязательно заменить** перед прошивкой; иначе Wi-Fi не поднимется |
+| `WIFI_SSID` / `WIFI_PASS` | `CONFIG_LIGHT_SENSOR_*` (в git пустые) | **menuconfig** перед прошивкой; иначе Wi-Fi не поднимется |
 | `I2C_SDA_GPIO` / `I2C_SCL_GPIO` | 21 / 22 | типичный 30-pin; клиент меняет, если разводка другая |
 | `I2C_HZ` | 100000 | стандарт для BH1750 |
 
-На LINUX `WIFI_*` и пины I2C не компилируются. Пороги lux→dim с сенсора **сняты** — они на контроллере.
+На LINUX `WIFI_*` и пины I2C не компилируются; IP/порт — литералы в `config.hpp`. Пороги lux→dim с сенсора **сняты** — они на контроллере.
 
-`sdkconfig.defaults`: flash **4 MB**, CPU **240 МГц**, UART **115200**, BT выключен, стек `app_main` **8 КБ**, лог INFO. Артефакты IDF (`esp32/build/`, `sdkconfig`, `managed_components/`) в `.gitignore`.
+Артефакты IDF (`esp32/build/`, `sdkconfig`, `managed_components/`) в `.gitignore`. Не коммитить полный дамп `sdkconfig` как `sdkconfig.defaults` (IDF 6 ставит flash 2 MB / 160 МГц).
 
 ## 2.6 Что на сенсоре в коде vs конфиг
 
 | Параметр | Где | Статус |
 |---|---|---|
-| DEVICE_ID, IP/порт, Wi-Fi, I2C, адрес, период | `config.hpp` | Хардкод compile-time |
+| DEVICE_ID, I2C, адрес, период | `config.hpp` | Хардкод compile-time |
+| Wi-Fi SSID/пароль, IP/порт контроллера (ESP32) | Kconfig → `sdkconfig` | menuconfig; sdkconfig gitignored |
 | Пороги lux→dim | — | **Перенесены на контроллер** |
-| Формат пакета | `main.cpp`: 3 байта lux BE | Хардкод протокола |
+| Формат пакета | `app_core.cpp`: 3 байта lux BE | Хардкод протокола |
 | Сценарий stub | `Stub(Evening)` на Linux/TEST | Хардкод тестовых люксов |
 | Датчик | ESP32 → `Bh1750`, иначе Stub | Сборка |
 | Платформа | CMake `PLATFORM_*` / ESP-IDF | Сборка, не runtime |
@@ -397,5 +399,5 @@ cmake -S light_sensor -B light_sensor/build_linux -DPLATFORM_LINUX=ON -DPLATFORM
 
 Размеры образа: bootloader 26 КБ @ `0x1000`, таблица разделов 3 КБ @ `0x8000`, приложение **704 КБ** @ `0x10000` (слот 1 МБ, ~31% свободно). Flash 4 MB, 40 МГц, DIO. `.bin` в git **не** кладём: в него запечены плейсхолдеры Wi-Fi.
 
-> **Ещё раз: перед `flash` правь [`include/config.hpp`](light_sensor/include/config.hpp) (`WIFI_SSID` / `WIFI_PASS` / при необходимости `CONTROLLER_IP`) и пересобери.**
-> Образ с `YOUR_SSID` на живой плате бесполезен. Пины I2C (21/22) и адрес `0x23` — только если разводка другая.
+> **Ещё раз: перед `flash` задай SSID/пароль через `idf.py menuconfig` (Light Sensor Configuration) и пересобери.**
+> Образ с пустым SSID на живой плате бесполезен. Пины I2C (21/22) и адрес `0x23` — только если разводка другая.

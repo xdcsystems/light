@@ -1,5 +1,6 @@
 #include "transports/wifi_esp32.h"
 
+#include <cerrno>
 #include <cstring>
 
 #include "esp_event.h"
@@ -10,7 +11,6 @@
 #include "freertos/event_groups.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
-#include "nvs_flash.h"
 
 static const char* TAG = "WifiEsp32Tr";
 
@@ -22,15 +22,6 @@ static constexpr TickType_t kConnectTimeout = pdMS_TO_TICKS(30000);
 static StaticEventGroup_t s_events_mem;
 static EventGroupHandle_t s_events = nullptr;
 static int s_retry = 0;
-
-static bool init_nvs() {
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-    }
-    return err == ESP_OK;
-}
 
 static void wifi_event_handler(void* /*arg*/, esp_event_base_t base, int32_t id, void* data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
@@ -61,6 +52,7 @@ WifiEsp32Transport::~WifiEsp32Transport() {
         close(_sock);
         _sock = -1;
     }
+    // Wi-Fi не останавливаем здесь — это ответственность верхнего уровня
 }
 
 bool WifiEsp32Transport::init() {
@@ -70,15 +62,18 @@ bool WifiEsp32Transport::init() {
 
     if (!_ssid || !_ssid[0] || !_ip || !_ip[0]) {
         ESP_LOGE(TAG, "Missing SSID or controller IP");
+        ESP_LOGE(TAG, "Set CONFIG_LIGHT_SENSOR_WIFI_SSID via menuconfig / sdkconfig");
         return false;
     }
-    if (std::strcmp(_ssid, "YOUR_SSID") == 0 || std::strcmp(_pass ? _pass : "", "YOUR_PASSWORD") == 0) {
-        ESP_LOGE(TAG, "Set WIFI_SSID / WIFI_PASS in include/config.hpp before flashing");
+    if (!_pass) {
+        ESP_LOGE(TAG, "Missing password pointer (use empty string for open network)");
         return false;
     }
 
-    if (!init_nvs()) {
-        ESP_LOGE(TAG, "nvs_flash_init failed");
+    constexpr size_t SSID_LIMIT = 32;
+    constexpr size_t PASS_LIMIT = 64;
+    if (std::strlen(_ssid) > SSID_LIMIT || std::strlen(_pass) > PASS_LIMIT) {
+        ESP_LOGE(TAG, "SSID or password length is too long");
         return false;
     }
 
@@ -99,6 +94,8 @@ bool WifiEsp32Transport::init() {
         return false;
     }
 
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, nullptr, nullptr));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
@@ -106,12 +103,10 @@ bool WifiEsp32Transport::init() {
 
     wifi_config_t wifi_config = {};
     std::strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), _ssid, sizeof(wifi_config.sta.ssid) - 1);
-    if (_pass != nullptr) {
-        std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password), _pass,
-                     sizeof(wifi_config.sta.password) - 1);
-    }
+    std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password), _pass,
+                 sizeof(wifi_config.sta.password) - 1);
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    if (_pass == nullptr || !_pass[0]) {
+    if (!_pass[0]) {
         wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
     }
     wifi_config.sta.scan_method = WIFI_FAST_SCAN;
@@ -140,7 +135,7 @@ bool WifiEsp32Transport::init() {
 
     _sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (_sock < 0) {
-        ESP_LOGE(TAG, "socket() failed");
+        ESP_LOGE(TAG, "socket() failed: %s", std::strerror(errno));
         esp_wifi_stop();
         esp_wifi_deinit();
         return false;
@@ -164,7 +159,7 @@ bool WifiEsp32Transport::init() {
 }
 
 bool WifiEsp32Transport::send(const unsigned char* data, std::size_t len) {
-    if (_sock < 0 && !init()) {
+    if (_sock == -1 && !init()) {
         return false;
     }
 

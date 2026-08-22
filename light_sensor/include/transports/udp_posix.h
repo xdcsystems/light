@@ -1,24 +1,17 @@
 #pragma once
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
+#include <netinet/in.h>
 
-// POSIX-заголовки обязательны именно здесь, потому что мы объявляем поле типа sockaddr_in
-#include <sys/socket.h>
-#include <netinet/in.h>   // определение struct sockaddr_in
-#include <arpa/inet.h>     // inet_pton
-#include <unistd.h>        // close
-
-#include "base.h"
-
-class UdpPosixTransport : public Transport {
+class UdpPosixTransport {
 public:
     UdpPosixTransport() = default;
     explicit UdpPosixTransport(const char* ip, uint16_t port);
-    ~UdpPosixTransport() override;
+    ~UdpPosixTransport();
 
-    bool init() override;
-    bool send(const unsigned char* data, std::size_t len) override;
+    bool init();
+    bool send(const unsigned char* data, std::size_t len);
 
 private:
     struct sockaddr_in _addr{};

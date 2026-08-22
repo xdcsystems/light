@@ -1,12 +1,12 @@
 #pragma once
 
-#include "base.h"
+#include <cstddef>
 
-class NullTransport : public Transport {
+class NullTransport {
 public:
     NullTransport() = default;
-    ~NullTransport() override = default;
+    ~NullTransport() = default;
 
-    bool init() override;
-    bool send(const unsigned char* data, std::size_t len) override;
+    bool init();
+    bool send(const unsigned char* data, std::size_t len);
 };

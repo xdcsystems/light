@@ -1,0 +1,29 @@
+menu "Light Sensor Configuration"
+
+config LIGHT_SENSOR_WIFI_SSID
+    string "Wi‑Fi SSID"
+    default ""
+    help
+        Wi‑Fi network name for the ESP32 sensor node.
+        Do NOT put real SSID here. Set it in sdkconfig or via menuconfig.
+
+config LIGHT_SENSOR_WIFI_PASS
+    string "Wi‑Fi Password"
+    default ""
+    help
+        Wi‑Fi password. Leave empty to force manual config.
+        WARNING: Never commit real passwords to git.
+
+config LIGHT_SENSOR_CONTROLLER_IP
+    string "Controller IP Address"
+    default "192.168.1.1"
+    help
+        IP address of the controller node (UDP receiver).
+
+config LIGHT_SENSOR_CONTROLLER_PORT
+    int "Controller UDP Port"
+    default 5005
+    help
+        UDP port of the controller node.
+
+endmenu

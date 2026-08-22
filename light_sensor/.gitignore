@@ -1,3 +1,11 @@
+# ESP‑IDF
+build/
+sdkconfig
+sdkconfig.old
+
+/externals/esp-idf/
+/externals/esp-tools/
+
 # CMake build dirs
 build_linux/
 build_test/

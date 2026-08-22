@@ -1,4 +1,10 @@
+#include <cstdint>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
 #include "transports/udp_posix.h"
+
 
 UdpPosixTransport::UdpPosixTransport(const char* ip, uint16_t port)
     : _ip(ip), _port(port) {}

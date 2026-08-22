@@ -63,7 +63,7 @@
 
 Железа у нас нет — **не** ставим ipk и **не** прошиваем ESP32. Шаг 5 закрыт в исходниках. Сенсорная часть шага 6 собрана (ESP-IDF v5.5.5); чеклист клиента — ниже.
 
-**Перед прошивкой клиент обязан заменить `WIFI_SSID` / `WIFI_PASS` (и при необходимости `CONTROLLER_IP`) в [`light_sensor/include/config.hpp`](light_sensor/include/config.hpp) и пересобрать.** Плейсхолдеры `YOUR_SSID` / `YOUR_PASSWORD` специально не поднимают Wi-Fi. Подробности — [DONE §2.8](DONE.md#28-сборка-прошивки-esp32-wsl--esp-idf).
+**Перед прошивкой клиент обязан задать SSID/пароль (и при необходимости IP роутера) через ESP-IDF Kconfig** — `idf.py menuconfig` → Light Sensor Configuration, либо локальный `esp32/sdkconfig` (gitignored). Пустой SSID специально не поднимает Wi-Fi. Подробности — [DONE §2.5](DONE.md#25-compile-time-конфиг) и [DONE §2.8](DONE.md#28-сборка-прошивки-esp32-wsl--esp-idf).
 
 Опционально без железа: локальная петля `light_sensor` LINUX → `127.0.0.1:5005` → хостовой `light_control`, смотреть syslog (`Device … scene=…`, `dimmer set_brightness`). Для этого в [`config.hpp`](light_sensor/include/config.hpp) временно `CONTROLLER_IP = "127.0.0.1"`.
 
@@ -132,16 +132,16 @@ logread | grep light_control | tail -n 30
 
 #### Шаг 6. Прошивка сенсора + остаток без схемы
 
-Прошивку льёт **клиент**. Образ у нас собран (IDF v5.5.5), но **с плейсхолдерами Wi-Fi — лить его нельзя**. Сначала `config.hpp`, потом пересборка, потом `idf.py -p /dev/ttyUSB0 flash monitor`.
+Прошивку льёт **клиент**. Образ у нас собран (IDF v5.5.5), но **с пустым SSID в git — лить его нельзя**. Сначала `idf.py menuconfig` (Light Sensor Configuration), потом пересборка, потом `idf.py -p /dev/ttyUSB0 flash monitor`.
 
 Порядок. Пункты 1–5 — сенсор; 6–7 — если на том же стенде уже есть WDR4300.
 
 1. **ESP-IDF 5.2+** (у нас 5.5.5; у клиента бывает **6.0.2** — в `esp32/CMakeLists.txt` уже есть `-D_GNU_SOURCE`). `idf.py set-target esp32`. IDF 4.x / Arduino / PlatformIO этот `CMakeLists` не возьмут (`esp_driver_i2c`).
 2. **Разводка:** VCC→3V3, GND, SDA GPIO21, SCL GPIO22, ADDR на GND (`0x23`). Только 3.3 V.
-3. **Прописать** в [`include/config.hpp`](light_sensor/include/config.hpp) **до** `flash` (без этого Wi-Fi не поднимется):
-   - `WIFI_SSID` / `WIFI_PASS` сети, куда ходит роутер (открытая: `WIFI_PASS = ""`);
-   - при необходимости `CONTROLLER_IP`, пины, `BH1750_I2C_ADDR`.
-   Оставить `YOUR_SSID` / `YOUR_PASSWORD` — в мониторе: `Set WIFI_SSID / WIFI_PASS …` и вечный delay. Затем **пересобрать**.
+3. **Прописать Wi-Fi в Kconfig** **до** `flash` (без этого Wi-Fi не поднимется):
+   - `idf.py menuconfig` → Light Sensor Configuration → SSID / пароль сети 2.4 ГГц, куда ходит роутер (открытая: пароль пустой);
+   - при необходимости Controller IP / UDP port; пины I2C и `BH1750_I2C_ADDR` по-прежнему в [`include/config.hpp`](light_sensor/include/config.hpp).
+   Оставить пустой SSID — в мониторе отказ connect и вечный delay. Затем **пересобрать**. Не коммитить `esp32/sdkconfig` (там секреты; файл в `.gitignore`).
 4. **Собрать и прошить** с той машины, где уже работал `esptool` (`/dev/ttyUSB0`, RTS):
 
 ```bash
