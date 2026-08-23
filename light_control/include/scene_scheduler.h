@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -42,7 +43,7 @@ public:
     const Scene& at(size_t index) const { return scenes_[index]; }
 
 private:
-    Scene scenes_[kMaxScenes]{};
+    std::array<Scene, kMaxScenes> scenes_{};
     size_t count_ = 0;
 };
 
@@ -82,7 +83,7 @@ private:
     const BrightnessCurve* resolve_curve(const char* map_set) const;
 
     BrightnessCurve default_curve_;
-    NamedCurve named_[kMaxNamed]{};
+    std::array<NamedCurve, kMaxNamed> named_{};
     size_t named_count_ = 0;
     SceneScheduler scheduler_;
 };

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <thread>
 
 #include "logger.h"
@@ -16,7 +17,8 @@ public:
     Application();
     ~Application() = default;
 
-    // Инициализирует все компоненты, но НЕ крутит главный цикл
+    // Инициализирует все компоненты, но НЕ крутит главный цикл.
+    // 0 = running, 1 = disabled in UCI, -1 = error.
     int init();
 
     // Останавливает все компоненты (вызывается из main при SIGTERM)

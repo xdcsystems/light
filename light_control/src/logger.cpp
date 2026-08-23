@@ -1,8 +1,6 @@
-#include <cstdio>
 #include <cstdarg>
+#include <cstdio>
 #include <syslog.h>
-#include <sstream>
-#include <iomanip>
 
 #include "logger.h"
 
@@ -44,19 +42,34 @@ void Logger::error(const char* fmt, ...) {
 
 void Logger::debug_hex(const char* prefix, const char* data, size_t len,
                        const char* ip, uint16_t port) {
-    std::ostringstream oss;
-    oss << prefix << ": len=" << len
-        << ", from " << ip << ":" << port
-        << ", hex=";
-
-    oss << std::hex << std::uppercase;
-    for (size_t i = 0; i < len; ++i) {
-        unsigned char b = static_cast<unsigned char>(data[i]);
-        oss << std::setw(2) << std::setfill('0') << static_cast<int>(b);
-        if (i + 1 < len) {
-            oss << ' ';
-        }
+    // UDP recv is 256 bytes; "XX " per byte + header fits in 1024.
+    char line[1024];
+    int used = std::snprintf(line, sizeof(line), "%s: len=%zu, from %s:%u, hex=",
+                             prefix ? prefix : "", len, ip ? ip : "-",
+                             static_cast<unsigned>(port));
+    if (used < 0) {
+        return;
     }
 
-    syslog(LOG_DEBUG, "%s", oss.str().c_str());
+    size_t pos = static_cast<size_t>(used);
+    if (pos >= sizeof(line)) {
+        line[sizeof(line) - 1] = '\0';
+        syslog(LOG_DEBUG, "%s", line);
+        return;
+    }
+    for (size_t i = 0; i < len; ++i) {
+        if (pos + 4 >= sizeof(line)) {
+            break;
+        }
+        const int n = std::snprintf(
+            line + pos, sizeof(line) - pos, "%s%02X",
+            i == 0 ? "" : " ",
+            static_cast<unsigned>(static_cast<unsigned char>(data[i])));
+        if (n < 0) {
+            break;
+        }
+        pos += static_cast<size_t>(n);
+    }
+    line[sizeof(line) - 1] = '\0';
+    syslog(LOG_DEBUG, "%s", line);
 }

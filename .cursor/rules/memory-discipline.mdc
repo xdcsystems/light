@@ -1,0 +1,18 @@
+---
+description: Client cornerstone — no heap, few locals, no file-scope statics; non-heap STL allowed
+globs: "**/*.{cpp,h,hpp}"
+alwaysApply: true
+---
+
+# Память: краеугольное требование клиента
+
+Без кучи и без лишних объектов. Это ограничение всего проекта (ESP32, OpenWrt 8 MB), не стиль «когда удобно».
+
+- Запрещено: `new` / `delete`, `malloc` / `free`, `std::vector` / `string` / `optional` / smart pointers, контейнеры с heap.
+- Буферы только фиксированного размера на стеке или как **поля класса**. Пакет UDP — `uint8_t packet[3]`, не динамический кадр.
+- Не плодить локальные переменные «для читаемости»: считать в выражении или в существующем поле. Новый идентификатор — только если без него не обойтись.
+- Состояние — **члены класса**, входы — **параметры**, константы — **`#define` / `constexpr` / Kconfig**. Не file-scope `static` в `.cpp`.
+- Исключение static: тонкая обёртка C API IDF/ubus (`event_handler`, `arg = this` / `offsetof` по объекту). Не static «на всякий случай».
+- Не-heap STL можно (`std::array`, `std::sort` / `<algorithm>`). `vector` / `string` — нет.
+
+Волна file-scope static / `BrightnessCurve` на `std::array` **закрыта** (DONE §1.10, §2.9). Хвост тоже: `SceneScheduler` / named maps — `std::array`; `Logger::debug_hex` — стековый буфер, без `ostringstream`.

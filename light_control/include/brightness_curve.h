@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -26,6 +27,6 @@ public:
     const Entry& at(size_t index) const { return entries_[index]; }
 
 private:
-    Entry entries_[kMaxEntries]{};
+    std::array<Entry, kMaxEntries> entries_{};
     size_t count_ = 0;
 };

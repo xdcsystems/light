@@ -1,0 +1,17 @@
+---
+description: Do not rewrite client OpenWrt/SDK paths to our machine
+globs: "**/{openwrt_light_control_*.sh,Makefile,CMakeLists.txt,README.md}"
+alwaysApply: true
+---
+
+# Пути клиента не ломать
+
+Клиент собирает OpenWrt из **своего** layout. В git это работает; наши WSL-пути в репозиторий не класть.
+
+- SDK по умолчанию: `light_control/externals/openwrt` (у клиента ещё `$HOME/Projects/light/light_control/externals/openwrt`).
+- Makefile пакета: `PKG_SOURCE_PATH:=../../../light_control` (относительно SDK в `externals/openwrt`). Не зашивать `/mnt/c/Dev/...`.
+- Скрипт [`openwrt_light_control_build.sh`](light_control/openwrt_light_control_build.sh): не менять дефолт на `$HOME/openwrt/sdk` или `/mnt/c/Dev/light_control`. Свой SDK — только `OPENWRT_SDK` / `LIGHT_CONTROL_SRC` в env, не в файле.
+- CMake `STAGING_DIR` fallback — путь клиента (`/home/xdcsystems/Projects/light/...`), не наш.
+- README: не подменять их `externals/openwrt` на наш WSL; правки точечные.
+
+Скрипт сборки и `PKG_SOURCE_PATH` уже вернули к клиентским дефолтам (`origin/master`). Не ломать снова.

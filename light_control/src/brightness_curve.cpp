@@ -1,5 +1,8 @@
 #include "brightness_curve.h"
 
+#include <algorithm>
+#include <cstddef>
+
 BrightnessCurve::BrightnessCurve() {
     reset_to_defaults();
 }
@@ -31,15 +34,8 @@ bool BrightnessCurve::add(uint16_t lux_below, uint8_t brightness) {
 }
 
 void BrightnessCurve::sort() {
-    for (size_t i = 1; i < count_; ++i) {
-        Entry key = entries_[i];
-        size_t j = i;
-        while (j > 0 && entries_[j - 1].lux_below > key.lux_below) {
-            entries_[j] = entries_[j - 1];
-            --j;
-        }
-        entries_[j] = key;
-    }
+    std::sort(entries_.begin(), entries_.begin() + static_cast<std::ptrdiff_t>(count_),
+              [](const Entry& a, const Entry& b) { return a.lux_below < b.lux_below; });
 }
 
 uint8_t BrightnessCurve::apply(uint16_t lux) const {

@@ -29,7 +29,8 @@ constexpr uint8_t BH1750_I2C_ADDR = 0x23;
     using TransportType = TransportWrapper<WifiEsp32Transport>;
     #define TRANSPORT_HAS_WIFI
 
-    // ESP‑IDF подставит CONFIG_* из sdkconfig
+    // CONFIG_* задаёт idf.py в локальном sdkconfig (файл без .h, gitignored).
+    // IDF сам прокидывает их в компиляцию — не #include "sdkconfig.h" и не #define.
     static constexpr const char* kWifiSsid = CONFIG_LIGHT_SENSOR_WIFI_SSID;
     static constexpr const char* kWifiPass = CONFIG_LIGHT_SENSOR_WIFI_PASS;
     static constexpr const char* kControllerIp = CONFIG_LIGHT_SENSOR_CONTROLLER_IP;

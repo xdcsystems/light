@@ -56,6 +56,7 @@ option(ENABLE_UBUS "Enable UBus support" OFF)
 
 if(OPENWRT_BUILD)
     set(ENABLE_UBUS ON CACHE BOOL "Force UBus for OpenWRT" FORCE)
+    add_compile_definitions(OPENWRT_BUILD)
 endif()
 
 if(ENABLE_UBUS)
@@ -101,4 +102,19 @@ message(STATUS "UBus enabled: ${ENABLE_UBUS}")
 
 if(OPENWRT_BUILD)
     install(TARGETS light_control DESTINATION bin)
+endif()
+
+if(NOT OPENWRT_BUILD)
+    find_package(Threads REQUIRED)
+    target_link_libraries(light_control PRIVATE Threads::Threads)
+
+    add_executable(light_control_selftest
+        tests/selftest.cpp
+        src/protocol_parser.cpp
+        src/brightness_curve.cpp
+        src/scene_scheduler.cpp
+    )
+    target_include_directories(light_control_selftest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
 endif()
