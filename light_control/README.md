@@ -27,7 +27,6 @@ Works on TP‑Link TL‑WDR4300 v1 (ath79/generic), OpenWrt 23.05.5 r24106‑10c
 - OpenWrt SDK for `ath79/generic`.
 - Compiler: GNU 12.3.0 + musl.
 - OpenWrt libraries: `libubus`, `libuloop`.
-- OpenWrt libraries: `libubus`, `libuloop`.
 - Cryptography: `libssl`, `libcrypto` (OpenSSL 1.1+), `libz` (zlib).
 - Compiler: GNU 12.3.0 + musl.
 
