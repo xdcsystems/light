@@ -136,9 +136,17 @@ strictly validated (garbage is an error, not a silent zero).
 - [x] M2.1: yolov5s_relu.rknn (640x640) on board — letterbox re-derived
       from the model (lb_top=140, lb_h=360, bars verified 128), RknnEngine
       N-output support, pipeline runs NPU-bound at ~16.8 FPS (720p evening).
-- [ ] M2: yolo post-processing — decode 3 heads (255 = 3 anchors x 85, NCHW,
-      fp16, post-sigmoid), obj*cls threshold, NMS, coordinate mapping via T;
-      probe of real output ranges done (scripts/probe_yolo.py).
+- [x] M2: yolo post-processing — decode 3 heads (255 = 3 anchors x 85, NCHW,
+      fp16, post-sigmoid), obj*cls threshold (0.25), NMS (IoU 0.45),
+      coordinate mapping via T; letterbox-geometry consistency check.
+      Verified visually: /tmp/cal.ppm overlay with boxes re-mapped scene ->
+      det (PNG writer in pure stdlib, no PIL in the venv). Night scene:
+      two chairs (cls 56) with partial-overlap duplicate box, potted plant
+      (cls 58) boxed correctly — COCO class ids match the scene, so the
+      decode is verified semantically, not just geometrically. Duplicate
+      boxes survive NMS at conf ~0.3 (IoU below threshold) — tunable via
+      conf_thr/iou_thr if it matters. FPS ceiling is now infer (~47 ms):
+      post-processing is invisible in the timing sum.
 - [ ] M2-alt: try a lighter detection model (yolov8n.onnx -> .rknn on x86,
       640x640) if the 47 ms yolov5s infer stays the FPS ceiling.
 - [ ] M3: NV12-family model input — RGA without format conversion, CPU-side
