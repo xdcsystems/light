@@ -9,7 +9,7 @@ public:
     ~CameraV4L2();
 
     void start();
-    // Возвращает index буфера; size заполняется фактической длиной кадра
+    // Returns the buffer index; size is filled with the actual frame length
     int dequeue(uint32_t* size);
     void requeue(int index);
     void* buffer(int index) const { return bufs_[index].start; }

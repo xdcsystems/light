@@ -12,6 +12,10 @@ pkg_check_modules(MPP REQUIRED rockchip_mpp)
 pkg_check_modules(RGA REQUIRED librga)
 
 set(RKNN_LIB_DIR "/usr/lib" CACHE PATH "librknnrt.so location")
+# Machine-specific path is now an overridable cache variable
+# (-DRKNN_MODEL_ZOO_INCLUDE=... instead of a hard-coded absolute path)
+set(RKNN_MODEL_ZOO_INCLUDE "/mnt/nvme_data/work/rknn_model_zoo/3rdparty/rknpu2/include"
+    CACHE PATH "directory containing rknn_api.h")
 
 set(CMAKE_BUILD_RPATH "/usr/local/lib")
 set(CMAKE_INSTALL_RPATH "/usr/local/lib")
@@ -28,7 +32,7 @@ add_executable(light_ai
 target_include_directories(light_ai PRIVATE
     include
     /usr/include/rockchip
-    /mnt/nvme_data/work/rknn_model_zoo/3rdparty/rknpu2/include
+    ${RKNN_MODEL_ZOO_INCLUDE}
 )
 
 target_link_libraries(light_ai PRIVATE

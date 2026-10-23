@@ -1,54 +1,102 @@
 #include "pipeline.hpp"
-#include <cstdio>
 #include <chrono>
+#include <iomanip>
+#include <iostream>
 #include <stdexcept>
 
-Pipeline::Pipeline(const Config& cfg) : cfg_(cfg) {
-    cam_.reset(new CameraV4L2(cfg_.device, cfg_.cam_w, cfg_.cam_h));
-    dec_.reset(new MppDecoder()); 
-    npu_.reset(new RknnEngine(cfg_.model.c_str()));
+namespace {
 
-    // Zero-copy:
-    if (npu_->setup_io() != 0) {
+using clk = std::chrono::steady_clock;
+
+inline double ms(clk::time_point a, clk::time_point b) {
+    return std::chrono::duration<double, std::milli>(b - a).count();
+}
+
+struct Timings {
+    double cam = 0, dec = 0, rga = 0, infer = 0; // sums, ms
+    int n = 0;
+
+    void add(double c, double d, double r, double i) {
+        cam += c; dec += d; rga += r; infer += i;
+        if (++n % 60 == 0) report("avg/60");
+    }
+
+    void report(const char* tag) {
+        if (n == 0) return;
+        const double sum = (cam + dec + rga + infer) / n;
+        std::cout << "[timing] " << tag
+                  << " cam=" << std::fixed << std::setprecision(1) << cam / n
+                  << " dec=" << dec / n
+                  << " rga=" << rga / n
+                  << " infer=" << infer / n
+                  << " | sum=" << sum << " ms -> ~"
+                  << (sum > 0 ? 1000.0 / sum : 0.0) << " FPS\n";
+        cam = dec = rga = infer = 0;
+        n = 0;
+    }
+} g_t;
+
+} // namespace
+
+Pipeline::Pipeline(const Config& cfg)
+    : cfg_(cfg),
+      cam_(cfg_.device, cfg_.cam_w, cfg_.cam_h),
+      dec_(cfg_.cam_w, cfg_.cam_h),
+      npu_(cfg_.model.c_str()) {
+    if (npu_.setup_io() != 0) {
         throw std::runtime_error("rknn setup_io failed");
     }
-    npu_input_fd_ = npu_->input_fd();
+    // Single source of truth for the model geometry: the model file itself.
+    // NHWC layout: dims = {N, H, W, C}, so W is dims[n-2] and H is dims[n-3].
+    const rknn_tensor_attr& ia = npu_.input_attr();
+    if (ia.n_dims < 4) {
+        std::cerr << "pipeline: unexpected input tensor ndims=" << ia.n_dims << '\n';
+        throw std::runtime_error("rknn: input tensor is not 4-D NHWC");
+    }
+    model_w_ = static_cast<int>(ia.dims[ia.n_dims - 2]);
+    model_h_ = static_cast<int>(ia.dims[ia.n_dims - 3]);
 
-    cam_->start();
+    cam_.start();
 }
 
 int Pipeline::run() {
     int ok = 0;
-    auto t0 = std::chrono::steady_clock::now();
+    const auto t_start = clk::now();
 
     for (int i = 0; i < cfg_.frames; ++i) {
+        const auto t0 = clk::now();
+
         uint32_t sz = 0;
-        int idx = cam_->dequeue(&sz);
+        const int idx = cam_.dequeue(&sz);
         if (idx < 0) break;
+        const auto t1 = clk::now();
 
-        const uint8_t* jpeg = static_cast<const uint8_t*>(cam_->buffer(idx));
-        int fd_nv12 = dec_->decode(jpeg, sz);
-        cam_->requeue(idx);
+        const uint8_t* jpeg = static_cast<const uint8_t*>(cam_.buffer(idx));
+        const int fd_src = dec_.decode(jpeg, sz);
+        cam_.requeue(idx);
+        const auto t2 = clk::now();
 
-	if (i < 5)
-            fprintf(stderr, "pip[%d]: idx=%d sz=%u fd=%d\n", i, idx, sz, fd_nv12);
+        // A frame that failed to decode contributes neither to ok nor to the
+        // timing statistics — otherwise rare errors would silently skew averages.
+        if (fd_src < 0) continue;
 
-        if (fd_nv12 < 0) continue;
+        const bool rga_ok = rga_.resize(fd_src, cfg_.cam_w, cfg_.cam_h,
+                                        npu_.input_fd(), model_w_, model_h_);
+        const auto t3 = clk::now();
 
-        // RGA
-        if (!rga_.resize(fd_nv12, cfg_.cam_w, cfg_.cam_h,
-                         npu_->input_fd(), cfg_.model_w, cfg_.model_h)) {
-            fprintf(stderr, "RGA resize failed\n");
-            continue;
+        const bool npu_ok = rga_ok && (npu_.run() == 0);
+        const auto t4 = clk::now();
+
+        if (npu_ok) {
+            ++ok;
         }
-
-        if (npu_->run() != 0) { fprintf(stderr, "rknn_run failed\n"); continue; }
-        ++ok;
+        g_t.add(ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4));
     }
 
-    double sec = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - t0).count();
-    printf("Processed %d frames in %.3f s -> %.1f FPS\n", ok, sec,
-           sec > 0 ? ok / sec : 0.0);
+    const double wall = std::chrono::duration<double>(clk::now() - t_start).count();
+    g_t.report("TOTAL ");
+    std::cout << "Processed " << ok << " frames in "
+              << std::fixed << std::setprecision(3) << wall << " s -> "
+              << (wall > 0 ? ok / wall : 0.0) << " FPS\n";
     return ok;
 }
