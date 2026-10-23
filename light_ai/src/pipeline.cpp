@@ -1,8 +1,11 @@
-#include "pipeline.hpp"
+#include <cstring>
+#include <fstream>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+
+#include "pipeline.hpp"
 
 namespace {
 
@@ -53,16 +56,31 @@ Pipeline::Pipeline(const Config& cfg)
         std::cerr << "pipeline: unexpected input tensor ndims=" << ia.n_dims << '\n';
         throw std::runtime_error("rknn: input tensor is not 4-D NHWC");
     }
+
+    // Gray letterbox bars: RGA writes only the visible band (drect), so the
+    // 128-fill done here survives every frame.
+    std::memset(npu_.input_data(), 128, npu_.input_size());
+
+    // Aux buffer only for the two-pass path (source over 8x the model input).
+    // 1280x720 -> 224 is 5.7x — single pass, aux not allocated, no DRM pool
+    // split. 1920x1080 still needs the 960x540 intermediate.
+    if (cfg_.cam_w > 8 * model_w_ || cfg_.cam_h > 8 * model_h_) {
+        aux_fd_ = dec_.aux_fd(static_cast<size_t>(cfg_.cam_w / 2) * (cfg_.cam_h / 2) * 2);
+        if (aux_fd_ < 0) {
+            throw std::runtime_error("pipeline: aux buffer alloc failed");
+        }
+    }
+
     model_w_ = static_cast<int>(ia.dims[ia.n_dims - 2]);
     model_h_ = static_cast<int>(ia.dims[ia.n_dims - 3]);
 
     // Half-size intermediate for the two-pass RGA path (see rga_resizer):
     // 1920x1080 -> 224x224 is 8.57x, over the RGA3 1/8 per-axis limit.
     // 960x540x2 bytes, YUV422SP, same DRM pool as the decoder output.
-    aux_fd_ = dec_.aux_fd(static_cast<size_t>(cfg_.cam_w / 2) * (cfg_.cam_h / 2) * 2);
-    if (aux_fd_ < 0) {
-        throw std::runtime_error("pipeline: aux buffer alloc failed");
-    }
+    //aux_fd_ = dec_.aux_fd(static_cast<size_t>(cfg_.cam_w / 2) * (cfg_.cam_h / 2) * 2);
+    //if (aux_fd_ < 0) {
+    //    throw std::runtime_error("pipeline: aux buffer alloc failed");
+    //}
 
     cam_.start();
 }
@@ -93,6 +111,23 @@ int Pipeline::run() {
                                         aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2);
 
         const auto t3 = clk::now();
+
+        if (rga_ok && cfg_.dump_cal && !cal_done_) {
+            // The only diagnostic CPU pixel read: one model-input frame as
+            // P6 PPM. RGB888, w_stride=0, so bytes = W*H*3 exactly.
+            const size_t bytes = static_cast<size_t>(model_w_) * model_h_ * 3;
+            std::ofstream out("/tmp/cal.ppm", std::ios::binary);
+            if (out && npu_.input_size() >= bytes) {
+                out << "P6\n" << model_w_ << ' ' << model_h_ << "\n255\n";
+                out.write(reinterpret_cast<const char*>(npu_.input_data()),
+                          static_cast<std::streamsize>(bytes));
+                std::cout << "calibration dump: /tmp/cal.ppm ("
+                          << model_w_ << 'x' << model_h_ << ")\n";
+            } else {
+                std::cerr << "calibration dump failed\n";
+            }
+            cal_done_ = true;
+        }
 
         const bool npu_ok = rga_ok && (npu_.run() == 0);
         const auto t4 = clk::now();

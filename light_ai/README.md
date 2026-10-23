@@ -47,9 +47,14 @@ post-processing.
   (640x480, 1280x720, 1920x1080), although the UVC descriptor advertises
   30/1 in all modes. Forcing exposure (exposure_absolute=33) does not lift
   the ceiling. 1080p in daylight: not yet measured.
-- The current resize stretches 1920x1080 into 224x224 without letterbox;
-  acceptable for the MobileNet baseline, to be revisited in M2 with the
-  calibration dump.
+- Resize is letterboxed: uniform scale by width (s = model_w / cam_w), the
+  visible band occupies rows [lb_top, lb_top + lb_h) of the model input, the
+  rest stays gray (128, memset once; RGA writes only the drect band).
+  1280x720 -> 224x224: s = 7/40, lb_h = 126, lb_top = 49. Detection mapping
+  T: x_scene = x_det * cam_w / model_w, y_scene = (y_det - lb_top) * cam_w /
+  model_w; detections on the bars (y_det outside the band) are filtered.
+- Default resolution is 1280x720: same model input geometry as 1080p
+  (identical s, band and T), but single-pass RGA and cheaper MJPEG decode.
 
 ## Measured performance (1920x1080 MJPEG, evening light, camera-bound)
 
@@ -74,7 +79,7 @@ second of the run.
     sudo LD_LIBRARY_PATH=/usr/local/lib ./build/light_ai \
         --device /dev/video20 --frames 300
 
-Defaults: /dev/video20, 1920x1080 MJPEG, 300 frames, mobilenet_v1.rknn.
+Defaults: /dev/video20, 1280x720 MJPEG, ... Options: --device, --model, --frames, --w, --h, --dump-cal.
 Options: --device, --model, --frames, --w, --h. Numeric values are strictly
 validated (garbage is an error, not a silent zero).
 

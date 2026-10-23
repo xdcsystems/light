@@ -35,9 +35,26 @@ bool RgaResizer::resize(int src_fd, int w_src, int h_src,
         w_src = w_aux;
         h_src = h_aux;
     }
+
+    // Letterbox: uniform scale by width; the visible band is w_dst x lb_h
+    // at y = lb_top. Examples: 1280x720 -> 224: lb_h = 126, lb_top = 49;
+    // 1920x1080 -> 224 (after pass 1, aux 960x540): the same 126/49;
+    // 640x480 -> 224: lb_h = 168, lb_top = 28.
+    lb_h_ = h_src * w_dst / w_src;
+    if (lb_h_ > h_dst) {
+        std::cerr << "RGA: aspect " << w_src << 'x' << h_src
+                  << " does not fit into " << w_dst << 'x' << h_dst << '\n';
+        return false;
+    }
+    lb_top_ = (h_dst - lb_h_) / 2;
+
     rga_buffer_t src = wrapbuffer_fd(src_fd, w_src, h_src, RK_FORMAT_YCbCr_422_SP);
     rga_buffer_t dst = wrapbuffer_fd(dst_fd, w_dst, h_dst, RK_FORMAT_RGB_888);
-    IM_STATUS st = imresize(src, dst);
+    im_rect srect = {0, 0, w_src, h_src};
+    im_rect drect = {0, lb_top_, w_dst, lb_h_};
+    // improcess instead of imresize: the drect band keeps the bars intact,
+    // RGA never touches rows outside it.
+    IM_STATUS st = improcess(src, dst, {}, srect, drect, {}, 0);
     if ((int)st <= 0) {
         std::cerr << "RGA resize failed: " << imStrError(st) << '\n';
         return false;

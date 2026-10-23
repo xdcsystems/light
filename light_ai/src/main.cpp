@@ -23,6 +23,13 @@ bool parse_int(const char* s, int* out) {
 // intentionally gone: they could only desynchronize RGA from the real tensor.
 bool apply_option(Config& cfg, int argc, char** argv, int& i) {
     const char* opt = argv[i];
+    // Flag without a value — must be handled before the generic
+    // "option requires a value" check below.
+    if (!std::strcmp(opt, "--dump-cal")) {
+        cfg.dump_cal = true;
+        return true;
+    }
+
     if (i + 1 >= argc) {
         std::cerr << "missing value for option: " << opt << '\n';
         return false;
