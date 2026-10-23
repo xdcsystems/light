@@ -147,8 +147,12 @@ strictly validated (garbage is an error, not a silent zero).
       boxes survive NMS at conf ~0.3 (IoU below threshold) — tunable via
       conf_thr/iou_thr if it matters. FPS ceiling is now infer (~47 ms):
       post-processing is invisible in the timing sum.
-- [ ] M2-alt: try a lighter detection model (yolov8n.onnx -> .rknn on x86,
-      640x640) if the 47 ms yolov5s infer stays the FPS ceiling.
+- [x] M2-alt: tested yolov8n (fp16, same recipe) — infer 65 ms vs 47 ms
+      yolov5s: the DFL head + flat (1,84,8400) output defeat the FLOPs
+      advantage on the NPU (needed disable_rules=['seperate_conv_rs_split'],
+      op fuse incomplete). Conclusion: lighter model is not the FPS lever;
+      yolov5s stays. Next candidate lever: int8 quantization (needs a
+      calibration dataset of night frames — dumper already exists).
 - [ ] M3: NV12-family model input — RGA without format conversion, CPU-side
       quantization disappears.
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
