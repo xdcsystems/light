@@ -28,19 +28,26 @@ RknnEngine::RknnEngine(const char* model_path) {
         return;
     }
 
-    out_attr_ = {};
-    out_attr_.index = 0;
-    if (rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &out_attr_, sizeof(out_attr_)) != RKNN_SUCC) {
-        std::cerr << "rknn_query OUTPUT_ATTR failed\n";
-        rknn_destroy(ctx_);
-        ctx_ = 0;
+    out_attrs_.resize(io_num.n_output);
+    for (uint32_t i = 0; i < io_num.n_output; ++i) {
+        out_attrs_[i] = {};
+        out_attrs_[i].index = i;
+        if (rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &out_attrs_[i],
+                       sizeof(out_attrs_[i])) != RKNN_SUCC) {
+            std::cerr << "rknn_query OUTPUT_ATTR[" << i << "] failed\n";
+            rknn_destroy(ctx_);
+            ctx_ = 0;
+            return;
+        }
     }
 }
 
 RknnEngine::~RknnEngine() {
     if (!ctx_) return;
     if (in_mem_)  rknn_destroy_mem(ctx_, in_mem_);
-    if (out_mem_) rknn_destroy_mem(ctx_, out_mem_);
+    for (auto* m : out_mems_) {
+        if (m) rknn_destroy_mem(ctx_, m);
+    }
     rknn_destroy(ctx_);
     ctx_ = 0;
 }
@@ -67,26 +74,31 @@ int RknnEngine::setup_io() {
         return -1;
     }
 
-    // The output buffer is sized exactly as the model expects. For an INT8
+    // The output buffers are sized exactly as the model expects. For an INT8
     // output this is n_elems bytes, not n_elems * sizeof(float) — the old
     // x4 over-allocation worked only by luck of the runtime accepting it.
-    const uint32_t out_size = out_attr_.size;
-    out_mem_ = rknn_create_mem(ctx_, out_size);
-    if (!out_mem_) {
-        std::cerr << "rknn_create_mem (output) failed\n";
-        return -1;
-    }
-
-    if (rknn_set_io_mem(ctx_, out_mem_, &out_attr_) != RKNN_SUCC) {
-        std::cerr << "rknn_set_io_mem (output) failed\n";
-        return -1;
+    out_mems_.assign(out_attrs_.size(), nullptr);
+    for (size_t i = 0; i < out_attrs_.size(); ++i) {
+        out_mems_[i] = rknn_create_mem(ctx_, out_attrs_[i].size);
+        if (!out_mems_[i]) {
+            std::cerr << "rknn_create_mem (output " << i << ") failed\n";
+            return -1;
+        }
+        if (rknn_set_io_mem(ctx_, out_mems_[i], &out_attrs_[i]) != RKNN_SUCC) {
+            std::cerr << "rknn_set_io_mem (output " << i << ") failed\n";
+            return -1;
+        }
     }
 
     // NHWC: dims = {N, H, W, C}; print W x H honestly.
     std::cout << "model input: " << in_attr_.dims[in_attr_.n_dims - 2] << 'x'
               << in_attr_.dims[in_attr_.n_dims - 3] << ' '
-              << get_type_string(in_attr_.type) << ", output: "
-              << out_attr_.n_elems << " elems\n";
+              << get_type_string(in_attr_.type) << ", outputs: "
+              << out_attrs_.size() << "\n";
+    for (size_t i = 0; i < out_attrs_.size(); ++i) {
+        std::cout << "  out[" << i << "]: " << out_attrs_[i].n_elems
+                  << " elems, " << get_type_string(out_attrs_[i].type) << "\n";
+    }
 
     return 0;
 }

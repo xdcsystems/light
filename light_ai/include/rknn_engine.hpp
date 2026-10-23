@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <vector>
 #include "rknn_api.h"
 
 class RknnEngine {
@@ -14,16 +15,21 @@ public:
     int    input_fd()  const { return in_mem_ ? in_mem_->fd : -1; }
     uint32_t input_size() const { return in_mem_ ? in_mem_->size : 0; }
 
-    void* output_data() const { return out_mem_ ? out_mem_->virt_addr : nullptr; }
-    uint32_t output_size() const { return out_mem_ ? out_mem_->size : 0; }
-
     const rknn_tensor_attr& input_attr() const { return in_attr_; }
-    const rknn_tensor_attr& output_attr() const { return out_attr_; }
+    const std::vector<rknn_tensor_attr>& output_attrs() const { return out_attrs_; }
+    // Output i as raw int8: post-processing applies the per-output scale/zero-point.
+    const int8_t* output_data(size_t i) const {
+        return (i < out_mems_.size() && out_mems_[i]) ?
+            static_cast<const int8_t*>(out_mems_[i]->virt_addr) : nullptr;
+    }
+    uint32_t output_size(size_t i) const {
+        return (i < out_mems_.size() && out_mems_[i]) ? out_mems_[i]->size : 0;
+    }
 
 private:
     rknn_context ctx_ = 0;
     rknn_tensor_mem* in_mem_ = nullptr;
-    rknn_tensor_mem* out_mem_ = nullptr;
+    std::vector<rknn_tensor_mem*> out_mems_;
     rknn_tensor_attr in_attr_{};
-    rknn_tensor_attr out_attr_{};
+    std::vector<rknn_tensor_attr> out_attrs_;
 };
