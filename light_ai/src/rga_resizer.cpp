@@ -24,6 +24,10 @@ bool RgaResizer::resize(int src_fd, int w_src, int h_src,
     // limit (1920/224 == 8, but the real ratio is 8.57) — compare by
     // multiplication.
     if (w_src > 8 * w_dst || h_src > 8 * h_dst) {
+        if (aux_fd < 0) {
+            std::cerr << "RGA: two-pass needed but aux_fd < 0\n";
+            return false;
+        }
         rga_buffer_t src = wrapbuffer_fd(src_fd, w_src, h_src, RK_FORMAT_YCbCr_422_SP);
         rga_buffer_t mid = wrapbuffer_fd(aux_fd, w_aux, h_aux, RK_FORMAT_YCbCr_422_SP);
         IM_STATUS st = imresize(src, mid);

@@ -61,6 +61,9 @@ Pipeline::Pipeline(const Config& cfg)
     // 128-fill done here survives every frame.
     std::memset(npu_.input_data(), 128, npu_.input_size());
 
+    model_w_ = static_cast<int>(ia.dims[ia.n_dims - 2]);
+    model_h_ = static_cast<int>(ia.dims[ia.n_dims - 3]);
+
     // Aux buffer only for the two-pass path (source over 8x the model input).
     // 1280x720 -> 224 is 5.7x — single pass, aux not allocated, no DRM pool
     // split. 1920x1080 still needs the 960x540 intermediate.
@@ -69,18 +72,10 @@ Pipeline::Pipeline(const Config& cfg)
         if (aux_fd_ < 0) {
             throw std::runtime_error("pipeline: aux buffer alloc failed");
         }
+    } else {
+        std::cout << "aux not needed: " << cfg_.cam_w << 'x' << cfg_.cam_h
+                  << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
     }
-
-    model_w_ = static_cast<int>(ia.dims[ia.n_dims - 2]);
-    model_h_ = static_cast<int>(ia.dims[ia.n_dims - 3]);
-
-    // Half-size intermediate for the two-pass RGA path (see rga_resizer):
-    // 1920x1080 -> 224x224 is 8.57x, over the RGA3 1/8 per-axis limit.
-    // 960x540x2 bytes, YUV422SP, same DRM pool as the decoder output.
-    //aux_fd_ = dec_.aux_fd(static_cast<size_t>(cfg_.cam_w / 2) * (cfg_.cam_h / 2) * 2);
-    //if (aux_fd_ < 0) {
-    //    throw std::runtime_error("pipeline: aux buffer alloc failed");
-    //}
 
     cam_.start();
 }
