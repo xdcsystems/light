@@ -101,7 +101,7 @@ std::vector<Detection> yolo_postprocess(const RknnEngine& npu,
                 for (int k = 0; k < 3; ++k) {
                     const size_t off = base + static_cast<size_t>(k) * per * cellHW;
                     const float obj = fp16_to_float(data[off + 4 * cellHW]);
-                    if (obj < 0.05f) continue;   // cheap early cut
+                    if (obj < 0.05f) continue;   // cheap early cut, below any usable conf_thr
 
                     int best = 0;
                     float best_cls = 0.0f;
@@ -132,7 +132,8 @@ std::vector<Detection> yolo_postprocess(const RknnEngine& npu,
         }
     }
 
-    // NMS: greedy, candidate count after the threshold is small.
+    // NMS: greedy, class-aware (standard yolov5 behaviour): boxes of
+    // different classes never suppress each other.
     std::sort(cand.begin(), cand.end(),
               [](const Box& a, const Box& b) { return a.conf > b.conf; });
     std::vector<bool> sup(cand.size(), false);
@@ -140,14 +141,15 @@ std::vector<Detection> yolo_postprocess(const RknnEngine& npu,
     for (size_t i = 0; i < cand.size(); ++i) {
         if (sup[i]) continue;
         for (size_t j = i + 1; j < cand.size(); ++j) {
-            if (!sup[j] && iou(cand[i], cand[j]) > iou_thr) sup[j] = true;
+            if (!sup[j] && cand[i].cls == cand[j].cls &&
+                iou(cand[i], cand[j]) > iou_thr) sup[j] = true;
         }
         const Box& b = cand[i];
         Detection d;
         d.x    = std::max(0.0f, b.x1 * scale);
         d.y    = std::max(0.0f, (b.y1 - lb_top) * scale);
-        d.w    = std::min(cam_w, (b.x2 - b.x1) * scale);
-        d.h    = std::min(cam_h, (b.y2 - b.y1) * scale);
+        d.w    = std::min(cam_w - d.x, (b.x2 - b.x1) * scale);
+        d.h    = std::min(cam_h - d.y, (b.y2 - b.y1) * scale);
         d.cls  = b.cls;
         d.conf = b.conf;
         out.push_back(d);

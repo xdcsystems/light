@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "pipeline.hpp"
+#include "coco_names.h"
 #include "yolo_postprocess.hpp"
 
 namespace {
@@ -129,20 +130,20 @@ int Pipeline::run() {
         const auto t4 = clk::now();
 
         if (npu_ok) {
-            // Letterbox geometry mirrors RgaResizer math (h_src*w_dst/w_src).
-            const int lb_h = cfg_.cam_h * model_w_ / cfg_.cam_w;
-            const int lb_top = (model_h_ - lb_h) / 2;
+            // Letterbox geometry from the single source of truth: RgaResizer
+            // stored it during the last resize.
             const auto dets = yolo_postprocess(npu_, cfg_.cam_w, cfg_.cam_h,
                                                model_w_, model_h_,
-                                               static_cast<float>(lb_top),
-                                               static_cast<float>(lb_h));
+                                               static_cast<float>(rga_.lb_top()),
+                                               static_cast<float>(rga_.lb_h()),
+                                               cfg_.conf_thr, cfg_.iou_thr);
             // Throttled report: every 15th frame, up to 8 boxes per report.
             if (!dets.empty() && i % 15 == 0) {
                 std::cout << "frame " << i << ": " << dets.size()
                           << " det(s)\n";
                 for (size_t k = 0; k < dets.size() && k < 8; ++k) {
                     const auto& d = dets[k];
-                    std::cout << "  cls=" << d.cls << " conf="
+                    std::cout << "  cls=" << kCocoNames[d.cls] << " conf="
                               << std::fixed << std::setprecision(2) << d.conf
                               << " box=(" << d.x << ',' << d.y << ' '
                               << d.w << 'x' << d.h << ")\n";

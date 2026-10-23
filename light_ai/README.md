@@ -100,8 +100,8 @@ second of the run.
 infer=46.9-47.7 ms dominates; cam drops to ~10 ms (the V4L2 queue absorbs
 the NPU latency). Steady state ~16.8 FPS at 720p evening. The pipeline is
 now NPU-bound: pipelining (M4) would no longer change FPS, only infer
-headroom does. The 47 ms figure also argues for trying a lighter model
-(yolov8n is still on the roadmap as an alternative).
+headroom does. The 47 ms figure motivated the yolov8n alternative — tested and closed
+negative in M2-alt below.
 
 ## Scripts
 - scripts/test_inference.py — RKNNLite smoke test: shapes, non-negativity
@@ -117,10 +117,12 @@ headroom does. The 47 ms figure also argues for trying a lighter model
 
 ## Run
     sudo LD_LIBRARY_PATH=/usr/local/lib ./build/light_ai \
-        --device /dev/video20 --frames 300
+        --device /dev/video20 --model ./yolov5s_relu.rknn --frames 300
 
-Defaults: /dev/video20, 1280x720 MJPEG, mobilenet_v1 model. Options:
---device, --model, --frames, --w, --h, --dump-cal. Numeric values are
+Defaults: /dev/video20, 1280x720 MJPEG; the model default is still the M1
+mobilenet_v1 relic — always pass --model for detection runs. Options:
+--device, --model, --frames, --w, --h, --dump-cal, --conf, --iou
+(detection thresholds, 0.0..1.0, defaults 0.25 / 0.45). Numeric values are
 strictly validated (garbage is an error, not a silent zero).
 
 ## Roadmap
@@ -153,6 +155,9 @@ strictly validated (garbage is an error, not a silent zero).
       op fuse incomplete). Conclusion: lighter model is not the FPS lever;
       yolov5s stays. Next candidate lever: int8 quantization (needs a
       calibration dataset of night frames — dumper already exists).
+- [x] M2.3: readable report (COCO-80 class names), CLI --conf/--iou with
+      validation; cleanup: class-aware NMS, symmetric box clamping, letterbox
+      geometry now read from RgaResizer (single source of truth).
 - [ ] M3: NV12-family model input — RGA without format conversion, CPU-side
       quantization disappears.
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays

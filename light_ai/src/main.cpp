@@ -19,6 +19,16 @@ bool parse_int(const char* s, int* out) {
     return true;
 }
 
+bool parse_float(const char* s, float* out) {
+    if (!s || !*s) return false;
+    errno = 0;
+    char* end = nullptr;
+    const float v = std::strtof(s, &end);
+    if (errno == ERANGE || end == s || *end != '\0') return false;
+    *out = v;
+    return true;
+}
+
 // Model input dimensions are read from the model itself, so --mw/--mh are
 // intentionally gone: they could only desynchronize RGA from the real tensor.
 bool apply_option(Config& cfg, int argc, char** argv, int& i) {
@@ -38,7 +48,16 @@ bool apply_option(Config& cfg, int argc, char** argv, int& i) {
 
     if (!std::strcmp(opt, "--device"))      cfg.device = val;
     else if (!std::strcmp(opt, "--model"))  cfg.model  = val;
-    else if (!std::strcmp(opt, "--frames") ||
+    else if (!std::strcmp(opt, "--conf") || !std::strcmp(opt, "--iou")) {
+        float f = 0.0f;
+        if (!parse_float(val, &f) || f < 0.0f || f > 1.0f) {
+            std::cerr << "invalid value for " << opt << ": '" << val
+                      << "' (expected 0.0..1.0)\n";
+            return false;
+        }
+        if (!std::strcmp(opt, "--conf")) cfg.conf_thr = f;
+        else                             cfg.iou_thr  = f;
+    } else if (!std::strcmp(opt, "--frames") ||
              !std::strcmp(opt, "--w")      ||
              !std::strcmp(opt, "--h")) {
         int n = 0;

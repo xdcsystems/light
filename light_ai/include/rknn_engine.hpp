@@ -17,7 +17,8 @@ public:
 
     const rknn_tensor_attr& input_attr() const { return in_attr_; }
     const std::vector<rknn_tensor_attr>& output_attrs() const { return out_attrs_; }
-    // Output i as raw int8: post-processing applies the per-output scale/zero-point.
+    // Output i as raw model-type bytes (int8_t here is just a byte view;
+    // the real type is out_attrs_[i].type — yolov5s_relu yields fp16).
     const int8_t* output_data(size_t i) const {
         return (i < out_mems_.size() && out_mems_[i]) ?
             static_cast<const int8_t*>(out_mems_[i]->virt_addr) : nullptr;

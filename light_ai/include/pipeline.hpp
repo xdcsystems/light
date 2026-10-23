@@ -10,11 +10,14 @@ struct Config {
     std::string model  = "/usr/share/model/RK3588/mobilenet_v1.rknn";
     //int cam_w = 1920, cam_h = 1080;
     int cam_w = 1280, cam_h = 720;
-    // Single-pass RGA at this size: 1280 <= 8*224 and 720 <= 8*224, so the
-    // two-pass path stays dormant (code kept for a possible 1080p Config).
+    // Two-pass RGA kicks in only when the source exceeds 8x the model input
+    // per axis (checked in the Pipeline ctor); at 720p -> 640 it stays dormant.
     bool dump_cal = false;   // dump one model-input frame to /tmp/cal.ppm
 
     int frames = 300;
+    // Detection thresholds, CLI-tunable via --conf / --iou.
+    float conf_thr = 0.25f;
+    float iou_thr  = 0.45f;
     // Model input size is NOT a config option: it is read from the model
     // itself (input_attr) after setup_io. A --mw/--mh flag could only
     // desynchronize RGA from the real tensor geometry.
