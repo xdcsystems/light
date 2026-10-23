@@ -26,6 +26,7 @@ add_executable(light_ai
     src/mpp_decoder.cpp
     src/rga_resizer.cpp
     src/rknn_engine.cpp
+    src/yolo_postprocess.cpp
     src/pipeline.cpp
 )
 

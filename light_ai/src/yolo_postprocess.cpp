@@ -1,0 +1,156 @@
+#include "yolo_postprocess.hpp"
+#include "rknn_engine.hpp"
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <iostream>
+
+namespace {
+
+// fp16 (IEEE 754 half) -> float, bit-exact, no arch extensions needed.
+inline float fp16_to_float(uint16_t h) {
+    const uint32_t sign = (h >> 15) & 1u;
+    uint32_t exp  = (h >> 10) & 31u;
+    uint32_t man  = h & 0x3FFu;
+    uint32_t bits;
+    if (exp == 0) {
+        if (man == 0) {
+            bits = sign << 31;                      // +-0
+        } else {                                    // subnormal
+            exp = 127 - 15 + 1;
+            while (!(man & 0x400u)) { man <<= 1; --exp; }
+            man &= 0x3FFu;
+            bits = (sign << 31) | (exp << 23) | (man << 13);
+        }
+    } else if (exp == 31) {
+        bits = (sign << 31) | 0x7F800000u | (man << 13);  // +-inf/nan
+    } else {
+        bits = (sign << 31) | ((exp - 15 + 127) << 23) | (man << 13);
+    }
+    float f;
+    std::memcpy(&f, &bits, 4);
+    return f;
+}
+
+// yolov5 default anchors, already in model-input pixels per stride.
+const float ANCH[3][3][2] = {
+    {{10, 13},  {16, 30},  {33, 23}},
+    {{30, 61},  {62, 45},  {59, 119}},
+    {{116, 90}, {156, 198},{373, 326}},
+};
+
+struct Box {
+    float x1, y1, x2, y2;   // det coordinates (model input)
+    float conf;
+    int   cls;
+};
+
+inline float iou(const Box& a, const Box& b) {
+    const float ix1 = std::max(a.x1, b.x1);
+    const float iy1 = std::max(a.y1, b.y1);
+    const float ix2 = std::min(a.x2, b.x2);
+    const float iy2 = std::min(a.y2, b.y2);
+    const float iw = std::max(0.0f, ix2 - ix1);
+    const float ih = std::max(0.0f, iy2 - iy1);
+    const float inter = iw * ih;
+    const float area_a = (a.x2 - a.x1) * (a.y2 - a.y1);
+    const float area_b = (b.x2 - b.x1) * (b.y2 - b.y1);
+    return inter / (area_a + area_b - inter + 1e-6f);
+}
+
+} // namespace
+
+std::vector<Detection> yolo_postprocess(const RknnEngine& npu,
+                                        float cam_w, float cam_h,
+                                        float model_w, float model_h,
+                                        float lb_top, float lb_h,
+                                        float conf_thr, float iou_thr) {
+    // Letterbox geometry must fit the model input: the band is rows
+    // [lb_top, lb_top + lb_h) of the model frame. A violation here would
+    // silently misplace every detection, so it is a hard error.
+    if (lb_top < 0.0f || lb_top + lb_h > model_h) {
+        std::cerr << "yolo_postprocess: letterbox band [" << lb_top << ", "
+                  << lb_top + lb_h << ") does not fit model height "
+                  << model_h << '\n';
+        return {};
+    }
+
+    std::vector<Box> cand;
+    cand.reserve(256);
+
+    const float scale = cam_w / model_w;   // uniform, by width
+
+    for (size_t gi = 0; gi < npu.output_attrs().size() && gi < 3; ++gi) {
+        const auto& attr = npu.output_attrs()[gi];
+        const uint16_t* data =
+            reinterpret_cast<const uint16_t*>(npu.output_data(gi));
+        if (!data || attr.n_dims != 4) continue;
+
+        // NCHW: dims = {1, 255, H, W}
+        const int H = static_cast<int>(attr.dims[2]);
+        const int W = static_cast<int>(attr.dims[3]);
+        const int stride = 8 << gi;
+        const int per = static_cast<int>(attr.dims[1]) / 3; // 85 = 4+1+80
+
+        for (int gy = 0; gy < H; ++gy) {
+            for (int gx = 0; gx < W; ++gx) {
+                const size_t base = (static_cast<size_t>(gy) * W + gx);
+                // channel-major: element (c, gy, gx) is at c*H*W + base
+                const size_t cellHW = static_cast<size_t>(H) * W;
+                // anchor loop is merged with the confidence shortcut below
+                for (int k = 0; k < 3; ++k) {
+                    const size_t off = base + static_cast<size_t>(k) * per * cellHW;
+                    const float obj = fp16_to_float(data[off + 4 * cellHW]);
+                    if (obj < 0.05f) continue;   // cheap early cut
+
+                    int best = 0;
+                    float best_cls = 0.0f;
+                    for (int c = 5; c < per; ++c) {
+                        const float v = fp16_to_float(data[off + c * cellHW]);
+                        if (v > best_cls) { best_cls = v; best = c; }
+                    }
+                    const float conf = obj * best_cls;
+                    if (conf < conf_thr) continue;
+
+                    const float* an = ANCH[gi][k];
+                    const float cx = (fp16_to_float(data[off + 0 * cellHW]) * 2.0f
+                                      - 0.5f + gx) * stride;
+                    const float cy = (fp16_to_float(data[off + 1 * cellHW]) * 2.0f
+                                      - 0.5f + gy) * stride;
+                    const float bw = fp16_to_float(data[off + 2 * cellHW]);
+                    const float bh = fp16_to_float(data[off + 3 * cellHW]);
+                    const float w  = (bw * 2.0f) * (bw * 2.0f) * an[0];
+                    const float h  = (bh * 2.0f) * (bh * 2.0f) * an[1];
+
+                    const float cy_det = cy;
+                    if (cy_det < lb_top || cy_det >= lb_top + lb_h) continue; // bar
+
+                    cand.push_back({cx - w / 2, cy - h / 2,
+                                    cx + w / 2, cy + h / 2, conf, best - 5});
+                }
+            }
+        }
+    }
+
+    // NMS: greedy, candidate count after the threshold is small.
+    std::sort(cand.begin(), cand.end(),
+              [](const Box& a, const Box& b) { return a.conf > b.conf; });
+    std::vector<bool> sup(cand.size(), false);
+    std::vector<Detection> out;
+    for (size_t i = 0; i < cand.size(); ++i) {
+        if (sup[i]) continue;
+        for (size_t j = i + 1; j < cand.size(); ++j) {
+            if (!sup[j] && iou(cand[i], cand[j]) > iou_thr) sup[j] = true;
+        }
+        const Box& b = cand[i];
+        Detection d;
+        d.x    = std::max(0.0f, b.x1 * scale);
+        d.y    = std::max(0.0f, (b.y1 - lb_top) * scale);
+        d.w    = std::min(cam_w, (b.x2 - b.x1) * scale);
+        d.h    = std::min(cam_h, (b.y2 - b.y1) * scale);
+        d.cls  = b.cls;
+        d.conf = b.conf;
+        out.push_back(d);
+    }
+    return out;
+}
