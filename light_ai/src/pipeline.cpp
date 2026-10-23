@@ -56,6 +56,14 @@ Pipeline::Pipeline(const Config& cfg)
     model_w_ = static_cast<int>(ia.dims[ia.n_dims - 2]);
     model_h_ = static_cast<int>(ia.dims[ia.n_dims - 3]);
 
+    // Half-size intermediate for the two-pass RGA path (see rga_resizer):
+    // 1920x1080 -> 224x224 is 8.57x, over the RGA3 1/8 per-axis limit.
+    // 960x540x2 bytes, YUV422SP, same DRM pool as the decoder output.
+    aux_fd_ = dec_.aux_fd(static_cast<size_t>(cfg_.cam_w / 2) * (cfg_.cam_h / 2) * 2);
+    if (aux_fd_ < 0) {
+        throw std::runtime_error("pipeline: aux buffer alloc failed");
+    }
+
     cam_.start();
 }
 
@@ -81,7 +89,9 @@ int Pipeline::run() {
         if (fd_src < 0) continue;
 
         const bool rga_ok = rga_.resize(fd_src, cfg_.cam_w, cfg_.cam_h,
-                                        npu_.input_fd(), model_w_, model_h_);
+                                        npu_.input_fd(), model_w_, model_h_,
+                                        aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2);
+
         const auto t3 = clk::now();
 
         const bool npu_ok = rga_ok && (npu_.run() == 0);

@@ -8,7 +8,7 @@
 struct Config {
     std::string device = "/dev/video20";
     std::string model  = "/usr/share/model/RK3588/mobilenet_v1.rknn";
-    int cam_w = 640, cam_h = 480;
+    int cam_w = 1920, cam_h = 1080;
     int frames = 300;
     // Model input size is NOT a config option: it is read from the model
     // itself (input_attr) after setup_io. A --mw/--mh flag could only
@@ -26,5 +26,6 @@ private:
     MppDecoder dec_;
     RgaResizer rga_;
     RknnEngine npu_;
+    int aux_fd_ = -1;
     int model_w_ = 0, model_h_ = 0;   // taken from the model, not from flags
 };

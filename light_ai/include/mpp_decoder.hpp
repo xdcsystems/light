@@ -18,6 +18,10 @@ public:
     ~MppDecoder();
 
     int decode(const uint8_t* data, size_t size);
+    // Extra dma-buf from the same DRM pool: intermediate buffer for
+    // multi-pass RGA when the scale ratio exceeds the RGA3 limit (1/8).
+    int aux_fd(size_t bytes);   // returns fd or -1; buffer lives until dtor
+
 
 private:
     MppCtx         ctx_ = nullptr;
@@ -26,6 +30,7 @@ private:
     MppFrame       out_frame_ = nullptr;
     MppPacket      pkt_ = nullptr;
     MppBufferGroup pkt_group_ = nullptr;
+    MppBuffer aux_ = nullptr;
 
     int            w_ = 0, h_ = 0;
     uint64_t       pts_ = 0;

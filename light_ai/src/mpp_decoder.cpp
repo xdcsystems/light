@@ -30,8 +30,14 @@ MppDecoder::MppDecoder(int w, int h) : w_(w), h_(h) {
         }
 
         MppBuffer buf = nullptr;
+        // Pool for output frames. Camera stream is 4:2:2, so the buffer is x2, not x1.5.
+        // MPP requires the frame buffer height aligned to 16 (1920x1080 needs
+        // 1088 rows: slot_size 4177920 vs 4147200 for exact 1080). 640x480 was
+        // accidentally aligned and hid this; the decoder asserts before it can
+        // even report info_change, so the constructor must allocate the safe size.
+        const int h_align = (h_ + 15) & ~15;
         if (mpp_buffer_get(out_group_, &buf,
-                           static_cast<size_t>(w_) * h_ * 2) != MPP_OK) {
+                           static_cast<size_t>(w_) * h_align * 2) != MPP_OK) {
             std::cerr << "mpp_buffer_get failed\n";
             break;
         }
@@ -64,6 +70,9 @@ MppDecoder::~MppDecoder() {
     // and leaks one packet-sized drm buffer (~33 KB).
     if (pkt_)       { mpp_packet_deinit(&pkt_); pkt_ = nullptr; }
     if (out_frame_) { mpp_frame_deinit(&out_frame_); out_frame_ = nullptr; }
+
+    if (aux_)       { mpp_buffer_put(aux_); aux_ = nullptr; }
+
     if (out_group_) { mpp_buffer_group_put(out_group_); out_group_ = nullptr; }
     if (pkt_group_) { mpp_buffer_group_put(pkt_group_); pkt_group_ = nullptr; }
 }
@@ -174,3 +183,11 @@ int MppDecoder::decode(const uint8_t* data, size_t size) {
     mpi_->enqueue(ctx_, MPP_PORT_OUTPUT, task);
     return fd;
 }
+
+int MppDecoder::aux_fd(size_t bytes) {
+    if (!ok_) return -1;
+    if (aux_) return mpp_buffer_get_fd(aux_);
+    if (mpp_buffer_get(out_group_, &aux_, bytes) != MPP_OK) return -1;
+    return mpp_buffer_get_fd(aux_);
+}
+
