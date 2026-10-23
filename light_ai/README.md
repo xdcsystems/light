@@ -1,27 +1,28 @@
-# light_ai
+# light_ai — zero-copy видеоаналитика на RK3588
 
-AI-powered lighting control for RK3588 (Linaro/Debian).
+Пайплайн: V4L2 (MJPEG) -> MPP (декод в NV12, dma-buf) -> RGA (im2d-ресайз
+прямо в dma-buf тензора NPU) -> RKNN (zero-copy) -> CPU-постобработка.
 
-The system uses a camera and artificial intelligence (neural networks)
-to detect objects and people in the field of view — including people
-approaching by their shadows before they enter the frame — and controls
-lighting accordingly: switching lights on/off and adjusting brightness
-based on real-time ambient light sensor readings and time of day.
+## Правила проекта
+- GStreamer запрещён (фиксация от владельца проекта).
+- Кадр существует только как dma-buf; копирование пикселей через CPU запрещено.
+  Единственный допустимый memcpy - сжатый MJPEG-кадр (~25 КБ) в packet декодера.
 
-## Key features
+## Слои
+- CameraV4L2   : захват MJPEG, mmap-буферы, DQBUF/QBUF.
+- MppDecoder   : декод MJPEG -> NV12, внешний буферный пул dma-buf, отдаёт fd.
+- RgaResizer   : im2d-ресайз по fd (wrapbuffer_fd + imresize).
+- RknnEngine   : rknn_create_mem + rknn_set_io_mem; fd входного тензора
+                 отдаётся RGA как приёмник (ресайз пишет прямо в тензор NPU).
 
-- People and object detection in camera view
-- Shadow-based early presence detection (light turns on before a person enters the room)
-- Adaptive brightness control driven by ambient light sensor data
-- Time-of-day aware lighting logic
+## Сборка
+    ./scripts/build.sh
 
-## Hardware
+## Запуск
+    sudo ./build/light_ai --device /dev/video20 --frames 60
 
-- RK3588 SBC (Debian/Linaro)
-- Camera (TBD)
-- Ambient light sensor (TBD)
-- Light actuator: relay / dimmer (TBD)
-
-## Status
-
-Work in progress.
+## Фазы
+- M1: базовый прогон с mobilenet_v1, замер честного FPS.
+- M2: конвертация yolov8n.onnx -> .rknn (rknn-toolkit2 на x86), вход 640x640.
+- M3: вход модели NV12 - RGA без конвертации формата, CPU-квантование исчезает.
+- M4: конвейеризация (async RGA), governor NPU/DDR = performance.
