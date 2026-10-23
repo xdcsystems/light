@@ -1,3 +1,4 @@
 venv/
 *.whl
 *.rknn
+dataset/

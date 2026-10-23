@@ -121,9 +121,12 @@ negative in M2-alt below.
 
 Defaults: /dev/video20, 1280x720 MJPEG; the model default is still the M1
 mobilenet_v1 relic — always pass --model for detection runs. Options:
---device, --model, --frames, --w, --h, --dump-cal, --conf, --iou
-(detection thresholds, 0.0..1.0, defaults 0.25 / 0.45). Numeric values are
-strictly validated (garbage is an error, not a silent zero).
+--device, --model, --frames, --w, --h, --dump-cal, --conf, --iou,
+--cal N, --cal-interval K (--cal saves up to N model-input frames into
+dataset/, one every K frames — the int8 calibration dataset collector;
+one frame is ~1.2 MB, so 200 frames are ~240 MB on /tmp's storage).
+Numeric values are strictly validated (garbage is an error, not a
+silent zero).
 
 ## Roadmap
 - [x] M1: baseline run with mobilenet_v1, honest FPS measurement.

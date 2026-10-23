@@ -1,5 +1,7 @@
 #include <cstring>
 #include <fstream>
+#include <sstream>
+#include <filesystem>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -79,6 +81,14 @@ Pipeline::Pipeline(const Config& cfg)
                   << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
     }
 
+    if (cfg_.cal_frames > 0) {
+        std::error_code ec;
+        std::filesystem::create_directories("dataset", ec);
+        if (ec) {
+            throw std::runtime_error("pipeline: cannot create dataset/: "
+                                     + ec.message());
+        }
+    }
     cam_.start();
 }
 
@@ -109,21 +119,37 @@ int Pipeline::run() {
 
         const auto t3 = clk::now();
 
-        if (rga_ok && cfg_.dump_cal && !cal_done_) {
-            // The only diagnostic CPU pixel read: one model-input frame as
-            // P6 PPM. RGB888, w_stride=0, so bytes = W*H*3 exactly.
+        // Calibration dump: P6 PPM of the model input. The only diagnostic
+        // CPU pixel read. --dump-cal writes a single /tmp/cal.ppm; --cal N
+        // saves up to N frames (one every --cal-interval) into dataset/.
+        const bool cal_wanted = cfg_.dump_cal ||
+            (cfg_.cal_frames > 0 && cal_saved_ < cfg_.cal_frames);
+        const bool cal_due = !cal_done_ || (i - last_cal_ >= cfg_.cal_interval);
+        if (rga_ok && cal_wanted && cal_due) {
             const size_t bytes = static_cast<size_t>(model_w_) * model_h_ * 3;
-            std::ofstream out("/tmp/cal.ppm", std::ios::binary);
+            std::string path = "/tmp/cal.ppm";
+            if (!cfg_.dump_cal) {
+                std::ostringstream name;
+                name << "dataset/cal_" << std::setw(4) << std::setfill('0')
+                     << cal_saved_ << ".ppm";
+                path = name.str();
+            }
+            std::ofstream out(path, std::ios::binary);
             if (out && npu_.input_size() >= bytes) {
                 out << "P6\n" << model_w_ << ' ' << model_h_ << "\n255\n";
                 out.write(reinterpret_cast<const char*>(npu_.input_data()),
                           static_cast<std::streamsize>(bytes));
-                std::cout << "calibration dump: /tmp/cal.ppm ("
-                          << model_w_ << 'x' << model_h_ << ")\n";
+                if (cfg_.dump_cal) {
+                    std::cout << "calibration dump: " << path << " ("
+                              << model_w_ << 'x' << model_h_ << ")\n";
+                }
+                ++cal_saved_;
+                last_cal_ = i;
+                cal_done_ = true;
             } else {
                 std::cerr << "calibration dump failed\n";
+                cal_done_ = true;   // do not retry-spam on a broken sink
             }
-            cal_done_ = true;
         }
 
         const bool npu_ok = rga_ok && (npu_.run() == 0);

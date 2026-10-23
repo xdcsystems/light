@@ -57,6 +57,16 @@ bool apply_option(Config& cfg, int argc, char** argv, int& i) {
         }
         if (!std::strcmp(opt, "--conf")) cfg.conf_thr = f;
         else                             cfg.iou_thr  = f;
+    } else if (!std::strcmp(opt, "--cal") ||
+             !std::strcmp(opt, "--cal-interval")) {
+        int n = 0;
+        if (!parse_int(val, &n) || n < 1 || n > 10000) {
+            std::cerr << "invalid value for " << opt << ": '" << val
+                      << "' (expected 1..10000)\n";
+            return false;
+        }
+        if (!std::strcmp(opt, "--cal")) cfg.cal_frames = n;
+        else                            cfg.cal_interval = n;
     } else if (!std::strcmp(opt, "--frames") ||
              !std::strcmp(opt, "--w")      ||
              !std::strcmp(opt, "--h")) {

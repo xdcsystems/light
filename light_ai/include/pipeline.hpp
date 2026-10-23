@@ -13,6 +13,10 @@ struct Config {
     // Two-pass RGA kicks in only when the source exceeds 8x the model input
     // per axis (checked in the Pipeline ctor); at 720p -> 640 it stays dormant.
     bool dump_cal = false;   // dump one model-input frame to /tmp/cal.ppm
+    // Calibration dataset: --cal N saves up to N model-input frames into
+    // dataset/ (one every --cal-interval frames) for int8 quantization.
+    int cal_frames = 0;
+    int cal_interval = 15;
 
     int frames = 300;
     // Detection thresholds, CLI-tunable via --conf / --iou.
@@ -37,4 +41,6 @@ private:
     int aux_fd_ = -1;
     int model_w_ = 0, model_h_ = 0;   // taken from the model, not from flags
     bool cal_done_ = false;
+    int cal_saved_ = 0;
+    int last_cal_ = -1;
 };
