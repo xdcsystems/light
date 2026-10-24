@@ -2,3 +2,4 @@ venv/
 *.whl
 *.rknn
 dataset/
+*.bak
