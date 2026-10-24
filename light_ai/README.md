@@ -221,6 +221,23 @@ silent zero).
       for this task. The ~5 ms projected infer saving does not buy back
       the recall risk. 640x640 stays; model-side resize levers are
       exhausted — remaining FPS levers are on the platform side.
+- [ ] M3.5: netsend — network preview subsystem (design agreed 2026-10-24,
+      awaiting go). New net/ family: NetControl (TCP listener, iostream,
+      commands on/off/fps/quality — dynamic start/stop without restart),
+      FrameTap (tap the full 1280x720 frame after MPP decode, before RGA
+      letterbox; RGA2 pass YUV422SP->NV12 — RGA3 stays pinned to the model),
+      NetEncoder (hardware H.264 via MPP mpp_enc — same zero-CPU path as the
+      MPP decoder; FFmpeg libs used ONLY for muxing/transport: mainline
+      ffmpeg has no rkmpp encoder, verify with
+      'ffmpeg -encoders | grep -i rkmpp'), NetSink (phase A: MPEG-TS over
+      UDP -> VLC 'udp://@:1234', ~1-2 s latency; phase B: RTSP; phase C:
+      WebRTC via libdatachannel only if remote access is ever needed).
+      H.264 packets = second legal memcpy alongside the MJPEG packet.
+      Preview path is strictly opt-in, never part of the standard run or
+      benchmarks. Open questions: transport phase, port (1234/UDP
+      proposed), LAN trust model. Priority vs M4: owner decision — if
+      netsend is a working tool, it goes first (it is also the debug
+      tool for M4).
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
       even a 10-15 ms yolov8n@640x640 fits the frame budget without
