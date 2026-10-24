@@ -28,7 +28,10 @@ post-processing.
                handed to RGA as the destination (resize writes directly into
                the NPU tensor). N output tensors (std::vector of
                rknn_tensor_mem), each sized exactly (attr.size). Output type
-               is read from the model: yolov5s_relu yields native fp16.
+               is read from the model; for int8-quantized models the attr is
+               rewritten to FLOAT16 (buffer becomes n_elems * 2) so the
+               runtime performs per-channel dequantization into our
+               zero-copy buffer — postprocess stays untouched.
 - Pipeline   : model input geometry is read from the model file itself
                (input_attr), not from CLI flags. Aux allocation happens after
                model geometry is known (constructor-order bug fixed; a
@@ -66,6 +69,16 @@ post-processing.
   ("calibration dump failed"). Clean it up between sudo and non-sudo runs.
 - yolov5 .rknn outputs are native fp16 (float16, NCHW) — no CPU-side
   dequantization needed; the lite-runtime wraps them as float32.
+- int8-quantized yolov5s_relu_int8.rknn: calibrated on 50 night frames
+  (--cal 50 --cal-interval 4), built with rknn-toolkit2 2.5.0 on Colab.
+  MmseQuant2 is memory-hungry: 50 samples fit in 12 GB, 200 OOM. Outputs
+  are int8 (per-channel scale/zp) — RknnEngine requests fp16 conversion
+  via set_io_mem, the runtime dequantizes into the zero-copy buffer.
+  Input: zp=-128, scale=0.00436174 (not 1/255 — scale was derived from
+  the night-frame distribution), so raw RGB byte writes remain correct.
+  A/B vs fp16 (daylight, 720p, conf 0.25): infer 43.1 -> 28.1 ms (~1.55x),
+  classes and boxes match within a few px, conf drop ~0.02. Night
+  re-check pending.
 - yolov5s_relu output semantics (probed on a real night frame,
   scripts/probe_yolo.py): ALL 255 channels are already post-sigmoid
   (range 0..1, box channels included) — the export applied the full
@@ -161,6 +174,10 @@ silent zero).
 - [x] M2.3: readable report (COCO-80 class names), CLI --conf/--iou with
       validation; cleanup: class-aware NMS, symmetric box clamping, letterbox
       geometry now read from RgaResizer (single source of truth).
+- [x] M2.4: int8 quantization — infer 43.1 -> 28.1 ms (~1.55x), detection
+      quality matches fp16 (same classes, boxes within a few px, conf
+      -0.02); build recipe and caveats in Platform constraints. Night
+      re-check pending.
 - [ ] M3: NV12-family model input — RGA without format conversion, CPU-side
       quantization disappears.
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays

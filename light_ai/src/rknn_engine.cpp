@@ -79,6 +79,10 @@ int RknnEngine::setup_io() {
     // x4 over-allocation worked only by luck of the runtime accepting it.
     out_mems_.assign(out_attrs_.size(), nullptr);
     for (size_t i = 0; i < out_attrs_.size(); ++i) {
+        if (out_attrs_[i].type != RKNN_TENSOR_FLOAT16) {
+            out_attrs_[i].type = RKNN_TENSOR_FLOAT16;
+            out_attrs_[i].size = out_attrs_[i].n_elems * sizeof(uint16_t);
+        }
         out_mems_[i] = rknn_create_mem(ctx_, out_attrs_[i].size);
         if (!out_mems_[i]) {
             std::cerr << "rknn_create_mem (output " << i << ") failed\n";
@@ -93,8 +97,9 @@ int RknnEngine::setup_io() {
     // NHWC: dims = {N, H, W, C}; print W x H honestly.
     std::cout << "model input: " << in_attr_.dims[in_attr_.n_dims - 2] << 'x'
               << in_attr_.dims[in_attr_.n_dims - 3] << ' '
-              << get_type_string(in_attr_.type) << ", outputs: "
-              << out_attrs_.size() << "\n";
+              << get_type_string(in_attr_.type)
+              << " zp=" << in_attr_.zp << " scale=" << in_attr_.scale
+              << ", outputs: " << out_attrs_.size() << "\n";
     for (size_t i = 0; i < out_attrs_.size(); ++i) {
         std::cout << "  out[" << i << "]: " << out_attrs_[i].n_elems
                   << " elems, " << get_type_string(out_attrs_[i].type) << "\n";
