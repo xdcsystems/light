@@ -37,6 +37,13 @@ post-processing.
                model geometry is known (constructor-order bug fixed; a
                one-line "aux not needed" log confirms the single-pass path).
 
+- NetPreview : opt-in preview stream (--net): TCP server on port 1234,
+               sends the model-input frame (640x640 letterboxed rgb24)
+               as rawvideo inside a NUT container, paced by --net-fps
+               (default 25). VLC plays it directly (tcp://IP:1234) —
+               no decoder needed on the viewer side. One viewer at a
+               time; dynamic start/stop commands are a later M3.5 step.
+
 ## Platform constraints (learned the hard way, M2-prep)
 - MPP decoder: output frame buffers must be allocated with the height
   aligned to 16 (1080 -> 1088 rows). An exact-size allocation trips the
@@ -92,6 +99,20 @@ post-processing.
 - Default resolution is 1280x720: same model input geometry as 1080p
   (identical s, band and T), but single-pass RGA and cheaper MJPEG decode.
 
+- Two ffmpeg stacks coexist on the board: the distro one (4.3, libav*
+  .so.58 in /lib) and the self-built ffmpeg-rockchip (8.1, libav*
+  .so.62 in /usr/local). Building light_ai against distro headers and
+  running against distro libs was the root cause of the codecpar
+  segfault and the NUT muxer's "No codec tag defined": the AVStream
+  layout differs between branches, so writer and muxer disagreed on
+  field offsets. The build is now pinned to /usr/local via
+  PKG_CONFIG_LIBDIR in CMakeLists.txt (configure fails hard if
+  libavformat.pc is not there), and the SONAME split (58 vs 62) makes
+  a runtime mixup impossible by construction. Do NOT purge the distro
+  libav* runtime — chromium/VLC/mpv depend on it and apt would cascade
+  them away; the dev packages can stay too, PKG_CONFIG_LIBDIR hides
+  them from cmake.
+
 ## Measured performance (1920x1080 MJPEG, evening light, camera-bound)
 
 | Stage | Average, ms |
@@ -143,6 +164,9 @@ dataset/, one every K frames — the int8 calibration dataset collector;
 one frame is ~1.2 MB, so 200 frames are ~240 MB on /tmp's storage).
 Numeric values are strictly validated (garbage is an error, not a
 silent zero).
+
+--net enables the preview server (NUT container, raw model-input
+rgb24, tcp port 1234); --net-fps N paces the stream (default 25).
 
 ## Roadmap
 - [x] M1: baseline run with mobilenet_v1, honest FPS measurement.
@@ -251,6 +275,16 @@ silent zero).
       port (1234/UDP proposed), LAN trust model. Priority vs M4: owner
       decision — if netsend is a working tool, it goes first (it is also
       the debug tool for M4).
+      Status 2026-10-24: phase A landed as a raw path, not the
+      designed h264_rkmpp one — NUT container with rawvideo rgb24 over
+      TCP:1234 (--net, --net-fps), libavformat 62 from the self-built
+      ffmpeg 8.1 (ABI pin, see Platform constraints). Verified
+      end-to-end in VLC: correct letterboxed frame with YOLO overlays.
+      Current tap is the model input (640x640), not the designed full
+      1280x720 frame — moving the tap upstream is remaining phase-A
+      work. Open issue: the viewer displays only the first frame —
+      pts/record-loop investigation pending. h264_rkmpp MPEG-TS/UDP
+      and NetControl commands remain open.
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
       even a 10-15 ms yolov8n@640x640 fits the frame budget without

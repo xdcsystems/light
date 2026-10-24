@@ -39,6 +39,12 @@ bool apply_option(Config& cfg, int argc, char** argv, int& i) {
         cfg.dump_cal = true;
         return true;
     }
+    // M3.5: preview server flag - no argument, so it must be handled
+    // before the generic "option requires a value" check below.
+    if (!std::strcmp(opt, "--net")) {
+        cfg.net = true;
+        return true;
+    }
 
     if (i + 1 >= argc) {
         std::cerr << "missing value for option: " << opt << '\n';
@@ -86,6 +92,22 @@ bool apply_option(Config& cfg, int argc, char** argv, int& i) {
             return false;
         }
         cfg.core = n;
+    } else if (!std::strcmp(opt, "--net-port")) {
+        int n = 0;
+        if (!parse_int(val, &n) || n < 1 || n > 65535) {
+            std::cerr << "invalid value for --net-port: '" << val
+                      << "' (expected 1..65535)\n";
+            return false;
+        }
+        cfg.net_port = n;
+    } else if (!std::strcmp(opt, "--net-fps")) {
+        int n = 0;
+        if (!parse_int(val, &n) || n < 1 || n > 120) {
+            std::cerr << "invalid value for --net-fps: '" << val
+                      << "' (expected 1..120)\n";
+            return false;
+        }
+        cfg.net_fps = n;
     } else {
         std::cerr << "unknown option: " << opt << '\n';
         return false;

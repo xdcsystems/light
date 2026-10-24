@@ -1,9 +1,11 @@
 #pragma once
+#include <optional>
 #include <string>
 #include "camera_v4l2.hpp"
 #include "mpp_decoder.hpp"
 #include "rga_resizer.hpp"
 #include "rknn_engine.hpp"
+#include "net_preview.hpp"
 
 struct Config {
     std::string device = "/dev/video20";
@@ -28,6 +30,11 @@ struct Config {
     // Model input size is NOT a config option: it is read from the model
     // itself (input_attr) after setup_io. A --mw/--mh flag could only
     // desynchronize RGA from the real tensor geometry.
+
+    // M3.5 phase A0: raw preview server (RGB888 tensor -> NUT over TCP).
+    bool net = false;
+    int net_port = 1234;
+    int net_fps = 25;   // pacing of the preview stream, FPS
 };
 
 class Pipeline {
@@ -42,8 +49,11 @@ private:
     RgaResizer rga_;
     RknnEngine npu_;
     int aux_fd_ = -1;
-    int model_w_ = 0, model_h_ = 0;   // taken from the model, not from flags
+    int model_w_ = 0;
+    int  model_h_ = 0;   // taken from the model, not from flags
     bool cal_done_ = false;
     int cal_saved_ = 0;
     int last_cal_ = -1;
+
+    std::optional<NetPreview> preview_;
 };

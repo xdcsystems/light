@@ -77,6 +77,18 @@ Pipeline::Pipeline(const Config& cfg)
     model_w_ = static_cast<int>(ia.dims[ia.n_dims - 2]);
     model_h_ = static_cast<int>(ia.dims[ia.n_dims - 3]);
 
+    if (cfg_.net) {
+        // Hard confirmation of tensor contiguity: if size_with_stride equals
+        // w*h*3, the buffer is exactly the PPM dump layout (stride = w*3).
+        std::cout << "net: tensor stride check: size_with_stride="
+                  << ia.size_with_stride << " vs "
+                  << model_w_ * model_h_ * 3 << "\n";
+        preview_.emplace(
+            model_w_, model_h_, model_w_ * 3, cfg_.net_fps, cfg_.net_port);
+        std::cout << "net: preview server on port " << cfg_.net_port
+                  << "\n";
+    }
+
     // Aux buffer only for the two-pass path (source over 8x the model input).
     // 1280x720 -> 224 is 5.7x — single pass, aux not allocated, no DRM pool
     // split. 1920x1080 still needs the 960x540 intermediate.
@@ -183,6 +195,18 @@ int Pipeline::run() {
                               << " box=(" << d.x << ',' << d.y << ' '
                               << d.w << 'x' << d.h << ")\n";
                 }
+            }
+            if (preview_) {
+                // Draw after run(): RGA overwrites the band next frame, so
+                // boxes never leak into inference. Cal dumps are also clean
+                // (they happen before run()).
+                NetPreview::draw_boxes_rgb24(
+                    static_cast<uint8_t*>(npu_.input_data()),
+                    model_w_, model_h_, model_w_ * 3, dets,
+                    static_cast<float>(model_w_) / cfg_.cam_w,
+                    static_cast<float>(rga_.lb_top()));
+                preview_->publish(
+                    static_cast<const uint8_t*>(npu_.input_data()));
             }
             ++ok;
         }

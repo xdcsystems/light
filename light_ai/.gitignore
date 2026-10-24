@@ -3,3 +3,5 @@ venv/
 *.rknn
 dataset/
 *.bak
+dataset_mix/
+dataset_night/
