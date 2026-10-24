@@ -188,14 +188,12 @@ silent zero).
       hypothetically the win is ~1 ms of rga (0.8 -> ~0.4) on a 39.8 ms
       frame (<2%): not worth a model rebuild + requantization. The real
       FPS lever is the model input size — see M3-alt2.
-- [ ] M3-alt2: yolov5s_relu_int8 @ 512x512 — rebuild on Colab with
-      input_size_list=[[1,3,512,512]], same calibration dataset (the
-      toolkit resizes calib images to the model input itself). Board code
-      needs no changes: geometry comes from the model, RgaResizer and the
-      postprocess follow. Projected infer ~18 ms (quadratic in the input
-      side), sum ~30 ms -> ~33 FPS. Risk: night recall on small/distant
-      objects (mid head 40x40 -> 32x32) — A/B against the night 640x640
-      baseline.
+- [x] M3-alt2: yolov5s_relu_int8 @ 512x512 — closed by decision, not
+      measured: smaller input means smaller grids (mid head 40x40 ->
+      32x32), and losing small/distant objects at night is unacceptable
+      for this task. The ~5 ms projected infer saving does not buy back
+      the recall risk. 640x640 stays; model-side resize levers are
+      exhausted — remaining FPS levers are on the platform side.
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
       even a 10-15 ms yolov8n@640x640 fits the frame budget without
