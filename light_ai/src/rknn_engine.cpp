@@ -111,3 +111,20 @@ int RknnEngine::setup_io() {
 int RknnEngine::run() {
     return rknn_run(ctx_, nullptr) == RKNN_SUCC ? 0 : -1;
 }
+
+int RknnEngine::set_core_mask(unsigned mask) {
+    if (!ctx_) return -1;
+    rknn_core_mask m;
+    switch (mask) {
+    case 1: m = RKNN_NPU_CORE_0;   break;
+    case 3: m = RKNN_NPU_CORE_0_1; break;
+    case 7: m = RKNN_NPU_CORE_0_1_2; break;
+    default: return 0;   // 0 = AUTO: keep the runtime default, no call
+    }
+    if (rknn_set_core_mask(ctx_, m) != RKNN_SUCC) {
+        std::cerr << "rknn_set_core_mask(0x" << std::hex << mask
+                  << std::dec << ") failed\n";
+        return -1;
+    }
+    return 0;
+}

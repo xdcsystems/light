@@ -78,6 +78,14 @@ bool apply_option(Config& cfg, int argc, char** argv, int& i) {
         if (!std::strcmp(opt, "--frames")) cfg.frames = n;
         else if (!std::strcmp(opt, "--w")) cfg.cam_w  = n;
         else                               cfg.cam_h  = n;
+    } else if (!std::strcmp(opt, "--core")) {
+        int n = 0;
+        if (!parse_int(val, &n) || n < 0 || n > 7) {
+            std::cerr << "invalid value for --core: '" << val
+                      << "' (expected 0|1|3|7)\n";
+            return false;
+        }
+        cfg.core = n;
     } else {
         std::cerr << "unknown option: " << opt << '\n';
         return false;

@@ -22,6 +22,9 @@ struct Config {
     // Detection thresholds, CLI-tunable via --conf / --iou.
     float conf_thr = 0.25f;
     float iou_thr  = 0.45f;
+    // NPU core selection (M2.5): 0 = AUTO (runtime default, no call),
+    // 1 = core 0, 3 = cores 0+1, 7 = cores 0+1+2 (rknn_set_core_mask).
+    int core = 0;
     // Model input size is NOT a config option: it is read from the model
     // itself (input_attr) after setup_io. A --mw/--mh flag could only
     // desynchronize RGA from the real tensor geometry.

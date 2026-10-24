@@ -53,6 +53,15 @@ Pipeline::Pipeline(const Config& cfg)
     if (npu_.setup_io() != 0) {
         throw std::runtime_error("rknn setup_io failed");
     }
+    // M2.5: optional NPU core pinning. Default (0) keeps the runtime's
+    // AUTO behaviour exactly as before — the A/B baseline is untouched.
+    if (cfg_.core != 0) {
+        if (npu_.set_core_mask(static_cast<unsigned>(cfg_.core)) != 0) {
+            throw std::runtime_error("rknn set_core_mask failed");
+        }
+        std::cout << "npu: core mask 0x" << std::hex << cfg_.core
+                  << std::dec << "\n";
+    }
     // Single source of truth for the model geometry: the model file itself.
     // NHWC layout: dims = {N, H, W, C}, so W is dims[n-2] and H is dims[n-3].
     const rknn_tensor_attr& ia = npu_.input_attr();

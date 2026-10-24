@@ -135,6 +135,9 @@ negative in M2-alt below.
 Defaults: /dev/video20, 1280x720 MJPEG; the model default is still the M1
 mobilenet_v1 relic — always pass --model for detection runs. Options:
 --device, --model, --frames, --w, --h, --dump-cal, --conf, --iou,
+--core 0|1|3|7 (NPU core pinning: 0=AUTO default, 1=core0, 3=0+1,
+7=0+1+2; measured: infer 25.1->21.2 ms on 012, FPS unchanged —
+source-bound, M2.5),
 --cal N, --cal-interval K (--cal saves up to N model-input frames into
 dataset/, one every K frames — the int8 calibration dataset collector;
 one frame is ~1.2 MB, so 200 frames are ~240 MB on /tmp's storage).
@@ -178,6 +181,18 @@ silent zero).
       quality matches fp16 (same classes, boxes within a few px, conf
       -0.02); build recipe and caveats in Platform constraints. Night
       re-check pending.
+- [x] M2.5: multi-core NPU infer (--core, rknn_set_core_mask) — measured.
+      Daytime A/B, 300 frames each, steady state (first 60-frame warmup
+      block excluded): AUTO 25.1 ms infer, core0 25.1 ms (AUTO == core0 —
+      the runtime already picked a single core), cores 012 21.2 ms (~15%
+      faster, consistent across all five blocks). FPS unchanged (~30.2
+      steady in all runs): the pipeline is source-bound at the camera's
+      ~30 FPS cadence, sum stays 33.1 ms everywhere — the saved ~4 ms is
+      headroom that pays off only when the source exceeds 30 FPS (M4).
+      Recommended run flag: --core 7; default stays AUTO so the
+      historical baseline remains reproducible. mpp_buffer init assert
+      seen in every run incl. pre-patch smoke — benign so far, re-check
+      in the night A/B.
 - [x] M3-alt: NV12-family model input — probed and closed negative. The
       RKNPU2 API on board (rknn_type.h / rknn_api.h) has no YUV tensor
       types: rknn_tensor_type is numeric only (FLOAT/INT/BFLOAT),
