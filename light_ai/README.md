@@ -178,8 +178,24 @@ silent zero).
       quality matches fp16 (same classes, boxes within a few px, conf
       -0.02); build recipe and caveats in Platform constraints. Night
       re-check pending.
-- [ ] M3: NV12-family model input — RGA without format conversion, CPU-side
-      quantization disappears.
+- [x] M3-alt: NV12-family model input — probed and closed negative. The
+      RKNPU2 API on board (rknn_type.h / rknn_api.h) has no YUV tensor
+      types: rknn_tensor_type is numeric only (FLOAT/INT/BFLOAT),
+      rknn_tensor_fmt is layout only (NCHW/NHWC) — set_io_mem cannot
+      declare an NV12 input, zero-copy YUV does not exist in this SDK.
+      Confirmed against the full toolkit changelog (v0.6..2.5.0, no NV12
+      entry) and the official demos (all do YUV->RGB via RGA/CPU). Even
+      hypothetically the win is ~1 ms of rga (0.8 -> ~0.4) on a 39.8 ms
+      frame (<2%): not worth a model rebuild + requantization. The real
+      FPS lever is the model input size — see M3-alt2.
+- [ ] M3-alt2: yolov5s_relu_int8 @ 512x512 — rebuild on Colab with
+      input_size_list=[[1,3,512,512]], same calibration dataset (the
+      toolkit resizes calib images to the model input itself). Board code
+      needs no changes: geometry comes from the model, RgaResizer and the
+      postprocess follow. Projected infer ~18 ms (quadratic in the input
+      side), sum ~30 ms -> ~33 FPS. Risk: night recall on small/distant
+      objects (mid head 40x40 -> 32x32) — A/B against the night 640x640
+      baseline.
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
       even a 10-15 ms yolov8n@640x640 fits the frame budget without
