@@ -179,8 +179,18 @@ silent zero).
       geometry now read from RgaResizer (single source of truth).
 - [x] M2.4: int8 quantization — infer 43.1 -> 28.1 ms (~1.55x), detection
       quality matches fp16 (same classes, boxes within a few px, conf
-      -0.02); build recipe and caveats in Platform constraints. Night
-      re-check pending.
+      -0.02); build recipe and caveats in Platform constraints.
+      Night A/B (target scene, 300 frames each, --core 7): classes
+      100% matched, 0 phantoms / 0 misses, infer 24.7 vs 29.2 ms
+      (~15%), FPS identical (~25, source-bound). BUT: dconf mean
+      -0.04 (day: -0.02, single alarm -0.09 at conf 0.25 threshold
+      0.07), systematic box shift: person x ~17 px scene (int8 left
+      of fp16), chair width -18 px; chair x unchanged. compare_night
+      verdict ALARM — M2.4 stays open. Candidate cause: calibration
+      dataset from a different night lighting; fresh night dataset
+      collected, recalibration pending (path B). Fallback decision
+      (path A): accept with --conf 0.21 for int8 night runs and a
+      documented box-shift tolerance.
 - [x] M2.5: multi-core NPU infer (--core, rknn_set_core_mask) — measured.
       Daytime A/B, 300 frames each, steady state (first 60-frame warmup
       block excluded): AUTO 25.1 ms infer, core0 25.1 ms (AUTO == core0 —
