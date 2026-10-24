@@ -225,19 +225,22 @@ silent zero).
       awaiting go). New net/ family: NetControl (TCP listener, iostream,
       commands on/off/fps/quality — dynamic start/stop without restart),
       FrameTap (tap the full 1280x720 frame after MPP decode, before RGA
-      letterbox; RGA2 pass YUV422SP->NV12 — RGA3 stays pinned to the model),
-      NetEncoder (hardware H.264 via MPP mpp_enc — same zero-CPU path as the
-      MPP decoder; FFmpeg libs used ONLY for muxing/transport: mainline
-      ffmpeg has no rkmpp encoder, verify with
-      'ffmpeg -encoders | grep -i rkmpp'), NetSink (phase A: MPEG-TS over
-      UDP -> VLC 'udp://@:1234', ~1-2 s latency; phase B: RTSP; phase C:
-      WebRTC via libdatachannel only if remote access is ever needed).
-      H.264 packets = second legal memcpy alongside the MJPEG packet.
-      Preview path is strictly opt-in, never part of the standard run or
-      benchmarks. Open questions: transport phase, port (1234/UDP
-      proposed), LAN trust model. Priority vs M4: owner decision — if
-      netsend is a working tool, it goes first (it is also the debug
-      tool for M4).
+      letterbox; the frame goes to the encoder AS-IS — no RGA2 pass needed,
+      RGA3 stays pinned to the model), NetEncoder (libavcodec h264_rkmpp
+      wrapper — the self-built ffmpeg d90e3a1c18 has rkmpp ENCODERS, the
+      hardware does the encode, zero-CPU like the MPP decoder; encoder
+      accepts nv16 == our YUV422SP, smoke-tested 720p lavfi: 60 frames,
+      20.4x at nv12 / 12.4x at nv16, valid MPEG-TS out; rc_mode
+      VBR/CBR/CQP, qp_*, intra-refresh available), NetSink (phase A:
+      MPEG-TS over UDP -> VLC 'udp://@:1234', ~1-2 s latency; phase B:
+      RTSP; phase C: WebRTC via libdatachannel only if remote access is
+      ever needed). H.264 packets = second legal memcpy alongside the
+      MJPEG packet. nv16 path still to be confirmed on live camera
+      frames. Preview path is strictly opt-in, never part of the
+      standard run or benchmarks. Open questions: transport phase,
+      port (1234/UDP proposed), LAN trust model. Priority vs M4: owner
+      decision — if netsend is a working tool, it goes first (it is also
+      the debug tool for M4).
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
       even a 10-15 ms yolov8n@640x640 fits the frame budget without
