@@ -202,6 +202,9 @@ silent zero).
       the CPU, so CPU performance is a prerequisite for the M2.5
       numbers. NPU/DDR governors = performance are confirmed harmless
       (AUTO baseline unchanged, 41.6C, npu 1 GHz, dmc 2400 MHz).
+      NPU load during a cores-012 run (debugfs, sampled mid-run):
+      Core0 20% / Core1 19% / Core2 16% — the work is actually spread
+      across all three cores, evenly within counter resolution.
 - [x] M3-alt: NV12-family model input — probed and closed negative. The
       RKNPU2 API on board (rknn_type.h / rknn_api.h) has no YUV tensor
       types: rknn_tensor_type is numeric only (FLOAT/INT/BFLOAT),
