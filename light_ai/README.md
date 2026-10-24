@@ -193,6 +193,15 @@ silent zero).
       historical baseline remains reproducible. mpp_buffer init assert
       seen in every run incl. pre-patch smoke — benign so far, re-check
       in the night A/B.
+      Follow-up (same day): the 012 gain is CPU-frequency dependent.
+      With CPU governors on performance, cores 012 reproduce 21.2 ms
+      (steady 20.5-21.6) and AUTO stays 25.1 — both match the morning
+      numbers exactly. After an idle period on the default governor,
+      cores 012 degrade to ~25.1-26.0 (no gain at all), while AUTO is
+      unaffected in both states: the multi-core split is coordinated by
+      the CPU, so CPU performance is a prerequisite for the M2.5
+      numbers. NPU/DDR governors = performance are confirmed harmless
+      (AUTO baseline unchanged, 41.6C, npu 1 GHz, dmc 2400 MHz).
 - [x] M3-alt: NV12-family model input — probed and closed negative. The
       RKNPU2 API on board (rknn_type.h / rknn_api.h) has no YUV tensor
       types: rknn_tensor_type is numeric only (FLOAT/INT/BFLOAT),
