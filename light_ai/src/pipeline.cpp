@@ -43,25 +43,28 @@ struct Timings {
     }
 } g_t;
 
-// M3.7 CPU baseline: 1-px outlines straight into the NPU tensor (RGB888),
-// same geometry (scale, lb_top) and colors as the GPU drawer. Used when the
-// GPU drawer is unavailable, or forced by --cpu-draw (A/B baseline).
-template <typename Dets>
-void draw_boxes_cpu(uint8_t* rgb, int w, int h, int stride, const Dets& dets,
-                    float scale, float lb_top) {
+// Colors shared by the GPU and CPU drawing paths (owner's pick).
+inline void det_color(int cls, uint8_t& r, uint8_t& g, uint8_t& b) {
+    if (cls == 0)       { r = 255; g = 64;  b = 64;  }  // person
+    else if (cls == 56) { r = 64;  g = 255; b = 64;  }  // chair
+    else                { r = 255; g = 255; b = 0;   }  // others
+}
+
+// M3.7 CPU baseline: 1-px outlines straight into the NPU tensor (RGB888).
+// The caller pre-maps boxes to tensor coordinates — the same geometry as
+// the GPU path; colors come from the box itself. Used when the GPU drawer
+// is unavailable, or forced by --cpu-draw (A/B baseline).
+void draw_boxes_cpu(uint8_t* rgb, int w, int h, int stride,
+                    const std::vector<GpuBox>& boxes) {
     auto clamp = [](int v, int hi) { return v < 0 ? 0 : (v > hi ? hi : v); };
-    for (const auto& d : dets) {
-        const int x0 = clamp(static_cast<int>(d.x * scale), w - 1);
-        const int y0 = clamp(static_cast<int>(d.y * scale + lb_top), h - 1);
-        const int x1 = clamp(static_cast<int>((d.x + d.w) * scale), w - 1);
-        const int y1 = clamp(static_cast<int>((d.y + d.h) * scale + lb_top), h - 1);
-        uint8_t r, g, b;
-        if (d.cls == 0)        { r = 255; g = 64;  b = 64;  }  // person
-        else if (d.cls == 56)  { r = 64;  g = 255; b = 64;  }  // chair
-        else                   { r = 255; g = 255; b = 0;   }  // others
+    for (const auto& b : boxes) {
+        const int x0 = clamp(static_cast<int>(b.x0), w - 1);
+        const int y0 = clamp(static_cast<int>(b.y0), h - 1);
+        const int x1 = clamp(static_cast<int>(b.x1), w - 1);
+        const int y1 = clamp(static_cast<int>(b.y1), h - 1);
         auto put = [&](int x, int y) {
             uint8_t* px = rgb + static_cast<size_t>(y) * stride + x * 3;
-            px[0] = r; px[1] = g; px[2] = b;
+            px[0] = b.r; px[1] = b.g; px[2] = b.b;
         };
         for (int x = x0; x <= x1; ++x) { put(x, y0); put(x, y1); }
         for (int y = y0; y <= y1; ++y) { put(x0, y); put(x1, y); }
@@ -232,6 +235,7 @@ int Pipeline::run() {
                 cal_done_ = true;   // do not retry-spam on a broken sink
             }
         }
+        const auto t3b = clk::now();   // cal-dump file I/O is not infer
 
         const bool npu_ok = rga_ok && (npu_.run() == 0);
         const auto t4 = clk::now();
@@ -260,29 +264,26 @@ int Pipeline::run() {
                 // Draw after run(): RGA overwrites the band next frame, so
                 // boxes never leak into inference. Cal dumps are also clean
                 // (they happen before run()).
-                // M3.7: boxes are drawn by the GPU drawer (Mali G610)
-                // on the tensor dma-buf — no CPU pixel writes in the
-                // combat path; CPU drawing is the fallback.
+                // M3.7: boxes are mapped to tensor coordinates ONCE for
+                // both drawing paths — a single source of geometry and
+                // colors (det_color); the GPU draws them in one call,
+                // the CPU fallback rasterizes the same list.
+                const float s = static_cast<float>(model_w_) / cfg_.cam_w;
+                const float lb_top = static_cast<float>(rga_.lb_top());
+                std::vector<GpuBox> boxes;
+                boxes.reserve(dets.size());
+                for (const auto& d : dets) {
+                    GpuBox b;
+                    b.x0 = d.x * s;
+                    b.y0 = d.y * s + lb_top;
+                    b.x1 = (d.x + d.w) * s;
+                    b.y1 = (d.y + d.h) * s + lb_top;
+                    if (b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f) continue;
+                    det_color(d.cls, b.r, b.g, b.b);
+                    b.a = 255;
+                    boxes.push_back(b);
+                }
                 if (drawer_) {
-                    // M3.7 GPU path: same geometry and colors as the RGA
-                    // fallback below (kRed/kGreen/kYellow from net_preview).
-                    const float s = static_cast<float>(model_w_) / cfg_.cam_w;
-                    const float lb_top = static_cast<float>(rga_.lb_top());
-                    std::vector<GpuBox> boxes;
-                    boxes.reserve(dets.size());
-                    for (const auto& d : dets) {
-                        GpuBox b;
-                        b.x0 = d.x * s;
-                        b.y0 = d.y * s + lb_top;
-                        b.x1 = (d.x + d.w) * s;
-                        b.y1 = (d.y + d.h) * s + lb_top;
-                        if (b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f) continue;
-                        if (d.cls == 0)       { b.r = 255; b.g = 64;  b.b = 64;  }
-                        else if (d.cls == 56) { b.r = 64;  b.g = 255; b.b = 64;  }
-                        else                  { b.r = 255; b.g = 255; b.b = 0;   }
-                        b.a = 255;
-                        boxes.push_back(b);
-                    }
                     drawer_->draw(boxes);
                     // publish() reads the tensor right away (CPU in the NUT
                     // path, RGA in the h264 path): GPU writes must land first.
@@ -294,11 +295,8 @@ int Pipeline::run() {
                     // rgb888 — dmesg "invalid function policy").
                     // --cpu-draw forces this path even when the GPU drawer
                     // is up (A/B baseline).
-                    draw_boxes_cpu(
-                        static_cast<uint8_t*>(npu_.input_data()),
-                        model_w_, model_h_, model_w_ * 3, dets,
-                        static_cast<float>(model_w_) / cfg_.cam_w,
-                        static_cast<float>(rga_.lb_top()));
+                    draw_boxes_cpu(static_cast<uint8_t*>(npu_.input_data()),
+                                   model_w_, model_h_, model_w_ * 3, boxes);
                 }
                 // M3.5: NetPreview publishes the 640x640 model tensor
                 // (NUT path). NetEncoder now publishes the same tensor:
@@ -317,7 +315,7 @@ int Pipeline::run() {
             }
             ++ok;
         }
-        g_t.add(ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4));
+        g_t.add(ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3b, t4));
     }
 
     const double wall = std::chrono::duration<double>(clk::now() - t_start).count();
