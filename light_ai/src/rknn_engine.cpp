@@ -1,4 +1,6 @@
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
 #include "rknn_engine.hpp"
 
@@ -6,27 +8,24 @@ RknnEngine::RknnEngine(const char* model_path) {
     std::cout << "loading model: " << model_path << '\n';
 
     if (rknn_init(&ctx_, const_cast<char*>(model_path), 0, 0, nullptr) != RKNN_SUCC) {
-        std::cerr << "rknn_init failed for " << model_path << '\n';
         ctx_ = 0;
-        return;
+        throw std::runtime_error(std::string("rknn_init failed for ") + model_path);
     }
 
     rknn_input_output_num io_num{};
     if (rknn_query(ctx_, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof(io_num)) != RKNN_SUCC ||
         io_num.n_input < 1 || io_num.n_output < 1) {
-        std::cerr << "rknn_query IN_OUT_NUM failed\n";
         rknn_destroy(ctx_);
         ctx_ = 0;
-        return;
+        throw std::runtime_error("rknn_query IN_OUT_NUM failed");
     }
 
     in_attr_ = {};
     in_attr_.index = 0;
     if (rknn_query(ctx_, RKNN_QUERY_INPUT_ATTR, &in_attr_, sizeof(in_attr_)) != RKNN_SUCC) {
-        std::cerr << "rknn_query INPUT_ATTR failed\n";
         rknn_destroy(ctx_);
         ctx_ = 0;
-        return;
+        throw std::runtime_error("rknn_query INPUT_ATTR failed");
     }
 
     out_attrs_.resize(io_num.n_output);
@@ -35,10 +34,10 @@ RknnEngine::RknnEngine(const char* model_path) {
         out_attrs_[i].index = i;
         if (rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &out_attrs_[i],
                        sizeof(out_attrs_[i])) != RKNN_SUCC) {
-            std::cerr << "rknn_query OUTPUT_ATTR[" << i << "] failed\n";
             rknn_destroy(ctx_);
             ctx_ = 0;
-            return;
+            throw std::runtime_error("rknn_query OUTPUT_ATTR["
+                                     + std::to_string(i) + "] failed");
         }
     }
 }
