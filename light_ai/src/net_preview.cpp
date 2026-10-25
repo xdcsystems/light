@@ -1,5 +1,3 @@
-#include "net_preview.hpp"
-
 #include <chrono>
 #include <cstring>
 #include <iostream>
@@ -11,6 +9,8 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/pixfmt.h>
 }
+
+#include "net_preview.hpp"
 
 namespace {
 
@@ -62,6 +62,10 @@ void NetPreview::serve() {
 
         AVDictionary* opts = nullptr;
         av_dict_set(&opts, "listen", "1", 0);
+        // Match the documented contract: a stalled viewer must not stall
+        // the pipeline. 5 s in microseconds; also bounds the blocking
+        // accept — a failed open just retries in 500 ms.
+        av_dict_set(&opts, "rw_timeout", "5000000", 0);
         AVIOInterruptCB cb = { &NetPreview::interrupt_cb, this };
         AVIOContext* pb = nullptr;
         // Blocks here until a viewer connects (or the interrupt fires on quit).
@@ -119,6 +123,8 @@ void NetPreview::serve() {
             std::cerr << "net: write_header failed: " << err << '\n';
             avio_closep(&pb);
             avformat_free_context(fc);
+            if (quit_.load()) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
             continue;
         }
         // avformat_write_header may rewrite st->time_base (the NUT muxer
@@ -177,7 +183,7 @@ void NetPreview::publish(const uint8_t* rgb) {
     p->size        = stride_ * h_;
     p->stream_index = st->index;
     p->pts = p->dts = static_cast<int64_t>(pts_ * frame_step_);
-    p->duration      = 1;
+    p->duration      = frame_step_;   // one frame, in the muxer's time base
     p->flags        |= AV_PKT_FLAG_KEY;
     ++pts_;
 

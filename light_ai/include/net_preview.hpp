@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <mutex>
 #include <thread>
-#include <vector>
 
 
 // M3.5 phase A0: raw preview over TCP, zero pixel copies.
@@ -33,6 +32,7 @@ private:
     void serve();
     static int interrupt_cb(void* self);
 
+private:
     const int w_, h_, stride_, fps_, port_;
     std::thread thread_;
     std::atomic<bool> quit_{false};
