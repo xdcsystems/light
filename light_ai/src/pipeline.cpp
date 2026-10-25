@@ -11,6 +11,7 @@
 #include "pipeline.hpp"
 #include "coco_names.h"
 #include "yolo_postprocess.hpp"
+#include <sys/stat.h>  // stat(): startup node fallback
 
 namespace {
 
@@ -80,6 +81,28 @@ Pipeline::Pipeline(const Config& cfg)
       dec_(cfg_.cam_w, cfg_.cam_h),
       npu_(cfg_.model.c_str()) {
     cam_node_ = cfg_.device;
+    // Startup fallback for a re-enumerated camera: the configured node
+    // may be gone after a replug (verified live: video20 -> video21)
+    // while the camera itself is alive. ENOENT-only: if the node exists
+    // but setup fails (busy, permissions, wrong node type), the error
+    // stays fatal — a silently substituted source is worse than a loud
+    // one. find_usb_capture_node() skips a missing preferred path on
+    // its own (stat) and trial-setups the candidates, so fake nodes
+    // (metadata-only) are filtered there.
+    if (!cam_node_.empty()) {
+        struct stat st{};
+        if (stat(cam_node_.c_str(), &st) != 0) {
+            std::cerr << "camera: configured node " << cam_node_
+                      << " not present, falling back to USB discovery\n";
+            std::string found;
+            if (find_usb_capture_node(cam_, cam_node_, found) != 0)
+                throw std::runtime_error("camera: configured node " +
+                    cam_node_ + " is missing and no USB capture node found");
+            std::cout << "camera: discovery adopted " << found << '\n';
+            cam_node_ = found;
+        }
+    }
+
     std::string cam_why;
     if (cam_.setup_device(cam_node_, &cam_why) != 0) {
         throw std::runtime_error("camera: " + cam_why);
