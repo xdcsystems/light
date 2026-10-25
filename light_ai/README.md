@@ -30,7 +30,9 @@ post-processing.
                when the per-axis scale ratio exceeds the RGA3 limit (1/8),
                guarded against aux_fd < 0. All jobs are pinned to RGA3 core0
                via imconfig at startup.
-- RknnEngine : rknn_create_mem + rknn_set_io_mem; the input tensor fd is
+- RknnEngine : init/query failures throw (fail loudly like CameraV4L2) —
+               main() reports the real cause, no zombie objects. Options:
+               rknn_create_mem + rknn_set_io_mem; the input tensor fd is
                handed to RGA as the destination (resize writes directly into
                the NPU tensor). N output tensors (std::vector of
                rknn_tensor_mem), each sized exactly (attr.size). Output type
@@ -202,6 +204,7 @@ and costs zero CPU writes into the NPU tensor.
 
 Defaults: /dev/video20, 1280x720 MJPEG; the model default is still the M1
 mobilenet_v1 relic — always pass --model for detection runs. Options:
+--help/-h prints the option list (generated from the parser table).
 --device, --model, --frames, --w, --h, --dump-cal, --conf, --iou,
 --core 0|1|3|7 (NPU core pinning: 0=AUTO default, 1=core0, 3=0+1,
 7=0+1+2; measured: infer 25.1->21.2 ms on 012, FPS unchanged —
