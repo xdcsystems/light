@@ -436,6 +436,17 @@ GPU drawer is up (A/B baseline; default is GPU drawing).
       cosmetic (owner's call, left as is): the "scanning /dev/video*"
       line prints on every attempt. The no-heap constraint is a project rule now (see Rules of
       the project); the refactor record is closed.
+      Post-recovery artifacts fixed (2026-10-25): a dying camera can
+      emit a zero-size buffer and mid-stream JPEG fragments; MPP may
+      decode a fragment "successfully" into garbage that RGA stretches
+      into the NPU tensor, so YOLO hallucinated phantom boxes on the
+      stream right after a replug. Fixes: zero-size frames skip the
+      decode (pipeline), a 3-frame warm-up discard follows reconnect
+      (pipeline, c870455), and the decoder rejects any packet without
+      SOI as defense in depth (f0ff5bb). Verified live (video20 ->
+      video21, recovery on attempt 9, ~2 s): clean stream after
+      reconnect, no phantom boxes, recognition unchanged; the SOI
+      guard did not trigger (the driver resumed with full frames).
 
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
