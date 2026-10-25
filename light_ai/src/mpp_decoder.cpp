@@ -1,8 +1,9 @@
 #define MODULE_TAG "light_ai"
 
-#include "mpp_decoder.hpp"
 #include <cstring>
 #include <iostream>
+
+#include "mpp_decoder.hpp"
 
 MppDecoder::MppDecoder(int w, int h) : w_(w), h_(h) {
     do {

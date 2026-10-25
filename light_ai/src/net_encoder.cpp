@@ -1,5 +1,3 @@
-#include "net_encoder.hpp"
-
 #include <chrono>
 #include <cstring>
 #include <iostream>
@@ -18,6 +16,8 @@ extern "C" {
 #include <libavutil/pixfmt.h>
 #include <libavutil/dict.h>
 }
+
+#include "net_encoder.hpp"
 
 namespace {
 

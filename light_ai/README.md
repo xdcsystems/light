@@ -11,6 +11,12 @@ post-processing.
   decoder packet buffer.
 - I/O is iostream-only: no printf/sprintf/snprintf anywhere. All diagnostics
   go through std::cout / std::cerr.
+- Include order: system/service headers first (angle brackets), the
+  project's own headers last (quotes). Reference: gpu_box_drawer.cpp.
+- Header layout: within each visibility section (public/private),
+  member functions and data members live in SEPARATE blocks — functions
+  first, then a fresh visibility label for the data. Reference:
+  camera_v4l2.hpp (xioctl in its own private: block, data in the next).
 
 ## Layers
 - CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. G_FMT is verified

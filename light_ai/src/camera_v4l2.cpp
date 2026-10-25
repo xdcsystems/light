@@ -1,4 +1,3 @@
-#include "camera_v4l2.hpp"
 #include <cerrno>
 #include <cstring>
 #include <iostream>
@@ -7,6 +6,8 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
+
+#include "camera_v4l2.hpp"
 
 CameraV4L2::CameraV4L2(const std::string& dev, int w, int h)
     : width_(w), height_(h) {

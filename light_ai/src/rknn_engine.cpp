@@ -1,5 +1,6 @@
-#include "rknn_engine.hpp"
 #include <iostream>
+
+#include "rknn_engine.hpp"
 
 RknnEngine::RknnEngine(const char* model_path) {
     std::cout << "loading model: " << model_path << '\n';

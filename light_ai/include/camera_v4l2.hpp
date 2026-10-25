@@ -18,10 +18,12 @@ public:
     int height() const { return height_; }
 
 private:
+    void xioctl(unsigned long req, void* arg) const;
+
+private:
     int fd_ = -1;
     int width_ = 0, height_ = 0;
     unsigned buf_count_ = 4;
     struct Buffer { void* start = nullptr; size_t length = 0; };
     Buffer bufs_[4];
-    void xioctl(unsigned long req, void* arg) const;
 };

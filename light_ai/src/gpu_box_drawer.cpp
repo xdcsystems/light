@@ -6,8 +6,6 @@
  *     the desired tensor R goes into the GL BLUE uniform channel.
  *   - EGL_ANDROID_native_fence_sync is available and usable.
  */
-#include "gpu_box_drawer.hpp"
-
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
@@ -15,10 +13,12 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <initializer_list>
+#include <iostream>
 #include <linux/dma-buf.h>
-#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "gpu_box_drawer.hpp"
 
 #ifndef EGL_PLATFORM_GBM_KHR
 #define EGL_PLATFORM_GBM_KHR 0x31D6
@@ -136,7 +136,7 @@ bool GpuBoxDrawer::init() {
     s->get_platform_display = (P_GetPlatformDisplayEXT)
         eglGetProcAddress("eglGetPlatformDisplayEXT");
     if (!s->get_platform_display) {
-        fprintf(stderr, "drawer: eglGetPlatformDisplayEXT missing\n");
+        std::cerr << "drawer: eglGetPlatformDisplayEXT missing\n";
         return false;
     }
     // GBM display: the mali libgbm first, then the system one
@@ -145,14 +145,14 @@ bool GpuBoxDrawer::init() {
                        RTLD_NOW | RTLD_GLOBAL);
     if (!s->dl_gbm) s->dl_gbm = dlopen("libgbm.so.1", RTLD_NOW | RTLD_GLOBAL);
     if (!s->dl_gbm) {
-        fprintf(stderr, "drawer: libgbm not loadable\n");
+        std::cerr << "drawer: libgbm not loadable\n";
         return false;
     }
     typedef void *(*P_gbm_create_device)(int);
     P_gbm_create_device gbm_create_device_ =
         (P_gbm_create_device)dlsym(s->dl_gbm, "gbm_create_device");
     if (!gbm_create_device_) {
-        fprintf(stderr, "drawer: gbm_create_device missing\n");
+        std::cerr << "drawer: gbm_create_device missing\n";
         return false;
     }
     for (const char *node : { "/dev/dri/renderD128", "/dev/dri/card0" }) {
@@ -170,14 +170,15 @@ bool GpuBoxDrawer::init() {
         break;
     }
     if (s->dpy == EGL_NO_DISPLAY) {
-        fprintf(stderr, "drawer: EGL/GBM init failed (0x%x)\n", eglGetError());
+        std::cerr << "drawer: EGL/GBM init failed (0x" << std::hex
+                  << eglGetError() << std::dec << ")\n";
         return false;
     }
 
     const char *exts = eglQueryString(s->dpy, EGL_EXTENSIONS);
     if (!has(exts, "EGL_EXT_image_dma_buf_import") ||
         !has(exts, "EGL_KHR_image_base")) {
-        fprintf(stderr, "drawer: no image import extensions\n");
+        std::cerr << "drawer: no image import extensions\n";
         return false;
     }
 
@@ -188,14 +189,12 @@ bool GpuBoxDrawer::init() {
     s->destroy_image = (P_DestroyImage)eglGetProcAddress("eglDestroyImageKHR");
     s->create_sync = (P_CreateSync)eglGetProcAddress("eglCreateSyncKHR");
     s->destroy_sync = (P_DestroySync)eglGetProcAddress("eglDestroySyncKHR");
-    s->client_wait = (P_ClientWaitSync)
-        eglGetProcAddress("eglClientWaitSyncKHR");
-    s->dup_fence = (P_DupNativeFenceFDANDROID)
-        eglGetProcAddress("eglDupNativeFenceFDANDROID");
-    s->image_target_tex = (P_ImageTargetTexture2DOES)
-        eglGetProcAddress("glEGLImageTargetTexture2DOES");
+    s->client_wait = (P_ClientWaitSync)eglGetProcAddress("eglClientWaitSyncKHR");
+    s->dup_fence = (P_DupNativeFenceFDANDROID)eglGetProcAddress("eglDupNativeFenceFDANDROID");
+    s->image_target_tex = (P_ImageTargetTexture2DOES)eglGetProcAddress("glEGLImageTargetTexture2DOES");
+    
     if (!s->create_image || !s->image_target_tex) {
-        fprintf(stderr, "drawer: image entry points missing\n");
+        std::cerr << "drawer: image entry points missing\n";
         return false;
     }
     s->native_fence = has(exts, "EGL_ANDROID_native_fence_sync") &&
@@ -218,11 +217,12 @@ bool GpuBoxDrawer::init() {
     if (!s->ctx) s->ctx = eglCreateContext(s->dpy, cfg, EGL_NO_CONTEXT, c2);
     if (!s->ctx || !eglMakeCurrent(s->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
                                    s->ctx)) {
-        fprintf(stderr, "drawer: context failed (0x%x)\n", eglGetError());
+        std::cerr << "drawer: context failed (0x" << std::hex
+                  << eglGetError() << std::dec << ")\n";
         return false;
     }
     if (!make_program(*s)) {
-        fprintf(stderr, "drawer: program failed\n");
+        std::cerr << "drawer: program failed\n";
         return false;
     }
     glGenBuffers(1, &s->vbo);
@@ -249,8 +249,8 @@ bool GpuBoxDrawer::attachTensor(int tensorDmaFd, int w, int h,
     s->img = s->create_image(s->dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
                              (EGLClientBuffer)nullptr, iattr);
     if (s->img == EGL_NO_IMAGE_KHR) {
-        fprintf(stderr, "drawer: import tensor failed (0x%x)\n",
-                eglGetError());
+        std::cerr << "drawer: import tensor failed (0x" << std::hex
+                  << eglGetError() << std::dec << ")\n";
         return false;
     }
     if (s->tex) glDeleteTextures(1, &s->tex);
@@ -265,11 +265,13 @@ bool GpuBoxDrawer::attachTensor(int tensorDmaFd, int w, int h,
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D, s->tex, 0);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        fprintf(stderr, "drawer: FBO incomplete (0x%x)\n", glGetError());
+        std::cerr << "drawer: FBO incomplete (0x" << std::hex
+                  << glGetError() << std::dec << ")\n";
         return false;
     }
-    printf("drawer: tensor attached %dx%d stride=%u (native fence: %s)\n",
-           w, h, stride, s->native_fence ? "yes" : "no");
+    std::cout << "drawer: tensor attached " << w << 'x' << h << " stride="
+              << stride << " (native fence: "
+              << (s->native_fence ? "yes" : "no") << ")\n";
     return true;
 }
 
@@ -304,8 +306,7 @@ void GpuBoxDrawer::syncCpu() {
     if (!s || s->dpy == EGL_NO_DISPLAY) return;
     if (s->native_fence) {
         make_current(*s);
-        EGLSyncKHR sync = s->create_sync(s->dpy, EGL_SYNC_NATIVE_FENCE_ANDROID,
-                                         nullptr);
+        EGLSyncKHR sync = s->create_sync(s->dpy, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr);
         if (sync != EGL_NO_SYNC_KHR) {
             s->client_wait(s->dpy, sync, 0, EGL_FOREVER_KHR);
             if (s->destroy_sync) s->destroy_sync(s->dpy, sync);
