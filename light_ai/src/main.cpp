@@ -205,6 +205,22 @@ int main(int argc, char** argv) {
         if (!it->second.apply(cfg, val)) return 2;
     }
 
+    // --net-h264 is a variant of the preview subsystem, not an independent
+    // switch: the whole preview setup (encoder, gpu drawer, diagnostics)
+    // lives under cfg_.net, so --net-h264 without --net silently runs a
+    // stream-less pipeline. Fail loudly instead — same contract as the
+    // --net-host check inside the pipeline (checked here, post-parse,
+    // because --net may come after --net-h264 on the command line).
+    if (cfg.net_h264 && !cfg.net) {
+        std::cerr << "--net-h264: preview is off, nothing to stream.\n"
+                     "  --net-h264 selects the transport of the --net "
+                     "preview subsystem (MPEG-TS over UDP)\n"
+                     "  instead of raw NUT over TCP; add --net to enable "
+                     "the preview itself, e.g.:\n"
+                     "    light_ai --net --net-h264 --net-host <pc-ip>\n";
+        return 2;
+    }
+
     try {
         Pipeline p(cfg);
         return p.run() > 0 ? 0 : 1;
