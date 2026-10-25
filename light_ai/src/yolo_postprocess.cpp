@@ -34,7 +34,7 @@ inline float fp16_to_float(uint16_t h) {
 }
 
 // yolov5 default anchors, already in model-input pixels per stride.
-const float ANCH[3][3][2] = {
+constexpr float ANCH[3][3][2] = {
     {{10, 13},  {16, 30},  {33, 23}},
     {{30, 61},  {62, 45},  {59, 119}},
     {{116, 90}, {156, 198},{373, 326}},
@@ -56,6 +56,7 @@ inline float iou(const Box& a, const Box& b) {
     const float inter = iw * ih;
     const float area_a = (a.x2 - a.x1) * (a.y2 - a.y1);
     const float area_b = (b.x2 - b.x1) * (b.y2 - b.y1);
+    // +1e-6f: both degenerate zero-area boxes must not crash the NMS.
     return inter / (area_a + area_b - inter + 1e-6f);
 }
 
@@ -123,8 +124,7 @@ std::vector<Detection> yolo_postprocess(const RknnEngine& npu,
                     const float w  = (bw * 2.0f) * (bw * 2.0f) * an[0];
                     const float h  = (bh * 2.0f) * (bh * 2.0f) * an[1];
 
-                    const float cy_det = cy;
-                    if (cy_det < lb_top || cy_det >= lb_top + lb_h) continue; // bar
+                    if (cy < lb_top || cy >= lb_top + lb_h) continue;   // bar
 
                     cand.push_back({cx - w / 2, cy - h / 2,
                                     cx + w / 2, cy + h / 2, conf, best - 5});

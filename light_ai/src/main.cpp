@@ -1,9 +1,10 @@
-#include "pipeline.hpp"
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+
+#include "pipeline.hpp"
 
 namespace {
 
@@ -95,7 +96,10 @@ bool apply_option(Config& cfg, int argc, char** argv, int& i) {
         else                               cfg.cam_h  = n;
     } else if (!std::strcmp(opt, "--core")) {
         int n = 0;
-        if (!parse_int(val, &n) || n < 0 || n > 7) {
+        // Exactly the masks set_core_mask() implements: anything else
+        // silently degrades to the runtime default (auto).
+        if (!parse_int(val, &n) ||
+            (n != 0 && n != 1 && n != 3 && n != 7)) {
             std::cerr << "invalid value for --core: '" << val
                       << "' (expected 0|1|3|7)\n";
             return false;
