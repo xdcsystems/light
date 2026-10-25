@@ -131,6 +131,19 @@ post-processing.
   30-FPS state observed ONCE (21:08); full-disturbance prelude replay
   (SIGTERM mid-stream + mid-stream SET_CUR x2 + S_PARM) did NOT
   reproduce it — trigger unknown, treat 20 FPS as the reliable rate.
+- PURE INFER, camera-independent (tools/bench_npu, 2026-10-25,
+  performance governors): 15.4 ms/frame on 3 NPU cores, 18.1 on
+  2, 22.0 on 1 — day/night identical, cores=7 retained. Core
+  scaling is poor (1.43x on 3x hardware): inter-core sync eats
+  most of the theoretical gain.
+  The [timing] 'infer' figure is NOT pure compute:
+  infer_shown = pure_infer + stall, where stall = frame interval
+  minus (cam + dec + rga). All three pacing levels fit exactly:
+  30 FPS -> 21.2 shown (15.4 + 6.2 stall), 25 -> 24.6 (15.4 + 9.4),
+  20 -> 30.6 (15.4 + 15.2). Serial work sum is ~34.5 ms/frame ->
+  SoC ceiling ~29 FPS even with a perfect 30-FPS camera (~6 ms
+  slack at 30). NPU load during a 20-FPS run: ~14% per core
+  (rknpu load) — the NPU idles 86% of the time.
   'Forcing exposure does not lift the ceiling' was right in result and
   now also right in mechanism: Manual exposure simply does not affect
   the camera; the earlier day ~30 vs evening ~20 attribution is
