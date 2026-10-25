@@ -49,6 +49,15 @@ post-processing.
                (default 25). VLC plays it directly (tcp://IP:1234) —
                no decoder needed on the viewer side. One viewer at a
                time; dynamic start/stop commands are a later M3.5 step.
+- NetEncoder : h264 preview (--net-h264 --net-host <pc-ip>):
+               h264_rkmpp hardware encode (self-built ffmpeg 8.1),
+               MPEG-TS over UDP. The source is the NPU tensor AFTER
+               box drawing: RGA crops the visible letterbox band
+               (srect y=[lb_top, lb_top+lb_h)) and converts RGB888 ->
+               NV12 1:1 into its own ping-pong MPP dma-bufs — no
+               upscale, zero CPU pixels. The stream size is the
+               band's native size (640x360 for the default 1280x720
+               camera). Late joiners via repeated PAT/PMT/SDT.
 
 ## Platform constraints (learned the hard way, M2-prep)
 - MPP decoder: output frame buffers must be allocated with the height
@@ -199,8 +208,16 @@ silent zero).
 
 --net enables the preview server (NUT container, raw model-input
 rgb24, tcp port 1234); --net-fps N paces the stream (default 25).
---cpu-draw forces CPU box drawing even when the GPU drawer is up
-(A/B baseline; default is GPU drawing).
+--net-h264 --net-host <pc-ip> switches the preview to the h264 path
+(h264_rkmpp, MPEG-TS over UDP to <pc-ip>:--net-port, default 1234):
+the stream is the letterbox band at its native size (640x360 for
+the default 1280x720 camera), with YOLO boxes drawn in. Bitrate via
+--net-bitrate (default 12000 kbps; 2500 is plenty for 640x360).
+Viewer: ffplay -f mpegts udp://0.0.0.0:1234 — an explicit IPv4 bind
+is required on Windows hosts (udp://@:1234 binds :: / IPv6 and
+silently receives no IPv4 packets; verified with
+Get-NetUDPEndpoint). --cpu-draw forces CPU box drawing even when the
+GPU drawer is up (A/B baseline; default is GPU drawing).
 
 ## Roadmap
 - [x] M1: baseline run with mobilenet_v1, honest FPS measurement.
@@ -318,8 +335,30 @@ rgb24, tcp port 1234); --net-fps N paces the stream (default 25).
       1280x720 frame — moving the tap upstream is remaining phase-A
       work. Status 2026-10-25: live streaming verified — viewers see
       continuous frames with YOLO overlays; the earlier "first frame
-      only" issue is no longer observed. h264_rkmpp MPEG-TS/UDP and
-      NetControl commands remain open.
+      only" issue is no longer observed.
+      h264_rkmpp MPEG-TS/UDP landed (same evening) as the tensor
+      path: the encoder publishes the NPU input tensor AFTER GPU
+      box drawing (syncCpu before publish — the RGA read sees
+      finished pixels), crops the visible letterbox band (srect
+      y=[140,500) for the 640x640 tensor) and converts
+      RGB888->NV12 1:1 into its own ping-pong NV12 dma-bufs. The
+      stream is the band at its NATIVE size — 640x360 for
+      1280x720, no upscale (the x2 upscale was tried first and
+      dropped: it adds no detail, only bitrate and RGA work).
+      Boxes ride into the stream for free; publish_full_frame
+      stays in the code (clean stream, no overlays) but is
+      unused by the pipeline. The publish-interface split from
+      the design note is resolved: both paths are fd-based.
+      Muxer patch for late joiners: mpegts_flags
+      +pat_pmt_at_frames, pat_period 0.1, sdt_period 0.25.
+      Viewer-side lesson: on Windows, ffplay udp://@:1234 binds
+      :: (IPv6) and receives nothing — bind udp://0.0.0.0:1234
+      explicitly (verified via Get-NetUDPEndpoint). Measured:
+      600-frame run, steady ~48 ms sum (~20.8 FPS evening), the
+      encode does not stall the pipeline. A benign-looking
+      mpp_buffer ref_count warning appears at shutdown on the
+      rkmpp-encoder path (unrelated to the known init assert) —
+      watch on future runs. NetControl commands remain open.
 - [x] M3.6 (closed negative): box drawing via RGA — planned, probed
       live with yolov5 detections, retired. The open check (a) turned
       out fatal: RGA fill is not routable on this board (see Platform

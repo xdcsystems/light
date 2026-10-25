@@ -113,8 +113,16 @@ Pipeline::Pipeline(const Config& cfg)
                 throw std::runtime_error(
                     "--net-h264 (UDP) requires --net-host <pc-ip>");
             }
-            enc_.emplace(model_w_, model_h_, cfg_.net_fps,
-                         cfg_.net_port, cfg_.net_host, cfg_.net_bitrate);
+            // M3.5: the h264 encoder consumes the NPU input tensor AFTER
+            // box drawing, at the NATIVE letterbox-band size (no upscale):
+            // w = model_w, h = cam_h * (model_w / cam_w) — for the default
+            // 1280x720 camera and a 640x640 tensor that is 640x360 (16:9).
+            // The encoder derives the same band geometry from these numbers.
+            const float s = static_cast<float>(model_w_) / cfg_.cam_w;
+            const int band_h = static_cast<int>(cfg_.cam_h * s + 0.5f);
+            enc_.emplace(model_w_, band_h, cfg_.net_fps,
+                         cfg_.net_port, cfg_.net_host, cfg_.net_bitrate,
+                         model_w_, model_h_);
             std::cout << "net: h264 preview on port " << cfg_.net_port
                       << ", " << cfg_.net_bitrate << " kbps\n";
         } else {
@@ -292,12 +300,18 @@ int Pipeline::run() {
                         static_cast<float>(model_w_) / cfg_.cam_w,
                         static_cast<float>(rga_.lb_top()));
                 }
+                // M3.5: NetPreview publishes the 640x640 model tensor
+                // (NUT path). NetEncoder now publishes the same tensor:
+                // the GPU/CPU drawing above has landed and is synced, so
+                // the RGA band crop carries the boxes into the stream.
                 if (preview_) {
                     preview_->publish(
                         static_cast<const uint8_t*>(npu_.input_data()));
-                } else {
-                    // RGA converts the boxed tensor to NV12
-                    // (dma-buf -> dma-buf) and MPP encodes it.
+                }
+                if (enc_) {
+                    // Tensor path: the encoder crops the visible band out
+                    // of the tensor (boxes already drawn and synced) and
+                    // converts it to NV12 1:1 — no upscale.
                     enc_->publish(npu_.input_fd());
                 }
             }

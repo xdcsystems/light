@@ -20,12 +20,18 @@
 class NetEncoder {
 public:
     NetEncoder(int w, int h, int fps, int port,
-               const std::string& host, int bitrate_kbps);
+               const std::string& host, int bitrate_kbps,
+               int model_w, int model_h);
     ~NetEncoder();
 
     // Called once per frame from the pipeline loop. tensor_fd is the
     // dma-buf of the NPU input tensor (RGB888, w x h); boxes are drawn.
     void publish(int tensor_fd);
+
+    // M3.5: publish the FULL decoder frame (cam_w x cam_h, YUV422SP
+    // dma-buf) BEFORE the RGA letterbox pass — by fd only, zero
+    // pixel copies. Implementation lives in net_encoder.cpp.
+    void publish_full_frame(int yuv_fd);
 
 private:
     void serve();
@@ -48,6 +54,11 @@ private:
     MppBuffer bufs_[2] = {nullptr, nullptr};   // ping-pong NV12 dma-bufs
     uint32_t cur_ = 0;
     int tensor_fd_ = -1;        // dma-buf fd of the NPU tensor (set in publish)
+    bool full_frame_ = false;   // true: tensor_fd_ is the decoder's
+                                // YUV422SP frame (publish_full_frame);
+                                // false: RGB888 NPU tensor (publish)
     int64_t frame_step_ = 1;    // pts increment in the muxer's time base
     uint64_t pts_ = 0;
+    int model_w_ = 0, model_h_ = 0;   // NPU tensor geometry (RGB888)
+    int band_top_ = 0, band_h_ = 0;   // visible letterbox band in the tensor
 };

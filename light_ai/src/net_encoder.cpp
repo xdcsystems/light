@@ -16,6 +16,7 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixfmt.h>
+#include <libavutil/dict.h>
 }
 
 namespace {
@@ -25,10 +26,27 @@ void noop_free(void*, uint8_t*) {}
 } // namespace
 
 NetEncoder::NetEncoder(int w, int h, int fps, int port,
-                       const std::string& host, int bitrate_kbps)
+                       const std::string& host, int bitrate_kbps,
+                       int model_w, int model_h)
     : w_(w), h_(h), fps_(fps > 0 ? fps : 25), port_(port),
-      bitrate_kbps_(bitrate_kbps > 0 ? bitrate_kbps : 12000), host_(host) {
+      bitrate_kbps_(bitrate_kbps > 0 ? bitrate_kbps : 12000), host_(host),
+      model_w_(model_w), model_h_(model_h) {
     avformat_network_init();
+
+    // Visible letterbox band inside the tensor: everything outside is the
+    // gray padding memset once at startup. The stream is the band at its
+    // NATIVE size — no upscale. The pipeline passes w = model_w and
+    // h = cam_h * (model_w / cam_w); with that w the scale below is
+    // s = model_w / w = 1, so band_h_ == h_ and band_top_ = (model_h_ - h_)/2
+    // (640x640 tensor, 1280x720 camera -> 640x360, band y=[140,500)).
+    const float s = static_cast<float>(model_w_) / static_cast<float>(w_);
+    band_h_ = static_cast<int>(static_cast<float>(h_) * s + 0.5f);
+    if (band_h_ > model_h_) band_h_ = model_h_;
+    band_top_ = (model_h_ - band_h_) / 2;
+    if (band_top_ < 0) band_top_ = 0;
+    std::cout << "enc: tensor band y=[" << band_top_ << ','
+              << band_top_ + band_h_ << ") of " << model_w_ << 'x'
+              << model_h_ << " -> " << w_ << 'x' << h_ << '\n';
 
     // Two NV12 dma-bufs from an MPP DRM pool: ping-pong so a plane held by
     // the encoder is never overwritten by RGA on the next frame.
@@ -150,7 +168,14 @@ void NetEncoder::serve() {
         st->time_base      = AVRational{1, fps_};
         st->avg_frame_rate = AVRational{fps_, 1};
 
-        int ret2 = avformat_write_header(fc, nullptr);
+        // Live-stream patch: повторять PAT/PMT/SDT в эфире, чтобы приёмник
+        // мог подключиться в любой момент, а не только на старте потока.
+        AVDictionary* mux_opts = nullptr;
+        av_dict_set(&mux_opts, "mpegts_flags", "+pat_pmt_at_frames", 0);
+        av_dict_set(&mux_opts, "pat_period",   "0.1",  0);  // PAT/PMT каждые 100 мс
+        av_dict_set(&mux_opts, "sdt_period",   "0.25", 0);
+        int ret2 = avformat_write_header(fc, &mux_opts);
+        av_dict_free(&mux_opts);
         if (ret2 < 0) {
             char err[64];
             av_strerror(ret2, err, sizeof(err));
@@ -201,6 +226,25 @@ void NetEncoder::publish(int tensor_fd) {
     std::lock_guard<std::mutex> lk(mx_);
     if (!fc_ || !enc_) return;
     tensor_fd_ = tensor_fd;   // RGA source for this frame
+    full_frame_ = false;      // tensor path: source is RGB888
+    if (!send_frame(fc_, st_)) {
+        error_.store(true);
+        cv_.notify_all();   // serve() closes and reopens the UDP path
+    }
+}
+
+// M3.5: publish the FULL decoder frame (cam_w x cam_h, YUV422SP dma-buf)
+// BEFORE the RGA letterbox pass. RGA converts it to NV12 on the way into
+// the encoder's own ping-pong dma-buf — zero CPU pixel copies. The improcess
+// call is a single-op (im2d, sync defaults to 1), so it completes before
+// this call returns: the decoder pool may safely reuse fd_src for the next
+// frame right after requeue.
+void NetEncoder::publish_full_frame(int yuv_fd) {
+    if (quit_.load()) return;
+    std::lock_guard<std::mutex> lk(mx_);
+    if (!fc_ || !enc_) return;
+    tensor_fd_ = yuv_fd;
+    full_frame_ = true;
     if (!send_frame(fc_, st_)) {
         error_.store(true);
         cv_.notify_all();   // serve() closes and reopens the UDP path
@@ -220,12 +264,29 @@ bool NetEncoder::send_frame(void* fcp, void* stp) {
     cur_ ^= 1u;
     MppBuffer mb = bufs_[cur_];
 
-    rga_buffer_t src = wrapbuffer_fd(tensor_fd_, w_, h_, RK_FORMAT_RGB_888);
+    // M3.5: the source is either the NPU tensor (RGB888, tensor path) or
+    // the decoder's full frame (YUV422SP, publish_full_frame). RGA does
+    // the 422SP->420SP conversion on the fly — no CPU copies either way.
+    rga_buffer_t src;
+    im_rect srect = {0, 0, 0, 0};
+    if (full_frame_) {
+        src = wrapbuffer_fd(tensor_fd_, w_, h_, RK_FORMAT_YCbCr_422_SP);
+    } else {
+        // Tensor path: crop the visible letterbox band out of the RGB888
+        // model tensor and convert it to NV12 at 1:1 (no upscale). The
+        // boxes are already in the band (GPU drawer + syncCpu before
+        // publish), so they ride along into the stream for free.
+        src = wrapbuffer_fd(tensor_fd_, model_w_, model_h_, RK_FORMAT_RGB_888);
+        srect.x = 0;
+        srect.y = band_top_;
+        srect.width = model_w_;
+        srect.height = band_h_;
+    }
     rga_buffer_t dst = wrapbuffer_fd(mpp_buffer_get_fd(mb), w_, h_,
                                      RK_FORMAT_YCbCr_420_SP);
-    const IM_STATUS rs = improcess(src, dst, {}, {}, {}, {}, 0);
+    const IM_STATUS rs = improcess(src, dst, {}, srect, {}, {}, 0);
     if ((int)rs <= 0) {
-        std::cerr << "enc: RGA RGB->NV12 failed: " << imStrError(rs) << '\n';
+        std::cerr << "enc: RGA convert failed: " << imStrError(rs) << '\n';
         return false;
     }
 
