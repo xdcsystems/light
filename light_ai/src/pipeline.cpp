@@ -197,7 +197,9 @@ int Pipeline::run() {
     // longer than the original 10x1s window allowed.
     constexpr int kCamReconnectMax = 20;
     constexpr auto kCamReconnectPause = std::chrono::seconds(1);
+    constexpr int kWarmupFrames = 3;
     int reconnects = 0;
+    int warmup_left = 0;   // publish-discards after reconnect
 
     for (int i = 0; i < cfg_.frames; ++i) {
         const auto t0 = clk::now();
@@ -226,6 +228,7 @@ int Pipeline::run() {
                         cam_node_ = node;
                     }
                     ++reconnects;
+                    warmup_left = kWarmupFrames;
                     std::cout << "camera: reconnected on attempt " << a
                               << '\n';
                     back = true;
@@ -243,14 +246,40 @@ int Pipeline::run() {
         }
         const auto t1 = clk::now();
 
-        const uint8_t* jpeg = static_cast<const uint8_t*>(cam_.buffer(idx));
-        const int fd_src = dec_.decode(jpeg, sz);
+        // Zero-size packet guard: a dying/reconnecting camera can hand
+        // out a buffer with bytesused == 0. Feeding it to the decoder
+        // produces "BAD INPUT ok=1 ... size=0" — MPP reports success on
+        // an EMPTY packet, and the buffer behind the returned fd is
+        // stale/uninitialized memory. RGA then stretches that garbage
+        // into the NPU tensor, YOLO hallucinates on it and the stream
+        // shows phantom boxes (observed right after a replug). Skip the
+        // decode, keep the buffer cycle intact (requeue still runs).
+        int fd_src = -1;
+        if (sz > 0) {
+            fd_src = dec_.decode(static_cast<const uint8_t*>(cam_.buffer(idx)), sz);
+        } else {
+            std::cerr << "camera: zero-size frame skipped\n";
+        }
         cam_.requeue(idx);
         const auto t2 = clk::now();
 
         // A frame that failed to decode contributes neither to ok nor to the
         // timing statistics — otherwise rare errors would silently skew averages.
         if (fd_src < 0) continue;
+
+        // Warm-up discard: even non-empty first packets after STREAMON
+        // start mid-stream, so the first decoded frame(s) after a
+        // reconnect can be partial garbage. They ARE decoded (flushing
+        // the decoder is the point) but never inferred or published —
+        // a two-frame gap beats phantoms on a live stream. The counter
+        // counts VALID decodes only: garbage frames (fd < 0) do not
+        // consume it, so publishing resumes on real data.
+        if (warmup_left > 0) {
+            --warmup_left;
+            if (warmup_left == 0)
+                std::cout << "camera: warm-up done, publishing resumed\n";
+            continue;
+        }
 
         const bool rga_ok = rga_.resize(fd_src, cfg_.cam_w, cfg_.cam_h,
                                         npu_.input_fd(), model_w_, model_h_,
