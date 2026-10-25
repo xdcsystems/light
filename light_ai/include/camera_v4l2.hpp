@@ -1,6 +1,7 @@
 #pragma once
-#include <string>
+#include <cstddef>
 #include <cstdint>
+#include <string>
 #include <linux/videodev2.h>
 
 class CameraV4L2 {
@@ -21,9 +22,9 @@ private:
     void xioctl(unsigned long req, void* arg) const;
 
 private:
+    static constexpr unsigned kBufCount = 4;
     int fd_ = -1;
     int width_ = 0, height_ = 0;
-    unsigned buf_count_ = 4;
     struct Buffer { void* start = nullptr; size_t length = 0; };
-    Buffer bufs_[4];
+    Buffer bufs_[kBufCount];
 };

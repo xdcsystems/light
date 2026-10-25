@@ -43,7 +43,7 @@ CameraV4L2::CameraV4L2(const std::string& dev, int w, int h)
     }
 
     v4l2_requestbuffers req{};
-    req.count = buf_count_;
+    req.count = kBufCount;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
     xioctl(VIDIOC_REQBUFS, &req);
@@ -71,7 +71,7 @@ CameraV4L2::~CameraV4L2() {
     if (fd_ < 0) return;
     v4l2_buf_type t = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     ioctl(fd_, VIDIOC_STREAMOFF, &t);
-    for (unsigned i = 0; i < buf_count_ && bufs_[i].start; ++i) {
+    for (unsigned i = 0; i < kBufCount && bufs_[i].start; ++i) {
         munmap(bufs_[i].start, bufs_[i].length);
     }
     close(fd_);

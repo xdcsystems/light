@@ -1,7 +1,7 @@
 #pragma once
 
 // COCO-80 in class-id order, for human-readable detection reports.
-static const char* kCocoNames[80] = {
+static constexpr const char* kCocoNames[80] = {
     "person",        "bicycle",      "car",          "motorcycle",
     "airplane",      "bus",          "train",        "truck",
     "boat",          "traffic light","fire hydrant", "stop sign",
