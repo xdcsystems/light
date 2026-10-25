@@ -242,7 +242,9 @@ rgb24, tcp port 1234); --net-fps N paces the stream (default 25).
 the stream is the letterbox band at its native size (640x360 for
 the default 1280x720 camera), with YOLO boxes drawn in. Bitrate via
 --net-bitrate (default 12000 kbps; 2500 is plenty for 640x360).
-Viewer: ffplay -f mpegts udp://0.0.0.0:1234 — an explicit IPv4 bind
+Viewer (low-latency, M3.9): ffplay -fflags nobuffer -flags
+low_delay -framedrop -probesize 32 -analyzeduration 0
+-vf setpts=0 -f mpegts udp://0.0.0.0:1234 — an explicit IPv4 bind
 is required on Windows hosts (udp://@:1234 binds :: / IPv6 and
 silently receives no IPv4 packets; verified with
 Get-NetUDPEndpoint). --cpu-draw forces CPU box drawing even when the
@@ -447,6 +449,29 @@ GPU drawer is up (A/B baseline; default is GPU drawing).
       video21, recovery on attempt 9, ~2 s): clean stream after
       reconnect, no phantom boxes, recognition unchanged; the SOI
       guard did not trigger (the driver resumed with full frames).
+      Startup fallback added (2026-10-25, 1f851e6): a configured node
+      missing at launch (ENOENT, e.g. after a replug re-enumeration
+      before the app starts) no longer aborts the run — the pipeline
+      falls back to find_usb_capture_node() and adopts the winner
+      (verified live: --device /dev/video20 with the camera
+      re-enumerated on video21 -> "discovery adopted /dev/video21",
+      normal start, detections live). Non-ENOENT open failures (busy,
+      permissions) stay fatal: a silently substituted source is worse
+      than a loud one.
+
+- [x] M3.9: preview latency — closed 2026-10-25, player-side. Symptom:
+      the UDP/MPEG-TS H.264 preview on the PC lagged reality by ~5 s
+      while the pipeline itself runs ~48 ms end to end (cam ~17-28 +
+      infer ~29) — the delay is transport/player-side, not the
+      pipeline. Cause: ffplay defaults (analyzeduration 5000000 us = 5 s
+      of probing plus input buffering; the player starts 5 s behind and
+      keeps a buffer). Fix: the reference viewer invocation is now
+      ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32
+      -analyzeduration 0 -vf setpts=0 -f mpegts udp://0.0.0.0:1234
+      (confirmed live: lag dropped drastically, hand-wave test). No code
+      changes. Follow-up if backlog ever accumulates: source pts from
+      camera wallclock instead of the fixed 3600-tick step (21-26 real
+      FPS vs 25 declared); muxer omit_video_pes_length stays untouched.
 
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
