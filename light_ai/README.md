@@ -102,9 +102,39 @@ post-processing.
   within the limit) with imconfig as a belt-and-suspenders pin.
 - Camera fps is exposure-dependent: ~30 FPS in daylight (measured at
   640x480, M1), ~20-24 FPS in the evening in every resolution alike
-  (640x480, 1280x720, 1920x1080), although the UVC descriptor advertises
+  (640x480, 1280x720, 1920x1080) — pre-YOLO numbers; the 720p
+  yolov5s_relu_int8 steady state with a viewer attached is ~26 FPS
+  (see the 720p section below), although the UVC descriptor advertises
   30/1 in all modes. Forcing exposure (exposure_absolute=33) does not lift
-  the ceiling. 1080p in daylight: not yet measured.
+  the ceiling — Manual exposure is a no-op on this camera, and FPS
+  pacing is a discrete firmware state (see the camera facts above). 1080p in daylight: not yet measured.
+- Camera is USB2-only BY SPEC (Canyon CNS-CWC5 = Sunplus 1bcf:2283,
+  bcdUSB 2.00): always enumerates on the hub's USB2 half (480M),
+  SuperSpeed half stays empty — normal. USB bandwidth is a non-issue
+  at 720p MJPEG (~1 MB/s).
+- FRAME PACING is a discrete FIRMWARE state, not addressable by any
+  control (verified 2026-10-25 evening, Dev 10 + fresh Dev 11):
+  the camera delivers one of {20, 25, 30} FPS and switches between
+  levels across successive streams with NO control changes. A replug
+  resets pacing to 20. UVC exposure controls are accepted, persisted
+  (exposure_absolute=33 survived a full replug) and read back OK, but
+  change NOTHING: the S1-S4 matrix (auto/manual x successive streams)
+  gave 19.3-19.4 FPS in all four runs, detections and scene brightness
+  identical. Mid-stream SET_CUR on exposure_absolute stalls with
+  EPIPE when auto mode makes the control inactive (spec-correct).
+  get-parm always reports the REQUESTED rate (30.000) regardless of
+  what is actually delivered — do not trust it as a status read.
+  Wall-clock proof that 30 FPS is deliverable: 900 frames in 30.5 s
+  (29.5 real FPS) when the camera is in its 30-FPS state — the SoC is
+  not the bottleneck, cam pacing is. Detections identical at 20/25/30
+  FPS: AE holds exposure constant, pacing varies independently.
+  30-FPS state observed ONCE (21:08); full-disturbance prelude replay
+  (SIGTERM mid-stream + mid-stream SET_CUR x2 + S_PARM) did NOT
+  reproduce it — trigger unknown, treat 20 FPS as the reliable rate.
+  'Forcing exposure does not lift the ceiling' was right in result and
+  now also right in mechanism: Manual exposure simply does not affect
+  the camera; the earlier day ~30 vs evening ~20 attribution is
+  superseded — pacing level, not lighting, was the variable.
 - Resize is letterboxed: uniform scale by width (s = model_w / cam_w), the
   visible band occupies rows [lb_top, lb_top + lb_h) of the model input, the
   rest stays gray (128, memset once; RGA writes only the drect band).
@@ -171,6 +201,10 @@ post-processing.
   libav* runtime — chromium/VLC/mpv depend on it and apt would cascade
   them away; the dev packages can stay too, PKG_CONFIG_LIBDIR hides
   them from cmake.
+- h264_rkmpp rc_mode: the live encoder does NOT accept rc_mode (log line:
+  "enc: rc_mode option not accepted"); the stream runs CBR at
+  --net-bitrate (default 12000 kbps). Fine for the preview; revisit when
+  bitrate control is actually needed.
 
 ## Measured performance (1920x1080 MJPEG, evening light, camera-bound)
 
@@ -220,10 +254,14 @@ and costs zero CPU writes into the NPU tensor.
 
 ## Run
     sudo LD_LIBRARY_PATH=/usr/local/lib ./build/light_ai \
-        --device /dev/video20 --model ./yolov5s_relu.rknn --frames 300
+        --device /dev/video20 --model ./yolov5s_relu_int8.rknn --frames 3000 \
+        --net --net-h264 --net-host 192.168.1.5 --core 7
 
 Defaults: /dev/video20, 1280x720 MJPEG; the model default is still the M1
-mobilenet_v1 relic — always pass --model for detection runs. Options:
+mobilenet_v1 relic — always pass --model for detection runs. A missing
+configured node (ENOENT) is not fatal: the pipeline falls back to
+find_usb_capture_node() and adopts the winner (startup fallback, M3.8);
+non-ENOENT open errors (EBUSY/EACCES) stay fatal. Options:
 --help/-h prints the option list (generated from the parser table).
 --device, --model, --frames, --w, --h, --dump-cal, --conf, --iou,
 --core 0|1|3|7 (NPU core pinning: 0=AUTO default, 1=core0, 3=0+1,
@@ -283,7 +321,7 @@ GPU drawer is up (A/B baseline; default is GPU drawing).
 - [x] M2.3: readable report (COCO-80 class names), CLI --conf/--iou with
       validation; cleanup: class-aware NMS, symmetric box clamping, letterbox
       geometry now read from RgaResizer (single source of truth).
-- [x] M2.4: int8 quantization — infer 43.1 -> 28.1 ms (~1.55x), detection
+- [x] M2.4: int8 quantization (OPEN: night recalibration pending) — infer 43.1 -> 28.1 ms (~1.55x), detection
       quality matches fp16 (same classes, boxes within a few px, conf
       -0.02); build recipe and caveats in Platform constraints.
       Night A/B (target scene, 300 frames each, --core 7): classes
@@ -347,7 +385,8 @@ GPU drawer is up (A/B baseline; default is GPU drawing).
       hardware does the encode, zero-CPU like the MPP decoder; encoder
       accepts nv16 == our YUV422SP, smoke-tested 720p lavfi: 60 frames,
       20.4x at nv12 / 12.4x at nv16, valid MPEG-TS out; rc_mode
-      VBR/CBR/CQP, qp_*, intra-refresh available), NetSink (phase A:
+      VBR/CBR/CQP, qp_*, intra-refresh available — but the LIVE encoder
+      rejected rc_mode, see Platform constraints), NetSink (phase A:
       MPEG-TS over UDP -> VLC 'udp://@:1234', ~1-2 s latency; phase B:
       RTSP; phase C: WebRTC via libdatachannel only if remote access is
       ever needed). H.264 packets = second legal memcpy alongside the
