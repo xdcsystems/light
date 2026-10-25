@@ -21,7 +21,22 @@ post-processing.
 ## Layers
 - CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. G_FMT is verified
                against the requested mode; a driver-side silent mode
-               substitution is a hard error.
+               substitution is a hard error. The node is NOT instance
+               state: setup_device(dev)/reconnect(dev) take the path as
+               an argument, teardown() is public (no dynamic allocation
+               anywhere in the recovery path). Disconnect recovery:
+               ENODEV/EIO from dequeue() are recoverable, other errnos
+               are fatal (exit 1 — silent exit 0 on camera death is
+               gone); each attempt re-runs the full open+verify path,
+               nothing is trusted blindly across a disappearance. Node
+               discovery lives outside the class (find_usb_capture_node
+               in camera_v4l2.cpp): the configured path is preferred,
+               otherwise numeric /dev/video* candidates are USB-filtered
+               (rkcif/rkisp platform nodes rejected before any S_FMT)
+               and trial-opened; the pipeline tracks the current node in
+               cam_node_ and adopts a re-enumerated one transparently.
+               A permanent unplug exhausts the 20x1 s window and ends
+               the run with exit code 1.
 - MppDecoder : MJPEG -> YUV422SP decode into an external dma-buf pool,
                returns the frame fd. Sized from Config, not hard-coded.
                Also hands out an aux dma-buf from the same pool for the
@@ -397,6 +412,25 @@ GPU drawer is up (A/B baseline; default is GPU drawing).
       quality and zero CPU writes into the tensor. mpp_buffer init
       assert seen in every run incl. this milestone — confirmed
       benign.
+
+- [x] M3.8: camera disconnect recovery (USB replug). dequeue() classifies
+      the failure: ENODEV/EIO are recoverable, any other errno is a hard
+      error ending the run with exit code 1 (run() -> -1, main() maps it).
+      Recovery: up to 20 attempts x 1 s (the original 10x1 s window was
+      too short — observed USB re-enumeration on this board took ~13 s);
+      each attempt re-runs the full open+verify path (S_FMT, G_FMT
+      check, REQBUFS, mmap, QBUF, STREAMON). Node discovery is outside
+      the camera class (the mutable-node design was rejected and
+      refactored away in the same revision): find_usb_capture_node()
+      prefers the configured path, falls back to USB-filtered numeric
+      /dev/video* candidates with a trial setup; the pipeline tracks
+      cam_node_ and adopts a re-enumerated node (verified live: video20
+      -> video21, recovery on attempt 13, stream continued, viewer
+      re-synced via repeated PAT/PMT without a restart). Permanent
+      unplug: gives up after 20 attempts, exit code 1 — verified. Known
+      cosmetic (owner's call, left as is): the "scanning /dev/video*"
+      line prints on every attempt. TODO.md holds the constraint record
+      (no dynamic allocation in the recovery path).
 
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
