@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 
 #include "pipeline.hpp"
 #include "coco_names.h"
@@ -75,9 +76,14 @@ void draw_boxes_cpu(uint8_t* rgb, int w, int h, int stride,
 
 Pipeline::Pipeline(const Config& cfg)
     : cfg_(cfg),
-      cam_(cfg_.device, cfg_.cam_w, cfg_.cam_h),
+      cam_(cfg_.cam_w, cfg_.cam_h),
       dec_(cfg_.cam_w, cfg_.cam_h),
       npu_(cfg_.model.c_str()) {
+    cam_node_ = cfg_.device;
+    std::string cam_why;
+    if (cam_.setup_device(cam_node_, &cam_why) != 0) {
+        throw std::runtime_error("camera: " + cam_why);
+    }
     if (npu_.setup_io() != 0) {
         throw std::runtime_error("rknn setup_io failed");
     }
@@ -180,12 +186,61 @@ int Pipeline::run() {
     int ok = 0;
     const auto t_start = clk::now();
 
+    // Disconnect policy: ENODEV/EIO from DQBUF mean the device is gone
+    // (unplug, USB hiccup) — worth a few timed reconnect attempts; any
+    // other errno is a hard error and ends the run with exit code 1
+    // (run() returns -1, main() maps it to 1). Exhausted reconnect
+    // attempts end the same way; a silent exit 0 on camera death is the
+    // bug this code removes. A recovery attempt consumes one frame of
+    // the --frames budget and contributes nothing to the timing stats.
+    // 20 attempts: observed USB re-enumeration on this board can take
+    // longer than the original 10x1s window allowed.
+    constexpr int kCamReconnectMax = 20;
+    constexpr auto kCamReconnectPause = std::chrono::seconds(1);
+    int reconnects = 0;
+
     for (int i = 0; i < cfg_.frames; ++i) {
         const auto t0 = clk::now();
 
         uint32_t sz = 0;
-        const int idx = cam_.dequeue(&sz);
-        if (idx < 0) break;
+        int cam_err = 0;
+        const int idx = cam_.dequeue(&sz, &cam_err);
+        if (idx < 0) {
+            // Classify the failure before acting on it.
+            const bool recoverable = (cam_err == ENODEV || cam_err == EIO);
+            std::cerr << "camera: dequeue failed: " << strerror(cam_err)
+                      << (recoverable ? " (recoverable)" : " (fatal)")
+                      << '\n';
+            if (!recoverable) return -1;
+            bool back = false;
+            for (int a = 1; a <= kCamReconnectMax; ++a) {
+                std::this_thread::sleep_for(kCamReconnectPause);
+                std::string node;
+                if (find_usb_capture_node(cam_, cam_node_, node) != 0)
+                    continue;
+                std::string why;
+                if (cam_.reconnect(node, &why) == 0) {
+                    if (node != cam_node_) {
+                        std::cout << "camera: re-enumerated node adopted: "
+                                  << cam_node_ << " -> " << node << '\n';
+                        cam_node_ = node;
+                    }
+                    ++reconnects;
+                    std::cout << "camera: reconnected on attempt " << a
+                              << '\n';
+                    back = true;
+                    break;
+                }
+                std::cerr << "camera: reconnect on " << node
+                          << " failed: " << why << '\n';
+            }
+            if (!back) {
+                std::cerr << "camera: reconnect failed after "
+                          << kCamReconnectMax << " attempts, giving up\n";
+                return -1;
+            }
+            continue;
+        }
         const auto t1 = clk::now();
 
         const uint8_t* jpeg = static_cast<const uint8_t*>(cam_.buffer(idx));
@@ -319,6 +374,9 @@ int Pipeline::run() {
     }
 
     const double wall = std::chrono::duration<double>(clk::now() - t_start).count();
+    if (reconnects > 0) {
+        std::cout << "camera disconnects recovered: " << reconnects << '\n';
+    }
     g_t.report("TOTAL ");
     std::cout << "Processed " << ok << " frames in "
               << std::fixed << std::setprecision(3) << wall << " s -> "

@@ -53,6 +53,7 @@ public:
 private:
     Config cfg_;
     CameraV4L2 cam_;
+    std::string cam_node_;
     MppDecoder dec_;
     RgaResizer rga_;
     RknnEngine npu_;
