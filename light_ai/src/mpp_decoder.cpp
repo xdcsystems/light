@@ -88,6 +88,18 @@ int MppDecoder::decode(const uint8_t* data, size_t size) {
     }
     ++frames_;
 
+    // Mid-stream fragment guard: a complete camera MJPEG frame always
+    // starts with SOI (FFD8). Packets torn out of the middle of the
+    // stream (right after STREAMON, before the first full frame lands,
+    // or from a dying camera) can be decoded by MPP "successfully" —
+    // no errinfo, no discard — into a partial garbage image that then
+    // reaches RGA/NPU. Reject anything without SOI.
+    if (size < 2 || data[0] != 0xFF || data[1] != 0xD8) {
+        std::cerr << "dec[" << frames_ << "]: no SOI, mid-stream fragment ("
+                  << size << " bytes) dropped\n";
+        return -1;
+    }
+
     if (pkt_) { mpp_packet_deinit(&pkt_); pkt_ = nullptr; }
 
     MppBuffer pbuf = nullptr;
