@@ -6,7 +6,6 @@
 #include <thread>
 #include <vector>
 
-#include "yolo_postprocess.hpp"   // Detection
 
 // M3.5 phase A0: raw preview over TCP, zero pixel copies.
 //
@@ -30,13 +29,6 @@ public:
     // frame drains to the socket.
     void publish(const uint8_t* rgb);
 
-    // Draws detection boxes in-place onto an RGB888 frame (the NPU tensor).
-    // Coordinates: scene -> model via model_per_scene = model_w / cam_w,
-    // y also gets + lb_top (inverse of the postprocess mapping T).
-    static void draw_boxes_rgb24(uint8_t* img, int w, int h, int stride,
-                                 const std::vector<Detection>& dets,
-                                 float model_per_scene, float lb_top);
-
 private:
     void serve();
     static int interrupt_cb(void* self);
@@ -54,6 +46,7 @@ private:
     void* fc_ = nullptr;      // AVFormatContext*, ready for writes
     void* stream_ = nullptr;  // AVStream* of the video stream
     void* pkt_ = nullptr;     // AVPacket*, allocated once
+    uint64_t frame_step_ = 1;   // pts increment in the muxer's time base
     uint64_t pts_ = 0;
 };
 

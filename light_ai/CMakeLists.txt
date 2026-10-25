@@ -11,6 +11,10 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPP REQUIRED rockchip_mpp)
 pkg_check_modules(RGA REQUIRED librga)
 
+# M3.7: GPU box drawing (Mali G610) — EGL/GBM + GLES2, entry points via
+# eglGetProcAddress at runtime; libdl for the dlopen'ed libgbm.
+pkg_check_modules(EGL REQUIRED egl glesv2)
+
 # Self-built ffmpeg (prefix /usr/local) — for the M3.5 phase A0 preview only
 # Pin libav* to the self-built ffmpeg in /usr/local. The distro ffmpeg 4.x
 # headers/libs must never leak back into the build: they caused the ABI
@@ -49,6 +53,8 @@ add_executable(light_ai
     src/yolo_postprocess.cpp
     src/pipeline.cpp
     src/net_preview.cpp
+    src/net_encoder.cpp
+    src/gpu_box_drawer.cpp
 )
 
 target_include_directories(light_ai PRIVATE
@@ -56,6 +62,7 @@ target_include_directories(light_ai PRIVATE
     /usr/include/rockchip
     ${RKNN_MODEL_ZOO_INCLUDE}
     ${AV_INCLUDE_DIRS}
+    ${EGL_INCLUDE_DIRS}
 )
 
 target_link_libraries(light_ai PRIVATE
@@ -64,6 +71,8 @@ target_link_libraries(light_ai PRIVATE
     ${AV_LIBRARIES}
     rknnrt
     pthread
+    ${EGL_LIBRARIES}
+    dl
 )
 
 target_link_directories(light_ai PRIVATE ${RKNN_LIB_DIR} ${AV_LIBRARY_DIRS})

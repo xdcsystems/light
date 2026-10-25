@@ -45,6 +45,15 @@ bool apply_option(Config& cfg, int argc, char** argv, int& i) {
         cfg.net = true;
         return true;
     }
+    if (!std::strcmp(opt, "--net-h264")) {
+        cfg.net_h264 = true;
+        return true;
+    }
+    // M3.7: force the CPU box-drawing path (A/B vs the GPU drawer).
+    if (!std::strcmp(opt, "--cpu-draw")) {
+        cfg.cpu_draw = true;
+        return true;
+    }
 
     if (i + 1 >= argc) {
         std::cerr << "missing value for option: " << opt << '\n';
@@ -108,6 +117,16 @@ bool apply_option(Config& cfg, int argc, char** argv, int& i) {
             return false;
         }
         cfg.net_fps = n;
+    } else if (!std::strcmp(opt, "--net-bitrate")) {
+        int n = 0;
+        if (!parse_int(val, &n) || n < 1000 || n > 100000) {
+            std::cerr << "invalid value for --net-bitrate: '" << val
+                      << "' (expected 1000..100000 kbps)\n";
+            return false;
+        }
+        cfg.net_bitrate = n;
+    } else if (!std::strcmp(opt, "--net-host")) {
+        cfg.net_host = val;
     } else {
         std::cerr << "unknown option: " << opt << '\n';
         return false;

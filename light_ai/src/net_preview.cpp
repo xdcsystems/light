@@ -17,42 +17,6 @@ namespace {
 // The packet references the NPU tensor memory; unref must never free it.
 void noop_free(void*, uint8_t*) {}
 
-const uint8_t kRed[3]    = {255, 64, 64};
-const uint8_t kGreen[3]  = {64, 255, 64};
-const uint8_t kYellow[3] = {255, 255, 0};
-
-void hline(uint8_t* img, int w, int h, int stride, int y, int x0, int x1,
-           const uint8_t c[3]) {
-    if (y < 0 || y >= h || x1 <= x0) return;
-    uint8_t* row = img + static_cast<size_t>(y) * stride;
-    if (x0 < 0) x0 = 0;
-    if (x1 > w) x1 = w;
-    for (int x = x0; x < x1; ++x) {
-        uint8_t* px = row + static_cast<size_t>(x) * 3;
-        px[0] = c[0]; px[1] = c[1]; px[2] = c[2];
-    }
-}
-
-void vline(uint8_t* img, int w, int h, int stride, int x, int y0, int y1,
-           const uint8_t c[3]) {
-    if (x < 0 || x >= w || y1 <= y0) return;
-    if (y0 < 0) y0 = 0;
-    if (y1 > h) y1 = h;
-    for (int y = y0; y < y1; ++y) {
-        uint8_t* px = img + static_cast<size_t>(y) * stride
-                          + static_cast<size_t>(x) * 3;
-        px[0] = c[0]; px[1] = c[1]; px[2] = c[2];
-    }
-}
-
-void rect(uint8_t* img, int w, int h, int stride,
-          int x0, int y0, int x1, int y1, const uint8_t c[3]) {
-    hline(img, w, h, stride, y0,     x0, x1, c);
-    hline(img, w, h, stride, y1 - 1, x0, x1, c);
-    vline(img, w, h, stride, x0,     y0, y1, c);
-    vline(img, w, h, stride, x1 - 1, y0, y1, c);
-}
-
 } // namespace
 
 NetPreview::NetPreview(int w, int h, int stride, int fps, int port)
@@ -157,6 +121,15 @@ void NetPreview::serve() {
             avformat_free_context(fc);
             continue;
         }
+        // avformat_write_header may rewrite st->time_base (the NUT muxer
+        // picks its own, e.g. 1/25 -> 1/51200). All pts written afterwards
+        // must be expressed in the NEW time base, otherwise the viewer sees
+        // the whole stream compressed into milliseconds and freezes.
+        const AVRational tb = st->time_base;
+        frame_step_ = av_rescale_q(1, AVRational{1, fps_}, tb);
+        if (frame_step_ < 1) frame_step_ = 1;
+        std::cout << "net: stream time_base " << tb.num << '/' << tb.den
+                  << ", pts step " << frame_step_ << "\n";
         std::cout << "net: viewer connected, streaming " << w_ << 'x' << h_
                   << " rgb24 (nut) on port " << port_ << '\n';
 
@@ -164,6 +137,7 @@ void NetPreview::serve() {
             std::lock_guard<std::mutex> lk(mx_);
             fc_ = fc;
             stream_ = st;
+            pts_ = 0;
         }
         connected_.store(true, std::memory_order_release);
 
@@ -202,7 +176,7 @@ void NetPreview::publish(const uint8_t* rgb) {
     p->data        = ref->data;
     p->size        = stride_ * h_;
     p->stream_index = st->index;
-    p->pts = p->dts  = static_cast<int64_t>(pts_);
+    p->pts = p->dts = static_cast<int64_t>(pts_ * frame_step_);
     p->duration      = 1;
     p->flags        |= AV_PKT_FLAG_KEY;
     ++pts_;
@@ -220,20 +194,3 @@ void NetPreview::publish(const uint8_t* rgb) {
     }
     avio_flush(fc->pb);     // push the frame out immediately (low latency)
 }
-
-void NetPreview::draw_boxes_rgb24(uint8_t* img, int w, int h, int stride,
-                                  const std::vector<Detection>& dets,
-                                  float model_per_scene, float lb_top) {
-    for (const auto& d : dets) {
-        const int x0 = static_cast<int>(d.x * model_per_scene);
-        const int y0 = static_cast<int>(d.y * model_per_scene + lb_top);
-        const int x1 = static_cast<int>((d.x + d.w) * model_per_scene);
-        const int y1 = static_cast<int>((d.y + d.h) * model_per_scene + lb_top);
-        if (x1 - x0 < 2 || y1 - y0 < 2) continue;
-        const uint8_t* c = (d.cls == 0) ? kRed
-                         : (d.cls == 56) ? kGreen
-                         : kYellow;
-        rect(img, w, h, stride, x0, y0, x1, y1, c);
-    }
-}
-

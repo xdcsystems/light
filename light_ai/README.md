@@ -37,6 +37,12 @@ post-processing.
                model geometry is known (constructor-order bug fixed; a
                one-line "aux not needed" log confirms the single-pass path).
 
+- GpuBoxDrawer (M3.7): box drawing on Mali G610 (EGL/GBM) straight
+               into the NPU input tensor. The tensor dma-buf is imported
+               as an EGLImage; one draw call per frame; native fence
+               sync; falls back to CPU drawing (draw_boxes_cpu in
+               pipeline.cpp) if the tensor pitch is not usable or init
+               fails. --cpu-draw forces the CPU path (A/B baseline).
 - NetPreview : opt-in preview stream (--net): TCP server on port 1234,
                sends the model-input frame (640x640 letterboxed rgb24)
                as rawvideo inside a NUT container, paced by --net-fps
@@ -99,6 +105,22 @@ post-processing.
 - Default resolution is 1280x720: same model input geometry as 1080p
   (identical s, band and T), but single-pass RGA and cheaper MJPEG decode.
 
+- RGA fill/rectangle is KNOWN-BROKEN on this board — do not use it for
+  drawing. The kernel refuses fill jobs outright: RGA3 cores cannot fill
+  at all, and RGA2E's policy matrix rejects rgb888 fill (dmesg:
+  "rga_policy: invalid function policy", "failed to get scheduler"). A
+  standalone imfill probe with a virtual-address buffer crashed the
+  kernel itself ("Internal error: Oops: 96000005") and took the board
+  down with a reboot — no further probing of RGA fill, ever. Drawing is
+  GPU-drawer (combat path) or CPU (fallback). RGA stays in the pipeline
+  only for resize (works: ~1 ms, RGA3) and the h264-path color
+  conversion.
+- NPU tensor as an EGLImage source: the tensor pitch must be acceptable
+  to the GPU (checked by attachTensor). The real model tensor passes
+  (640x640, stride 1920 = 640*3, 64-byte aligned); a pitch of 672
+  failed earlier with 0x3003 — invalid pitch falls back to the CPU
+  path automatically, never a hard error.
+
 - Two ffmpeg stacks coexist on the board: the distro one (4.3, libav*
   .so.58 in /lib) and the self-built ffmpeg-rockchip (8.1, libav*
   .so.62 in /usr/local). Building light_ai against distro headers and
@@ -137,6 +159,16 @@ now NPU-bound: pipelining (M4) would no longer change FPS, only infer
 headroom does. The 47 ms figure motivated the yolov8n alternative — tested and closed
 negative in M2-alt below.
 
+## Measured performance (1280x720 MJPEG, yolov5s_relu_int8 @ 640x640,
+## steady state, viewer connected)
+
+Sum ~38 ms -> ~26 FPS steady (infer ~35-36 ms dominates). The overall
+run average (~17-18 FPS) includes the viewer-less warmup where cam
+blocks at ~23-53 ms — compare only steady blocks with a viewer
+attached. CPU vs GPU box drawing is a timing paritet (38.0 vs
+38.3-38.6 ms); GPU wins on render quality (subpixel-accurate outlines)
+and costs zero CPU writes into the NPU tensor.
+
 ## Scripts
 - scripts/test_inference.py — RKNNLite smoke test: shapes, non-negativity
   (ReLU check), PASS/FAIL exit code.
@@ -167,6 +199,8 @@ silent zero).
 
 --net enables the preview server (NUT container, raw model-input
 rgb24, tcp port 1234); --net-fps N paces the stream (default 25).
+--cpu-draw forces CPU box drawing even when the GPU drawer is up
+(A/B baseline; default is GPU drawing).
 
 ## Roadmap
 - [x] M1: baseline run with mobilenet_v1, honest FPS measurement.
@@ -282,9 +316,40 @@ rgb24, tcp port 1234); --net-fps N paces the stream (default 25).
       end-to-end in VLC: correct letterboxed frame with YOLO overlays.
       Current tap is the model input (640x640), not the designed full
       1280x720 frame — moving the tap upstream is remaining phase-A
-      work. Open issue: the viewer displays only the first frame —
-      pts/record-loop investigation pending. h264_rkmpp MPEG-TS/UDP
-      and NetControl commands remain open.
+      work. Status 2026-10-25: live streaming verified — viewers see
+      continuous frames with YOLO overlays; the earlier "first frame
+      only" issue is no longer observed. h264_rkmpp MPEG-TS/UDP and
+      NetControl commands remain open.
+- [x] M3.6 (closed negative): box drawing via RGA — planned, probed
+      live with yolov5 detections, retired. The open check (a) turned
+      out fatal: RGA fill is not routable on this board (see Platform
+      constraints) — every imrectangle call failed with "invalid
+      function policy", no boxes were drawn, and a standalone probe
+      crashed the kernel. Never re-open. The useful findings survive:
+      the 90-degree rotation myth was the improcess usage arg
+      (IM_HAL_TRANSFORM_ROT_90), and box rects must be clipped to
+      [lb_top, lb_top+lb_h) — the GPU path inherits both lessons.
+      CPU drawing returned as the fallback (draw_boxes_cpu,
+      pipeline.cpp).
+
+- [x] M3.7: GPU box drawing (Mali G610, EGL/GBM) straight into the
+      NPU tensor. The rknn tensor dma-buf is imported as an EGLImage
+      (attachTensor); quads drawn with one draw call per frame; native
+      fence sync; syncCpu() before publish so the CPU read (NUT path)
+      and RGA read (h264 path) see finished pixels. Y-orientation:
+      GL origin (bottom-left) IS memory row 0 — no flip; the earlier
+      mirrored boxes came from a probe that sat at the center row,
+      which is symmetric under a flip and could not detect it (a live
+      frame did). Outline 1 px (owner's pick, visually verified on
+      live frames). Colors/geometry identical to the CPU fallback
+      (scale = model_w/cam_w, lb_top, person red 255/64/64, chair
+      green 64/255/64, others yellow). A/B, 240 frames each, viewer
+      connected, steady blocks: CPU 38.0 ms (~26.3 FPS) vs GPU
+      38.3-38.6 ms (~26.0) — timing paritet; GPU wins on outline
+      quality and zero CPU writes into the tensor. mpp_buffer init
+      assert seen in every run incl. this milestone — confirmed
+      benign.
+
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
       even a 10-15 ms yolov8n@640x640 fits the frame budget without

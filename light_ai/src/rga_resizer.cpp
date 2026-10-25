@@ -1,5 +1,9 @@
-#include <iostream>
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
+#include <iostream>
+#include <vector>
+
 #include "rga_resizer.hpp"
 #include "im2d.h"
 #include "rga.h"
@@ -66,3 +70,46 @@ bool RgaResizer::resize(int src_fd, int w_src, int h_src,
     return true;
 }
 
+// M3.6: boxes are drawn by RGA, not CPU. All jobs stay on the pinned RGA3
+// core0 and complete synchronously (single-op default sync=1, see
+// im2d_single.h), so both the raw publisher (CPU read) and the NV12
+// converter (RGA read) see the finished frame. No cache-barrier concerns:
+// there are no CPU pixel writes in the combat path anymore.
+bool RgaResizer::draw_boxes(int tensor_fd, int w, int h,
+                            const std::vector<Detection>& dets,
+                            float model_per_scene, int lb_top) {
+    rga_buffer_t dst = wrapbuffer_fd(tensor_fd, w, h, RK_FORMAT_RGB_888);
+    const int band_top = lb_top;
+    const int band_bot = lb_top + lb_h_;
+
+    for (const auto& d : dets) {
+        int x0 = static_cast<int>(d.x * model_per_scene);
+        int y0 = static_cast<int>(d.y * model_per_scene) + lb_top;
+        int x1 = static_cast<int>((d.x + d.w) * model_per_scene);
+        int y1 = static_cast<int>((d.y + d.h) * model_per_scene) + lb_top;
+        // Clip to the visible band: the bars are never overwritten by
+        // resize, so a leaked border would pollute the next inference.
+        x0 = std::max(x0, 0);        x1 = std::min(x1, w);
+        y0 = std::max(y0, band_top); y1 = std::min(y1, band_bot);
+        if (x1 - x0 < 2 || y1 - y0 < 2) continue;
+
+        // 0xAARRGGBB assumed; if the raw preview shows a "red" box as cyan,
+        // the packing is BGR — swap the byte pairs in the constants below.
+        const uint32_t color = (d.cls == 0)  ? 0x00FF4040u  // red (person)
+                             : (d.cls == 56) ? 0x0040FF40u  // green (chair)
+                             :                0x00FFFF00u;  // yellow (other)
+
+        const im_rect r = {x0, y0, x1 - x0, y1 - y0};
+        // RGA3 hardware minimum is 2x2 px per fill op — a 1-px border
+        // fails with "unsupported operation of images smaller than 2
+        // pixels". Thickness 2 is the minimum RGA3 can draw.
+        const IM_STATUS st = imrectangle(dst, r, static_cast<int>(color),
+                                         /*thickness=*/2,
+                                         /*sync=*/1, nullptr);
+        if ((int)st <= 0) {
+            std::cerr << "RGA imrectangle failed: " << imStrError(st) << '\n';
+            return false;
+        }
+    }
+    return true;
+}

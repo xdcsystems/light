@@ -1,5 +1,8 @@
 #pragma once
 #include <cstdint>
+#include <vector>
+
+#include "yolo_postprocess.hpp"   // Detection
 
 // Resize/format conversion via im2d. Source and destination are dma-buf fds.
 // The destination is letterboxed: uniform scale by width (s = w_dst/w_src),
@@ -21,6 +24,15 @@ public:
     // a detection with y_det < lb_top() or >= lb_top() + lb_h() sits on a bar.
     int lb_top() const { return lb_top_; }
     int lb_h()   const { return lb_h_; }
+
+    // M3.6: draws 1-px detection borders directly on the tensor
+    // dma-buf (RGB888) via RGA imrectangle(). Coordinates: scene ->
+    // model via model_per_scene, y shifted by lb_top; rects are
+    // clipped to [lb_top, lb_top+lb_h) so the letterbox bars stay
+    // clean for the next inference.
+    bool draw_boxes(int tensor_fd, int w, int h,
+                    const std::vector<Detection>& dets,
+                    float model_per_scene, int lb_top);
 
 private:
     int lb_top_ = 0;

@@ -43,6 +43,31 @@ struct Timings {
     }
 } g_t;
 
+// M3.7 CPU baseline: 1-px outlines straight into the NPU tensor (RGB888),
+// same geometry (scale, lb_top) and colors as the GPU drawer. Used when the
+// GPU drawer is unavailable, or forced by --cpu-draw (A/B baseline).
+template <typename Dets>
+void draw_boxes_cpu(uint8_t* rgb, int w, int h, int stride, const Dets& dets,
+                    float scale, float lb_top) {
+    auto clamp = [](int v, int hi) { return v < 0 ? 0 : (v > hi ? hi : v); };
+    for (const auto& d : dets) {
+        const int x0 = clamp(static_cast<int>(d.x * scale), w - 1);
+        const int y0 = clamp(static_cast<int>(d.y * scale + lb_top), h - 1);
+        const int x1 = clamp(static_cast<int>((d.x + d.w) * scale), w - 1);
+        const int y1 = clamp(static_cast<int>((d.y + d.h) * scale + lb_top), h - 1);
+        uint8_t r, g, b;
+        if (d.cls == 0)        { r = 255; g = 64;  b = 64;  }  // person
+        else if (d.cls == 56)  { r = 64;  g = 255; b = 64;  }  // chair
+        else                   { r = 255; g = 255; b = 0;   }  // others
+        auto put = [&](int x, int y) {
+            uint8_t* px = rgb + static_cast<size_t>(y) * stride + x * 3;
+            px[0] = r; px[1] = g; px[2] = b;
+        };
+        for (int x = x0; x <= x1; ++x) { put(x, y0); put(x, y1); }
+        for (int y = y0; y <= y1; ++y) { put(x0, y); put(x1, y); }
+    }
+}
+
 } // namespace
 
 Pipeline::Pipeline(const Config& cfg)
@@ -83,10 +108,37 @@ Pipeline::Pipeline(const Config& cfg)
         std::cout << "net: tensor stride check: size_with_stride="
                   << ia.size_with_stride << " vs "
                   << model_w_ * model_h_ * 3 << "\n";
-        preview_.emplace(
-            model_w_, model_h_, model_w_ * 3, cfg_.net_fps, cfg_.net_port);
-        std::cout << "net: preview server on port " << cfg_.net_port
-                  << "\n";
+        if (cfg_.net_h264) {
+            if (cfg_.net_host.empty()) {
+                throw std::runtime_error(
+                    "--net-h264 (UDP) requires --net-host <pc-ip>");
+            }
+            enc_.emplace(model_w_, model_h_, cfg_.net_fps,
+                         cfg_.net_port, cfg_.net_host, cfg_.net_bitrate);
+            std::cout << "net: h264 preview on port " << cfg_.net_port
+                      << ", " << cfg_.net_bitrate << " kbps\n";
+        } else {
+            preview_.emplace(
+                model_w_, model_h_, model_w_ * 3, cfg_.net_fps, cfg_.net_port);
+            std::cout << "net: preview server on port " << cfg_.net_port
+                      << "\n";
+        }
+    }
+
+    // M3.7: GPU box drawing (Mali G610, EGL/GBM) straight into the NPU
+    // tensor. Init once, only with a preview sink active. On failure the
+    // CPU path (net_preview::draw_boxes_rgb24) stays as the fallback.
+    // --cpu-draw forces the CPU path (A/B baseline).
+    if ((preview_ || enc_) && !cfg_.cpu_draw) {
+        drawer_.emplace();
+        if (!drawer_->init() ||
+            !drawer_->attachTensor(npu_.input_fd(), model_w_, model_h_,
+                                   static_cast<uint32_t>(model_w_) * 3)) {
+            std::cerr << "pipeline: gpu drawer unavailable, RGA fallback\n";
+            drawer_.reset();
+        } else {
+            std::cout << "net: gpu box drawing active (Mali G610, EGL/GBM)\n";
+        }
     }
 
     // Aux buffer only for the two-pass path (source over 8x the model input).
@@ -196,17 +248,58 @@ int Pipeline::run() {
                               << d.w << 'x' << d.h << ")\n";
                 }
             }
-            if (preview_) {
+            if (preview_ || enc_) {
                 // Draw after run(): RGA overwrites the band next frame, so
                 // boxes never leak into inference. Cal dumps are also clean
                 // (they happen before run()).
-                NetPreview::draw_boxes_rgb24(
-                    static_cast<uint8_t*>(npu_.input_data()),
-                    model_w_, model_h_, model_w_ * 3, dets,
-                    static_cast<float>(model_w_) / cfg_.cam_w,
-                    static_cast<float>(rga_.lb_top()));
-                preview_->publish(
-                    static_cast<const uint8_t*>(npu_.input_data()));
+                // M3.7: boxes are drawn by the GPU drawer (Mali G610)
+                // on the tensor dma-buf — no CPU pixel writes in the
+                // combat path; CPU drawing is the fallback.
+                if (drawer_) {
+                    // M3.7 GPU path: same geometry and colors as the RGA
+                    // fallback below (kRed/kGreen/kYellow from net_preview).
+                    const float s = static_cast<float>(model_w_) / cfg_.cam_w;
+                    const float lb_top = static_cast<float>(rga_.lb_top());
+                    std::vector<GpuBox> boxes;
+                    boxes.reserve(dets.size());
+                    for (const auto& d : dets) {
+                        GpuBox b;
+                        b.x0 = d.x * s;
+                        b.y0 = d.y * s + lb_top;
+                        b.x1 = (d.x + d.w) * s;
+                        b.y1 = (d.y + d.h) * s + lb_top;
+                        if (b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f) continue;
+                        if (d.cls == 0)       { b.r = 255; b.g = 64;  b.b = 64;  }
+                        else if (d.cls == 56) { b.r = 64;  b.g = 255; b.b = 64;  }
+                        else                  { b.r = 255; b.g = 255; b.b = 0;   }
+                        b.a = 255;
+                        boxes.push_back(b);
+                    }
+                    drawer_->draw(boxes);
+                    // publish() reads the tensor right away (CPU in the NUT
+                    // path, RGA in the h264 path): GPU writes must land first.
+                    drawer_->syncCpu();
+                } else {
+                    // Fallback: CPU drawing. The RGA imrectangle path is
+                    // gone for good: RGA fill on RGB888 is not routable on
+                    // RK3588 (RGA3 cores cannot fill; RGA2E policy rejects
+                    // rgb888 — dmesg "invalid function policy").
+                    // --cpu-draw forces this path even when the GPU drawer
+                    // is up (A/B baseline).
+                    draw_boxes_cpu(
+                        static_cast<uint8_t*>(npu_.input_data()),
+                        model_w_, model_h_, model_w_ * 3, dets,
+                        static_cast<float>(model_w_) / cfg_.cam_w,
+                        static_cast<float>(rga_.lb_top()));
+                }
+                if (preview_) {
+                    preview_->publish(
+                        static_cast<const uint8_t*>(npu_.input_data()));
+                } else {
+                    // RGA converts the boxed tensor to NV12
+                    // (dma-buf -> dma-buf) and MPP encodes it.
+                    enc_->publish(npu_.input_fd());
+                }
             }
             ++ok;
         }

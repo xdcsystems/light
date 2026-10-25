@@ -5,3 +5,6 @@ dataset/
 *.bak
 dataset_mix/
 dataset_night/
+*.o
+*.d
+temp*.txt
