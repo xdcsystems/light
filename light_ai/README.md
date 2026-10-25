@@ -17,6 +17,11 @@ post-processing.
   member functions and data members live in SEPARATE blocks — functions
   first, then a fresh visibility label for the data. Reference:
   camera_v4l2.hpp (xioctl in its own private: block, data in the next).
+- Dynamic memory allocation is forbidden: no new/delete, no
+  std::unique_ptr/shared_ptr anywhere, no heap in recovery
+  paths. Data lives in fixed-size members; mutable identity
+  (e.g. the current camera node) lives with the owning layer.
+  Reference: camera_v4l2.hpp + pipeline.cpp.
 
 ## Layers
 - CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. G_FMT is verified
@@ -429,8 +434,8 @@ GPU drawer is up (A/B baseline; default is GPU drawing).
       re-synced via repeated PAT/PMT without a restart). Permanent
       unplug: gives up after 20 attempts, exit code 1 — verified. Known
       cosmetic (owner's call, left as is): the "scanning /dev/video*"
-      line prints on every attempt. TODO.md holds the constraint record
-      (no dynamic allocation in the recovery path).
+      line prints on every attempt. The no-heap constraint is a project rule now (see Rules of
+      the project); the refactor record is closed.
 
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
