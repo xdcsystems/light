@@ -621,6 +621,30 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       even a 10-15 ms yolov8n@640x640 fits the frame budget without
       pipelining while the source stays at 20-30 FPS).
 
+- [ ] M5: multi-camera (proposal, owner decision 2026-10-26): 3x USB
+      cameras from different room angles. Platform budget fits: 3x MJPEG
+      ~3 MB/s on the shared USB2 half, MPP decode trivial. RGA needs core
+      spreading — everything is pinned to RGA3 core0 today (imconfig);
+      three single-pass 720p->640x640 jobs want RGA3 c0/c1 + RGA2E or the
+      scheduler. NPU fits: ~3x current load is ~50% per core; pure infer
+      is 15.4 ms/frame regardless of stream count — scheduling strategy
+      (round-robin frames vs 3 RKNN contexts) is an open question.
+      Pipeline refactor: an array of cam+dec+rga chains, each with its
+      own dma-buf/tensor pool, plus a round-robin dispatcher; per-cam
+      BoxSmoother. Fusion is NOT volumetric on this NPU (BEV/3D
+      transformers are out of reach at 22 ms/infer): path A is one-time
+      geometric calibration (chessboard or 4+ known floor points per
+      camera) -> homography cam->floor plan -> box-bottom projection
+      gives per-object (x, y) in meters; cross-camera track matching by
+      world proximity + class; EMA reused as-is. Cheap first step:
+      single-camera floor projection + minimap overlay in the stream.
+      Known traps: per-camera night exposure differs -> per-cam
+      conf/gamma tuning; 10 cm of calibration error is a permanent
+      10 cm object error. Portability: moving to another room = geometry
+      recalibration per camera (lighting-independent); model INT8
+      recalibration only if the lighting regime differs materially
+      (v1->v2 precedent), conf band re-checked from logs on day one.
+
 ## INT8 vs FP32 validation (2026-10-26, yolov5s_relu_int8_v2)
 
 Purpose: verify the freshly calibrated int8 model (v2) against a float32
