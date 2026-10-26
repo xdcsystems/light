@@ -41,9 +41,14 @@ NetPreview::~NetPreview() {
     avformat_network_deinit();
 }
 
-int NetPreview::interrupt_cb(void* self) {
-    return static_cast<NetPreview*>(self)->quit_.load() ? 1 : 0;
+// ffmpeg AVIO interrupt callback (statics rule): file-local free
+// function; the opaque context carries the quit flag pointer, not
+// the object, so no private access is needed.
+namespace {
+int preview_interrupt_cb(void* arg) {
+    return static_cast<std::atomic<bool>*>(arg)->load() ? 1 : 0;
 }
+}  // anonymous namespace
 
 void NetPreview::serve() {
     std::ostringstream os;
@@ -66,7 +71,7 @@ void NetPreview::serve() {
         // the pipeline. 5 s in microseconds; also bounds the blocking
         // accept — a failed open just retries in 500 ms.
         av_dict_set(&opts, "rw_timeout", "5000000", 0);
-        AVIOInterruptCB cb = { &NetPreview::interrupt_cb, this };
+        AVIOInterruptCB cb = { &preview_interrupt_cb, &quit_ };
         AVIOContext* pb = nullptr;
         // Blocks here until a viewer connects (or the interrupt fires on quit).
         const int ret = avio_open2(&pb, url.c_str(), AVIO_FLAG_WRITE, &cb, &opts);

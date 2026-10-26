@@ -30,7 +30,6 @@ public:
 
 private:
     void serve();
-    static int interrupt_cb(void* self);
 
 private:
     const int w_, h_, stride_, fps_, port_;
