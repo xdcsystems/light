@@ -73,12 +73,18 @@ void make_current(State& s) {
     eglMakeCurrent(s.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, s.ctx);
 }
 
+namespace {
+
+// Shader sources: file-local constexpr constants (statics rule).
+constexpr const char* VS =
+    "attribute vec2 a_pos; void main(){ gl_Position=vec4(a_pos,0.,1.); }";
+constexpr const char* FS =
+    "precision mediump float; uniform vec4 u_col; "
+    "void main(){ gl_FragColor=u_col; }";
+
+}  // anonymous namespace
+
 bool make_program(State& s) {
-    static const char *VS =
-        "attribute vec2 a_pos; void main(){ gl_Position=vec4(a_pos,0.,1.); }";
-    static const char *FS =
-        "precision mediump float; uniform vec4 u_col; "
-        "void main(){ gl_FragColor=u_col; }";
     GLuint vs = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vs, 1, &VS, nullptr);
     glCompileShader(vs);
