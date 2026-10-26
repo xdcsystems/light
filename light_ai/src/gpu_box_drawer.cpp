@@ -276,21 +276,41 @@ void GpuBoxDrawer::syncCpu() {
 }
 
 void GpuBoxDrawer::done() {
-    if (st_.dpy == EGL_NO_DISPLAY) return;   // never inited: nothing to release
-    make_current();
-    if (st_.fbo) glDeleteFramebuffers(1, &st_.fbo);
-    if (st_.tex) glDeleteTextures(1, &st_.tex);
-    if (st_.img != EGL_NO_IMAGE_KHR && st_.destroy_image)
-        st_.destroy_image(st_.dpy, st_.img);
-    st_.img = EGL_NO_IMAGE_KHR;
-    st_.fbo = 0;
-    st_.tex = 0;
-    if (st_.ctx) {
-        eglMakeCurrent(st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        eglDestroyContext(st_.dpy, st_.ctx);
-        st_.ctx = nullptr;
+    if (st_.dpy != EGL_NO_DISPLAY) {
+        make_current();
+        if (st_.fbo) glDeleteFramebuffers(1, &st_.fbo);
+        if (st_.tex) glDeleteTextures(1, &st_.tex);
+        if (st_.img != EGL_NO_IMAGE_KHR && st_.destroy_image)
+            st_.destroy_image(st_.dpy, st_.img);
+        st_.img = EGL_NO_IMAGE_KHR;
+        st_.fbo = 0;
+        st_.tex = 0;
+        if (st_.ctx) {
+            eglMakeCurrent(st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+            eglDestroyContext(st_.dpy, st_.ctx);
+            st_.ctx = nullptr;
+        }
+        eglTerminate(st_.dpy);
+        st_.dpy = EGL_NO_DISPLAY;
     }
-    if (st_.dpy != EGL_NO_DISPLAY) eglTerminate(st_.dpy);
-    st_.dpy = EGL_NO_DISPLAY;
+    // GBM device outlives EGL on its fd: destroy it first, then close
+    // the fd, then drop the dlopen handle. All three were leaked by the
+    // old code on every done() (audit 2026-10-27). Unconditional: init
+    // may fail after dlopen/dlopen+open, and those handles must go too.
+    if (st_.dl_gbm) {
+        typedef void (*P_gbm_destroy_device)(void *);
+        if (st_.gbm_dev) {
+            auto destroy_dev = (P_gbm_destroy_device)dlsym(st_.dl_gbm,
+                                                           "gbm_destroy_device");
+            if (destroy_dev) destroy_dev(st_.gbm_dev);
+            st_.gbm_dev = nullptr;
+        }
+        dlclose(st_.dl_gbm);
+        st_.dl_gbm = nullptr;
+    }
+    if (st_.gbm_fd >= 0) {
+        close(st_.gbm_fd);
+        st_.gbm_fd = -1;
+    }
     ready_ = false;
 }
