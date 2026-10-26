@@ -133,7 +133,8 @@ void CameraV4L2::teardown() {
 // they would burn reconnect attempts on setup failures, and a platform
 // capture node might even accept the format while never delivering a
 // frame (no sensor attached) — a false "successful" reconnect.
-static bool usb_capture_node(const std::string& path) {
+namespace {
+bool usb_capture_node(const std::string& path) {
     const int fd = ::open(path.c_str(), O_RDONLY);
     if (fd < 0) return false;
     v4l2_capability cap{};
@@ -146,6 +147,7 @@ static bool usb_capture_node(const std::string& path) {
     ::close(fd);
     return ok;
 }
+}  // anonymous namespace (file-local helper)
 
 // Disconnect recovery: full teardown + the same setup path as startup,
 // plus STREAMON. The node is supplied by the owner (see

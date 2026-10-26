@@ -48,7 +48,7 @@ private:
     void xioctl(unsigned long req, void* arg) const;
 
 private:
-    static constexpr unsigned kBufCount = 4;
+    enum : unsigned { kBufCount = 4 };
     int fd_ = -1;
     int width_ = 0, height_ = 0;
     struct Buffer { void* start = nullptr; size_t length = 0; };
