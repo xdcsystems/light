@@ -24,7 +24,8 @@ post-processing.
   std::vector/std::string are allowed as RAII wrappers;
   manual heap ownership (raw new/delete, bare owning
   pointers) is forbidden. Reference: camera_v4l2.hpp +
-  pipeline.cpp.
+  pipeline.cpp + pod_list.hpp (fixed-capacity lists in the detection
+  path).
 - Statics are forbidden: no static data members, no static
   member functions, no function-local statics. Shared state
   lives with the owning layer as a regular member; file-local
@@ -34,6 +35,30 @@ post-processing.
   camera_v4l2.cpp / gpu_box_drawer.cpp / net_preview.cpp
   (anon-namespace helpers), box_smoother.hpp (plain member).
   tools/ is exempt (disposable probes).
+- No virtual functions, no inheritance hierarchies: zero vtables, zero
+  dynamic polymorphism. Layer boundaries are the composition of concrete
+  members (pipeline.hpp), not an interface contract. Static polymorphism
+  (templates) is the sanctioned replacement where one implementation
+  serves several types: PodList<T, N> (include/pod_list.hpp) — one
+  fixed-capacity list, two instantiations (DetList in
+  yolo_postprocess.hpp, GpuBoxList in gpu_box_drawer.hpp), zero heap.
+- const by default: member functions that do not mutate state are
+  const; parameters are passed by const-ref unless the callee owns a
+  copy. Out-parameters are plain references filled by the callee
+  (yolo_postprocess fills DetList& out — no return-value vectors in
+  the frame path).
+- Branch tables over if-chains: a multi-way dispatch on a fixed set
+  becomes a switch or a constexpr table, not a ladder. Reference:
+  det_color in pipeline.cpp (switch).
+- Preallocated buffer contract: a buffer that lives across frames
+  (a member, not a local) is NEVER implicitly empty — the callee owns
+  the reset and clears it at entry (DetList out.clear() in
+  yolo_postprocess). Converting a returned std::vector into a
+  preallocated member silently loses the "fresh vector each call"
+  semantics; the 2026-10-27 live run caught exactly that (detections
+  accumulated to the 128 cap, the box set froze, person went
+  undetected — 8ba4f74). A heap scan cannot catch this class of bug;
+  only a live visual run can.
 
 ## Layers
 - CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. G_FMT is verified
@@ -648,6 +673,31 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       (~1.5-1.7x); timing unchanged (26.2 FPS steady). Earlier ~17 px
       estimate superseded: it counted low-conf flicker
       (bottle<->vase flips, n=46 vs n=300).
+- [x] Refactor audit (owner-requested, closed 2026-10-27): a full pass
+      over the audit checklist, all findings fixed and verified live.
+      - det_color -> switch (b833867).
+      - GpuBoxDrawer: the last raw owning pointer (pimpl State*) removed,
+        State by value in the header; make_current/make_program/draw_quad
+        became member functions (State is private — anon-namespace free
+        functions lost access); zero new/delete left (1b53d11).
+      - done() leak fix: GBM device destroy + gbm_fd close + dlclose now
+        unconditional (init may fail after dlopen; the old early return
+        on dpy==NO_DISPLAY leaked all three on that path) (bf18722).
+      - DetList/GpuBoxList: PodList<T, N> template through the
+        postprocess -> smoother -> pipeline chain; per-frame detection
+        buffers are preallocated Pipeline members; signatures switched
+        to out-parameters (7c99906).
+      - Regression caught on the live run (see the buffer contract rule
+        above): fixed in 8ba4f74.
+      - Heap scan after the pass: the only real allocations are
+        rknn_engine out_attrs_/out_mems_ (init-time); zero heap traffic
+        in the steady-state per-frame path.
+      - Live verification (3000 frames, h264 pull, steady): det count
+        2-6 per frame, person tracked in and out, sum ~48 ms ~20.8 FPS —
+        parity with the M3.7-era baseline. Box jitter visibly reduced —
+        a side effect: the 32-slot tracker no longer churns on ~30
+        duplicate copies of one object per frame (the old accumulating
+        DetList fed them to BoxSmoother every frame).
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
       even a 10-15 ms yolov8n@640x640 fits the frame budget without
