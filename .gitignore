@@ -22,6 +22,3 @@ compile_commands.json
 Thumbs.db
 .DS_Store
 __pycache__/
-dataset_day2/
-dataset/
-dataset_night/

@@ -2,9 +2,9 @@ venv/
 *.whl
 *.rknn
 dataset/
-*.bak
 dataset_mix/
 dataset_night/
+dataset_day2/
 *.o
 *.d
 temp*.txt
