@@ -1,4 +1,6 @@
-misc/
+misc/*
+!misc/README.md
+!misc/*.whl
 
 # CMake
 build/
