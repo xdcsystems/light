@@ -141,10 +141,10 @@ Pipeline::Pipeline(const Config& cfg)
                   << ia.size_with_stride << " vs "
                   << model_w_ * model_h_ * 3 << "\n";
         if (cfg_.net_h264) {
-            if (cfg_.net_host.empty()) {
-                throw std::runtime_error(
-                    "--net-h264 (UDP) requires --net-host <pc-ip>");
-            }
+            // M3.5 pull: empty net_host = TCP pull server (listener
+            // on net_port, the viewer connects to the board's LAN
+            // IP); a non-empty net_host keeps the legacy UDP push
+            // to that destination.
             // M3.5: the h264 encoder consumes the NPU input tensor AFTER
             // box drawing, at the NATIVE letterbox-band size (no upscale):
             // w = model_w, h = cam_h * (model_w / cam_w) — for the default
@@ -155,8 +155,16 @@ Pipeline::Pipeline(const Config& cfg)
             enc_.emplace(model_w_, band_h, cfg_.net_fps,
                          cfg_.net_port, cfg_.net_host, cfg_.net_bitrate,
                          model_w_, model_h_);
-            std::cout << "net: h264 preview on port " << cfg_.net_port
-                      << ", " << cfg_.net_bitrate << " kbps\n";
+            if (cfg_.net_host.empty()) {
+                std::cout << "net: h264 PULL server on port "
+                          << cfg_.net_port << ", " << cfg_.net_bitrate
+                          << " kbps (viewer: ffplay tcp://<board-ip>:"
+                          << cfg_.net_port << ")\n";
+            } else {
+                std::cout << "net: h264 preview -> " << cfg_.net_host
+                          << ':' << cfg_.net_port << ", "
+                          << cfg_.net_bitrate << " kbps\n";
+            }
         } else {
             preview_.emplace(
                 model_w_, model_h_, model_w_ * 3, cfg_.net_fps, cfg_.net_port);

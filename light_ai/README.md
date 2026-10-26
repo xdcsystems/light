@@ -21,7 +21,10 @@ post-processing.
   std::unique_ptr/shared_ptr anywhere, no heap in recovery
   paths. Data lives in fixed-size members; mutable identity
   (e.g. the current camera node) lives with the owning layer.
-  Reference: camera_v4l2.hpp + pipeline.cpp.
+  std::vector/std::string are allowed as RAII wrappers;
+  manual heap ownership (raw new/delete, bare owning
+  pointers) is forbidden. Reference: camera_v4l2.hpp +
+  pipeline.cpp.
 
 ## Layers
 - CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. G_FMT is verified
@@ -76,16 +79,31 @@ post-processing.
                as rawvideo inside a NUT container, paced by --net-fps
                (default 25). VLC plays it directly (tcp://IP:1234) —
                no decoder needed on the viewer side. One viewer at a
-               time; dynamic start/stop commands are a later M3.5 step.
-- NetEncoder : h264 preview (--net-h264 --net-host <pc-ip>):
-               h264_rkmpp hardware encode (self-built ffmpeg 8.1),
-               MPEG-TS over UDP. The source is the NPU tensor AFTER
-               box drawing: RGA crops the visible letterbox band
-               (srect y=[lb_top, lb_top+lb_h)) and converts RGB888 ->
-               NV12 1:1 into its own ping-pong MPP dma-bufs — no
-               upscale, zero CPU pixels. The stream size is the
+               time. Status 2026-10-26: diagnostic viewer — the daily
+               viewer is the h264 TCP pull (NetEncoder); raw NUT runs
+               ~246 Mbps (640x640 rgb24 @ 25 fps) vs ~12 Mbps h264.
+- NetEncoder : h264 preview (--net --net-h264): h264_rkmpp hardware
+               encode (self-built ffmpeg 8.1), MPEG-TS. Transport:
+               TCP pull by default (empty --net-host — the encoder
+               listens on --net-port and the viewer connects to the
+               board's LAN IP, so the run command carries no
+               addresses); --net-host <pc-ip> keeps the legacy UDP
+               push to that destination. The source is the NPU tensor
+               AFTER box drawing: RGA crops the visible letterbox
+               band (srect y=[lb_top, lb_top+lb_h)) and converts
+               RGB888 -> NV12 1:1 into its own ping-pong MPP dma-bufs
+               — no upscale, zero CPU pixels. The stream size is the
                band's native size (640x360 for the default 1280x720
-               camera). Late joiners via repeated PAT/PMT/SDT.
+               camera). One viewer at a time; no encode until the
+               first viewer connects; a stalled viewer is dropped via
+               SO_SNDTIMEO (2 s). Late joiners via repeated
+               PAT/PMT/SDT.
+               Client (pull, product path): ffplay -fflags nobuffer
+               tcp://<board-ip>:1234
+               Client (UDP push, legacy, low latency): ffplay -fflags
+               nobuffer -flags low_delay -framedrop -probesize 32
+               -analyzeduration 0 -vf setpts=0 -f mpegts
+               udp://0.0.0.0:1234
 
 ## Platform constraints (learned the hard way, M2-prep)
 - MPP decoder: output frame buffers must be allocated with the height
@@ -107,7 +125,8 @@ post-processing.
   (see the 720p section below), although the UVC descriptor advertises
   30/1 in all modes. Forcing exposure (exposure_absolute=33) does not lift
   the ceiling — Manual exposure is a no-op on this camera, and FPS
-  pacing is a discrete firmware state (see the camera facts above). 1080p in daylight: not yet measured.
+  pacing is a discrete firmware state (see the camera facts
+  below). 1080p in daylight: not yet measured.
 - Camera is USB2-only BY SPEC (Canyon CNS-CWC5 = Sunplus 1bcf:2283,
   bcdUSB 2.00): always enumerates on the hub's USB2 half (480M),
   SuperSpeed half stays empty — normal. USB bandwidth is a non-issue
@@ -139,7 +158,7 @@ post-processing.
   The [timing] 'infer' figure is NOT pure compute:
   infer_shown = pure_infer + stall, where stall = frame interval
   minus (cam + dec + rga). All three pacing levels fit exactly:
-  30 FPS -> 21.2 shown (15.4 + 6.2 stall), 25 -> 24.6 (15.4 + 9.4),
+  30 FPS -> 21.2 shown (15.4 + 5.8 stall), 25 -> 24.6 (15.4 + 9.2),
   20 -> 30.6 (15.4 + 15.2). Serial work sum is ~34.5 ms/frame ->
   SoC ceiling ~29 FPS even with a perfect 30-FPS camera (~6 ms
   slack at 30). NPU load during a 20-FPS run: ~14% per core
@@ -162,16 +181,21 @@ post-processing.
   ("calibration dump failed"). Clean it up between sudo and non-sudo runs.
 - yolov5 .rknn outputs are native fp16 (float16, NCHW) — no CPU-side
   dequantization needed; the lite-runtime wraps them as float32.
-- int8-quantized yolov5s_relu_int8.rknn: calibrated on 50 night frames
-  (--cal 50 --cal-interval 4), built with rknn-toolkit2 2.5.0 on Colab.
+- int8-quantized yolov5s_relu_int8.rknn: built with rknn-toolkit2 2.5.0
+  on Colab. v1: calibrated on 50 night frames (--cal 50 --cal-interval 4);
+  v2 (current): recalibrated on dataset_mix (25 day + 25 night frames) —
+  see INT8 vs FP32 validation.
   MmseQuant2 is memory-hungry: 50 samples fit in 12 GB, 200 OOM. Outputs
   are int8 (per-channel scale/zp) — RknnEngine requests fp16 conversion
   via set_io_mem, the runtime dequantizes into the zero-copy buffer.
-  Input: zp=-128, scale=0.00436174 (not 1/255 — scale was derived from
-  the night-frame distribution), so raw RGB byte writes remain correct.
+  Input: zp=-128, scale=0.00436174 (not 1/255 — fitted from the
+  calibration distribution; confirmed present in the v2 model
+  file, byte-level, 2026-10-26), so raw RGB byte writes remain
+  correct.
   A/B vs fp16 (daylight, 720p, conf 0.25): infer 43.1 -> 28.1 ms (~1.55x),
-  classes and boxes match within a few px, conf drop ~0.02. Night
-  re-check pending.
+  classes and boxes match within a few px, conf drop ~0.02. Night A/B:
+  done on v1 (verdict ALARM, superseded by v2 recalibration), pending
+  on v2 (M2.4).
 - yolov5s_relu output semantics (probed on a real night frame,
   scripts/probe_yolo.py): ALL 255 channels are already post-sigmoid
   (range 0..1, box channels included) — the export applied the full
@@ -240,11 +264,11 @@ second of the run.
 infer=46.9-47.7 ms dominates; cam drops to ~10 ms (the V4L2 queue absorbs
 the NPU latency). Steady state ~16.8 FPS at 720p evening. The pipeline is
 now NPU-bound: pipelining (M4) would no longer change FPS, only infer
-headroom does. The 47 ms figure motivated the yolov8n alternative — tested and closed
-negative in M2-alt below.
+headroom does. The 47 ms figure motivated the yolov8n alternative —
+tested and closed negative in M2-alt below.
 
 ## Measured performance (1280x720 MJPEG, yolov5s_relu_int8 @ 640x640,
-## steady state, viewer connected)
+steady state, viewer connected)
 
 Sum ~38 ms -> ~26 FPS steady (infer ~35-36 ms dominates). The overall
 run average (~17-18 FPS) includes the viewer-less warmup where cam
@@ -261,14 +285,23 @@ and costs zero CPU writes into the NPU tensor.
 - scripts/probe_yolo.py     — output semantics probe on a real /tmp/cal.ppm
   frame (per-head box/obj/cls ranges, hot-cell counts). Feeds the model a
   4-dim input (img[None]).
+- tools/save_board_csv.py   — RKNNLite predictions dump (board_preds.csv).
+- tools/compare.py + tools/list_missed.py — INT8 vs FP32 comparison
+  (IoU>0.5 + class match, mean |dscore|); see INT8 vs FP32 validation.
+- tools/probe_dark_heads.py, probe_gamma_sweep.py, probe_adaptive.py,
+  probe_gamma3_det.py — dark-frame probes (see Night session findings;
+  gamma3 results in gamma3_det.csv).
+- tools/peek_dark.py — renders the reference dark frames to PNG
+  (dataset_night/, hardcoded triple, ignores CLI args); dark-band
+  stats are printed separately.
 
 ## Build
     ./scripts/build.sh
 
 ## Run
     sudo LD_LIBRARY_PATH=/usr/local/lib ./build/light_ai \
-        --device /dev/video20 --model ./yolov5s_relu_int8.rknn --frames 3000 \
-        --net --net-h264 --net-host 192.168.1.5 --core 7
+        --device /dev/video20 --model ./yolov5s_relu_int8_v2.rknn --frames 3000 \
+        --net --net-h264 --core 7
 
 Defaults: /dev/video20, 1280x720 MJPEG; the model default is still the M1
 mobilenet_v1 relic — always pass --model for detection runs. A missing
@@ -288,18 +321,23 @@ silent zero).
 
 --net enables the preview server (NUT container, raw model-input
 rgb24, tcp port 1234); --net-fps N paces the stream (default 25).
---net-h264 --net-host <pc-ip> switches the preview to the h264 path
-(h264_rkmpp, MPEG-TS over UDP to <pc-ip>:--net-port, default 1234):
-the stream is the letterbox band at its native size (640x360 for
-the default 1280x720 camera), with YOLO boxes drawn in. Bitrate via
---net-bitrate (default 12000 kbps; 2500 is plenty for 640x360).
-Viewer (low-latency, M3.9): ffplay -fflags nobuffer -flags
-low_delay -framedrop -probesize 32 -analyzeduration 0
--vf setpts=0 -f mpegts udp://0.0.0.0:1234 — an explicit IPv4 bind
-is required on Windows hosts (udp://@:1234 binds :: / IPv6 and
-silently receives no IPv4 packets; verified with
-Get-NetUDPEndpoint). --cpu-draw forces CPU box drawing even when the
-GPU drawer is up (A/B baseline; default is GPU drawing).
+--net-h264 switches the preview to the h264 path (h264_rkmpp,
+MPEG-TS): the stream is the letterbox band at its native size
+(640x360 for the default 1280x720 camera), with YOLO boxes drawn
+in. Transport: TCP pull by default — the board listens on
+--net-port (default 1234), the viewer connects by the board's LAN
+IP; --net-host <pc-ip> switches to the legacy UDP push to that
+destination. Bitrate via --net-bitrate (default 12000 kbps; 2500
+is plenty for 640x360).
+Viewer (pull, product path): ffplay -fflags nobuffer
+tcp://<board-ip>:1234
+Viewer (UDP push, legacy, low-latency, M3.9): ffplay -fflags
+nobuffer -flags low_delay -framedrop -probesize 32
+-analyzeduration 0 -vf setpts=0 -f mpegts udp://0.0.0.0:1234 — an
+explicit IPv4 bind is required on Windows hosts (udp://@:1234
+binds :: / IPv6 and silently receives no IPv4 packets; verified
+with Get-NetUDPEndpoint). --cpu-draw forces CPU box drawing even
+when the GPU drawer is up (A/B baseline; default is GPU drawing).
 
 ## Roadmap
 - [x] M1: baseline run with mobilenet_v1, honest FPS measurement.
@@ -334,9 +372,11 @@ GPU drawer is up (A/B baseline; default is GPU drawing).
 - [x] M2.3: readable report (COCO-80 class names), CLI --conf/--iou with
       validation; cleanup: class-aware NMS, symmetric box clamping, letterbox
       geometry now read from RgaResizer (single source of truth).
-- [x] M2.4: int8 quantization (OPEN: night recalibration pending) — infer 43.1 -> 28.1 ms (~1.55x), detection
-      quality matches fp16 (same classes, boxes within a few px, conf
-      -0.02); build recipe and caveats in Platform constraints.
+- [x] M2.4: int8 quantization (OPEN: night A/B re-run on v2
+      pending; recalibration DONE — see INT8 vs FP32 validation)
+      — infer 43.1 -> 28.1 ms (~1.55x), detection quality matches
+      fp16 (same classes, boxes within a few px, conf -0.02);
+      build recipe and caveats in Platform constraints.
       Night A/B (target scene, 300 frames each, --core 7): classes
       100% matched, 0 phantoms / 0 misses, infer 24.7 vs 29.2 ms
       (~15%), FPS identical (~25, source-bound). BUT: dconf mean
@@ -345,7 +385,9 @@ GPU drawer is up (A/B baseline; default is GPU drawing).
       of fp16), chair width -18 px; chair x unchanged. compare_night
       verdict ALARM — M2.4 stays open. Candidate cause: calibration
       dataset from a different night lighting; fresh night dataset
-      collected, recalibration pending (path B). Fallback decision
+      collected, recalibration DONE (v2, 2026-10-26 — see INT8 vs
+      FP32 validation; v1 ALARM superseded, night A/B re-run
+      pending). Fallback decision
       (path A): accept with --conf 0.21 for int8 night runs and a
       documented box-shift tolerance.
 - [x] M2.5: multi-core NPU infer (--core, rknn_set_core_mask) — measured.
@@ -388,60 +430,89 @@ GPU drawer is up (A/B baseline; default is GPU drawing).
       for this task. The ~5 ms projected infer saving does not buy back
       the recall risk. 640x640 stays; model-side resize levers are
       exhausted — remaining FPS levers are on the platform side.
-- [ ] M3.5: netsend — network preview subsystem (design agreed 2026-10-24,
-      awaiting go). New net/ family: NetControl (TCP listener, iostream,
-      commands on/off/fps/quality — dynamic start/stop without restart),
-      FrameTap (tap the full 1280x720 frame after MPP decode, before RGA
-      letterbox; the frame goes to the encoder AS-IS — no RGA2 pass needed,
-      RGA3 stays pinned to the model), NetEncoder (libavcodec h264_rkmpp
-      wrapper — the self-built ffmpeg d90e3a1c18 has rkmpp ENCODERS, the
-      hardware does the encode, zero-CPU like the MPP decoder; encoder
-      accepts nv16 == our YUV422SP, smoke-tested 720p lavfi: 60 frames,
-      20.4x at nv12 / 12.4x at nv16, valid MPEG-TS out; rc_mode
-      VBR/CBR/CQP, qp_*, intra-refresh available — but the LIVE encoder
-      rejected rc_mode, see Platform constraints), NetSink (phase A:
-      MPEG-TS over UDP -> VLC 'udp://@:1234', ~1-2 s latency; phase B:
-      RTSP; phase C: WebRTC via libdatachannel only if remote access is
-      ever needed). H.264 packets = second legal memcpy alongside the
-      MJPEG packet. nv16 path still to be confirmed on live camera
-      frames. Preview path is strictly opt-in, never part of the
-      standard run or benchmarks. Open questions: transport phase,
-      port (1234/UDP proposed), LAN trust model. Priority vs M4: owner
-      decision — if netsend is a working tool, it goes first (it is also
-      the debug tool for M4).
-      Status 2026-10-24: phase A landed as a raw path, not the
-      designed h264_rkmpp one — NUT container with rawvideo rgb24 over
-      TCP:1234 (--net, --net-fps), libavformat 62 from the self-built
-      ffmpeg 8.1 (ABI pin, see Platform constraints). Verified
-      end-to-end in VLC: correct letterboxed frame with YOLO overlays.
-      Current tap is the model input (640x640), not the designed full
-      1280x720 frame — moving the tap upstream is remaining phase-A
-      work. Status 2026-10-25: live streaming verified — viewers see
-      continuous frames with YOLO overlays; the earlier "first frame
-      only" issue is no longer observed.
-      h264_rkmpp MPEG-TS/UDP landed (same evening) as the tensor
-      path: the encoder publishes the NPU input tensor AFTER GPU
-      box drawing (syncCpu before publish — the RGA read sees
-      finished pixels), crops the visible letterbox band (srect
-      y=[140,500) for the 640x640 tensor) and converts
-      RGB888->NV12 1:1 into its own ping-pong NV12 dma-bufs. The
-      stream is the band at its NATIVE size — 640x360 for
-      1280x720, no upscale (the x2 upscale was tried first and
-      dropped: it adds no detail, only bitrate and RGA work).
-      Boxes ride into the stream for free; publish_full_frame
-      stays in the code (clean stream, no overlays) but is
-      unused by the pipeline. The publish-interface split from
-      the design note is resolved: both paths are fd-based.
-      Muxer patch for late joiners: mpegts_flags
-      +pat_pmt_at_frames, pat_period 0.1, sdt_period 0.25.
-      Viewer-side lesson: on Windows, ffplay udp://@:1234 binds
-      :: (IPv6) and receives nothing — bind udp://0.0.0.0:1234
-      explicitly (verified via Get-NetUDPEndpoint). Measured:
-      600-frame run, steady ~48 ms sum (~20.8 FPS evening), the
-      encode does not stall the pipeline. A benign-looking
-      mpp_buffer ref_count warning appears at shutdown on the
-      rkmpp-encoder path (unrelated to the known init assert) —
-      watch on future runs. NetControl commands remain open.
+- [ ] M3.5: netsend — network preview subsystem (design agreed
+      2026-10-24). STATUS 2026-10-26 (day session, v2 model): phase A
+      LIVE on both transports, PULL is the product.
+      - h264 TCP pull (product path, VERIFIED live 2026-10-26):
+        net_encoder listens on --net-port (default 1234), the viewer
+        connects ffplay -fflags nobuffer tcp://<board-ip>:1234; the
+        run command carries no addresses. One viewer; no encode until
+        the first viewer connects (publish() sees a null context);
+        a stalled viewer is dropped via SO_SNDTIMEO (2 s), a viewer
+        drop reopens the listener without touching the pipeline.
+        Live log confirmed: listener up before the viewer, "viewer
+        connected" at connect time, pipeline steady (~26 FPS,
+        sum ~38 ms).
+      - Raw NUT (tensor path, --net): TCP server, 640x640 letterboxed
+        rgb24; verified end-to-end in VLC. Demoted to diagnostic duty
+        2026-10-26: ~246 Mbps (640x640 rgb24 @ 25 fps) vs ~12 Mbps
+        h264 (default CBR; 2500 kbps is plenty) — fine for
+        pixel-accurate debugging, but saturates a LAN link.
+      - UDP push (--net-host <pc-ip>) stays the legacy opt-in (the
+        Windows IPv6-bind lesson below applies to push mode only).
+      NOT yet implemented: NetControl — the run is still configured
+      by CLI flags, restart per change. Scope additions (owner
+      request 2026-10-26): (1) NetControl priority raised —
+      on/off/fps/quality (low/mid/high -> bitrate/fps mapping) +
+      status, control TCP port next to the stream port; (2) owner
+      decision: PULL model is the product, push-unicast stays an
+      optional flag; (3) the early open questions are resolved by the
+      same decision: transport = pull (push optional), port 1234,
+      LAN trust model stands. RTSP phase B is the next transport
+      target — h264, many viewers, standard player UX
+      (rtsp://<board>:8554/live). NetControl commands
+      (on/off/fps/quality/status) apply to whichever pull server is
+      active. FrameTap full-frame path (publish_full_frame) sits in
+      the code, clean stream without overlays, unused by the
+      pipeline — reconcile during NetControl work.
+      net/ family (design): NetControl (TCP listener, iostream,
+      commands on/off/fps/quality — dynamic start/stop without
+      restart), FrameTap (tap the full 1280x720 frame after MPP
+      decode, before RGA letterbox; the frame goes to the encoder
+      AS-IS — no RGA2 pass needed, RGA3 stays pinned to the model),
+      NetEncoder (libavcodec h264_rkmpp wrapper — the self-built
+      ffmpeg d90e3a1c18 has rkmpp ENCODERS, the hardware does the
+      encode, zero-CPU like the MPP decoder; encoder accepts nv16 ==
+      our YUV422SP, smoke-tested 720p lavfi: 60 frames, 20.4x at
+      nv12 / 12.4x at nv16, valid MPEG-TS out; rc_mode VBR/CBR/CQP,
+      qp_*, intra-refresh available — the LIVE encoder rejected
+      rc_mode, see Platform constraints), NetSink (phase B: RTSP;
+      phase C: WebRTC via libdatachannel only if remote access is
+      ever needed). H.264 packets = second legal memcpy alongside
+      the MJPEG packet. nv16 path still to be confirmed on live
+      camera frames. Preview path is strictly opt-in, never part of
+      the standard run or benchmarks. Priority vs M4: owner decision
+      — if netsend is a working tool, it goes first (it is also the
+      debug tool for M4).
+      History (dated facts kept as recorded):
+      - 2026-10-24: phase A landed as raw NUT over TCP:1234, not the
+        designed h264 first (libavformat 62 from the self-built
+        ffmpeg 8.1, ABI pin, see Platform constraints); the tap was
+        the 640x640 model input — the designed full-frame tap exists
+        now as publish_full_frame (unused, see above).
+      - 2026-10-25: live streaming verified (continuous frames with
+        YOLO overlays; the earlier "first frame only" issue gone).
+        h264_rkmpp MPEG-TS/UDP landed as the tensor path: the
+        encoder publishes the NPU input tensor AFTER GPU box drawing
+        (syncCpu before publish), crops the visible letterbox band
+        (srect y=[140,500) for the 640x640 tensor) and converts
+        RGB888->NV12 1:1 into its own ping-pong NV12 dma-bufs. The
+        stream is the band at its NATIVE size — 640x360 for 1280x720,
+        no upscale (the x2 upscale was tried first and dropped: adds
+        no detail, only bitrate and RGA work). Boxes ride into the
+        stream for free. Muxer patch for late joiners: mpegts_flags
+        +pat_pmt_at_frames, pat_period 0.1, sdt_period 0.25.
+        Measured: 600-frame run, steady ~48 ms sum (~20.8 FPS
+        evening), the encode does not stall the pipeline.
+      - Viewer-side lesson (UDP push, Windows): ffplay udp://@:1234
+        binds :: (IPv6) and receives nothing — bind
+        udp://0.0.0.0:1234 explicitly (verified via
+        Get-NetUDPEndpoint). The 2026-10-25 UDP latency closure is
+        M3.9, player-side.
+      - A benign-looking mpp_buffer ref_count warning appears at
+        shutdown on the rkmpp-encoder path (unrelated to the known
+        init assert) — watch on future runs. Seen again on the
+        2026-10-26 pull run, still benign.
 - [x] M3.6 (closed negative): box drawing via RGA — planned, probed
       live with yolov5 detections, retired. The open check (a) turned
       out fatal: RGA fill is not routable on this board (see Platform
@@ -488,7 +559,8 @@ GPU drawer is up (A/B baseline; default is GPU drawing).
       re-synced via repeated PAT/PMT without a restart). Permanent
       unplug: gives up after 20 attempts, exit code 1 — verified. Known
       cosmetic (owner's call, left as is): the "scanning /dev/video*"
-      line prints on every attempt. The no-heap constraint is a project rule now (see Rules of
+      line prints on every attempt. The no-heap constraint is a
+      project rule now (see Rules of
       the project); the refactor record is closed.
       Post-recovery artifacts fixed (2026-10-25): a dying camera can
       emit a zero-size buffer and mid-stream JPEG fragments; MPP may
@@ -521,11 +593,121 @@ GPU drawer is up (A/B baseline; default is GPU drawing).
       ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32
       -analyzeduration 0 -vf setpts=0 -f mpegts udp://0.0.0.0:1234
       (confirmed live: lag dropped drastically, hand-wave test). No code
-      changes. Follow-up if backlog ever accumulates: source pts from
+      changes. Update 2026-10-26: with the h264 TCP pull the same
+      no-buffering principles apply; the pull viewer command
+      (ffplay -fflags nobuffer tcp://<board-ip>:1234) needs no input
+      format flags — ffplay autodetects MPEG-TS. Follow-up if backlog
+      ever accumulates: source pts from
       camera wallclock instead of the fixed 3600-tick step (21-26 real
       FPS vs 25 declared); muxer omit_video_pes_length stays untouched.
 
+- [ ] M3.10: detection smoothing — EMA on box coords over 3-5
+      frames (added 2026-10-26). Day h264-stream session: boxes
+      hold objects confidently but tremble ~17 px on the 640x360
+      tensor band (~2.7% width); conf stays stable, so jitter is
+      frame-to-frame model noise, no temporal filtering yet.
+      Near-free fix, schedule after M3.5.
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
       even a 10-15 ms yolov8n@640x640 fits the frame budget without
       pipelining while the source stays at 20-30 FPS).
+
+## INT8 vs FP32 validation (2026-10-26, yolov5s_relu_int8_v2)
+
+Purpose: verify the freshly calibrated int8 model (v2) against a float32
+reference on identical inputs — quantization verdict for the M2.4 re-check
+(path B). The v1 ALARM (box shift ~17 px, dconf -0.04) predates this
+recalibration; this section documents v2.
+
+Methodology:
+- 50 calibration frames (n1_cal_*/n2_cal_*), 640x640, same gamma-2.0 -> uint8
+  -> /255 preprocessing on both sides.
+- FP32 reference: yolov5s_relu.onnx via onnxruntime (Colab), artifacts
+  ref_preds.csv; INT8: RKNNLite on board, tools/save_board_csv.py ->
+  board_preds.csv; comparison tools/compare.py + tools/list_missed.py
+  (IoU>0.5 + class match, mean |dscore|).
+
+Pitfall learned: the ONNX model does NOT normalize its input (rknn divides
+by 255 internally, std=255 in the quant config). Feeding raw 0..255 to
+onnxruntime saturates the model -> hundreds of phantom detections. Input
+must be 0..1.
+
+Results:
+
+| conf (both) | FP32 det | INT8 det | matched | missed | extra | mean \|dscore\| |
+|---|---|---|---|---|---|---|
+| 0.25 | 89 | 89 | 86 (96.6%) | 3 | 3 | 0.028 |
+| 0.25 ref / 0.18 int8 | 89 | 98 | 89 (100%) | 0 | 9 | 0.028 |
+| 0.18 | 101 | 98 | 97 (96.0%) | 4 | 1 | 0.028 |
+
+Conclusions:
+- v2 INT8 == FP32 within noise: mean |dscore| 0.028 at both thresholds, box
+  geometry matches to a pixel, no loss of any detection with score >= 0.30.
+  All discrepancies sit in the 0.18-0.29 band (threshold-edge candidates).
+  Missed at 0.25: cls58 (0.2509/0.2874/0.2561). Missed at 0.18: cls75
+  (0.1831), cls39 (0.1893), cls58 (0.2205), cls41 (0.1825) — FP32 scores,
+  i.e. objects the FP32 model itself was unsure about.
+- Lowering the board conf to 0.18 pulls those edge candidates back; the 9
+  "extra" detections at 0.18 are stable recurring objects (same boxes across
+  frames: cls39 at ~(249,368)-(259,396), cls58 at ~(295,376)-(347,482)), not
+  noise. Working conf for the board: 0.18-0.20.
+- v1 box-shift ALARM is superseded for v2: no systematic shift on the
+  calibration set (within-pixel agreement). M2.4 night A/B should be
+  re-run on v2 before closing it — the ALARM verdict above applied to the
+  v1 model.
+- Dark blindness (n2_cal_0096, n2_cal_0152: 0 detections) is identical in
+  FP32 and INT8 — quantization-independent, a data/scene problem.
+- Class-flip observation: the recurring object at ~(248,366)-(260,396) gets
+  cls75/cls39/cls41 across frames; verify against ground-truth labels later.
+
+## Night session findings (2026-10-26): dark frames and gamma verdict
+
+Dataset map (owner's clarification):
+- dataset/        — DAYTIME calibration dump, day 2, fixed
+  pipeline (no row tears).
+- dataset_night/  — NIGHT calibration dump, day 1, the buggy
+  pipeline that periodically produced row-tear artifacts.
+  Hardest conditions for the model; all gamma probes ran on it.
+- dataset_mix/    — calibration dump assembled proportionally
+  from day-2 and night-1 frames; THE calibration set of
+  int8_v2 / int8_mmse (50 frames: n1_cal_* every 2nd of 50,
+  n2_cal_* every 8th of 200).
+- There is NO retrained FP32. The earlier session note "model
+  retrained on dataset_mix" was wrong: dataset_mix is a
+  calibration set (unlabeled dumps), Colab has no runs/, no
+  best.pt/last.pt exists. Any future training on night scenes
+  needs labeled data.
+
+Dark-frame classes (night_survey*.py, probe_dark_heads.py,
+probe_gamma_sweep.py):
+- "alive in darkness": cal_0037 (band median 3, max_obj 0.83),
+  cal_0149, cal_0065 —
+  backlight: dark silhouette against a bright doorway; the model sees these.
+- "revive under extra gamma": cal_0096, cal_0152 — signal exists, outside the
+  training domain; gamma 3.0 brings them back.
+- "dead regardless": cal_0067 (person very close to camera, max
+  scale + heavy row tears), cal_0068 (confirmed visually: row
+  tears across the whole frame, scene unreadable — legacy-dump
+  quality, not the camera). Untreatable by gamma; future
+  treatment is data (needs labeling).
+
+Gamma 3.0 verdict (tools/probe_gamma3_det.py, int8_v2, full decode+NMS, band
+[140,500) filter, results in gamma3_det.csv):
+- Total gamma is negative for BOTH domains: dark — coverage up
+  (131 -> 142 frames with detections) but detections down
+  310 -> 261 (-16%), the stable recurring plant (cls58, 28
+  consecutive frames) dies entirely; bright — count ~flat but
+  mean conf drops (0.448 -> 0.382 @0.18), -19 detections @0.25.
+- Conditional gamma (dark only): +14 revived frames (incl. cal_0030 person 0.81
+  confirmed visually: real backlit silhouette (person) in
+  doorway + potted plant, row-tear artifacts present,
+  cal_0047/0100/0152 chairs 0.4-0.6) minus 3 fully killed
+  frames and ~50 detections; also noise revivals (cal_0154 cls13 0.45).
+- VERDICT (owner's decision): conditional gamma 3.0 NOT adopted — "considered;
+  detection A/B: insufficient gain for the loss of a stable
+  class". A gamma change would also require a fresh calibration
+  anyway (scale 0.00436174 is fitted to the
+  old distribution).
+- Adaptive gain by band median stays rejected (probe_adaptive.py).
+- Remaining dark-frame lever: fresh clean night dump -> v3 recalibration (M2.4).
+

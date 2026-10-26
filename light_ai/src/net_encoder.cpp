@@ -2,6 +2,14 @@
 #include <cstring>
 #include <iostream>
 #include <sstream>
+#include <arpa/inet.h>
+#include <cerrno>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #include <im2d.h>
 #include <rga.h>
@@ -22,6 +30,31 @@ extern "C" {
 namespace {
 
 void noop_free(void*, uint8_t*) {}
+
+
+// M3.5 pull: avio write callback поверх принятого TCP-сокета.
+int tcp_write_cb(void* opaque, const uint8_t* buf, int buf_size) {
+    const int fd = *static_cast<int*>(opaque);
+    const ssize_t n = ::send(fd, buf, static_cast<size_t>(buf_size), MSG_NOSIGNAL);
+    return n <= 0 ? AVERROR(EIO) : static_cast<int>(n);
+}
+
+int open_listener(int port) {
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    int one = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0 ||
+        ::listen(fd, 1) < 0) {
+        ::close(fd);
+        return -1;
+    }
+    return fd;
+}
 
 } // namespace
 
@@ -117,44 +150,101 @@ NetEncoder::~NetEncoder() {
 }
 
 void NetEncoder::serve() {
-    std::ostringstream os;
-    os << "udp://" << host_ << ':' << port_ << "?pkt_size=1316";
-    const std::string url = os.str();
+    // Пустой host_ = pull-режим: слушаем TCP, зритель подключается сам.
+    const bool tcp_pull = host_.empty();
+    const std::string url = tcp_pull
+        ? std::string()
+        : ("udp://" + host_ + ':' + std::to_string(port_) + "?pkt_size=1316");
+
+    int lfd = -1;
+    if (tcp_pull) {
+        lfd = open_listener(port_);
+        if (lfd < 0) {
+            std::cerr << "enc: tcp listener bind failed on port " << port_ << '\n';
+            error_.store(true);
+            return;
+        }
+        std::cout << "enc: PULL mode: listening on tcp port " << port_
+                  << " (viewer: ffplay -fflags nobuffer tcp://<board-ip>:"
+                  << port_ << ")\n";
+    }
 
     while (!quit_.load()) {
         error_.store(false);
 
         AVFormatContext* fc = nullptr;
-        if (avformat_alloc_output_context2(&fc, nullptr, "mpegts", url.c_str()) < 0 || !fc) {
+        if (avformat_alloc_output_context2(&fc, nullptr, "mpegts",
+                                           tcp_pull ? nullptr : url.c_str()) < 0 || !fc) {
             std::cerr << "enc: avformat_alloc_output_context2 failed\n";
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             continue;
         }
 
         AVIOContext* pb = nullptr;
-        // UDP: no handshake, no listener — the socket is opened once and
-        // packets are pushed whether a viewer listens or not.
-        const int ret = avio_open(&pb, url.c_str(), AVIO_FLAG_WRITE);
-        if (ret < 0) {
-            char err[64];
-            av_strerror(ret, err, sizeof(err));
-            std::cerr << "enc: udp open failed: " << err << '\n';
-            avformat_free_context(fc);
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            continue;
+        uint8_t* iobuf = nullptr;
+        int cfd = -1;
+
+        auto close_transport = [&]() {
+            if (tcp_pull) {
+                if (pb) avio_context_free(&pb);
+                if (iobuf) { av_free(iobuf); iobuf = nullptr; }
+                if (cfd >= 0) { ::close(cfd); cfd = -1; }
+            } else if (pb) {
+                avio_closep(&pb);
+            }
+        };
+
+        if (tcp_pull) {
+            // Ждём зрителя; poll не даёт циклу крутиться вхолостую и не
+            // блокирует выход по quit_.
+            pollfd pf{};
+            pf.fd = lfd;
+            pf.events = POLLIN;
+            while (!quit_.load() && ::poll(&pf, 1, 200) == 0) {}
+            if (quit_.load()) { avformat_free_context(fc); break; }
+            cfd = ::accept(lfd, nullptr, nullptr);
+            if (cfd < 0) { avformat_free_context(fc); continue; }
+            int one = 1;
+            ::setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+            const int sndbuf = 262144;   // запас на микроподлагивания сети
+            ::setsockopt(cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+            const timeval tv{2, 0};      // зависший зритель отваливается, а не морозит конвейер
+            ::setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+            std::cout << "enc: viewer connected (tcp)\n";
+
+            iobuf = static_cast<uint8_t*>(av_malloc(32768));
+            pb = iobuf ? avio_alloc_context(iobuf, 32768, 1, &cfd,
+                                            nullptr, tcp_write_cb, nullptr)
+                       : nullptr;
+            if (!pb) {
+                if (iobuf) av_free(iobuf);
+                ::close(cfd);
+                avformat_free_context(fc);
+                continue;
+            }
+            fc->pb = pb;
+            fc->flags |= AVFMT_FLAG_CUSTOM_IO;
+        } else {
+            // UDP: без рукопожатия и слушателя — сокет открывается один
+            // раз, пакеты пушатся вне зависимости от зрителя.
+            const int ret = avio_open(&pb, url.c_str(), AVIO_FLAG_WRITE);
+            if (ret < 0) {
+                char err[64];
+                av_strerror(ret, err, sizeof(err));
+                std::cerr << "enc: udp open failed: " << err << '\n';
+                avformat_free_context(fc);
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                continue;
+            }
+            fc->pb = pb;
         }
-        fc->pb = pb;
 
         AVStream* st = avformat_new_stream(fc, nullptr);
-        if (!st) {
-            avio_closep(&pb);
-            avformat_free_context(fc);
-            continue;
-        }
+        if (!st) { close_transport(); avformat_free_context(fc); continue; }
         if (!st->codecpar) {
             st->codecpar = avcodec_parameters_alloc();
             if (!st->codecpar) {
-                avio_closep(&pb);
+                close_transport();
                 avformat_free_context(fc);
                 continue;
             }
@@ -172,7 +262,7 @@ void NetEncoder::serve() {
         // мог подключиться в любой момент, а не только на старте потока.
         AVDictionary* mux_opts = nullptr;
         av_dict_set(&mux_opts, "mpegts_flags", "+pat_pmt_at_frames", 0);
-        av_dict_set(&mux_opts, "pat_period",   "0.1",  0);  // PAT/PMT каждые 100 мс
+        av_dict_set(&mux_opts, "pat_period",   "0.1",  0);
         av_dict_set(&mux_opts, "sdt_period",   "0.25", 0);
         int ret2 = avformat_write_header(fc, &mux_opts);
         av_dict_free(&mux_opts);
@@ -180,7 +270,7 @@ void NetEncoder::serve() {
             char err[64];
             av_strerror(ret2, err, sizeof(err));
             std::cerr << "enc: write_header failed: " << err << '\n';
-            avio_closep(&pb);
+            close_transport();
             avformat_free_context(fc);
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             continue;
@@ -190,8 +280,13 @@ void NetEncoder::serve() {
         if (frame_step_ < 1) frame_step_ = 1;
         std::cout << "enc: stream time_base " << tb.num << '/' << tb.den
                   << ", pts step " << frame_step_ << "\n";
-        std::cout << "enc: udp streaming " << w_ << 'x' << h_
-                  << " h264 (mpegts) -> " << host_ << ':' << port_ << '\n';
+        if (tcp_pull) {
+            std::cout << "enc: tcp pull streaming " << w_ << 'x' << h_
+                      << " h264 (mpegts) on port " << port_ << '\n';
+        } else {
+            std::cout << "enc: udp streaming " << w_ << 'x' << h_
+                      << " h264 (mpegts) -> " << host_ << ':' << port_ << '\n';
+        }
 
         {
             std::lock_guard<std::mutex> lk(mx_);
@@ -201,7 +296,7 @@ void NetEncoder::serve() {
         }
 
         // Park until quit or a write error; UDP writes do not block on a
-        // dead viewer, so a drop just falls out on the next write failure.
+        // dead viewer, TCP drops the stalled one via SO_SNDTIMEO.
         {
             std::unique_lock<std::mutex> lk(mx_);
             cv_.wait(lk, [this] { return quit_.load() || error_.load(); });
@@ -212,13 +307,16 @@ void NetEncoder::serve() {
             st_ = nullptr;
         }
         av_write_trailer(fc);   // best effort
-        avio_closep(&pb);
+        close_transport();
         avformat_free_context(fc);
         if (!quit_.load()) {
-            std::cout << "enc: udp path reset, reopening in 500 ms\n";
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            std::cout << (tcp_pull ? "enc: viewer gone, waiting for the next one\n"
+                                   : "enc: udp path reset, reopening in 500 ms\n");
+            if (!tcp_pull)
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
     }
+    if (lfd >= 0) ::close(lfd);
 }
 
 void NetEncoder::publish(int tensor_fd) {
