@@ -25,6 +25,15 @@ post-processing.
   manual heap ownership (raw new/delete, bare owning
   pointers) is forbidden. Reference: camera_v4l2.hpp +
   pipeline.cpp.
+- Statics are forbidden: no static data members, no static
+  member functions, no function-local statics. Shared state
+  lives with the owning layer as a regular member; file-local
+  helpers become free functions inside an anonymous namespace
+  in the layer's .cpp. Compile-time class constants use an
+  unscoped enum (camera_v4l2.hpp kBufCount); references:
+  camera_v4l2.cpp / gpu_box_drawer.cpp / net_preview.cpp
+  (anon-namespace helpers), box_smoother.hpp (plain member).
+  tools/ is exempt (disposable probes).
 
 ## Layers
 - CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. G_FMT is verified
