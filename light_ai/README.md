@@ -270,10 +270,14 @@ tested and closed negative in M2-alt below.
 ## Measured performance (1280x720 MJPEG, yolov5s_relu_int8 @ 640x640,
 steady state, viewer connected)
 
-Sum ~38 ms -> ~26 FPS steady (infer ~35-36 ms dominates). The overall
-run average (~17-18 FPS) includes the viewer-less warmup where cam
-blocks at ~23-53 ms — compare only steady blocks with a viewer
-attached. CPU vs GPU box drawing is a timing paritet (38.0 vs
+Sum ~38 ms -> ~26 FPS steady. The largest term is infer (shown =
+pure + cam pacing stall): ~22-26 ms in the 2026-10-26 daytime runs
+(cam ~12-14 ms); the older "infer ~35-36 ms" figure belongs to a
+run where cam stalled near zero — same 38 ms sum, different
+breakdown. The overall run average (~17-18 FPS evening, ~23.8 FPS
+daytime 2026-10-26) includes the viewer-less warmup where cam
+blocks at ~23-53 ms (evening) / ~20-22 ms (daytime) — compare only
+steady blocks with a viewer attached. CPU vs GPU box drawing is a timing paritet (38.0 vs
 38.3-38.6 ms); GPU wins on render quality (subpixel-accurate outlines)
 and costs zero CPU writes into the NPU tensor.
 
@@ -316,6 +320,8 @@ source-bound, M2.5),
 --cal N, --cal-interval K (--cal saves up to N model-input frames into
 dataset/, one every K frames — the int8 calibration dataset collector;
 one frame is ~1.2 MB, so 200 frames are ~240 MB on /tmp's storage).
+--box-log <path> (per-frame CSV of raw vs smoothed boxes — the
+M3.10 jitter A/B tool; near-zero cost when unset).
 Numeric values are strictly validated (garbage is an error, not a
 silent zero).
 
@@ -372,7 +378,7 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
 - [x] M2.3: readable report (COCO-80 class names), CLI --conf/--iou with
       validation; cleanup: class-aware NMS, symmetric box clamping, letterbox
       geometry now read from RgaResizer (single source of truth).
-- [x] M2.4: int8 quantization (OPEN: night A/B re-run on v2
+- [ ] M2.4: int8 quantization (OPEN: night A/B re-run on v2
       pending; recalibration DONE — see INT8 vs FP32 validation)
       — infer 43.1 -> 28.1 ms (~1.55x), detection quality matches
       fp16 (same classes, boxes within a few px, conf -0.02);
@@ -389,7 +395,8 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       FP32 validation; v1 ALARM superseded, night A/B re-run
       pending). Fallback decision
       (path A): accept with --conf 0.21 for int8 night runs and a
-      documented box-shift tolerance.
+      documented box-shift tolerance (v1-era fallback; for v2 the
+      working conf is 0.18-0.20 — see INT8 vs FP32 validation).
 - [x] M2.5: multi-core NPU infer (--core, rknn_set_core_mask) — measured.
       Daytime A/B, 300 frames each, steady state (first 60-frame warmup
       block excluded): AUTO 25.1 ms infer, core0 25.1 ms (AUTO == core0 —
@@ -601,12 +608,14 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       camera wallclock instead of the fixed 3600-tick step (21-26 real
       FPS vs 25 declared); muxer omit_video_pes_length stays untouched.
 
-- [ ] M3.10: detection smoothing — EMA on box coords over 3-5
-      frames (added 2026-10-26). Day h264-stream session: boxes
-      hold objects confidently but tremble ~17 px on the 640x360
-      tensor band (~2.7% width); conf stays stable, so jitter is
-      frame-to-frame model noise, no temporal filtering yet.
-      Near-free fix, schedule after M3.5.
+- [x] M3.10: detection smoothing — closed 2026-10-26. BoxSmoother
+      (include/box_smoother.hpp): EMA on box coords (alpha=0.5,
+      effective window ~2-3 frames), greedy IoU>0.3 + class match,
+      miss<=2 decay, fixed 32-slot array, zero heap. Per-frame CSV
+      via --box-log: raw jitter ~4 px per object -> ~2.5 px smoothed
+      (~1.5-1.7x); timing unchanged (26.2 FPS steady). Earlier ~17 px
+      estimate superseded: it counted low-conf flicker
+      (bottle<->vase flips, n=46 vs n=300).
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
       even a 10-15 ms yolov8n@640x640 fits the frame budget without

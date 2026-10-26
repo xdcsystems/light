@@ -232,6 +232,7 @@ int Pipeline::run() {
     int reconnects = 0;
     int warmup_left = 0;   // publish-discards after reconnect
 
+    smoother_.set_log(cfg_.box_log);
     for (int i = 0; i < cfg_.frames; ++i) {
         const auto t0 = clk::now();
 
@@ -358,11 +359,16 @@ int Pipeline::run() {
         if (npu_ok) {
             // Letterbox geometry from the single source of truth: RgaResizer
             // stored it during the last resize.
-            const auto dets = yolo_postprocess(npu_, cfg_.cam_w, cfg_.cam_h,
+            const auto dets_raw = yolo_postprocess(npu_, cfg_.cam_w,
+                                               cfg_.cam_h,
                                                model_w_, model_h_,
                                                static_cast<float>(rga_.lb_top()),
                                                static_cast<float>(rga_.lb_h()),
                                                cfg_.conf_thr, cfg_.iou_thr);
+            // M3.10: EMA smoothing on scene-coord boxes; the raw list
+            // is kept only for the --box-log jitter A/B CSV.
+            const auto dets = smoother_.update(dets_raw);
+            smoother_.log_frame(i, dets_raw, dets);
             // Throttled report: every 15th frame, up to 8 boxes per report.
             if (!dets.empty() && i % 15 == 0) {
                 std::cout << "frame " << i << ": " << dets.size()

@@ -167,6 +167,8 @@ const std::map<std::string, Option> kOptions = {
         }}},
     {"--net-host", {true, "optional UDP destination (h264 push); unset = TCP pull",
         [](Config& c, const char* v) { c.net_host = v; return true; }}},
+    {"--box-log", {true, "per-frame box CSV for jitter A/B (raw vs smoothed)",
+        [](Config& c, const char* v) { c.box_log = v; return true; }}},
 };
 
 void usage() {

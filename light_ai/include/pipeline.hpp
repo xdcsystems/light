@@ -8,6 +8,7 @@
 #include "net_preview.hpp"
 #include "net_encoder.hpp"
 #include "gpu_box_drawer.hpp"
+#include "box_smoother.hpp"
 
 struct Config {
     std::string device = "/dev/video20";
@@ -40,6 +41,9 @@ struct Config {
     // M3.5 phase B: h264_rkmpp + MPEG-TS instead of raw NUT. --net-h264.
     bool net_h264 = false;
     int net_bitrate = 12000;   // kbps, --net-bitrate
+
+    // M3.10: per-frame box CSV for the jitter A/B (raw vs smoothed).
+    std::string box_log;
     std::string net_host;      // UDP destination, --net-host (required with --net-h264)
     // M3.7: force the CPU box-drawing path (A/B vs the GPU drawer).
     bool cpu_draw = false;
@@ -67,4 +71,6 @@ private:
     std::optional<NetPreview> preview_;
     std::optional<NetEncoder> enc_;
     std::optional<GpuBoxDrawer> drawer_;
+
+    BoxSmoother smoother_;   // M3.10 EMA box smoothing + jitter log
 };
