@@ -733,6 +733,8 @@ Dataset map (owner's clarification):
 - dataset_night/  — NIGHT calibration dump, day 1, the buggy
   pipeline that periodically produced row-tear artifacts.
   Hardest conditions for the model; all gamma probes ran on it.
+  All cal_XXXX frame references in this section and in the
+  dark-frame probes point HERE, not to the day-4 dataset/
 - dataset_mix/    — calibration dump assembled proportionally
   from day-2 and night-1 frames; THE calibration set of
   int8_v2 / int8_mmse (50 frames: n1_cal_* every 2nd of 50,
