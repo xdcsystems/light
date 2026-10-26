@@ -80,7 +80,7 @@ private:
         bool  matched = false;
     };
 
-    static float iou(const BoxTrack& t, const Detection& d) {
+    float iou(const BoxTrack& t, const Detection& d) const {
         const float x0 = t.x > d.x ? t.x : d.x;
         const float y0 = t.y > d.y ? t.y : d.y;
         const float x1 = (t.x + t.w) < (d.x + d.w) ? (t.x + t.w) : (d.x + d.w);
