@@ -1,6 +1,10 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
 
 // M3.7: GPU-assisted box drawing straight into the NPU input tensor
 // (Mali G610 via EGL/GBM, zero CPU pixels per frame).
@@ -32,7 +36,53 @@ public:
     bool ok() const { return ready_; }
 
 private:
+    // Extension entry points: never assumed to be linkable, always via
+    // eglGetProcAddress with a null check (the probe proved libmali does
+    // not export all of them as symbols).
+    typedef EGLImageKHR (EGLAPIENTRYP P_CreateImage)
+        (EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint *);
+    typedef EGLBoolean (EGLAPIENTRYP P_DestroyImage)(EGLDisplay, EGLImageKHR);
+    typedef EGLSyncKHR (EGLAPIENTRYP P_CreateSync)(EGLDisplay, EGLenum,
+                                                   const EGLint *);
+    typedef EGLBoolean (EGLAPIENTRYP P_DestroySync)(EGLDisplay, EGLSyncKHR);
+    typedef EGLBoolean (EGLAPIENTRYP P_ClientWaitSync)(EGLDisplay, EGLSyncKHR,
+                                                       EGLint, EGLTimeKHR);
+    typedef EGLint (EGLAPIENTRYP P_DupNativeFenceFDANDROID)(EGLDisplay, EGLSyncKHR);
+    typedef EGLDisplay (EGLAPIENTRYP P_GetPlatformDisplayEXT)
+        (EGLenum, void *, const EGLint *);
+    typedef void (GL_APIENTRYP P_ImageTargetTexture2DOES)(GLenum, GLeglImageOES);
+
+    // GL/EGL state by value: no heap, no pimpl. The old State* was the
+    // only raw owning pointer in the production code (audit 2026-10-27).
+    struct State {
+        EGLDisplay dpy = EGL_NO_DISPLAY;
+        EGLContext ctx = nullptr;
+        EGLImageKHR img = EGL_NO_IMAGE_KHR;
+        GLuint tex = 0, fbo = 0, prog = 0, vbo = 0;
+        GLint ucol = -1, apos = -1;
+        int w = 0, h = 0;
+        uint32_t stride = 0;
+        int gbm_fd = -1;            // the GBM device lives on this fd
+        void *gbm_dev = nullptr;
+        void *dl_gbm = nullptr;
+        bool native_fence = false;
+
+        P_CreateImage create_image = nullptr;
+        P_DestroyImage destroy_image = nullptr;
+        P_CreateSync create_sync = nullptr;
+        P_DestroySync destroy_sync = nullptr;
+        P_ClientWaitSync client_wait = nullptr;
+        P_DupNativeFenceFDANDROID dup_fence = nullptr;  // future RGA handoff
+        P_GetPlatformDisplayEXT get_platform_display = nullptr;
+        P_ImageTargetTexture2DOES image_target_tex = nullptr;
+    };
+
     void done();
-    void* st_;          // pimpl: EGL/GL state, hidden from this header
+    void make_current();
+    bool make_program();
+    void draw_quad(float x0, float y0, float x1, float y1);
+
+private:  // data
+    State st_{};
     bool ready_ = false;
 };

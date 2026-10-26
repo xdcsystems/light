@@ -29,51 +29,9 @@
 
 namespace {
 
-typedef EGLImageKHR (EGLAPIENTRYP P_CreateImage)
-    (EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint *);
-typedef EGLBoolean (EGLAPIENTRYP P_DestroyImage)(EGLDisplay, EGLImageKHR);
-typedef EGLSyncKHR (EGLAPIENTRYP P_CreateSync)(EGLDisplay, EGLenum,
-                                               const EGLint *);
-typedef EGLBoolean (EGLAPIENTRYP P_DestroySync)(EGLDisplay, EGLSyncKHR);
-typedef EGLBoolean (EGLAPIENTRYP P_ClientWaitSync)(EGLDisplay, EGLSyncKHR,
-                                                   EGLint, EGLTimeKHR);
-typedef EGLint (EGLAPIENTRYP P_DupNativeFenceFDANDROID)(EGLDisplay, EGLSyncKHR);
-typedef EGLDisplay (EGLAPIENTRYP P_GetPlatformDisplayEXT)
-    (EGLenum, void *, const EGLint *);
-typedef void (GL_APIENTRYP P_ImageTargetTexture2DOES)(GLenum, GLeglImageOES);
-
 bool has(const char *exts, const char *name) {
     return exts && strstr(exts, name) != nullptr;
 }
-
-struct State {
-    EGLDisplay dpy = EGL_NO_DISPLAY;
-    EGLContext ctx = nullptr;
-    EGLImageKHR img = EGL_NO_IMAGE_KHR;
-    GLuint tex = 0, fbo = 0, prog = 0, vbo = 0;
-    GLint ucol = -1, apos = -1;
-    int w = 0, h = 0;
-    uint32_t stride = 0;
-    int gbm_fd = -1;            // the GBM device lives on this fd
-    void *gbm_dev = nullptr;
-    void *dl_gbm = nullptr;
-    bool native_fence = false;
-
-    P_CreateImage create_image = nullptr;
-    P_DestroyImage destroy_image = nullptr;
-    P_CreateSync create_sync = nullptr;
-    P_DestroySync destroy_sync = nullptr;
-    P_ClientWaitSync client_wait = nullptr;
-    P_DupNativeFenceFDANDROID dup_fence = nullptr;  // future RGA handoff
-    P_GetPlatformDisplayEXT get_platform_display = nullptr;
-    P_ImageTargetTexture2DOES image_target_tex = nullptr;
-};
-
-void make_current(State& s) {
-    eglMakeCurrent(s.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, s.ctx);
-}
-
-namespace {
 
 // Shader sources: file-local constexpr constants (statics rule).
 constexpr const char* VS =
@@ -84,20 +42,24 @@ constexpr const char* FS =
 
 }  // anonymous namespace
 
-bool make_program(State& s) {
+void GpuBoxDrawer::make_current() {
+    eglMakeCurrent(st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, st_.ctx);
+}
+
+bool GpuBoxDrawer::make_program() {
     GLuint vs = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vs, 1, &VS, nullptr);
     glCompileShader(vs);
     GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fs, 1, &FS, nullptr);
     glCompileShader(fs);
-    s.prog = glCreateProgram();
-    glAttachShader(s.prog, vs);
-    glAttachShader(s.prog, fs);
-    glLinkProgram(s.prog);
-    s.ucol = glGetUniformLocation(s.prog, "u_col");
-    s.apos = glGetAttribLocation(s.prog, "a_pos");
-    return s.prog != 0;
+    st_.prog = glCreateProgram();
+    glAttachShader(st_.prog, vs);
+    glAttachShader(st_.prog, fs);
+    glLinkProgram(st_.prog);
+    st_.ucol = glGetUniformLocation(st_.prog, "u_col");
+    st_.apos = glGetAttribLocation(st_.prog, "a_pos");
+    return st_.prog != 0;
 }
 
 // One filled quad in tensor coordinates. The viewport clips anything
@@ -107,12 +69,12 @@ bool make_program(State& s) {
 // green-band test sat at the center row, which is symmetric under a
 // flip and could not catch this; a live frame did (boxes were mirrored
 // around y = h/2).
-void draw_quad(State& s, float x0, float y0, float x1, float y1) {
+void GpuBoxDrawer::draw_quad(float x0, float y0, float x1, float y1) {
     if (x1 - x0 < 1.0f || y1 - y0 < 1.0f) return;
-    const float nx0 = (x0 / (float)s.w) * 2.0f - 1.0f;
-    const float nx1 = (x1 / (float)s.w) * 2.0f - 1.0f;
-    const float ny0 = (y0 / (float)s.h) * 2.0f - 1.0f;
-    const float ny1 = (y1 / (float)s.h) * 2.0f - 1.0f;
+    const float nx0 = (x0 / (float)st_.w) * 2.0f - 1.0f;
+    const float nx1 = (x1 / (float)st_.w) * 2.0f - 1.0f;
+    const float ny0 = (y0 / (float)st_.h) * 2.0f - 1.0f;
+    const float ny1 = (y1 / (float)st_.h) * 2.0f - 1.0f;
     const GLfloat q[12] = {
         nx0, ny0,  nx1, ny0,  nx0, ny1,
         nx1, ny0,  nx1, ny1,  nx0, ny1,
@@ -121,42 +83,35 @@ void draw_quad(State& s, float x0, float y0, float x1, float y1) {
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
-} // namespace
-
-GpuBoxDrawer::GpuBoxDrawer() : st_(nullptr) {}
+GpuBoxDrawer::GpuBoxDrawer() {}
 
 GpuBoxDrawer::~GpuBoxDrawer() {
     done();
-    delete static_cast<State*>(st_);
 }
 
 bool GpuBoxDrawer::init() {
     done();
-    delete static_cast<State*>(st_);
-    st_ = nullptr;
+    st_ = State{};
     ready_ = false;
 
-    State* s = new State();
-    st_ = s;
-
-    s->get_platform_display = (P_GetPlatformDisplayEXT)
+    st_.get_platform_display = (P_GetPlatformDisplayEXT)
         eglGetProcAddress("eglGetPlatformDisplayEXT");
-    if (!s->get_platform_display) {
+    if (!st_.get_platform_display) {
         std::cerr << "drawer: eglGetPlatformDisplayEXT missing\n";
         return false;
     }
     // GBM display: the mali libgbm first, then the system one
     // (calibrated in the probe: mali's copy initializes cleanly).
-    s->dl_gbm = dlopen("/usr/lib/aarch64-linux-gnu/mali/libgbm.so.1",
+    st_.dl_gbm = dlopen("/usr/lib/aarch64-linux-gnu/mali/libgbm.so.1",
                        RTLD_NOW | RTLD_GLOBAL);
-    if (!s->dl_gbm) s->dl_gbm = dlopen("libgbm.so.1", RTLD_NOW | RTLD_GLOBAL);
-    if (!s->dl_gbm) {
+    if (!st_.dl_gbm) st_.dl_gbm = dlopen("libgbm.so.1", RTLD_NOW | RTLD_GLOBAL);
+    if (!st_.dl_gbm) {
         std::cerr << "drawer: libgbm not loadable\n";
         return false;
     }
     typedef void *(*P_gbm_create_device)(int);
     P_gbm_create_device gbm_create_device_ =
-        (P_gbm_create_device)dlsym(s->dl_gbm, "gbm_create_device");
+        (P_gbm_create_device)dlsym(st_.dl_gbm, "gbm_create_device");
     if (!gbm_create_device_) {
         std::cerr << "drawer: gbm_create_device missing\n";
         return false;
@@ -166,22 +121,22 @@ bool GpuBoxDrawer::init() {
         if (fd < 0) continue;
         void *dev = gbm_create_device_(fd);
         if (!dev) { close(fd); continue; }
-        EGLDisplay d = s->get_platform_display(EGL_PLATFORM_GBM_KHR, dev,
+        EGLDisplay d = st_.get_platform_display(EGL_PLATFORM_GBM_KHR, dev,
                                                nullptr);
         EGLint maj = 0, min = 0;
         if (d == EGL_NO_DISPLAY || !eglInitialize(d, &maj, &min)) continue;
-        s->dpy = d;
-        s->gbm_fd = fd;      // kept open: gbm_dev is bound to it
-        s->gbm_dev = dev;
+        st_.dpy = d;
+        st_.gbm_fd = fd;      // kept open: gbm_dev is bound to it
+        st_.gbm_dev = dev;
         break;
     }
-    if (s->dpy == EGL_NO_DISPLAY) {
+    if (st_.dpy == EGL_NO_DISPLAY) {
         std::cerr << "drawer: EGL/GBM init failed (0x" << std::hex
                   << eglGetError() << std::dec << ")\n";
         return false;
     }
 
-    const char *exts = eglQueryString(s->dpy, EGL_EXTENSIONS);
+    const char *exts = eglQueryString(st_.dpy, EGL_EXTENSIONS);
     if (!has(exts, "EGL_EXT_image_dma_buf_import") ||
         !has(exts, "EGL_KHR_image_base")) {
         std::cerr << "drawer: no image import extensions\n";
@@ -191,85 +146,84 @@ bool GpuBoxDrawer::init() {
     // Extension entry points: never assumed to be linkable, always via
     // eglGetProcAddress with a null check (the probe proved libmali does
     // not export all of them as symbols).
-    s->create_image = (P_CreateImage)eglGetProcAddress("eglCreateImageKHR");
-    s->destroy_image = (P_DestroyImage)eglGetProcAddress("eglDestroyImageKHR");
-    s->create_sync = (P_CreateSync)eglGetProcAddress("eglCreateSyncKHR");
-    s->destroy_sync = (P_DestroySync)eglGetProcAddress("eglDestroySyncKHR");
-    s->client_wait = (P_ClientWaitSync)eglGetProcAddress("eglClientWaitSyncKHR");
-    s->dup_fence = (P_DupNativeFenceFDANDROID)eglGetProcAddress("eglDupNativeFenceFDANDROID");
-    s->image_target_tex = (P_ImageTargetTexture2DOES)eglGetProcAddress("glEGLImageTargetTexture2DOES");
+    st_.create_image = (P_CreateImage)eglGetProcAddress("eglCreateImageKHR");
+    st_.destroy_image = (P_DestroyImage)eglGetProcAddress("eglDestroyImageKHR");
+    st_.create_sync = (P_CreateSync)eglGetProcAddress("eglCreateSyncKHR");
+    st_.destroy_sync = (P_DestroySync)eglGetProcAddress("eglDestroySyncKHR");
+    st_.client_wait = (P_ClientWaitSync)eglGetProcAddress("eglClientWaitSyncKHR");
+    st_.dup_fence = (P_DupNativeFenceFDANDROID)eglGetProcAddress("eglDupNativeFenceFDANDROID");
+    st_.image_target_tex = (P_ImageTargetTexture2DOES)eglGetProcAddress("glEGLImageTargetTexture2DOES");
     
-    if (!s->create_image || !s->image_target_tex) {
+    if (!st_.create_image || !st_.image_target_tex) {
         std::cerr << "drawer: image entry points missing\n";
         return false;
     }
-    s->native_fence = has(exts, "EGL_ANDROID_native_fence_sync") &&
-                      s->create_sync && s->client_wait;
+    st_.native_fence = has(exts, "EGL_ANDROID_native_fence_sync") &&
+                      st_.create_sync && st_.client_wait;
 
     EGLConfig cfg = nullptr;
     EGLint n = 0;
     const EGLint cattr[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
         EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_NONE};
-    if (!eglChooseConfig(s->dpy, cattr, &cfg, 1, &n) || n < 1) {
+    if (!eglChooseConfig(st_.dpy, cattr, &cfg, 1, &n) || n < 1) {
         const EGLint cattr2[] = {EGL_RENDERABLE_TYPE,
                                  EGL_OPENGL_ES2_BIT, EGL_NONE};
-        eglChooseConfig(s->dpy, cattr2, &cfg, 1, &n);
+        eglChooseConfig(st_.dpy, cattr2, &cfg, 1, &n);
     }
     const EGLint c3[] = {EGL_CONTEXT_MAJOR_VERSION, 3,
                          EGL_CONTEXT_MINOR_VERSION, 1, EGL_NONE};
     const EGLint c2[] = {EGL_CONTEXT_MAJOR_VERSION, 2, EGL_NONE};
-    s->ctx = eglCreateContext(s->dpy, cfg, EGL_NO_CONTEXT, c3);
-    if (!s->ctx) s->ctx = eglCreateContext(s->dpy, cfg, EGL_NO_CONTEXT, c2);
-    if (!s->ctx || !eglMakeCurrent(s->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
-                                   s->ctx)) {
+    st_.ctx = eglCreateContext(st_.dpy, cfg, EGL_NO_CONTEXT, c3);
+    if (!st_.ctx) st_.ctx = eglCreateContext(st_.dpy, cfg, EGL_NO_CONTEXT, c2);
+    if (!st_.ctx || !eglMakeCurrent(st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                                   st_.ctx)) {
         std::cerr << "drawer: context failed (0x" << std::hex
                   << eglGetError() << std::dec << ")\n";
         return false;
     }
-    if (!make_program(*s)) {
+    if (!make_program()) {
         std::cerr << "drawer: program failed\n";
         return false;
     }
-    glGenBuffers(1, &s->vbo);
+    glGenBuffers(1, &st_.vbo);
     ready_ = true;
     return true;
 }
 
 bool GpuBoxDrawer::attachTensor(int tensorDmaFd, int w, int h,
                                 uint32_t stride) {
-    State* s = static_cast<State*>(st_);
-    if (!s || s->dpy == EGL_NO_DISPLAY) return false;
-    make_current(*s);
-    s->w = w;
-    s->h = h;
-    s->stride = stride;
+    if (st_.dpy == EGL_NO_DISPLAY) return false;
+    make_current();
+    st_.w = w;
+    st_.h = h;
+    st_.stride = stride;
 
     EGLint iattr[] = {EGL_WIDTH, w, EGL_HEIGHT, h,
         EGL_LINUX_DRM_FOURCC_EXT, /* DRM_FORMAT_RGB888 */ 0x34324752,
         EGL_DMA_BUF_PLANE0_FD_EXT, tensorDmaFd,
         EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
         EGL_DMA_BUF_PLANE0_PITCH_EXT, (EGLint)stride, EGL_NONE};
-    if (s->img != EGL_NO_IMAGE_KHR && s->destroy_image)
-        s->destroy_image(s->dpy, s->img);
-    s->img = s->create_image(s->dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
+    if (st_.img != EGL_NO_IMAGE_KHR && st_.destroy_image)
+        st_.destroy_image(st_.dpy, st_.img);
+    st_.img = st_.create_image(st_.dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
                              (EGLClientBuffer)nullptr, iattr);
-    if (s->img == EGL_NO_IMAGE_KHR) {
+    if (st_.img == EGL_NO_IMAGE_KHR) {
         std::cerr << "drawer: import tensor failed (0x" << std::hex
                   << eglGetError() << std::dec << ")\n";
         return false;
     }
-    if (s->tex) glDeleteTextures(1, &s->tex);
-    glGenTextures(1, &s->tex);
-    glBindTexture(GL_TEXTURE_2D, s->tex);
+    if (st_.tex) glDeleteTextures(1, &st_.tex);
+    glGenTextures(1, &st_.tex);
+    glBindTexture(GL_TEXTURE_2D, st_.tex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    s->image_target_tex(GL_TEXTURE_2D, (GLeglImageOES)s->img);
-    if (s->fbo) glDeleteFramebuffers(1, &s->fbo);
-    glGenFramebuffers(1, &s->fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
+    st_.image_target_tex(GL_TEXTURE_2D, (GLeglImageOES)st_.img);
+    if (st_.fbo) glDeleteFramebuffers(1, &st_.fbo);
+    glGenFramebuffers(1, &st_.fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, st_.fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, s->tex, 0);
+                           GL_TEXTURE_2D, st_.tex, 0);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         std::cerr << "drawer: FBO incomplete (0x" << std::hex
                   << glGetError() << std::dec << ")\n";
@@ -277,45 +231,43 @@ bool GpuBoxDrawer::attachTensor(int tensorDmaFd, int w, int h,
     }
     std::cout << "drawer: tensor attached " << w << 'x' << h << " stride="
               << stride << " (native fence: "
-              << (s->native_fence ? "yes" : "no") << ")\n";
+              << (st_.native_fence ? "yes" : "no") << ")\n";
     return true;
 }
 
 void GpuBoxDrawer::draw(const std::vector<GpuBox>& boxes) {
-    State* s = static_cast<State*>(st_);
-    if (!s || s->dpy == EGL_NO_DISPLAY || boxes.empty()) return;
-    make_current(*s);
-    glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
-    glViewport(0, 0, s->w, s->h);
-    glUseProgram(s->prog);
+    if (st_.dpy == EGL_NO_DISPLAY || boxes.empty()) return;
+    make_current();
+    glBindFramebuffer(GL_FRAMEBUFFER, st_.fbo);
+    glViewport(0, 0, st_.w, st_.h);
+    glUseProgram(st_.prog);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
-    glBindBuffer(GL_ARRAY_BUFFER, s->vbo);
-    glEnableVertexAttribArray(s->apos);
-    glVertexAttribPointer(s->apos, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    glBindBuffer(GL_ARRAY_BUFFER, st_.vbo);
+    glEnableVertexAttribArray(st_.apos);
+    glVertexAttribPointer(st_.apos, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
 
     const float t = 1.0f;   // outline thickness, tensor px
     for (const GpuBox& b : boxes) {
         // The dma-buf reads as BGR to the GPU: the tensor R must go into
         // the GL blue channel (probe calibration).
-        glUniform4f(s->ucol, b.b / 255.0f, b.g / 255.0f, b.r / 255.0f,
+        glUniform4f(st_.ucol, b.b / 255.0f, b.g / 255.0f, b.r / 255.0f,
                     b.a / 255.0f);
-        draw_quad(*s, b.x0, b.y0, b.x1, b.y0 + t);   // top edge
-        draw_quad(*s, b.x0, b.y1 - t, b.x1, b.y1);   // bottom edge
-        draw_quad(*s, b.x0, b.y0, b.x0 + t, b.y1);   // left edge
-        draw_quad(*s, b.x1 - t, b.y0, b.x1, b.y1);   // right edge
+        draw_quad(b.x0, b.y0, b.x1, b.y0 + t);   // top edge
+        draw_quad(b.x0, b.y1 - t, b.x1, b.y1);   // bottom edge
+        draw_quad(b.x0, b.y0, b.x0 + t, b.y1);   // left edge
+        draw_quad(b.x1 - t, b.y0, b.x1, b.y1);   // right edge
     }
 }
 
 void GpuBoxDrawer::syncCpu() {
-    State* s = static_cast<State*>(st_);
-    if (!s || s->dpy == EGL_NO_DISPLAY) return;
-    if (s->native_fence) {
-        make_current(*s);
-        EGLSyncKHR sync = s->create_sync(s->dpy, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr);
+    if (st_.dpy == EGL_NO_DISPLAY) return;
+    if (st_.native_fence) {
+        make_current();
+        EGLSyncKHR sync = st_.create_sync(st_.dpy, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr);
         if (sync != EGL_NO_SYNC_KHR) {
-            s->client_wait(s->dpy, sync, 0, EGL_FOREVER_KHR);
-            if (s->destroy_sync) s->destroy_sync(s->dpy, sync);
+            st_.client_wait(st_.dpy, sync, 0, EGL_FOREVER_KHR);
+            if (st_.destroy_sync) st_.destroy_sync(st_.dpy, sync);
             return;
         }
     }
@@ -323,22 +275,21 @@ void GpuBoxDrawer::syncCpu() {
 }
 
 void GpuBoxDrawer::done() {
-    if (!st_) return;
-    State* s = static_cast<State*>(st_);
-    make_current(*s);
-    if (s->fbo) glDeleteFramebuffers(1, &s->fbo);
-    if (s->tex) glDeleteTextures(1, &s->tex);
-    if (s->img != EGL_NO_IMAGE_KHR && s->destroy_image)
-        s->destroy_image(s->dpy, s->img);
-    s->img = EGL_NO_IMAGE_KHR;
-    s->fbo = 0;
-    s->tex = 0;
-    if (s->ctx) {
-        eglMakeCurrent(s->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        eglDestroyContext(s->dpy, s->ctx);
-        s->ctx = nullptr;
+    if (st_.dpy == EGL_NO_DISPLAY) return;   // never inited: nothing to release
+    make_current();
+    if (st_.fbo) glDeleteFramebuffers(1, &st_.fbo);
+    if (st_.tex) glDeleteTextures(1, &st_.tex);
+    if (st_.img != EGL_NO_IMAGE_KHR && st_.destroy_image)
+        st_.destroy_image(st_.dpy, st_.img);
+    st_.img = EGL_NO_IMAGE_KHR;
+    st_.fbo = 0;
+    st_.tex = 0;
+    if (st_.ctx) {
+        eglMakeCurrent(st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglDestroyContext(st_.dpy, st_.ctx);
+        st_.ctx = nullptr;
     }
-    if (s->dpy != EGL_NO_DISPLAY) eglTerminate(s->dpy);
-    s->dpy = EGL_NO_DISPLAY;
+    if (st_.dpy != EGL_NO_DISPLAY) eglTerminate(st_.dpy);
+    st_.dpy = EGL_NO_DISPLAY;
     ready_ = false;
 }
