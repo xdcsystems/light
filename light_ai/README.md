@@ -183,19 +183,23 @@ post-processing.
   dequantization needed; the lite-runtime wraps them as float32.
 - int8-quantized yolov5s_relu_int8.rknn: built with rknn-toolkit2 2.5.0
   on Colab. v1: calibrated on 50 night frames (--cal 50 --cal-interval 4);
-  v2 (current): recalibrated on dataset_mix (25 day + 25 night frames) —
-  see INT8 vs FP32 validation.
+  v2: recalibrated on dataset_mix (25 day + 25 night frames) —
+  see INT8 vs FP32 validation. v3 (current; formal A/B done for night, day A/B pending):
+  recalibrated on 60 fresh evening frames with mean=0/std=255 ->
+  canonical input scale 1/255 (0.00392157) — see M2.4.
   MmseQuant2 is memory-hungry: 50 samples fit in 12 GB, 200 OOM. Outputs
   are int8 (per-channel scale/zp) — RknnEngine requests fp16 conversion
   via set_io_mem, the runtime dequantizes into the zero-copy buffer.
-  Input: zp=-128, scale=0.00436174 (not 1/255 — fitted from the
-  calibration distribution; confirmed present in the v2 model
-  file, byte-level, 2026-10-26), so raw RGB byte writes remain
-  correct.
+  Input (v2): zp=-128, scale=0.00436174 (not 1/255 — fitted from
+  the calibration distribution; confirmed present in the v2 model
+  file, byte-level, 2026-10-26). Input (v3): zp=-128, scale=1/255
+  (0.00392157, canonical mean/std config) — raw RGB byte writes
+  remain correct for both.
   A/B vs fp16 (daylight, 720p, conf 0.25): infer 43.1 -> 28.1 ms (~1.55x),
   classes and boxes match within a few px, conf drop ~0.02. Night A/B:
-  done on v1 (verdict ALARM, superseded by v2 recalibration), pending
-  on v2 (M2.4).
+  v1 ALARM (superseded), v2 ALARM confirmed 2026-10-26 (systematic
+  dconf -0.045, vase missed in every steady block), v3 closed —
+  see M2.4.
 - yolov5s_relu output semantics (probed on a real night frame,
   scripts/probe_yolo.py): ALL 255 channels are already post-sigmoid
   (range 0..1, box channels included) — the export applied the full
@@ -304,7 +308,7 @@ and costs zero CPU writes into the NPU tensor.
 
 ## Run
     sudo LD_LIBRARY_PATH=/usr/local/lib ./build/light_ai \
-        --device /dev/video20 --model ./yolov5s_relu_int8_v2.rknn --frames 3000 \
+        --device /dev/video20 --model ./yolov5s_relu_int8_v3.rknn --frames 3000 \
         --net --net-h264 --core 7
 
 Defaults: /dev/video20, 1280x720 MJPEG; the model default is still the M1
@@ -378,25 +382,41 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
 - [x] M2.3: readable report (COCO-80 class names), CLI --conf/--iou with
       validation; cleanup: class-aware NMS, symmetric box clamping, letterbox
       geometry now read from RgaResizer (single source of truth).
-- [ ] M2.4: int8 quantization (OPEN: night A/B re-run on v2
-      pending; recalibration DONE — see INT8 vs FP32 validation)
-      — infer 43.1 -> 28.1 ms (~1.55x), detection quality matches
-      fp16 (same classes, boxes within a few px, conf -0.02);
-      build recipe and caveats in Platform constraints.
-      Night A/B (target scene, 300 frames each, --core 7): classes
-      100% matched, 0 phantoms / 0 misses, infer 24.7 vs 29.2 ms
-      (~15%), FPS identical (~25, source-bound). BUT: dconf mean
-      -0.04 (day: -0.02, single alarm -0.09 at conf 0.25 threshold
-      0.07), systematic box shift: person x ~17 px scene (int8 left
-      of fp16), chair width -18 px; chair x unchanged. compare_night
-      verdict ALARM — M2.4 stays open. Candidate cause: calibration
-      dataset from a different night lighting; fresh night dataset
-      collected, recalibration DONE (v2, 2026-10-26 — see INT8 vs
-      FP32 validation; v1 ALARM superseded, night A/B re-run
-      pending). Fallback decision
-      (path A): accept with --conf 0.21 for int8 night runs and a
-      documented box-shift tolerance (v1-era fallback; for v2 the
-      working conf is 0.18-0.20 — see INT8 vs FP32 validation).
+- [x] M2.4: int8 quantization — CLOSED 2026-10-26 on v3 (evening
+      recalibration). v3 recipe: calibrated on 60 fresh evening
+      frames, quant config mean=0/std=255 -> canonical input scale
+      1/255 (0.00392157, zp=-128); the "not 1/255 — fitted" caveat
+      in Platform constraints applies to v2 only.
+      Night A/B vs fp16 (3 sessions x 300 frames each, --core 7,
+      conf 0.25, static evening scene; r3 final): stable objects
+      (chair, potted plant) match fp16 100% by class in every
+      session, box shift 0.8-1.3 px (day ref <=2), dconf mean
+      +0.002..+0.010 (no systematic bias; v2: -0.045), vase visible
+      in 17/20 steady blocks by v3 (r3; fp16: 16/20 in the same run;
+      v2: 0/20). infer 24.8 vs 28.9 ms
+      at 25-FPS pacing (~15% int8 gain), FPS identical (source-
+      bound) — headroom saved for M4. Working conf for v3: 0.25
+      (vase 0.29-0.37 / bowl 0.33-0.45 in r3 whenever detected; both
+      objects drop out entirely in 3/20 blocks — f60/f75/f135 — and
+      fp16 drops them in 4 blocks of the same run: edge-object
+      absence, not a conf shortfall).
+      compare_night residual ALARM on r2/r3: confined to the conf
+      band 0.18-0.45 (bowl/vase edge objects) where the fp16
+      reference itself flickers between runs (bowl<->vase flips on
+      the same box across sessions, duplicate conflicting-class
+      boxes at f45 r3, conf dips below 0.25 in varying blocks);
+      v3 holds these objects MORE consistently than fp16 — the
+      binary verdict is too strict for the evening conf band,
+      documented, not a defect. Two intermediate sessions were
+      scene-contaminated (person crossed between the paired runs;
+      also object layout changed between hours) — discarded;
+      methodology lesson: A and B runs must capture the same static
+      scene within one session.
+      v2 verdict: night A/B re-run done 2026-10-26 — ALARM confirmed
+      (systematic dconf -0.045, vase missed 20/20 steady blocks,
+      bottle down to -0.24): the recalibration did not fix v2's
+      night bias. v2 superseded by v3 for night scenes, file kept
+      for reference. Fallback (path A) never needed for v3.
 - [x] M2.5: multi-core NPU infer (--core, rknn_set_core_mask) — measured.
       Daytime A/B, 300 frames each, steady state (first 60-frame warmup
       block excluded): AUTO 25.1 ms infer, core0 25.1 ms (AUTO == core0 —
@@ -407,8 +427,9 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       headroom that pays off only when the source exceeds 30 FPS (M4).
       Recommended run flag: --core 7; default stays AUTO so the
       historical baseline remains reproducible. mpp_buffer init assert
-      seen in every run incl. pre-patch smoke — benign so far, re-check
-      in the night A/B.
+      seen in every run incl. pre-patch smoke — benign so far;
+      re-checked in the night A/B (2026-10-26): 2 asserts at startup
+      of every run, A=2/B=2 in all compare outputs — still benign.
       Follow-up (same day): the 012 gain is CPU-frequency dependent.
       With CPU governors on performance, cores 012 reproduce 21.2 ms
       (steady 20.5-21.6) and AUTO stays 25.1 — both match the morning
@@ -683,15 +704,18 @@ Conclusions:
 - Lowering the board conf to 0.18 pulls those edge candidates back; the 9
   "extra" detections at 0.18 are stable recurring objects (same boxes across
   frames: cls39 at ~(249,368)-(259,396), cls58 at ~(295,376)-(347,482)), not
-  noise. Working conf for the board: 0.18-0.20.
+  noise. Working conf for v2: 0.18-0.20 (v3: 0.25 — see M2.4).
 - v1 box-shift ALARM is superseded for v2: no systematic shift on the
-  calibration set (within-pixel agreement). M2.4 night A/B should be
-  re-run on v2 before closing it — the ALARM verdict above applied to the
-  v1 model.
+  calibration set (within-pixel agreement). M2.4 night A/B was re-run
+  on v2 (2026-10-26): ALARM confirmed — see the last bullet below;
+  M2.4 is closed on v3.
 - Dark blindness (n2_cal_0096, n2_cal_0152: 0 detections) is identical in
   FP32 and INT8 — quantization-independent, a data/scene problem.
 - Class-flip observation: the recurring object at ~(248,366)-(260,396) gets
   cls75/cls39/cls41 across frames; verify against ground-truth labels later.
+- Night A/B on the board (2026-10-26, live camera): v2 ALARM confirmed
+  (systematic dconf -0.045 vs fp16, vase never detected) — superseded by
+  v3; see M2.4 for the closed verdict.
 
 ## Night session findings (2026-10-26): dark frames and gamma verdict
 
@@ -704,7 +728,8 @@ Dataset map (owner's clarification):
 - dataset_mix/    — calibration dump assembled proportionally
   from day-2 and night-1 frames; THE calibration set of
   int8_v2 / int8_mmse (50 frames: n1_cal_* every 2nd of 50,
-  n2_cal_* every 8th of 200).
+  n2_cal_* every 8th of 200); v3's calibration set is separate —
+  60 fresh evening frames (see M2.4).
 - There is NO retrained FP32. The earlier session note "model
   retrained on dataset_mix" was wrong: dataset_mix is a
   calibration set (unlabeled dumps), Colab has no runs/, no
@@ -739,8 +764,10 @@ Gamma 3.0 verdict (tools/probe_gamma3_det.py, int8_v2, full decode+NMS, band
 - VERDICT (owner's decision): conditional gamma 3.0 NOT adopted — "considered;
   detection A/B: insufficient gain for the loss of a stable
   class". A gamma change would also require a fresh calibration
-  anyway (scale 0.00436174 is fitted to the
-  old distribution).
+  anyway (the v2 scale 0.00436174 is fitted to the
+  old distribution; v3 uses canonical 1/255, also
+  distribution-dependent).
 - Adaptive gain by band median stays rejected (probe_adaptive.py).
-- Remaining dark-frame lever: fresh clean night dump -> v3 recalibration (M2.4).
+- Remaining dark-frame lever: fresh clean night dump -> v3 recalibration
+  (DONE 2026-10-26 — M2.4 closed on v3).
 
