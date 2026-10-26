@@ -73,4 +73,10 @@ private:
     std::optional<GpuBoxDrawer> drawer_;
 
     BoxSmoother smoother_;   // M3.10 EMA box smoothing + jitter log
+
+    // Per-frame detection buffers: preallocated members, cleared each
+    // frame — zero heap traffic in the steady-state path.
+    DetList dets_raw_;
+    DetList dets_;
+    GpuBoxList boxes_;
 };

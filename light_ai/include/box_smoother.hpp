@@ -3,7 +3,6 @@
 #include <array>
 #include <fstream>
 #include <string>
-#include <vector>
 
 #include "yolo_postprocess.hpp"
 
@@ -12,19 +11,19 @@
 // Greedy IoU matching (best IoU > 0.3, class must match); alpha = 0.5;
 // a missed detection keeps the track (and its filtered coords) for up
 // to 2 frames so a brief dropout does not reset the filter, more frees
-// the slot. No heap: a fixed std::array of 32 slots; std::vector only
-// as the RAII return wrapper (project rule).
+// the slot. No heap: a fixed std::array of 32 slots and fixed-capacity
+// DetList buffers (PodList — no allocations at all).
 class BoxSmoother {
 public:
     void set_log(const std::string& path) {
         if (!path.empty()) log_.open(path);  // overwrite: each A/B run starts clean
     }
 
-    std::vector<Detection> update(const std::vector<Detection>& in) {
+    void update(const DetList& in, DetList& out) {
+        out.clear();
         for (auto& t : tracks_) t.matched = false;
-        std::vector<Detection> out;
-        out.reserve(in.size());
-        for (const auto& d : in) {
+        for (int i = 0; i < in.n; ++i) {
+            const Detection& d = in.d[i];
             int best = -1;
             float best_iou = 0.3f;
             for (size_t t = 0; t < tracks_.size(); ++t) {
@@ -52,23 +51,25 @@ public:
                     break;  // first sighting passes through unsmoothed (warm-up)
                 }
             }
-            out.push_back(sd);
+            out.push(sd);
         }
         for (auto& t : tracks_)
             if (t.alive && !t.matched && ++t.miss > 2) t.alive = false;
-        return out;
     }
 
-    void log_frame(int frame, const std::vector<Detection>& raw,
-                   const std::vector<Detection>& smooth) {
+    void log_frame(int frame, const DetList& raw, const DetList& smooth) {
         if (!log_.is_open()) return;
-        log_ << frame << ',' << raw.size() << ',' << smooth.size() << '\n';
-        for (const auto& d : raw)
+        log_ << frame << ',' << raw.n << ',' << smooth.n << '\n';
+        for (int k = 0; k < raw.n; ++k) {
+            const Detection& d = raw.d[k];
             log_ << "raw," << d.cls << ',' << d.conf << ',' << d.x << ','
                  << d.y << ',' << d.w << ',' << d.h << '\n';
-        for (const auto& d : smooth)
+        }
+        for (int k = 0; k < smooth.n; ++k) {
+            const Detection& d = smooth.d[k];
             log_ << "sm,"  << d.cls << ',' << d.conf << ',' << d.x << ','
                  << d.y << ',' << d.w << ',' << d.h << '\n';
+        }
     }
 
 private:

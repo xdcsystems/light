@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
-#include <vector>
+
+#include "pod_list.hpp"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
@@ -16,6 +17,8 @@ struct GpuBox {
     uint8_t r, g, b, a;
 };
 
+using GpuBoxList = PodList<GpuBox, 128>;
+
 class GpuBoxDrawer {
 public:
     GpuBoxDrawer();
@@ -28,7 +31,7 @@ public:
     // Imports the NPU tensor dma-buf as an EGLImage-backed FBO.
     bool attachTensor(int tensorDmaFd, int w, int h, uint32_t stride);
     // Async GPU draw: one 1-px outline per box.
-    void draw(const std::vector<GpuBox>& boxes);
+    void draw(const GpuBox* boxes, int n);
     // Blocks until all GPU writes from draw() are visible to CPU/RGA.
     // Native fence (EGL_ANDROID_native_fence_sync) when available,
     // glFinish() otherwise.

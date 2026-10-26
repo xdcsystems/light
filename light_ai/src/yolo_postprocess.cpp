@@ -62,11 +62,12 @@ inline float iou(const Box& a, const Box& b) {
 
 } // namespace
 
-std::vector<Detection> yolo_postprocess(const RknnEngine& npu,
-                                        float cam_w, float cam_h,
-                                        float model_w, float model_h,
-                                        float lb_top, float lb_h,
-                                        float conf_thr, float iou_thr) {
+void yolo_postprocess(const RknnEngine& npu,
+                      float cam_w, float cam_h,
+                      float model_w, float model_h,
+                      float lb_top, float lb_h,
+                      DetList& out,
+                      float conf_thr, float iou_thr) {
     // Letterbox geometry must fit the model input: the band is rows
     // [lb_top, lb_top + lb_h) of the model frame. A violation here would
     // silently misplace every detection, so it is a hard error.
@@ -74,11 +75,16 @@ std::vector<Detection> yolo_postprocess(const RknnEngine& npu,
         std::cerr << "yolo_postprocess: letterbox band [" << lb_top << ", "
                   << lb_top + lb_h << ") does not fit model height "
                   << model_h << '\n';
-        return {};
+        out.clear();
+        return;
     }
 
-    std::vector<Box> cand;
-    cand.reserve(256);
+    // Candidate buffer on the stack: fixed capacity, no heap. The early
+    // cut (obj < 0.05f) keeps the real flow to single digits; the cap
+    // is a safety net.
+    constexpr int kMaxCand = 1024;
+    std::array<Box, kMaxCand> cand;
+    int nc = 0;
 
     const float scale = cam_w / model_w;   // uniform, by width
 
@@ -126,8 +132,9 @@ std::vector<Detection> yolo_postprocess(const RknnEngine& npu,
 
                     if (cy < lb_top || cy >= lb_top + lb_h) continue;   // bar
 
-                    cand.push_back({cx - w / 2, cy - h / 2,
-                                    cx + w / 2, cy + h / 2, conf, best - 5});
+                    if (nc < kMaxCand)
+                        cand[nc++] = {cx - w / 2, cy - h / 2,
+                                      cx + w / 2, cy + h / 2, conf, best - 5};
                 }
             }
         }
@@ -135,13 +142,12 @@ std::vector<Detection> yolo_postprocess(const RknnEngine& npu,
 
     // NMS: greedy, class-aware (standard yolov5 behaviour): boxes of
     // different classes never suppress each other.
-    std::sort(cand.begin(), cand.end(),
+    std::sort(cand.begin(), cand.begin() + nc,
               [](const Box& a, const Box& b) { return a.conf > b.conf; });
-    std::vector<bool> sup(cand.size(), false);
-    std::vector<Detection> out;
-    for (size_t i = 0; i < cand.size(); ++i) {
+    std::array<uint8_t, kMaxCand> sup{};
+    for (int i = 0; i < nc; ++i) {
         if (sup[i]) continue;
-        for (size_t j = i + 1; j < cand.size(); ++j) {
+        for (int j = i + 1; j < nc; ++j) {
             if (!sup[j] && cand[i].cls == cand[j].cls &&
                 iou(cand[i], cand[j]) > iou_thr) sup[j] = true;
         }
@@ -153,7 +159,6 @@ std::vector<Detection> yolo_postprocess(const RknnEngine& npu,
         d.h    = std::min(cam_h - d.y, (b.y2 - b.y1) * scale);
         d.cls  = b.cls;
         d.conf = b.conf;
-        out.push_back(d);
+        out.push(d);
     }
-    return out;
 }

@@ -1,5 +1,6 @@
 #pragma once
-#include <vector>
+
+#include "pod_list.hpp"
 
 class RknnEngine;
 
@@ -14,9 +15,12 @@ struct Detection {
 // into scene coordinates. Letterbox: the visible band occupies rows
 // [lb_top, lb_top + lb_h) of the model input; scene scale is uniform by
 // width (cam_w / model_w).
-std::vector<Detection> yolo_postprocess(const RknnEngine& npu,
-                                        float cam_w, float cam_h,
-                                        float model_w, float model_h,
-                                        float lb_top, float lb_h,
-                                        float conf_thr = 0.25f,
-                                        float iou_thr = 0.45f);
+using DetList = PodList<Detection, 128>;
+
+void yolo_postprocess(const RknnEngine& npu,
+                      float cam_w, float cam_h,
+                      float model_w, float model_h,
+                      float lb_top, float lb_h,
+                      DetList& out,
+                      float conf_thr = 0.25f,
+                      float iou_thr = 0.45f);

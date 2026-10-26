@@ -235,8 +235,8 @@ bool GpuBoxDrawer::attachTensor(int tensorDmaFd, int w, int h,
     return true;
 }
 
-void GpuBoxDrawer::draw(const std::vector<GpuBox>& boxes) {
-    if (st_.dpy == EGL_NO_DISPLAY || boxes.empty()) return;
+void GpuBoxDrawer::draw(const GpuBox* boxes, int n) {
+    if (st_.dpy == EGL_NO_DISPLAY || boxes == nullptr || n <= 0) return;
     make_current();
     glBindFramebuffer(GL_FRAMEBUFFER, st_.fbo);
     glViewport(0, 0, st_.w, st_.h);
@@ -248,7 +248,8 @@ void GpuBoxDrawer::draw(const std::vector<GpuBox>& boxes) {
     glVertexAttribPointer(st_.apos, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
 
     const float t = 1.0f;   // outline thickness, tensor px
-    for (const GpuBox& b : boxes) {
+    for (int i = 0; i < n; ++i) {
+        const GpuBox& b = boxes[i];
         // The dma-buf reads as BGR to the GPU: the tensor R must go into
         // the GL blue channel (probe calibration).
         glUniform4f(st_.ucol, b.b / 255.0f, b.g / 255.0f, b.r / 255.0f,

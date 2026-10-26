@@ -59,9 +59,10 @@ inline void det_color(int cls, uint8_t& r, uint8_t& g, uint8_t& b) {
 // the GPU path; colors come from the box itself. Used when the GPU drawer
 // is unavailable, or forced by --cpu-draw (A/B baseline).
 void draw_boxes_cpu(uint8_t* rgb, int w, int h, int stride,
-                    const std::vector<GpuBox>& boxes) {
+                    const GpuBox* boxes, int n) {
     auto clamp = [](int v, int hi) { return v < 0 ? 0 : (v > hi ? hi : v); };
-    for (const auto& b : boxes) {
+    for (int i = 0; i < n; ++i) {
+        const GpuBox& b = boxes[i];
         const int x0 = clamp(static_cast<int>(b.x0), w - 1);
         const int y0 = clamp(static_cast<int>(b.y0), h - 1);
         const int x1 = clamp(static_cast<int>(b.x1), w - 1);
@@ -361,22 +362,23 @@ int Pipeline::run() {
         if (npu_ok) {
             // Letterbox geometry from the single source of truth: RgaResizer
             // stored it during the last resize.
-            const auto dets_raw = yolo_postprocess(npu_, cfg_.cam_w,
-                                               cfg_.cam_h,
-                                               model_w_, model_h_,
-                                               static_cast<float>(rga_.lb_top()),
-                                               static_cast<float>(rga_.lb_h()),
-                                               cfg_.conf_thr, cfg_.iou_thr);
+            yolo_postprocess(npu_, cfg_.cam_w,
+                             cfg_.cam_h,
+                             model_w_, model_h_,
+                             static_cast<float>(rga_.lb_top()),
+                             static_cast<float>(rga_.lb_h()),
+                             dets_raw_,
+                             cfg_.conf_thr, cfg_.iou_thr);
             // M3.10: EMA smoothing on scene-coord boxes; the raw list
             // is kept only for the --box-log jitter A/B CSV.
-            const auto dets = smoother_.update(dets_raw);
-            smoother_.log_frame(i, dets_raw, dets);
+            smoother_.update(dets_raw_, dets_);
+            smoother_.log_frame(i, dets_raw_, dets_);
             // Throttled report: every 15th frame, up to 8 boxes per report.
-            if (!dets.empty() && i % 15 == 0) {
-                std::cout << "frame " << i << ": " << dets.size()
+            if (dets_.n > 0 && i % 15 == 0) {
+                std::cout << "frame " << i << ": " << dets_.n
                           << " det(s)\n";
-                for (size_t k = 0; k < dets.size() && k < 8; ++k) {
-                    const auto& d = dets[k];
+                for (int k = 0; k < dets_.n && k < 8; ++k) {
+                    const Detection& d = dets_.d[k];
                     std::cout << "  cls=" << kCocoNames[d.cls] << " conf="
                               << std::fixed << std::setprecision(2) << d.conf
                               << " box=(" << d.x << ',' << d.y << ' '
@@ -393,9 +395,9 @@ int Pipeline::run() {
                 // the CPU fallback rasterizes the same list.
                 const float s = static_cast<float>(model_w_) / cfg_.cam_w;
                 const float lb_top = static_cast<float>(rga_.lb_top());
-                std::vector<GpuBox> boxes;
-                boxes.reserve(dets.size());
-                for (const auto& d : dets) {
+                boxes_.clear();
+                for (int k = 0; k < dets_.n; ++k) {
+                    const Detection& d = dets_.d[k];
                     GpuBox b;
                     b.x0 = d.x * s;
                     b.y0 = d.y * s + lb_top;
@@ -404,10 +406,10 @@ int Pipeline::run() {
                     if (b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f) continue;
                     det_color(d.cls, b.r, b.g, b.b);
                     b.a = 255;
-                    boxes.push_back(b);
+                    boxes_.push(b);
                 }
                 if (drawer_) {
-                    drawer_->draw(boxes);
+                    drawer_->draw(boxes_.d.data(), boxes_.n);
                     // publish() reads the tensor right away (CPU in the NUT
                     // path, RGA in the h264 path): GPU writes must land first.
                     drawer_->syncCpu();
@@ -419,7 +421,8 @@ int Pipeline::run() {
                     // --cpu-draw forces this path even when the GPU drawer
                     // is up (A/B baseline).
                     draw_boxes_cpu(static_cast<uint8_t*>(npu_.input_data()),
-                                   model_w_, model_h_, model_w_ * 3, boxes);
+                                   model_w_, model_h_, model_w_ * 3,
+                                   boxes_.d.data(), boxes_.n);
                 }
                 // M3.5: NetPreview publishes the 640x640 model tensor
                 // (NUT path). NetEncoder now publishes the same tensor:
