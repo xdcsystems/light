@@ -47,9 +47,11 @@ struct Timings {
 
 // Colors shared by the GPU and CPU drawing paths (owner's pick).
 inline void det_color(int cls, uint8_t& r, uint8_t& g, uint8_t& b) {
-    if (cls == 0)       { r = 255; g = 64;  b = 64;  }  // person
-    else if (cls == 56) { r = 64;  g = 255; b = 64;  }  // chair
-    else                { r = 255; g = 255; b = 0;   }  // others
+    switch (cls) {
+    case 0:  r = 255; g = 64;  b = 64;  break;  // person
+    case 56: r = 64;  g = 255; b = 64;  break;  // chair
+    default: r = 255; g = 255; b = 0;   break;  // others
+    }
 }
 
 // M3.7 CPU baseline: 1-px outlines straight into the NPU tensor (RGB888).
