@@ -185,7 +185,7 @@ post-processing.
   on Colab. v1: calibrated on 50 night frames (--cal 50 --cal-interval 4);
   v2: recalibrated on dataset_mix (25 day + 25 night frames) —
   see INT8 vs FP32 validation. v3 (current; formal A/B done for night, day A/B pending):
-  recalibrated on 60 fresh evening frames with mean=0/std=255 ->
+  recalibrated on 60 fresh day-4 daytime frames with mean=0/std=255 ->
   canonical input scale 1/255 (0.00392157) — see M2.4.
   MmseQuant2 is memory-hungry: 50 samples fit in 12 GB, 200 OOM. Outputs
   are int8 (per-channel scale/zp) — RknnEngine requests fp16 conversion
@@ -195,6 +195,9 @@ post-processing.
   file, byte-level, 2026-10-26). Input (v3): zp=-128, scale=1/255
   (0.00392157, canonical mean/std config) — raw RGB byte writes
   remain correct for both.
+  (Calibration caveat: the cal set embeds the gray-128 letterbox
+  padding, ~44% of pixels per frame — its stats partly come from
+  the fill; see dataset map.)
   A/B vs fp16 (daylight, 720p, conf 0.25): infer 43.1 -> 28.1 ms (~1.55x),
   classes and boxes match within a few px, conf drop ~0.02. Night A/B:
   v1 ALARM (superseded), v2 ALARM confirmed 2026-10-26 (systematic
@@ -271,8 +274,7 @@ now NPU-bound: pipelining (M4) would no longer change FPS, only infer
 headroom does. The 47 ms figure motivated the yolov8n alternative —
 tested and closed negative in M2-alt below.
 
-## Measured performance (1280x720 MJPEG, yolov5s_relu_int8 @ 640x640,
-steady state, viewer connected)
+## Measured performance (1280x720 MJPEG, yolov5s_relu_int8 @ 640x640, steady, viewer connected)
 
 Sum ~38 ms -> ~26 FPS steady. The largest term is infer (shown =
 pure + cam pacing stall): ~22-26 ms in the 2026-10-26 daytime runs
@@ -281,7 +283,7 @@ run where cam stalled near zero — same 38 ms sum, different
 breakdown. The overall run average (~17-18 FPS evening, ~23.8 FPS
 daytime 2026-10-26) includes the viewer-less warmup where cam
 blocks at ~23-53 ms (evening) / ~20-22 ms (daytime) — compare only
-steady blocks with a viewer attached. CPU vs GPU box drawing is a timing paritet (38.0 vs
+steady blocks with a viewer attached. CPU vs GPU box drawing is a timing parity (38.0 vs
 38.3-38.6 ms); GPU wins on render quality (subpixel-accurate outlines)
 and costs zero CPU writes into the NPU tensor.
 
@@ -382,9 +384,9 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
 - [x] M2.3: readable report (COCO-80 class names), CLI --conf/--iou with
       validation; cleanup: class-aware NMS, symmetric box clamping, letterbox
       geometry now read from RgaResizer (single source of truth).
-- [x] M2.4: int8 quantization — CLOSED 2026-10-26 on v3 (evening
-      recalibration). v3 recipe: calibrated on 60 fresh evening
-      frames, quant config mean=0/std=255 -> canonical input scale
+- [x] M2.4: int8 quantization — CLOSED 2026-10-26 on v3 (day-4
+      daytime recalibration). v3 recipe: calibrated on 60 fresh day-4
+      daytime frames, quant config mean=0/std=255 -> canonical input scale
       1/255 (0.00392157, zp=-128); the "not 1/255 — fitted" caveat
       in Platform constraints applies to v2 only.
       Night A/B vs fp16 (3 sessions x 300 frames each, --core 7,
@@ -566,7 +568,7 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       (scale = model_w/cam_w, lb_top, person red 255/64/64, chair
       green 64/255/64, others yellow). A/B, 240 frames each, viewer
       connected, steady blocks: CPU 38.0 ms (~26.3 FPS) vs GPU
-      38.3-38.6 ms (~26.0) — timing paritet; GPU wins on outline
+      38.3-38.6 ms (~26.0) — timing parity; GPU wins on outline
       quality and zero CPU writes into the tensor. mpp_buffer init
       assert seen in every run incl. this milestone — confirmed
       benign.
@@ -720,8 +722,14 @@ Conclusions:
 ## Night session findings (2026-10-26): dark frames and gamma verdict
 
 Dataset map (owner's clarification):
-- dataset/        — DAYTIME calibration dump, day 2, fixed
-  pipeline (no row tears).
+- dataset/        — DAYTIME calibration dump, day 4 (2026-10-26),
+  60 frames cal_00XX.ppm. Pre-letterboxed 640x640 network input:
+  gray-128 padding (rows 0-139 and 500-639, ~44% of pixels),
+  content 640x360 centered. One static daytime view; people
+  intermittently cross the scene, occluding the lower half
+  (Rmean 78-82 -> 53-57 in occluded frames, upper half unchanged,
+  k=1.0). Quantization input for v3 (built 20:20 same day).
+  Replaces the former day-2 daytime dump.
 - dataset_night/  — NIGHT calibration dump, day 1, the buggy
   pipeline that periodically produced row-tear artifacts.
   Hardest conditions for the model; all gamma probes ran on it.
@@ -729,7 +737,7 @@ Dataset map (owner's clarification):
   from day-2 and night-1 frames; THE calibration set of
   int8_v2 / int8_mmse (50 frames: n1_cal_* every 2nd of 50,
   n2_cal_* every 8th of 200); v3's calibration set is separate —
-  60 fresh evening frames (see M2.4).
+  60 fresh day-4 daytime frames (see M2.4).
 - There is NO retrained FP32. The earlier session note "model
   retrained on dataset_mix" was wrong: dataset_mix is a
   calibration set (unlabeled dumps), Colab has no runs/, no
