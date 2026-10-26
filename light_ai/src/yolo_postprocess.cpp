@@ -79,6 +79,13 @@ void yolo_postprocess(const RknnEngine& npu,
         return;
     }
 
+    // Fresh frame: out is a preallocated pipeline member (DetList), it
+    // is never reconstructed between calls — clear it at entry. Without
+    // this, detections from previous frames accumulate until the 128
+    // cap saturates and the visible box set freezes (regression from
+    // 7c99906, caught live on 2026-10-27).
+    out.clear();
+
     // Candidate buffer on the stack: fixed capacity, no heap. The early
     // cut (obj < 0.05f) keeps the real flow to single digits; the cap
     // is a safety net.
