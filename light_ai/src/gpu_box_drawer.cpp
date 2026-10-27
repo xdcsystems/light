@@ -17,6 +17,7 @@
 #include <linux/dma-buf.h>
 #include <string.h>
 #include <unistd.h>
+#include <string_view>
 
 #include "gpu_box_drawer.hpp"
 
@@ -63,8 +64,22 @@ struct BatchVert {
 // init(); draw() only uploads — zero reallocations.
 constexpr int kMaxBoxes = 128;
 constexpr int kVertsPerBox = 4 * 6;
-constexpr GLsizeiptr kVboBytes =
-    kMaxBoxes * kVertsPerBox * (GLsizeiptr)sizeof(BatchVert);
+constexpr GLsizeiptr kVboBytes = kMaxBoxes * kVertsPerBox * (GLsizeiptr)sizeof(BatchVert);
+
+// Compile/link diagnostics: libmali returns non-zero handles even for
+// failed shaders — without these checks a broken program degrades
+// silently into "nothing is drawn".
+bool shader_ok(GLuint sh, const char* what) {
+    GLint ok = 0;
+    glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+    if (ok) return true;
+    char log[512];
+    GLsizei n = 0;
+    glGetShaderInfoLog(sh, sizeof(log), &n, log);
+    log[n] = 0;
+    std::cerr << "gpu_draw: " << what << " shader compile failed:\n" << log << '\n';
+    return false;
+}
 
 }  // anonymous namespace
 
@@ -82,12 +97,45 @@ bool GpuBoxDrawer::make_program() {
     GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fs, 1, &FS, nullptr);
     glCompileShader(fs);
+
+    if (!shader_ok(vs, "vertex") || !shader_ok(fs, "fragment")) {
+        glDeleteShader(vs);
+        glDeleteShader(fs);
+        return false;
+    }
+
     st_.prog = glCreateProgram();
     glAttachShader(st_.prog, vs);
     glAttachShader(st_.prog, fs);
     glLinkProgram(st_.prog);
+
+    GLint linked = 0;
+    glGetProgramiv(st_.prog, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        char log[512];
+        GLsizei n = 0;
+        glGetProgramInfoLog(st_.prog, sizeof(log), &n, log);
+        std::cerr << "gpu_draw: program link failed:\n"
+                  << std::string_view(log, n) << '\n';
+        glDeleteProgram(st_.prog);
+        st_.prog = 0;
+        glDeleteShader(vs);
+        glDeleteShader(fs);
+        return false;
+    }
+    glDeleteShader(vs);   // прилинкованы — ссылки шейдеров больше не нужны
+    glDeleteShader(fs);
+
     st_.apos = glGetAttribLocation(st_.prog, "a_pos");
     st_.acol = glGetAttribLocation(st_.prog, "a_col");
+
+    if (st_.apos < 0 || st_.acol < 0) {
+        std::cerr << "gpu_draw: a_pos/a_col missing from linked program\n";
+        glDeleteProgram(st_.prog);
+        st_.prog = 0;
+        return false;
+    }
+
     return st_.prog != 0;
 }
 
@@ -146,7 +194,23 @@ bool GpuBoxDrawer::init() {
         EGLDisplay d = st_.get_platform_display(EGL_PLATFORM_GBM_KHR, dev,
                                                nullptr);
         EGLint maj = 0, min = 0;
-        if (d == EGL_NO_DISPLAY || !eglInitialize(d, &maj, &min)) continue;
+        if (d == EGL_NO_DISPLAY || !eglInitialize(d, &maj, &min)) {
+            // failed init candidate: release what this attempt created
+            // (EGL display + GBM device + fd). The dl_gbm handle stays:
+            // gbm_create_device_ may be needed by the next node attempt,
+            // done() closes it on the terminal failure path.
+            if (d != EGL_NO_DISPLAY) eglTerminate(d);
+            if (dev) {
+                typedef void (*P_gbm_destroy_device)(void *);
+                auto destroy_dev =
+                    (P_gbm_destroy_device)dlsym(st_.dl_gbm,
+                                                "gbm_destroy_device");
+                if (destroy_dev) destroy_dev(dev);
+            }
+            close(fd);
+            continue;
+        }
+
         st_.dpy = d;
         st_.gbm_fd = fd;      // kept open: gbm_dev is bound to it
         st_.gbm_dev = dev;
@@ -192,17 +256,14 @@ bool GpuBoxDrawer::init() {
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
         EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_NONE};
     if (!eglChooseConfig(st_.dpy, cattr, &cfg, 1, &n) || n < 1) {
-        const EGLint cattr2[] = {EGL_RENDERABLE_TYPE,
-                                 EGL_OPENGL_ES2_BIT, EGL_NONE};
+        const EGLint cattr2[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE};
         eglChooseConfig(st_.dpy, cattr2, &cfg, 1, &n);
     }
-    const EGLint c3[] = {EGL_CONTEXT_MAJOR_VERSION, 3,
-                         EGL_CONTEXT_MINOR_VERSION, 1, EGL_NONE};
+    const EGLint c3[] = {EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 1, EGL_NONE};
     const EGLint c2[] = {EGL_CONTEXT_MAJOR_VERSION, 2, EGL_NONE};
     st_.ctx = eglCreateContext(st_.dpy, cfg, EGL_NO_CONTEXT, c3);
     if (!st_.ctx) st_.ctx = eglCreateContext(st_.dpy, cfg, EGL_NO_CONTEXT, c2);
-    if (!st_.ctx || !eglMakeCurrent(st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
-                                   st_.ctx)) {
+    if (!st_.ctx || !eglMakeCurrent(st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, st_.ctx)) {
         std::cerr << "drawer: context failed (0x" << std::hex
                   << eglGetError() << std::dec << ")\n";
         return false;
@@ -233,11 +294,8 @@ bool GpuBoxDrawer::init() {
 
 bool GpuBoxDrawer::attachTensor(int tensorDmaFd, int w, int h,
                                 uint32_t stride) {
-    if (st_.dpy == EGL_NO_DISPLAY) return false;
+    if (!ready_) return false;
     make_current();
-    st_.w = w;
-    st_.h = h;
-    st_.stride = stride;
 
     EGLint iattr[] = {EGL_WIDTH, w, EGL_HEIGHT, h,
         EGL_LINUX_DRM_FOURCC_EXT, /* DRM_FORMAT_RGB888 */ 0x34324752,
@@ -264,11 +322,15 @@ bool GpuBoxDrawer::attachTensor(int tensorDmaFd, int w, int h,
     glBindFramebuffer(GL_FRAMEBUFFER, st_.fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D, st_.tex, 0);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "drawer: FBO incomplete (0x" << std::hex
-                  << glGetError() << std::dec << ")\n";
+    const GLenum fst = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (fst != GL_FRAMEBUFFER_COMPLETE) {
+        std::cerr << "drawer: FBO incomplete (status 0x" << std::hex
+                  << fst << std::dec << ")\n";
         return false;
     }
+    st_.w = w;
+    st_.h = h;
+    st_.stride = stride;
     std::cout << "drawer: tensor attached " << w << 'x' << h << " stride="
               << stride << " (native fence: "
               << (st_.native_fence ? "yes" : "no") << ")\n";
@@ -276,7 +338,7 @@ bool GpuBoxDrawer::attachTensor(int tensorDmaFd, int w, int h,
 }
 
 void GpuBoxDrawer::draw(const GpuBox* boxes, int n) {
-    if (st_.dpy == EGL_NO_DISPLAY || boxes == nullptr || n <= 0) return;
+    if (!ready_ || boxes == nullptr || n <= 0) return;
     if (n > kMaxBoxes) n = kMaxBoxes;
     make_current();
 
@@ -295,6 +357,8 @@ void GpuBoxDrawer::draw(const GpuBox* boxes, int n) {
     auto push = [&](float x0, float y0, float x1, float y1,
                     const GpuBox& b) {
         if (x1 - x0 < 1.0f || y1 - y0 < 1.0f) return;
+        if (cnt + 6 > kMaxBoxes * kVertsPerBox) return;
+
         const float q[6][2] = {
             {x0*xs - 1.0f, y0*ys - 1.0f},
             {x1*xs - 1.0f, y0*ys - 1.0f},
@@ -371,6 +435,10 @@ int GpuBoxDrawer::exportFence() {
 void GpuBoxDrawer::done() {
     if (st_.dpy != EGL_NO_DISPLAY) {
         make_current();
+        if (st_.vbo) glDeleteBuffers(1, &st_.vbo);
+        st_.vbo = 0;
+        if (st_.prog) glDeleteProgram(st_.prog);
+        st_.prog = 0;
         if (st_.fbo) glDeleteFramebuffers(1, &st_.fbo);
         if (st_.tex) glDeleteTextures(1, &st_.tex);
         if (st_.vao && st_.del_vao) st_.del_vao(1, &st_.vao);

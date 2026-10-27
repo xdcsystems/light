@@ -41,7 +41,7 @@ int CameraV4L2::setup_device(const std::string& dev, std::string* why) {
         if (why) *why = "S_FMT failed";
         return -1;
     }
-
+    
     // The driver may silently substitute a closest supported mode.
     // Verify what we actually got and fail loudly on a mismatch,
     // otherwise the whole pipeline (RGA, MPP) would run with wrong dims.
@@ -73,10 +73,16 @@ int CameraV4L2::setup_device(const std::string& dev, std::string* why) {
         if (why) *why = "REQBUFS failed";
         return -1;
     }
+
     if (req.count == 0) {
         if (why) *why = "camera: REQBUFS returned zero buffers";
         return -1;
     }
+
+    // V4L2 allows the driver to return MORE buffers than requested
+    // (VIDIOC_REQBUFS spec). The mmap/QBUF loops below index bufs_[],
+    // which has kBufCount slots — clamp before touching them.
+    if (req.count > kBufCount) req.count = kBufCount;
 
     for (unsigned i = 0; i < req.count; ++i) {
         v4l2_buffer buf{};
