@@ -54,7 +54,7 @@ MppDecoder::MppDecoder( int w, int h ) : w_( w ), h_( h )
         mpp_buffer_put( buf );
         ok_ = true;
     }
-    while ( 0 );
+    while ( false );
 
     if ( !ok_ )
     {

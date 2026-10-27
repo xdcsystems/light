@@ -130,7 +130,8 @@ int RknnEngine::set_core_mask( unsigned mask )
 {
     if ( !ctx_ )
         return -1;
-    rknn_core_mask m;
+
+    rknn_core_mask m = RKNN_NPU_CORE_AUTO;
     switch ( mask )
     {
         case 1:
@@ -143,7 +144,7 @@ int RknnEngine::set_core_mask( unsigned mask )
             m = RKNN_NPU_CORE_0_1_2;
             break;
         default:
-            return 0;  // 0 = AUTO: keep the runtime default, no call
+            return RKNN_NPU_CORE_AUTO;  // 0 = AUTO: keep the runtime default, no call
     }
     if ( rknn_set_core_mask( ctx_, m ) != RKNN_SUCC )
     {

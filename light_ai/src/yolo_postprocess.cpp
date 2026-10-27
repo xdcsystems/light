@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include "yolo_postprocess.hpp"
+#include "math.h"
 #include "rknn_engine.hpp"
 
 namespace
@@ -14,7 +15,7 @@ namespace
         const uint32_t sign = ( h >> 15 ) & 1u;
         uint32_t exp = ( h >> 10 ) & 31u;
         uint32_t man = h & 0x3FFu;
-        uint32_t bits;
+        uint32_t bits = 0;
         if ( exp == 0 )
         {
             if ( man == 0 )
@@ -41,7 +42,7 @@ namespace
         {
             bits = ( sign << 31 ) | ( ( exp - 15 + 127 ) << 23 ) | ( man << 13 );
         }
-        float f;
+        float f = NAN;
         std::memcpy( &f, &bits, 4 );
         return f;
     }
@@ -102,7 +103,7 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
     // cut (obj < 0.05f) keeps the real flow to single digits; the cap
     // is a safety net.
     constexpr int kMaxCand = 1024;
-    std::array<Box, kMaxCand> cand;
+    std::array<Box, kMaxCand> cand{};
     int nc = 0;
 
     const float scale = cam_w / model_w;  // uniform, by width
@@ -184,7 +185,7 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
                 sup[j] = true;
         }
         const Box& b = cand[i];
-        Detection d;
+        Detection d{};
         d.x = std::max( 0.0f, b.x1 * scale );
         d.y = std::max( 0.0f, ( b.y1 - lb_top ) * scale );
         d.w = std::min( cam_w - d.x, ( b.x2 - b.x1 ) * scale );

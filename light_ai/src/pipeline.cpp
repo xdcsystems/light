@@ -450,7 +450,7 @@ int Pipeline::run()
                 for ( int k = 0; k < dets_.n; ++k )
                 {
                     const Detection& d = dets_.d[k];
-                    GpuBox b;
+                    GpuBox b{};
                     b.x0 = d.x * s;
                     b.y0 = d.y * s + lb_top;
                     b.x1 = ( d.x + d.w ) * s;

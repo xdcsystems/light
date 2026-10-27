@@ -5,6 +5,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <cmath>
 
 #include "pipeline.hpp"
 
@@ -116,7 +117,7 @@ namespace
                     { true,
                             "confidence threshold 0.0..1.0",
                             []( Config& c, const char* v ) {
-                                float f;
+                                float f = NAN;
                                 if ( !parse_float( v, &f ) || f < 0.0f || f > 1.0f )
                                     return value_error( "--conf", v, "0.0..1.0" );
                                 c.conf_thr = f;
@@ -126,7 +127,7 @@ namespace
                     { true,
                             "NMS IoU threshold 0.0..1.0",
                             []( Config& c, const char* v ) {
-                                float f;
+                                float f = NAN;
                                 if ( !parse_float( v, &f ) || f < 0.0f || f > 1.0f )
                                     return value_error( "--iou", v, "0.0..1.0" );
                                 c.iou_thr = f;
@@ -137,7 +138,7 @@ namespace
                     { true,
                             "calibration frames 1..10000",
                             []( Config& c, const char* v ) {
-                                int n;
+                                int n = 0;
                                 if ( !parse_int( v, &n ) || n < 1 || n > 10000 )
                                     return value_error( "--cal", v, "1..10000" );
                                 c.cal_frames = n;
@@ -147,7 +148,7 @@ namespace
                     { true,
                             "calibration sampling stride 1..10000",
                             []( Config& c, const char* v ) {
-                                int n;
+                                int n = 0;
                                 if ( !parse_int( v, &n ) || n < 1 || n > 10000 )
                                     return value_error( "--cal-interval", v, "1..10000" );
                                 c.cal_interval = n;
@@ -158,7 +159,7 @@ namespace
                     { true,
                             "stop after N frames",
                             []( Config& c, const char* v ) {
-                                int n;
+                                int n = 0;
                                 if ( !parse_int( v, &n ) )
                                     return value_error( "--frames", v, nullptr );
                                 c.frames = n;
@@ -168,7 +169,7 @@ namespace
                     { true,
                             "camera width",
                             []( Config& c, const char* v ) {
-                                int n;
+                                int n = 0;
                                 if ( !parse_int( v, &n ) )
                                     return value_error( "--w", v, nullptr );
                                 c.cam_w = n;
@@ -178,7 +179,7 @@ namespace
                     { true,
                             "camera height",
                             []( Config& c, const char* v ) {
-                                int n;
+                                int n = 0;
                                 if ( !parse_int( v, &n ) )
                                     return value_error( "--h", v, nullptr );
                                 c.cam_h = n;
@@ -189,7 +190,7 @@ namespace
                     { true,
                             "NPU cores: 0 auto, 1, 3 (0+1), 7 (0+1+2)",
                             []( Config& c, const char* v ) {
-                                int n;
+                                int n = 0;
                                 // Exactly the masks set_core_mask() implements: anything else
                                 // silently degrades to the runtime default (auto).
                                 if ( !parse_int( v, &n ) || ( n != 0 && n != 1 && n != 3 && n != 7 ) )
@@ -202,7 +203,7 @@ namespace
                     { true,
                             "preview port 1..65535",
                             []( Config& c, const char* v ) {
-                                int n;
+                                int n = 0;
                                 if ( !parse_int( v, &n ) || n < 1 || n > 65535 )
                                     return value_error( "--net-port", v, "1..65535" );
                                 c.net_port = n;
@@ -212,7 +213,7 @@ namespace
                     { true,
                             "preview stream fps 1..120",
                             []( Config& c, const char* v ) {
-                                int n;
+                                int n = 0;
                                 if ( !parse_int( v, &n ) || n < 1 || n > 120 )
                                     return value_error( "--net-fps", v, "1..120" );
                                 c.net_fps = n;
@@ -222,7 +223,7 @@ namespace
                     { true,
                             "preview bitrate 1000..100000 kbps",
                             []( Config& c, const char* v ) {
-                                int n;
+                                int n = 0;
                                 if ( !parse_int( v, &n ) || n < 1000 || n > 100000 )
                                     return value_error( "--net-bitrate", v, "1000..100000 kbps" );
                                 c.net_bitrate = n;

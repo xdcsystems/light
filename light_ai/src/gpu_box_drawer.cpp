@@ -15,7 +15,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <linux/dma-buf.h>
-#include <string.h>
+#include <cstring>
 #include <unistd.h>
 #include <string_view>
 
@@ -150,7 +150,7 @@ void GpuBoxDrawer::setup_attribs()
 {
     glBindBuffer( GL_ARRAY_BUFFER, st_.vbo );
     glEnableVertexAttribArray( st_.apos );
-    glVertexAttribPointer( st_.apos, 2, GL_FLOAT, GL_FALSE, sizeof( BatchVert ), (void *)0 );
+    glVertexAttribPointer( st_.apos, 2, GL_FLOAT, GL_FALSE, sizeof( BatchVert ), (void *)nullptr );
     if ( st_.acol >= 0 )
     {
         glEnableVertexAttribArray( st_.acol );
@@ -159,7 +159,7 @@ void GpuBoxDrawer::setup_attribs()
 }
 
 GpuBoxDrawer::GpuBoxDrawer()
-{}
+= default;
 
 GpuBoxDrawer::~GpuBoxDrawer()
 {
@@ -207,7 +207,8 @@ bool GpuBoxDrawer::init()
             continue;
         }
         EGLDisplay d = st_.get_platform_display( EGL_PLATFORM_GBM_KHR, dev, nullptr );
-        EGLint maj = 0, min = 0;
+        EGLint maj = 0;
+        EGLint min = 0;
         if ( d == EGL_NO_DISPLAY || !eglInitialize( d, &maj, &min ) )
         {
             // failed init candidate: release what this attempt created
@@ -389,7 +390,8 @@ void GpuBoxDrawer::draw( const GpuBox *boxes, int n )
     // around y = h/2).
     BatchVert v[kMaxBoxes * kVertsPerBox];  // ~36 KB on stack
     int cnt = 0;
-    const float xs = 2.0f / (float)st_.w, ys = 2.0f / (float)st_.h;
+    const float xs = 2.0f / (float)st_.w;
+    const float ys = 2.0f / (float)st_.h;
     const float t = 1.0f;  // outline thickness, tensor px
 
     auto push = [&]( float x0, float y0, float x1, float y1, const GpuBox &b ) {
