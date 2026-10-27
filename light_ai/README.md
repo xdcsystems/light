@@ -57,7 +57,7 @@ post-processing.
   preallocated member silently loses the "fresh vector each call"
   semantics; the 2026-10-27 live run caught exactly that (detections
   accumulated to the 128 cap, the box set froze, person went
-  undetected — 8ba4f74). A heap scan cannot catch this class of bug;
+  undetected — 705636b). A heap scan cannot catch this class of bug;
   only a live visual run can.
 
 ## Layers
@@ -682,20 +682,20 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       (bottle<->vase flips, n=46 vs n=300).
 - [x] Refactor audit (owner-requested, closed 2026-10-27): a full pass
       over the audit checklist, all findings fixed and verified live.
-      - det_color -> switch (b833867).
+      - det_color -> switch (a469e06).
       - GpuBoxDrawer: the last raw owning pointer (pimpl State*) removed,
         State by value in the header; make_current/make_program/draw_quad
         became member functions (State is private — anon-namespace free
-        functions lost access); zero new/delete left (1b53d11).
+        functions lost access); zero new/delete left (185b843).
       - done() leak fix: GBM device destroy + gbm_fd close + dlclose now
         unconditional (init may fail after dlopen; the old early return
-        on dpy==NO_DISPLAY leaked all three on that path) (bf18722).
+        on dpy==NO_DISPLAY leaked all three on that path) (ed523cf).
       - DetList/GpuBoxList: PodList<T, N> template through the
         postprocess -> smoother -> pipeline chain; per-frame detection
         buffers are preallocated Pipeline members; signatures switched
-        to out-parameters (7c99906).
+        to out-parameters (f501ea1).
       - Regression caught on the live run (see the buffer contract rule
-        above): fixed in 8ba4f74.
+        above): fixed in 705636b.
       - Heap scan after the pass: the only real allocations are
         rknn_engine out_attrs_/out_mems_ (init-time); zero heap traffic
         in the steady-state per-frame path.
