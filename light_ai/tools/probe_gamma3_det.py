@@ -7,7 +7,7 @@
 # большим score, который и на 0.25 выживает.
 #
 # Запуск:  python tools/probe_gamma3_det.py [модель.rknn]
-# Выход:   gamma3_det.csv (корень) + агрегат в stdout.
+# Выход:   misc/gamma3_det.csv + агрегат в stdout. + агрегат в stdout.
 
 import glob
 import sys
@@ -23,7 +23,7 @@ MODEL = sys.argv[1] if len(sys.argv) > 1 else 'yolov5s_relu_int8_v2.rknn'
 BRIGHT_FROM = 155          # cal_0155..0199 — светлый домен (как в probe_gamma3_full)
 THRESHOLDS = (0.18, 0.25)
 LB_TOP, LB_H = 140, 360    # видимая полоса 640x640 (s=1/2), как в пайплайне
-OUT_CSV = 'gamma3_det.csv'
+OUT_CSV = 'misc/gamma3_det.csv'
 
 rk = RKNNLite()
 assert rk.load_rknn(MODEL) == 0, f'load_rknn failed: {MODEL}'

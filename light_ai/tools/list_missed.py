@@ -17,8 +17,8 @@ def iou(a, b):
     union = (ax2-ax1)*(ay2-ay1) + (bx2-bx1)*(by2-by1) - inter
     return inter / union if union > 0 else 0.0
 
-ref = load('ref_preds.csv')
-brd = load('board_preds.csv')
+ref = load('misc/ref_preds.csv')
+brd = load('misc/board_preds.csv')
 print('пропущенные на плате (FP32-скор → ближайший INT8-скор того же класса):')
 for r in ref:
     cands = [b for b in brd if b['name'] == r['name'] and b['cls'] == r['cls']]

@@ -18,8 +18,8 @@ for path in sorted(glob.glob('dataset_mix/n1_cal_*.ppm') +
     for x1, y1, x2, y2, s, c in decode_outputs([o[0] for o in outs], conf_thres=0.18):
         rows.append([path.split('/')[-1], int(c), round(s, 4),
                      round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)])
-with open('board_preds.csv', 'w', newline='') as f:
+with open('misc/board_preds.csv', 'w', newline='') as f:
     w = csv.writer(f)
     w.writerow(['name', 'cls', 'score', 'x1', 'y1', 'x2', 'y2'])
     w.writerows(rows)
-print('сохранено: board_preds.csv,', len(rows), 'детекций')
+print('сохранено: misc/board_preds.csv,', len(rows), 'детекций')

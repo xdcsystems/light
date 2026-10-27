@@ -329,12 +329,12 @@ and costs zero CPU writes into the NPU tensor.
 - scripts/probe_yolo.py     — output semantics probe on a real /tmp/cal.ppm
   frame (per-head box/obj/cls ranges, hot-cell counts). Feeds the model a
   4-dim input (img[None]).
-- tools/save_board_csv.py   — RKNNLite predictions dump (board_preds.csv).
+- tools/save_board_csv.py   — RKNNLite predictions dump (misc/board_preds.csv).
 - tools/compare.py + tools/list_missed.py — INT8 vs FP32 comparison
   (IoU>0.5 + class match, mean |dscore|); see INT8 vs FP32 validation.
 - tools/probe_dark_heads.py, probe_gamma_sweep.py, probe_adaptive.py,
   probe_gamma3_det.py — dark-frame probes (see Night session findings;
-  gamma3 results in gamma3_det.csv).
+  gamma3 results in misc/gamma3_det.csv).
 - tools/peek_dark.py — renders the reference dark frames to PNG
   (dataset_night/, hardcoded triple, ignores CLI args); dark-band
   stats are printed separately.
@@ -745,8 +745,8 @@ Methodology:
 - 50 calibration frames (n1_cal_*/n2_cal_*), 640x640, same gamma-2.0 -> uint8
   -> /255 preprocessing on both sides.
 - FP32 reference: yolov5s_relu.onnx via onnxruntime (Colab), artifacts
-  ref_preds.csv; INT8: RKNNLite on board, tools/save_board_csv.py ->
-  board_preds.csv; comparison tools/compare.py + tools/list_missed.py
+  misc/ref_preds.csv; INT8: RKNNLite on board, tools/save_board_csv.py ->
+  misc/board_preds.csv; comparison tools/compare.py + tools/list_missed.py
   (IoU>0.5 + class match, mean |dscore|).
 
 Pitfall learned: the ONNX model does NOT normalize its input (rknn divides
@@ -826,7 +826,7 @@ probe_gamma_sweep.py):
   treatment is data (needs labeling).
 
 Gamma 3.0 verdict (tools/probe_gamma3_det.py, int8_v2, full decode+NMS, band
-[140,500) filter, results in gamma3_det.csv):
+[140,500) filter, results in misc/gamma3_det.csv):
 - Total gamma is negative for BOTH domains: dark — coverage up
   (131 -> 142 frames with detections) but detections down
   310 -> 261 (-16%), the stable recurring plant (cls58, 28

@@ -18,8 +18,8 @@ def iou(a, b):
     union = (ax2-ax1)*(ay2-ay1) + (bx2-bx1)*(by2-by1) - inter
     return inter / union if union > 0 else 0.0
 
-ref = load('ref_preds.csv')
-brd = load('board_preds.csv')
+ref = load('misc/ref_preds.csv')
+brd = load('misc/board_preds.csv')
 frames = sorted(set(r['name'] for r in ref) | set(r['name'] for r in brd))
 
 matched, missed, extra, dsum = 0, 0, 0, 0.0
