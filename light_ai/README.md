@@ -283,6 +283,16 @@ post-processing.
   "enc: rc_mode option not accepted"); the stream runs CBR at
   --net-bitrate (default 12000 kbps). Fine for the preview; revisit when
   bitrate control is actually needed.
+- mpp_buffer_group_get requires a caller string: mpp_assert(caller)
+  in mpp_buffer_group_init (mpp/base/mpp_buffer_impl.c:809,
+  introduced by 147aec8a "Refactor C++ mpp_buffer to C", 2025-05)
+  fires on NULL caller and PRINTS AND CONTINUES — the group is
+  created either way, so the print is a lost-attribution
+  diagnostic, not a failure. Our mpp_decoder (2 groups) and
+  net_encoder (1) passed nullptr: three asserts per run. Fixed by
+  passing __FUNCTION__ (2026-10-27): zero prints since, [timing]
+  unchanged. The buffer manager lives in mpp/base/ in this branch,
+  not osal/ — line numbers of foreign layouts do not apply.
 
 ## Measured performance (1920x1080 MJPEG, evening light, camera-bound)
 
@@ -473,6 +483,10 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       seen in every run incl. pre-patch smoke — benign so far;
       re-checked in the night A/B (2026-10-26): 2 asserts at startup
       of every run, A=2/B=2 in all compare outputs — still benign.
+      Update 2026-10-27: root-caused — the prints were OUR OWN
+      mpp_buffer_group_get calls with caller=nullptr (decoder x2,
+      encoder x1); fixed by passing __FUNCTION__. Zero prints since,
+      [timing] unchanged — see Platform constraints.
       Follow-up (same day): the 012 gain is CPU-frequency dependent.
       With CPU governors on performance, cores 012 reproduce 21.2 ms
       (steady 20.5-21.6) and AUTO stays 25.1 — both match the morning
@@ -581,8 +595,9 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
         Get-NetUDPEndpoint). The 2026-10-25 UDP latency closure is
         M3.9, player-side.
       - A benign-looking mpp_buffer ref_count warning appears at
-        shutdown on the rkmpp-encoder path (unrelated to the known
-        init assert) — watch on future runs. Seen again on the
+        shutdown on the rkmpp-encoder path (the init assert itself was
+        root-caused and fixed 2026-10-27, see Platform
+        constraints) — watch on future runs. Seen again on the
         2026-10-26 pull run, still benign.
 - [x] M3.6 (closed negative): box drawing via RGA — planned, probed
       live with yolov5 detections, retired. The open check (a) turned
@@ -613,7 +628,8 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       38.3-38.6 ms (~26.0) — timing parity; GPU wins on outline
       quality and zero CPU writes into the tensor. mpp_buffer init
       assert seen in every run incl. this milestone — confirmed
-      benign.
+      benign. Update 2026-10-27: root-caused and closed — see
+      Platform constraints (mpp_buffer_group caller).
 
 - [x] M3.8: camera disconnect recovery (USB replug). dequeue() classifies
       the failure: ENODEV/EIO are recoverable, any other errno is a hard
