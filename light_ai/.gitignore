@@ -12,4 +12,3 @@ temp*.txt
 # разрешаем коммит артефактов
 !misc/README.md
 !misc/*.whl
-!/yolov5s_relu*.rknn
