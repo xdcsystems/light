@@ -331,6 +331,22 @@ steady blocks with a viewer attached. CPU vs GPU box drawing is a timing parity 
 38.3-38.6 ms); GPU wins on render quality (subpixel-accurate outlines)
 and costs zero CPU writes into the NPU tensor.
 
+enc= stage in [timing] (2026-10-27, M3.5 item 7): the report carries a
+fifth term — the synchronous NetEncoder::publish in the pipeline thread
+(draw-fence poll + RGA band crop RGB888->NV12 + h264 encode + mux + TCP
+write; SO_SNDTIMEO caps a stalled viewer at 2 s). No viewer: enc=0.0
+by construction (publish early-returns). Viewer attached, 300-frame
+evening run: 1.8-1.9 ms steady (the first avg/60 block after a mid-run
+connect is inflated — compare steady blocks only). The sum does NOT
+grow by enc: at the camera's 20-FPS pacing the frame budget is fixed,
+and the publish cost previously hid inside the pacing stall reported
+as part of 'infer' — steady blocks show infer 30.9 -> 29.0-29.6 with
+enc ~1.9 (cam 17.0 -> 16.2, within noise), sum unchanged (49.3-50.1
+vs 49.6-49.8 baseline), FPS unchanged (~20.1-20.3). Decision (owner):
+publish is measured whole, the fence-poll stays inside enc — the poll
+wait is ~0 (single draw call per frame), and a future growth of enc
+with a flat encode time would flag a GPU-path regression on its own.
+
 ## Scripts
 - scripts/test_inference.py — RKNNLite smoke test: shapes, non-negativity
   (ReLU check), PASS/FAIL exit code.

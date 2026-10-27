@@ -7,12 +7,13 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <sys/stat.h>  // stat(): startup node fallback
+#include <unistd.h>
 
 #include "pipeline.hpp"
 #include "coco_names.h"
 #include "yolo_postprocess.hpp"
-#include <sys/stat.h>  // stat(): startup node fallback
-#include <unistd.h>
+
 
 namespace {
 
@@ -23,25 +24,26 @@ inline double ms(clk::time_point a, clk::time_point b) {
 }
 
 struct Timings {
-    double cam = 0, dec = 0, rga = 0, infer = 0; // sums, ms
+    double cam = 0, dec = 0, rga = 0, infer = 0, enc = 0; // sums, ms
     int n = 0;
 
-    void add(double c, double d, double r, double i) {
-        cam += c; dec += d; rga += r; infer += i;
+    void add(double c, double d, double r, double i, double e) {
+        cam += c; dec += d; rga += r; infer += i; enc += e;
         if (++n % 60 == 0) report("avg/60");
     }
 
     void report(const char* tag) {
         if (n == 0) return;
-        const double sum = (cam + dec + rga + infer) / n;
+        const double sum = (cam + dec + rga + infer + enc) / n;
         std::cout << "[timing] " << tag
                   << " cam=" << std::fixed << std::setprecision(1) << cam / n
                   << " dec=" << dec / n
                   << " rga=" << rga / n
                   << " infer=" << infer / n
+                  << " enc=" << enc / n
                   << " | sum=" << sum << " ms -> ~"
                   << (sum > 0 ? 1000.0 / sum : 0.0) << " FPS\n";
-        cam = dec = rga = infer = 0;
+        cam = dec = rga = infer = enc = 0;
         n = 0;
     }
 } g_t;
@@ -359,6 +361,7 @@ int Pipeline::run() {
 
         const bool npu_ok = rga_ok && (npu_.run() == 0);
         const auto t4 = clk::now();
+        double enc_ms = 0.0;  // measured below, inside the publish branch
 
         if (npu_ok) {
             // Letterbox geometry from the single source of truth: RgaResizer
@@ -446,12 +449,18 @@ int Pipeline::run() {
                     // Tensor path: the encoder crops the visible band out
                     // of the tensor (boxes already drawn and synced) and
                     // converts it to NV12 1:1 — no upscale.
+                    const auto t5 = clk::now();
                     enc_->publish(npu_.input_fd(), fence);
+                    const auto t6 = clk::now();
+                    // publish() is synchronous in the pipeline thread:
+                    // fence-poll + RGA crop + encode + mux + TCP write.
+                    // Zero without a viewer (publish early-returns).
+                    enc_ms = ms(t5, t6);
                 }
             }
             ++ok;
         }
-        g_t.add(ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3b, t4));
+        g_t.add(ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3b, t4), enc_ms);
     }
 
     const double wall = std::chrono::duration<double>(clk::now() - t_start).count();

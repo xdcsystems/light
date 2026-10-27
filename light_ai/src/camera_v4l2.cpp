@@ -6,13 +6,36 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
-
-#include "camera_v4l2.hpp"
 #include <cctype>
 #include <cstdlib>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <map>
+
+#include "camera_v4l2.hpp"
+
+// True when the node is a V4L2 capture device sitting on a USB bus
+// (QUERYCAP bus_info contains "usb"). Everything else on this board —
+// rkcif/rkisp platform nodes — is rejected before any S_FMT is tried:
+// they would burn reconnect attempts on setup failures, and a platform
+// capture node might even accept the format while never delivering a
+// frame (no sensor attached) — a false "successful" reconnect.
+namespace {
+bool usb_capture_node(const std::string& path) {
+    const int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    v4l2_capability cap{};
+    while (::ioctl(fd, VIDIOC_QUERYCAP, &cap) < 0 && errno == EINTR) {}
+    bool ok = false;
+    if (cap.capabilities & V4L2_CAP_VIDEO_CAPTURE) {
+        const char* bus = reinterpret_cast<const char*>(cap.bus_info);
+        ok = bus != nullptr && std::strstr(bus, "usb") != nullptr;
+    }
+    ::close(fd);
+    return ok;
+}
+}  // anonymous namespace (file-local helper)
+
 
 CameraV4L2::CameraV4L2(int w, int h)
     : width_(w), height_(h) {}
@@ -41,7 +64,7 @@ int CameraV4L2::setup_device(const std::string& dev, std::string* why) {
         if (why) *why = "S_FMT failed";
         return -1;
     }
-    
+
     // The driver may silently substitute a closest supported mode.
     // Verify what we actually got and fail loudly on a mismatch,
     // otherwise the whole pipeline (RGA, MPP) would run with wrong dims.
@@ -133,28 +156,6 @@ void CameraV4L2::teardown() {
     }
 }
 
-// True when the node is a V4L2 capture device sitting on a USB bus
-// (QUERYCAP bus_info contains "usb"). Everything else on this board —
-// rkcif/rkisp platform nodes — is rejected before any S_FMT is tried:
-// they would burn reconnect attempts on setup failures, and a platform
-// capture node might even accept the format while never delivering a
-// frame (no sensor attached) — a false "successful" reconnect.
-namespace {
-bool usb_capture_node(const std::string& path) {
-    const int fd = ::open(path.c_str(), O_RDONLY);
-    if (fd < 0) return false;
-    v4l2_capability cap{};
-    while (::ioctl(fd, VIDIOC_QUERYCAP, &cap) < 0 && errno == EINTR) {}
-    bool ok = false;
-    if (cap.capabilities & V4L2_CAP_VIDEO_CAPTURE) {
-        const char* bus = reinterpret_cast<const char*>(cap.bus_info);
-        ok = bus != nullptr && std::strstr(bus, "usb") != nullptr;
-    }
-    ::close(fd);
-    return ok;
-}
-}  // anonymous namespace (file-local helper)
-
 // Disconnect recovery: full teardown + the same setup path as startup,
 // plus STREAMON. The node is supplied by the owner (see
 // find_usb_capture_node) — the class never decides which node to open.
@@ -230,7 +231,11 @@ CameraV4L2::~CameraV4L2() {
 
 void CameraV4L2::xioctl(unsigned long req, void* arg) const {
     int r;
-    do { r = ioctl(fd_, req, arg); } while (r < 0 && errno == EINTR);
+
+    do {
+        r = ioctl(fd_, req, arg);
+    } while (r < 0 && errno == EINTR);
+
     if (r < 0) {
         throw std::runtime_error(std::string("ioctl failed: ") + strerror(errno));
     }

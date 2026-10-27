@@ -27,10 +27,12 @@ public:
             int best = -1;
             float best_iou = 0.3f;
             for (size_t t = 0; t < tracks_.size(); ++t) {
-                if (!tracks_[t].alive || tracks_[t].matched ||
-                    tracks_[t].cls != d.cls) continue;
+                if (!tracks_[t].alive || tracks_[t].matched || tracks_[t].cls != d.cls)
+                    continue;
                 const float v = iou(tracks_[t], d);
-                if (v > best_iou) { best_iou = v; best = static_cast<int>(t); }
+                if (v > best_iou) {
+                    best_iou = v; best = static_cast<int>(t);
+                }
             }
             Detection sd = d;
             if (best >= 0) {
@@ -44,7 +46,8 @@ public:
                 sd.x = t.x; sd.y = t.y; sd.w = t.w; sd.h = t.h;
             } else {
                 for (auto& t : tracks_) {
-                    if (t.alive) continue;
+                    if (t.alive) 
+                        continue;
                     t.x = d.x; t.y = d.y; t.w = d.w; t.h = d.h;
                     t.cls = d.cls; t.miss = 0;
                     t.alive = true; t.matched = true;
@@ -54,11 +57,13 @@ public:
             out.push(sd);
         }
         for (auto& t : tracks_)
-            if (t.alive && !t.matched && ++t.miss > 2) t.alive = false;
+            if (t.alive && !t.matched && ++t.miss > 2)
+                t.alive = false;
     }
 
     void log_frame(int frame, const DetList& raw, const DetList& smooth) {
-        if (!log_.is_open()) return;
+        if (!log_.is_open()) 
+            return;
         log_ << frame << ',' << raw.n << ',' << smooth.n << '\n';
         for (int k = 0; k < raw.n; ++k) {
             const Detection& d = raw.d[k];
@@ -87,7 +92,8 @@ private:
         const float x1 = (t.x + t.w) < (d.x + d.w) ? (t.x + t.w) : (d.x + d.w);
         const float y1 = (t.y + t.h) < (d.y + d.h) ? (t.y + t.h) : (d.y + d.h);
         const float iw = x1 - x0, ih = y1 - y0;
-        if (iw <= 0.f || ih <= 0.f) return 0.f;
+        if (iw <= 0.f || ih <= 0.f) 
+            return 0.f;
         const float inter = iw * ih;
         const float uni = t.w * t.h + d.w * d.h - inter;
         return uni > 0.f ? inter / uni : 0.f;
