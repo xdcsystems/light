@@ -18,14 +18,14 @@ MppDecoder::MppDecoder(int w, int h) : w_(w), h_(h) {
 
         // Pool for input packets (DRM: the decoder reads the packet directly)
         if (mpp_buffer_group_get(&pkt_group_, MPP_BUFFER_TYPE_DRM,
-                                 MPP_BUFFER_INTERNAL, MODULE_TAG, nullptr) != MPP_OK) {
+                                 MPP_BUFFER_INTERNAL, MODULE_TAG, __FUNCTION__) != MPP_OK) {
             std::cerr << "mpp_buffer_group_get pkt failed\n";
             break;
         }
 
         // Pool for output frames. Camera stream is 4:2:2, so the buffer is x2, not x1.5
         if (mpp_buffer_group_get(&out_group_, MPP_BUFFER_TYPE_DRM,
-                                 MPP_BUFFER_INTERNAL, MODULE_TAG, nullptr) != MPP_OK) {
+                                 MPP_BUFFER_INTERNAL, MODULE_TAG, __FUNCTION__) != MPP_OK) {
             std::cerr << "mpp_buffer_group_get failed\n";
             break;
         }
@@ -67,8 +67,7 @@ MppDecoder::~MppDecoder() {
     mpi_ = nullptr;
     // Critical order: the packet holds a reference to a buffer from pkt_group_,
     // so it must be released BEFORE its buffer group. The reversed order
-    // triggers "mpp_buffer: Assertion caller failed at mpp_buffer_group_init:809"
-    // and leaks one packet-sized drm buffer (~33 KB).
+    // leaks one packet-sized drm buffer (~33 KB).
     if (pkt_)       { mpp_packet_deinit(&pkt_); pkt_ = nullptr; }
     if (out_frame_) { mpp_frame_deinit(&out_frame_); out_frame_ = nullptr; }
 

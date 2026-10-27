@@ -84,7 +84,7 @@ NetEncoder::NetEncoder(int w, int h, int fps, int port,
     // Two NV12 dma-bufs from an MPP DRM pool: ping-pong so a plane held by
     // the encoder is never overwritten by RGA on the next frame.
     if (mpp_buffer_group_get(&buf_group_, MPP_BUFFER_TYPE_DRM,
-                             MPP_BUFFER_INTERNAL, nullptr, nullptr) != MPP_OK) {
+                             MPP_BUFFER_INTERNAL, MODULE_TAG, __FUNCTION__) != MPP_OK) {
         throw std::runtime_error("net encoder: mpp_buffer_group_get failed");
     }
     const size_t bytes = static_cast<size_t>(w_) * h_ * 3 / 2;
