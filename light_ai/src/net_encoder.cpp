@@ -319,11 +319,24 @@ void NetEncoder::serve() {
     if (lfd >= 0) ::close(lfd);
 }
 
-void NetEncoder::publish(int tensor_fd) {
-    if (quit_.load()) return;
+void NetEncoder::publish(int tensor_fd, int acquire_fence_fd) {
+
+    if (quit_.load()) {
+       if (acquire_fence_fd >= 0) ::close(acquire_fence_fd);
+       return;
+    }
+
     std::lock_guard<std::mutex> lk(mx_);
-    if (!fc_ || !enc_) return;
+
+    if (!fc_ || !enc_) {
+       if (acquire_fence_fd >= 0) ::close(acquire_fence_fd);
+       return;
+    }
+
+    if (acq_fd_ >= 0) { ::close(acq_fd_); acq_fd_ = -1; }   // stale fence
     tensor_fd_ = tensor_fd;   // RGA source for this frame
+    acq_fd_ = acquire_fence_fd;   // consumed by send_frame
+
     full_frame_ = false;      // tensor path: source is RGB888
     if (!send_frame(fc_, st_)) {
         error_.store(true);
@@ -355,10 +368,10 @@ bool NetEncoder::send_frame(void* fcp, void* stp) {
     auto* ctx = static_cast<AVCodecContext*>(enc_);
 
     // Ping-pong: RGA never writes into a plane the previous encode still
-    // holds. The 7th improcess argument is the usage mask, not a sync
-    // flag (IM_HAL_TRANSFORM_ROT_90 = 1<<0); 0 means "no transform".
-    // Single-op calls run synchronously (im2d_single.h: sync defaults
-    // to 1), so the encoder reads a finished buffer.
+    // holds. improcess is the synchronous single-op form: it returns
+    // with the dst already finished for the CPU-side encoder read.
+    // Ordering vs the GPU drawer is guaranteed upstream by poll() on
+    // the exported draw fence (acq_fd_).
     cur_ ^= 1u;
     MppBuffer mb = bufs_[cur_];
 
@@ -382,6 +395,20 @@ bool NetEncoder::send_frame(void* fcp, void* stp) {
     }
     rga_buffer_t dst = wrapbuffer_fd(mpp_buffer_get_fd(mb), w_, h_,
                                      RK_FORMAT_YCbCr_420_SP);
+
+    // RGA-fence support is absent in this kernel driver: the acquire
+    // fence passed to improcess was silently ignored (boxes vanished).
+    // The draw fence is a plain sync_file fd: wait via poll() — much
+    // cheaper than syncCpu(), same ordering guarantee for RGA.
+    if (acq_fd_ >= 0) {
+        pollfd pf{};
+        pf.fd = acq_fd_;
+        pf.events = POLLIN;
+        if (::poll(&pf, 1, 200) <= 0)
+            std::cerr << "enc: draw fence wait failed, boxes may lag a frame\n";
+        ::close(acq_fd_);
+        acq_fd_ = -1;
+    }
     const IM_STATUS rs = improcess(src, dst, {}, srect, {}, {}, 0);
     if ((int)rs <= 0) {
         std::cerr << "enc: RGA convert failed: " << imStrError(rs) << '\n';

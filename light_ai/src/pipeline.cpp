@@ -12,6 +12,7 @@
 #include "coco_names.h"
 #include "yolo_postprocess.hpp"
 #include <sys/stat.h>  // stat(): startup node fallback
+#include <unistd.h>
 
 namespace {
 
@@ -48,9 +49,9 @@ struct Timings {
 // Colors shared by the GPU and CPU drawing paths (owner's pick).
 inline void det_color(int cls, uint8_t& r, uint8_t& g, uint8_t& b) {
     switch (cls) {
-    case 0:  r = 255; g = 64;  b = 64;  break;  // person
-    case 56: r = 64;  g = 255; b = 64;  break;  // chair
-    default: r = 255; g = 255; b = 0;   break;  // others
+        case 0: r = 255; g = 64; b = 64; break; // person
+        case 56: r = 64; g = 255; b = 64; break; // chair
+        default: r = 255; g = 255; b = 0; break; // others
     }
 }
 
@@ -408,11 +409,20 @@ int Pipeline::run() {
                     b.a = 255;
                     boxes_.push(b);
                 }
+                int fence = -1;   // GPU draw fence, consumed by enc publish
                 if (drawer_) {
                     drawer_->draw(boxes_.d.data(), boxes_.n);
-                    // publish() reads the tensor right away (CPU in the NUT
-                    // path, RGA in the h264 path): GPU writes must land first.
-                    drawer_->syncCpu();
+                    // GPU writes: the NUT preview reads the tensor via CPU
+                    // and needs a hard syncCpu(); the h264 path waits for
+                    // the exported draw fence inside the encoder (poll),
+                    // because this RGA driver ignores acquire fences.
+                    // fence < 0 -> syncCpu fallback (no fence extension).
+                    fence = drawer_->exportFence();
+                    if (preview_ || fence < 0) {
+                        drawer_->syncCpu();
+                        if (fence >= 0) ::close(fence);
+                        fence = -1;
+                    }
                 } else {
                     // Fallback: CPU drawing. The RGA imrectangle path is
                     // gone for good: RGA fill on RGB888 is not routable on
@@ -436,7 +446,7 @@ int Pipeline::run() {
                     // Tensor path: the encoder crops the visible band out
                     // of the tensor (boxes already drawn and synced) and
                     // converts it to NV12 1:1 — no upscale.
-                    enc_->publish(npu_.input_fd());
+                    enc_->publish(npu_.input_fd(), fence);
                 }
             }
             ++ok;

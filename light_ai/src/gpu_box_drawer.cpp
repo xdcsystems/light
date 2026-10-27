@@ -26,6 +26,12 @@
 #ifndef EGL_FOREVER_KHR
 #define EGL_FOREVER_KHR 0xFFFFFFFFFFFFFFFFull
 #endif
+#ifndef EGL_SYNC_FLUSH_COMMANDS_BIT_KHR
+#define EGL_SYNC_FLUSH_COMMANDS_BIT_KHR 0x0001
+#endif
+
+// 100 ms cap for syncCpu(): a wedged GPU must not hang the pipeline.
+constexpr EGLTimeKHR kFenceWaitNs = 100ull * 1000 * 1000;
 
 namespace {
 
@@ -33,17 +39,40 @@ bool has(const char *exts, const char *name) {
     return exts && strstr(exts, name) != nullptr;
 }
 
-// Shader sources: file-local constexpr constants (statics rule).
+// Per-vertex color (normalized ubyte attribute) instead of the per-box
+// uniform: that is what allows all boxes to be batched into ONE draw
+// call. Channel order is GL semantics — see the r/b swap note in draw().
 constexpr const char* VS =
-    "attribute vec2 a_pos; void main(){ gl_Position=vec4(a_pos,0.,1.); }";
+    "attribute vec2 a_pos; attribute vec4 a_col; varying vec4 v_col; "
+    "void main(){ gl_Position=vec4(a_pos,0.,1.); v_col=a_col; }";
 constexpr const char* FS =
-    "precision mediump float; uniform vec4 u_col; "
-    "void main(){ gl_FragColor=u_col; }";
+    "precision mediump float; varying vec4 v_col; "
+    "void main(){ gl_FragColor=v_col; }";
+
+// Batched vertex: 2 floats + 4 normalized ubytes = 12 bytes. The
+// r/g/b/a fields are GL component order; GL red lands in memory byte2
+// (the dma-buf reads as BGR — probe calibration), so the TENSOR R is
+// stored in the field named 'b'.
+struct BatchVert {
+    float x, y;
+    uint8_t r, g, b, a;
+};
+
+// PodList<GpuBox, 128> hard cap (mirrors the header type). One VBO for
+// the whole session: 4 quads x 6 vertices per box, allocated once in
+// init(); draw() only uploads — zero reallocations.
+constexpr int kMaxBoxes = 128;
+constexpr int kVertsPerBox = 4 * 6;
+constexpr GLsizeiptr kVboBytes =
+    kMaxBoxes * kVertsPerBox * (GLsizeiptr)sizeof(BatchVert);
 
 }  // anonymous namespace
 
 void GpuBoxDrawer::make_current() {
-    eglMakeCurrent(st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, st_.ctx);
+    // Same-context eglMakeCurrent is not free in libmali; skip it when
+    // the context is already current (the common case in the hot path).
+    if (eglGetCurrentContext() != st_.ctx)
+        eglMakeCurrent(st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, st_.ctx);
 }
 
 bool GpuBoxDrawer::make_program() {
@@ -57,30 +86,23 @@ bool GpuBoxDrawer::make_program() {
     glAttachShader(st_.prog, vs);
     glAttachShader(st_.prog, fs);
     glLinkProgram(st_.prog);
-    st_.ucol = glGetUniformLocation(st_.prog, "u_col");
     st_.apos = glGetAttribLocation(st_.prog, "a_pos");
+    st_.acol = glGetAttribLocation(st_.prog, "a_col");
     return st_.prog != 0;
 }
 
-// One filled quad in tensor coordinates. The viewport clips anything
-// outside the tensor, matching the CPU-path clamping.
-// Y orientation: memory row r maps to NDC y = -1 + 2*r/h — GL's origin
-// (bottom-left) IS memory row 0, so there is NO flip. The probe's
-// green-band test sat at the center row, which is symmetric under a
-// flip and could not catch this; a live frame did (boxes were mirrored
-// around y = h/2).
-void GpuBoxDrawer::draw_quad(float x0, float y0, float x1, float y1) {
-    if (x1 - x0 < 1.0f || y1 - y0 < 1.0f) return;
-    const float nx0 = (x0 / (float)st_.w) * 2.0f - 1.0f;
-    const float nx1 = (x1 / (float)st_.w) * 2.0f - 1.0f;
-    const float ny0 = (y0 / (float)st_.h) * 2.0f - 1.0f;
-    const float ny1 = (y1 / (float)st_.h) * 2.0f - 1.0f;
-    const GLfloat q[12] = {
-        nx0, ny0,  nx1, ny0,  nx0, ny1,
-        nx1, ny0,  nx1, ny1,  nx0, ny1,
-    };
-    glBufferData(GL_ARRAY_BUFFER, sizeof(q), q, GL_DYNAMIC_DRAW);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+// Attribute setup for the batched vertex layout (12-byte stride). The
+// color field offset is fixed: 2 x sizeof(float) = 8 bytes.
+void GpuBoxDrawer::setup_attribs() {
+    glBindBuffer(GL_ARRAY_BUFFER, st_.vbo);
+    glEnableVertexAttribArray(st_.apos);
+    glVertexAttribPointer(st_.apos, 2, GL_FLOAT, GL_FALSE,
+                          sizeof(BatchVert), (void*)0);
+    if (st_.acol >= 0) {
+        glEnableVertexAttribArray(st_.acol);
+        glVertexAttribPointer(st_.acol, 4, GL_UNSIGNED_BYTE, GL_TRUE,
+                              sizeof(BatchVert), (void*)8);
+    }
 }
 
 GpuBoxDrawer::GpuBoxDrawer() {}
@@ -153,7 +175,10 @@ bool GpuBoxDrawer::init() {
     st_.client_wait = (P_ClientWaitSync)eglGetProcAddress("eglClientWaitSyncKHR");
     st_.dup_fence = (P_DupNativeFenceFDANDROID)eglGetProcAddress("eglDupNativeFenceFDANDROID");
     st_.image_target_tex = (P_ImageTargetTexture2DOES)eglGetProcAddress("glEGLImageTargetTexture2DOES");
-    
+    st_.gen_vao = (P_GenVertexArrays)eglGetProcAddress("glGenVertexArrays");
+    st_.del_vao = (P_DeleteVertexArrays)eglGetProcAddress("glDeleteVertexArrays");
+    st_.bind_vao = (P_BindVertexArray)eglGetProcAddress("glBindVertexArray");
+
     if (!st_.create_image || !st_.image_target_tex) {
         std::cerr << "drawer: image entry points missing\n";
         return false;
@@ -187,6 +212,21 @@ bool GpuBoxDrawer::init() {
         return false;
     }
     glGenBuffers(1, &st_.vbo);
+    // Pre-allocate the batch VBO once: draw() only uploads into it.
+    glBindBuffer(GL_ARRAY_BUFFER, st_.vbo);
+    glBufferData(GL_ARRAY_BUFFER, kVboBytes, nullptr, GL_STREAM_DRAW);
+    // VAO (ES3 only, when the entry points exist): attributes are
+    // recorded once here; draw() then does a single glBindVertexArray.
+    const char *glver = (const char *)glGetString(GL_VERSION);
+    st_.es3 = glver && strstr(glver, "ES 3.") != nullptr &&
+              st_.gen_vao && st_.del_vao && st_.bind_vao;
+    if (st_.es3) {
+        st_.gen_vao(1, &st_.vao);
+        st_.bind_vao(st_.vao);
+        setup_attribs();
+        st_.bind_vao(0);
+        std::cout << "drawer: batch VAO ready (ES3)\n";
+    }
     ready_ = true;
     return true;
 }
@@ -237,42 +277,95 @@ bool GpuBoxDrawer::attachTensor(int tensorDmaFd, int w, int h,
 
 void GpuBoxDrawer::draw(const GpuBox* boxes, int n) {
     if (st_.dpy == EGL_NO_DISPLAY || boxes == nullptr || n <= 0) return;
+    if (n > kMaxBoxes) n = kMaxBoxes;
     make_current();
+
+    // Batched quads in tensor coordinates. The viewport clips anything
+    // outside the tensor, matching the CPU-path clamping.
+    // Y orientation: memory row r maps to NDC y = -1 + 2*r/h — GL's origin
+    // (bottom-left) IS memory row 0, so there is NO flip. The probe's
+    // green-band test sat at the center row, which is symmetric under a
+    // flip and could not catch this; a live frame did (boxes were mirrored
+    // around y = h/2).
+    BatchVert v[kMaxBoxes * kVertsPerBox];   // ~36 KB on stack
+    int cnt = 0;
+    const float xs = 2.0f / (float)st_.w, ys = 2.0f / (float)st_.h;
+    const float t = 1.0f;   // outline thickness, tensor px
+
+    auto push = [&](float x0, float y0, float x1, float y1,
+                    const GpuBox& b) {
+        if (x1 - x0 < 1.0f || y1 - y0 < 1.0f) return;
+        const float q[6][2] = {
+            {x0*xs - 1.0f, y0*ys - 1.0f},
+            {x1*xs - 1.0f, y0*ys - 1.0f},
+            {x0*xs - 1.0f, y1*ys - 1.0f},
+            {x1*xs - 1.0f, y0*ys - 1.0f},
+            {x1*xs - 1.0f, y1*ys - 1.0f},
+            {x0*xs - 1.0f, y1*ys - 1.0f},
+        };
+        // The dma-buf reads as BGR to the GPU: the tensor R must go into
+        // the GL blue channel (probe calibration) — see BatchVert.
+        for (const auto& p : q) {
+            v[cnt].x = p[0]; v[cnt].y = p[1];
+            v[cnt].r = b.b; v[cnt].g = b.g;
+            v[cnt].b = b.r; v[cnt].a = b.a;
+            ++cnt;
+        }
+    };
+    for (int i = 0; i < n; ++i) {
+        const GpuBox& b = boxes[i];
+        push(b.x0, b.y0, b.x1, b.y0 + t, b);   // top edge
+        push(b.x0, b.y1 - t, b.x1, b.y1, b);   // bottom edge
+        push(b.x0, b.y0, b.x0 + t, b.y1, b);   // left edge
+        push(b.x1 - t, b.y0, b.x1, b.y1, b);   // right edge
+    }
+    if (cnt == 0) return;
+
+    if (st_.es3) st_.bind_vao(st_.vao);
     glBindFramebuffer(GL_FRAMEBUFFER, st_.fbo);
     glViewport(0, 0, st_.w, st_.h);
     glUseProgram(st_.prog);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
+    if (!st_.es3) setup_attribs();   // ES3: attributes live in the VAO
     glBindBuffer(GL_ARRAY_BUFFER, st_.vbo);
-    glEnableVertexAttribArray(st_.apos);
-    glVertexAttribPointer(st_.apos, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
-
-    const float t = 1.0f;   // outline thickness, tensor px
-    for (int i = 0; i < n; ++i) {
-        const GpuBox& b = boxes[i];
-        // The dma-buf reads as BGR to the GPU: the tensor R must go into
-        // the GL blue channel (probe calibration).
-        glUniform4f(st_.ucol, b.b / 255.0f, b.g / 255.0f, b.r / 255.0f,
-                    b.a / 255.0f);
-        draw_quad(b.x0, b.y0, b.x1, b.y0 + t);   // top edge
-        draw_quad(b.x0, b.y1 - t, b.x1, b.y1);   // bottom edge
-        draw_quad(b.x0, b.y0, b.x0 + t, b.y1);   // left edge
-        draw_quad(b.x1 - t, b.y0, b.x1, b.y1);   // right edge
-    }
+    glBufferSubData(GL_ARRAY_BUFFER, 0,
+                    (GLsizeiptr)cnt * sizeof(BatchVert), v);
+    glDrawArrays(GL_TRIANGLES, 0, cnt);
 }
 
 void GpuBoxDrawer::syncCpu() {
     if (st_.dpy == EGL_NO_DISPLAY) return;
     if (st_.native_fence) {
         make_current();
-        EGLSyncKHR sync = st_.create_sync(st_.dpy, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr);
+        EGLSyncKHR sync = st_.create_sync(st_.dpy,
+                EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr);
         if (sync != EGL_NO_SYNC_KHR) {
-            st_.client_wait(st_.dpy, sync, 0, EGL_FOREVER_KHR);
+            // Flush bit: without it the fence may never signal if the
+            // driver has not flushed the command stream. Bounded wait:
+            // a wedged GPU must not hang the pipeline.
+            const EGLint r = st_.client_wait(st_.dpy, sync,
+                    EGL_SYNC_FLUSH_COMMANDS_BIT_KHR, kFenceWaitNs);
             if (st_.destroy_sync) st_.destroy_sync(st_.dpy, sync);
-            return;
+            if (r == EGL_CONDITION_SATISFIED_KHR) return;
+            std::cerr << "drawer: fence wait timed out, glFinish fallback\n";
         }
     }
     glFinish();
+}
+
+int GpuBoxDrawer::exportFence() {
+    if (st_.dpy == EGL_NO_DISPLAY) return -1;
+    if (!st_.native_fence || !st_.dup_fence) return -1;
+    make_current();
+    EGLSyncKHR sync = st_.create_sync(st_.dpy,
+            EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr);
+    if (sync == EGL_NO_SYNC_KHR) return -1;
+    // dup'ed fd: our copy, we own it — the caller must close() it (or
+    // hand it to an RGA acquire, which consumes it the same way).
+    const int fd = st_.dup_fence(st_.dpy, sync);
+    st_.destroy_sync(st_.dpy, sync);
+    return fd;
 }
 
 void GpuBoxDrawer::done() {
@@ -280,6 +373,8 @@ void GpuBoxDrawer::done() {
         make_current();
         if (st_.fbo) glDeleteFramebuffers(1, &st_.fbo);
         if (st_.tex) glDeleteTextures(1, &st_.tex);
+        if (st_.vao && st_.del_vao) st_.del_vao(1, &st_.vao);
+        st_.vao = 0;
         if (st_.img != EGL_NO_IMAGE_KHR && st_.destroy_image)
             st_.destroy_image(st_.dpy, st_.img);
         st_.img = EGL_NO_IMAGE_KHR;

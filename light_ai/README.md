@@ -565,7 +565,7 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
         YOLO overlays; the earlier "first frame only" issue gone).
         h264_rkmpp MPEG-TS/UDP landed as the tensor path: the
         encoder publishes the NPU input tensor AFTER GPU box drawing
-        (syncCpu before publish), crops the visible letterbox band
+        (draw-fence poll before RGA), crops the visible letterbox band
         (srect y=[140,500) for the 640x640 tensor) and converts
         RGB888->NV12 1:1 into its own ping-pong NV12 dma-bufs. The
         stream is the band at its NATIVE size — 640x360 for 1280x720,
@@ -599,8 +599,9 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
 - [x] M3.7: GPU box drawing (Mali G610, EGL/GBM) straight into the
       NPU tensor. The rknn tensor dma-buf is imported as an EGLImage
       (attachTensor); quads drawn with one draw call per frame; native
-      fence sync; syncCpu() before publish so the CPU read (NUT path)
-      and RGA read (h264 path) see finished pixels. Y-orientation:
+      fence sync; the h264 path orders GPU/RGA by poll() on the exported
+      draw fence (this RGA driver ignores improcess acquire fences),
+      syncCpu() remains for the CPU reader only. Y-orientation:
       GL origin (bottom-left) IS memory row 0 — no flip; the earlier
       mirrored boxes came from a probe that sat at the center row,
       which is symmetric under a flip and could not detect it (a live

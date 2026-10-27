@@ -30,12 +30,22 @@ public:
     bool init();
     // Imports the NPU tensor dma-buf as an EGLImage-backed FBO.
     bool attachTensor(int tensorDmaFd, int w, int h, uint32_t stride);
-    // Async GPU draw: one 1-px outline per box.
+    // Async GPU draw: 1-px outlines for all boxes in ONE draw call
+    // (batched VBO, per-vertex color).
     void draw(const GpuBox* boxes, int n);
     // Blocks until all GPU writes from draw() are visible to CPU/RGA.
     // Native fence (EGL_ANDROID_native_fence_sync) when available,
-    // glFinish() otherwise.
+    // glFinish() otherwise. The fence wait is bounded (100 ms cap) with
+    // a glFinish() fallback — a wedged GPU must not hang the pipeline.
     void syncCpu();
+    // Export a native fence fd covering the writes of the last draw().
+    // Ownership passes to the caller, which must close() it (or wait on
+    // it, e.g. poll() in the encoder before the RGA convert; then
+    // close() it). NOTE: this RGA driver ignores acquire fences, so
+    // fd handoff to improcess is NOT a valid use.
+    // Returns -1 when the native fence extension is unavailable — the
+    // caller must fall back to syncCpu().
+    int exportFence();
     bool ok() const { return ready_; }
 
 private:
@@ -54,6 +64,9 @@ private:
     typedef EGLDisplay (EGLAPIENTRYP P_GetPlatformDisplayEXT)
         (EGLenum, void *, const EGLint *);
     typedef void (GL_APIENTRYP P_ImageTargetTexture2DOES)(GLenum, GLeglImageOES);
+    typedef void (GL_APIENTRYP P_GenVertexArrays)(GLsizei, GLuint *);
+    typedef void (GL_APIENTRYP P_DeleteVertexArrays)(GLsizei, const GLuint *);
+    typedef void (GL_APIENTRYP P_BindVertexArray)(GLuint);
 
     // GL/EGL state by value: no heap, no pimpl. The old State* was the
     // only raw owning pointer in the production code (audit 2026-10-27).
@@ -61,8 +74,9 @@ private:
         EGLDisplay dpy = EGL_NO_DISPLAY;
         EGLContext ctx = nullptr;
         EGLImageKHR img = EGL_NO_IMAGE_KHR;
-        GLuint tex = 0, fbo = 0, prog = 0, vbo = 0;
-        GLint ucol = -1, apos = -1;
+        GLuint tex = 0, fbo = 0, prog = 0, vbo = 0, vao = 0;
+        GLint apos = -1, acol = -1;
+        bool es3 = false;           // ES3 context with VAO entry points
         int w = 0, h = 0;
         uint32_t stride = 0;
         int gbm_fd = -1;            // the GBM device lives on this fd
@@ -75,15 +89,20 @@ private:
         P_CreateSync create_sync = nullptr;
         P_DestroySync destroy_sync = nullptr;
         P_ClientWaitSync client_wait = nullptr;
-        P_DupNativeFenceFDANDROID dup_fence = nullptr;  // future RGA handoff
+        P_DupNativeFenceFDANDROID dup_fence = nullptr;  // RGA handoff
         P_GetPlatformDisplayEXT get_platform_display = nullptr;
         P_ImageTargetTexture2DOES image_target_tex = nullptr;
+        P_GenVertexArrays gen_vao = nullptr;
+        P_DeleteVertexArrays del_vao = nullptr;
+        P_BindVertexArray bind_vao = nullptr;
     };
 
     void done();
     void make_current();
     bool make_program();
-    void draw_quad(float x0, float y0, float x1, float y1);
+    // Attribute setup for the batched vertex layout: recorded once into
+    // the VAO (ES3 path) or re-applied per draw() (GLES2 path).
+    void setup_attribs();
 
 private:  // data
     State st_{};

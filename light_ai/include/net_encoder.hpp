@@ -26,7 +26,7 @@ public:
 
     // Called once per frame from the pipeline loop. tensor_fd is the
     // dma-buf of the NPU input tensor (RGB888, w x h); boxes are drawn.
-    void publish(int tensor_fd);
+    void publish(int tensor_fd, int acquire_fence_fd = -1);
 
     // M3.5: publish the FULL decoder frame (cam_w x cam_h, YUV422SP
     // dma-buf) BEFORE the RGA letterbox pass — by fd only, zero
@@ -54,6 +54,7 @@ private:
     MppBuffer bufs_[2] = {nullptr, nullptr};   // ping-pong NV12 dma-bufs
     uint32_t cur_ = 0;
     int tensor_fd_ = -1;        // dma-buf fd of the NPU tensor (set in publish)
+    int acq_fd_ = -1;    // draw fence fd, consumed by RGA in send_frame
     bool full_frame_ = false;   // true: tensor_fd_ is the decoder's
                                 // YUV422SP frame (publish_full_frame);
                                 // false: RGB888 NPU tensor (publish)
