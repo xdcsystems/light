@@ -47,7 +47,7 @@ namespace
     }
 
     // yolov5 default anchors, already in model-input pixels per stride.
-    constexpr float ANCH[3][3][2] = {
+    constexpr float kANCH[3][3][2] = {
             { { 10, 13 }, { 16, 30 }, { 33, 23 } },
             { { 30, 61 }, { 62, 45 }, { 59, 119 } },
             { { 116, 90 }, { 156, 198 }, { 373, 326 } },
@@ -101,8 +101,8 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
     // Candidate buffer on the stack: fixed capacity, no heap. The early
     // cut (obj < 0.05f) keeps the real flow to single digits; the cap
     // is a safety net.
-    constexpr int kMaxCand = 1024;
-    std::array<Box, kMaxCand> cand{};
+    constexpr int k_max_cand = 1024;
+    std::array<Box, k_max_cand> cand{};
     int nc = 0;
 
     const float scale = cam_w / model_w;  // uniform, by width
@@ -114,24 +114,24 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
         if ( !data || attr.n_dims != 4 )
             continue;
 
-        // NCHW: dims = {1, 255, H, W}
-        const int H = static_cast<int>( attr.dims[2] );
-        const int W = static_cast<int>( attr.dims[3] );
+        // NCHW: dims = {1, 255, h, w}
+        const int h = static_cast<int>( attr.dims[2] );
+        const int w = static_cast<int>( attr.dims[3] );
         const int stride = 8 << gi;
         const int per = static_cast<int>( attr.dims[1] ) / 3;  // 85 = 4+1+80
 
-        for ( int gy = 0; gy < H; ++gy )
+        for ( int gy = 0; gy < h; ++gy )
         {
-            for ( int gx = 0; gx < W; ++gx )
+            for ( int gx = 0; gx < w; ++gx )
             {
-                const size_t base = ( static_cast<size_t>( gy ) * W + gx );
-                // channel-major: element (c, gy, gx) is at c*H*W + base
-                const size_t cellHW = static_cast<size_t>( H ) * W;
+                const size_t base = ( static_cast<size_t>( gy ) * w + gx );
+                // channel-major: element (c, gy, gx) is at c*h*w + base
+                const size_t cell_hw = static_cast<size_t>( h ) * w;
                 // anchor loop is merged with the confidence shortcut below
                 for ( int k = 0; k < 3; ++k )
                 {
-                    const size_t off = base + static_cast<size_t>( k ) * per * cellHW;
-                    const float obj = fp16_to_float( data[off + 4 * cellHW] );
+                    const size_t off = base + static_cast<size_t>( k ) * per * cell_hw;
+                    const float obj = fp16_to_float( data[off + 4 * cell_hw] );
                     if ( obj < 0.05f )
                         continue;  // cheap early cut, below any usable conf_thr
 
@@ -139,7 +139,7 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
                     float best_cls = 0.0f;
                     for ( int c = 5; c < per; ++c )
                     {
-                        const float v = fp16_to_float( data[off + c * cellHW] );
+                        const float v = fp16_to_float( data[off + c * cell_hw] );
                         if ( v > best_cls )
                         {
                             best_cls = v;
@@ -150,18 +150,18 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
                     if ( conf < conf_thr )
                         continue;
 
-                    const float* an = ANCH[gi][k];
-                    const float cx = ( fp16_to_float( data[off + 0 * cellHW] ) * 2.0f - 0.5f + gx ) * stride;
-                    const float cy = ( fp16_to_float( data[off + 1 * cellHW] ) * 2.0f - 0.5f + gy ) * stride;
-                    const float bw = fp16_to_float( data[off + 2 * cellHW] );
-                    const float bh = fp16_to_float( data[off + 3 * cellHW] );
+                    const float* an = kANCH[gi][k];
+                    const float cx = ( fp16_to_float( data[off + 0 * cell_hw] ) * 2.0f - 0.5f + gx ) * stride;
+                    const float cy = ( fp16_to_float( data[off + 1 * cell_hw] ) * 2.0f - 0.5f + gy ) * stride;
+                    const float bw = fp16_to_float( data[off + 2 * cell_hw] );
+                    const float bh = fp16_to_float( data[off + 3 * cell_hw] );
                     const float w = ( bw * 2.0f ) * ( bw * 2.0f ) * an[0];
                     const float h = ( bh * 2.0f ) * ( bh * 2.0f ) * an[1];
 
                     if ( cy < lb_top || cy >= lb_top + lb_h )
                         continue;  // bar
 
-                    if ( nc < kMaxCand )
+                    if ( nc < k_max_cand )
                         cand[nc++] = { cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, conf, best - 5 };
                 }
             }
@@ -173,7 +173,7 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
     std::sort( cand.begin(), cand.begin() + nc, []( const Box& a, const Box& b ) {
         return a.conf > b.conf;
     } );
-    std::array<uint8_t, kMaxCand> sup {};
+    std::array<uint8_t, k_max_cand> sup {};
     for ( int i = 0; i < nc; ++i )
     {
         if ( sup[i] )

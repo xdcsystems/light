@@ -475,7 +475,7 @@ bool NetEncoder::send_frame( void* fcp, void* stp )
     {
         // Tensor path: crop the visible letterbox band out of the RGB888
         // model tensor and convert it to NV12 at 1:1 (no upscale). The
-        // boxes are already in the band (GPU drawer + syncCpu before
+        // boxes are already in the band (GPU drawer + sync_cpu before
         // publish), so they ride along into the stream for free.
         src = wrapbuffer_fd( tensor_fd_, model_w_, model_h_, RK_FORMAT_RGB_888 );
         srect.x = 0;
@@ -488,7 +488,7 @@ bool NetEncoder::send_frame( void* fcp, void* stp )
     // RGA-fence support is absent in this kernel driver: the acquire
     // fence passed to improcess was silently ignored (boxes vanished).
     // The draw fence is a plain sync_file fd: wait via poll() — much
-    // cheaper than syncCpu(), same ordering guarantee for RGA.
+    // cheaper than sync_cpu(), same ordering guarantee for RGA.
     if ( acq_fd_ >= 0 )
     {
         pollfd pf {};

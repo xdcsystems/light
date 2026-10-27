@@ -115,9 +115,13 @@ private:
         const float y0 = t.y > d.y ? t.y : d.y;
         const float x1 = ( t.x + t.w ) < ( d.x + d.w ) ? ( t.x + t.w ) : ( d.x + d.w );
         const float y1 = ( t.y + t.h ) < ( d.y + d.h ) ? ( t.y + t.h ) : ( d.y + d.h );
-        const float iw = x1 - x0, ih = y1 - y0;
+
+        const float iw = x1 - x0;
+        const float ih = y1 - y0;
+
         if ( iw <= 0.f || ih <= 0.f )
             return 0.f;
+
         const float inter = iw * ih;
         const float uni = t.w * t.h + d.w * d.h - inter;
         return uni > 0.f ? inter / uni : 0.f;

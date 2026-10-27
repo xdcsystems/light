@@ -31,7 +31,7 @@ public:
     // EGL/GBM display + surfaceless GLES3 context + shader + VBO.
     bool init();
     // Imports the NPU tensor dma-buf as an EGLImage-backed FBO.
-    bool attachTensor( int tensorDmaFd, int w, int h, uint32_t stride );
+    bool attach_tensor( int tensor_dma_fd, int w, int h, uint32_t stride );
     // Async GPU draw: 1-px outlines for all boxes in ONE draw call
     // (batched VBO, per-vertex color).
     void draw( const GpuBox *boxes, int n );
@@ -39,15 +39,15 @@ public:
     // Native fence (EGL_ANDROID_native_fence_sync) when available,
     // glFinish() otherwise. The fence wait is bounded (100 ms cap) with
     // a glFinish() fallback — a wedged GPU must not hang the pipeline.
-    void syncCpu();
+    void sync_cpu();
     // Export a native fence fd covering the writes of the last draw().
     // Ownership passes to the caller, which must close() it (or wait on
     // it, e.g. poll() in the encoder before the RGA convert; then
     // close() it). NOTE: this RGA driver ignores acquire fences, so
     // fd handoff to improcess is NOT a valid use.
     // Returns -1 when the native fence extension is unavailable — the
-    // caller must fall back to syncCpu().
-    int exportFence();
+    // caller must fall back to sync_cpu().
+    int export_fence();
     bool ok() const { return ready_; }
 
 private:
@@ -101,7 +101,7 @@ private:
     bool make_program();
     // Attribute setup for the batched vertex layout: recorded once into
     // the VAO (ES3 path) or re-applied per draw() (GLES2 path).
-    void setup_attribs();
+    void setup_attribs() const;
 
 private:  // data
     State st_ {};

@@ -10,11 +10,11 @@ public:
     ~RknnEngine();
 
     int setup_io();
-    int run();
+    int run() const;
 
     // M2.5: pin inference to NPU core(s) via rknn_set_core_mask.
     // mask: 0 = AUTO (do not call), 1 = core 0, 3 = cores 0+1, 7 = 0+1+2.
-    int set_core_mask( unsigned mask );
+    int set_core_mask( unsigned mask ) const;
 
     void* input_data() const { return in_mem_ ? in_mem_->virt_addr : nullptr; }
     int input_fd() const { return in_mem_ ? in_mem_->fd : -1; }

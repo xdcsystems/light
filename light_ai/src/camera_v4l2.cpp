@@ -295,7 +295,7 @@ void CameraV4L2::start()
     xioctl( VIDIOC_STREAMON, &t );
 }
 
-int CameraV4L2::dequeue( uint32_t* size, int* err )
+int CameraV4L2::dequeue( uint32_t* size, int* err )  // NOLINT(readability-make-member-function-const)
 {
     v4l2_buffer buf {};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -315,7 +315,7 @@ int CameraV4L2::dequeue( uint32_t* size, int* err )
     return buf.index;
 }
 
-void CameraV4L2::requeue( int index )
+void CameraV4L2::requeue( int index )  // NOLINT(readability-make-member-function-const)
 {
     v4l2_buffer buf {};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;

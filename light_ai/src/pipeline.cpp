@@ -217,7 +217,7 @@ Pipeline::Pipeline( const Config& cfg )
     if ( ( preview_ || enc_ ) && !cfg_.cpu_draw )
     {
         drawer_.emplace();
-        if ( !drawer_->init() || !drawer_->attachTensor( npu_.input_fd(), model_w_, model_h_, static_cast<uint32_t>( model_w_ ) * 3 ) )
+        if ( !drawer_->init() || !drawer_->attach_tensor( npu_.input_fd(), model_w_, model_h_, static_cast<uint32_t>( model_w_ ) * 3 ) )
         {
             std::cerr << "pipeline: gpu drawer unavailable, RGA fallback\n";
             drawer_.reset();
@@ -271,9 +271,9 @@ int Pipeline::run()
     // the --frames budget and contributes nothing to the timing stats.
     // 20 attempts: observed USB re-enumeration on this board can take
     // longer than the original 10x1s window allowed.
-    constexpr int kCamReconnectMax = 20;
-    constexpr auto kCamReconnectPause = std::chrono::seconds( 1 );
-    constexpr int kWarmupFrames = 3;
+    constexpr int k_cam_reconnect_max = 20;
+    constexpr auto k_cam_reconnect_pause = std::chrono::seconds( 1 );
+    constexpr int k_warmup_frames = 3;
     int reconnects = 0;
     int warmup_left = 0;  // publish-discards after reconnect
 
@@ -293,9 +293,9 @@ int Pipeline::run()
             if ( !recoverable )
                 return -1;
             bool back = false;
-            for ( int a = 1; a <= kCamReconnectMax; ++a )
+            for ( int a = 1; a <= k_cam_reconnect_max; ++a )
             {
-                std::this_thread::sleep_for( kCamReconnectPause );
+                std::this_thread::sleep_for( k_cam_reconnect_pause );
                 std::string node;
                 if ( find_usb_capture_node( cam_, cam_node_, node ) != 0 )
                     continue;
@@ -308,7 +308,7 @@ int Pipeline::run()
                         cam_node_ = node;
                     }
                     ++reconnects;
-                    warmup_left = kWarmupFrames;
+                    warmup_left = k_warmup_frames;
                     std::cout << "camera: reconnected on attempt " << a << '\n';
                     back = true;
                     break;
@@ -317,7 +317,7 @@ int Pipeline::run()
             }
             if ( !back )
             {
-                std::cerr << "camera: reconnect failed after " << kCamReconnectMax << " attempts, giving up\n";
+                std::cerr << "camera: reconnect failed after " << k_cam_reconnect_max << " attempts, giving up\n";
                 return -1;
             }
             continue;
@@ -469,14 +469,14 @@ int Pipeline::run()
                 {
                     drawer_->draw( boxes_.d.data(), boxes_.n );
                     // GPU writes: the NUT preview reads the tensor via CPU
-                    // and needs a hard syncCpu(); the h264 path waits for
+                    // and needs a hard sync_cpu(); the h264 path waits for
                     // the exported draw fence inside the encoder (poll),
                     // because this RGA driver ignores acquire fences.
-                    // fence < 0 -> syncCpu fallback (no fence extension).
-                    fence = drawer_->exportFence();
+                    // fence < 0 -> sync_cpu fallback (no fence extension).
+                    fence = drawer_->export_fence();
                     if ( preview_ || fence < 0 )
                     {
-                        drawer_->syncCpu();
+                        drawer_->sync_cpu();
                         if ( fence >= 0 )
                             ::close( fence );
                         fence = -1;

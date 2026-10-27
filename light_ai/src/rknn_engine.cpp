@@ -121,12 +121,12 @@ int RknnEngine::setup_io()
     return 0;
 }
 
-int RknnEngine::run()
+int RknnEngine::run() const
 {
     return rknn_run( ctx_, nullptr ) == RKNN_SUCC ? 0 : -1;
 }
 
-int RknnEngine::set_core_mask( unsigned mask )
+int RknnEngine::set_core_mask( unsigned mask ) const
 {
     if ( !ctx_ )
         return -1;

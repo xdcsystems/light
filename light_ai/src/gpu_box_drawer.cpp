@@ -31,7 +31,7 @@
 #define EGL_SYNC_FLUSH_COMMANDS_BIT_KHR 0x0001
 #endif
 
-// 100 ms cap for syncCpu(): a wedged GPU must not hang the pipeline.
+// 100 ms cap for sync_cpu(): a wedged GPU must not hang the pipeline.
 constexpr EGLTimeKHR kFenceWaitNs = 100ull * 1000 * 1000;
 
 namespace
@@ -41,10 +41,10 @@ namespace
     // Per-vertex color (normalized ubyte attribute) instead of the per-box
     // uniform: that is what allows all boxes to be batched into ONE draw
     // call. Channel order is GL semantics — see the r/b swap note in draw().
-    constexpr const char *VS =
+    constexpr const char *kVS =
             "attribute vec2 a_pos; attribute vec4 a_col; varying vec4 v_col; "
             "void main(){ gl_Position=vec4(a_pos,0.,1.); v_col=a_col; }";
-    constexpr const char *FS =
+    constexpr const char *kFS =
             "precision mediump float; varying vec4 v_col; "
             "void main(){ gl_FragColor=v_col; }";
 
@@ -84,7 +84,7 @@ namespace
 
 }  // anonymous namespace
 
-void GpuBoxDrawer::make_current()
+void GpuBoxDrawer::make_current()  // NOLINT(readability-make-member-function-const)
 {
     // Same-context eglMakeCurrent is not free in libmali; skip it when
     // the context is already current (the common case in the hot path).
@@ -95,10 +95,10 @@ void GpuBoxDrawer::make_current()
 bool GpuBoxDrawer::make_program()
 {
     GLuint vs = glCreateShader( GL_VERTEX_SHADER );
-    glShaderSource( vs, 1, &VS, nullptr );
+    glShaderSource( vs, 1, &kVS, nullptr );
     glCompileShader( vs );
     GLuint fs = glCreateShader( GL_FRAGMENT_SHADER );
-    glShaderSource( fs, 1, &FS, nullptr );
+    glShaderSource( fs, 1, &kFS, nullptr );
     glCompileShader( fs );
 
     if ( !shader_ok( vs, "vertex" ) || !shader_ok( fs, "fragment" ) )
@@ -146,7 +146,7 @@ bool GpuBoxDrawer::make_program()
 
 // Attribute setup for the batched vertex layout (12-byte stride). The
 // color field offset is fixed: 2 x sizeof(float) = 8 bytes.
-void GpuBoxDrawer::setup_attribs()
+void GpuBoxDrawer::setup_attribs() const
 {
     glBindBuffer( GL_ARRAY_BUFFER, st_.vbo );
     glEnableVertexAttribArray( st_.apos );
@@ -189,8 +189,8 @@ bool GpuBoxDrawer::init()
         return false;
     }
     typedef void *( *P_gbm_create_device )( int );
-    P_gbm_create_device gbm_create_device_ = (P_gbm_create_device)dlsym( st_.dl_gbm, "gbm_create_device" );
-    if ( !gbm_create_device_ )
+    P_gbm_create_device gbm_create_device = (P_gbm_create_device)dlsym( st_.dl_gbm, "gbm_create_device" );
+    if ( !gbm_create_device )
     {
         std::cerr << "drawer: gbm_create_device missing\n";
         return false;
@@ -200,7 +200,7 @@ bool GpuBoxDrawer::init()
         int fd = open( node, O_RDWR | O_CLOEXEC );
         if ( fd < 0 )
             continue;
-        void *dev = gbm_create_device_( fd );
+        void *dev = gbm_create_device( fd );
         if ( !dev )
         {
             close( fd );
@@ -213,7 +213,7 @@ bool GpuBoxDrawer::init()
         {
             // failed init candidate: release what this attempt created
             // (EGL display + GBM device + fd). The dl_gbm handle stays:
-            // gbm_create_device_ may be needed by the next node attempt,
+            // gbm_create_device may be needed by the next node attempt,
             // done() closes it on the terminal failure path.
             if ( d != EGL_NO_DISPLAY )
                 eglTerminate( d );
@@ -320,7 +320,7 @@ bool GpuBoxDrawer::init()
     return true;
 }
 
-bool GpuBoxDrawer::attachTensor( int tensorDmaFd, int w, int h, uint32_t stride )
+bool GpuBoxDrawer::attach_tensor( int tensor_dma_fd, int w, int h, uint32_t stride )
 {
     if ( !ready_ )
         return false;
@@ -333,7 +333,7 @@ bool GpuBoxDrawer::attachTensor( int tensorDmaFd, int w, int h, uint32_t stride 
             EGL_LINUX_DRM_FOURCC_EXT,
             /* DRM_FORMAT_RGB888 */ 0x34324752,
             EGL_DMA_BUF_PLANE0_FD_EXT,
-            tensorDmaFd,
+            tensor_dma_fd,
             EGL_DMA_BUF_PLANE0_OFFSET_EXT,
             0,
             EGL_DMA_BUF_PLANE0_PITCH_EXT,
@@ -446,7 +446,7 @@ void GpuBoxDrawer::draw( const GpuBox *boxes, int n )
     glDrawArrays( GL_TRIANGLES, 0, cnt );
 }
 
-void GpuBoxDrawer::syncCpu()
+void GpuBoxDrawer::sync_cpu()
 {
     if ( st_.dpy == EGL_NO_DISPLAY )
         return;
@@ -470,7 +470,7 @@ void GpuBoxDrawer::syncCpu()
     glFinish();
 }
 
-int GpuBoxDrawer::exportFence()
+int GpuBoxDrawer::export_fence()
 {
     if ( st_.dpy == EGL_NO_DISPLAY )
         return -1;
