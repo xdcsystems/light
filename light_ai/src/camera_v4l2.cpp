@@ -24,7 +24,7 @@ namespace
 {
     bool usb_capture_node( const std::string& path )
     {
-        const int fd = ::open( path.c_str(), O_RDONLY );
+        const int fd = ::open( path.c_str(), O_RDONLY | O_CLOEXEC );
         if ( fd < 0 )
             return false;
         v4l2_capability cap {};
@@ -51,7 +51,7 @@ CameraV4L2::CameraV4L2( int w, int h ) : width_( w ), height_( h )
 // here.
 int CameraV4L2::setup_device( const std::string& dev, std::string* why )
 {
-    fd_ = ::open( dev.c_str(), O_RDWR );
+    fd_ = ::open( dev.c_str(), O_RDWR | O_CLOEXEC );
     if ( fd_ < 0 )
     {
         std::cerr << "open camera: " << strerror( errno ) << '\n';
@@ -239,7 +239,7 @@ int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::s
             struct stat cst
             {};
             if ( stat( p.c_str(), &cst ) == 0 && usb_capture_node( p ) )
-                cands[std::atoi( n.c_str() + 5 )] = p;
+                cands[static_cast<int>( std::strtol( n.c_str() + 5, nullptr, 10 ) )] = p;
         }
         closedir( d );
     }

@@ -197,7 +197,7 @@ void NetPreview::publish( const uint8_t* rgb )
     auto* p = static_cast<AVPacket*>( pkt_ );
 
     // Zero-copy: data points into the NPU input tensor (dma-buf).
-    AVBufferRef* ref = av_buffer_create( const_cast<uint8_t*>( rgb ), stride_ * h_, noop_free, nullptr, 0 );
+    AVBufferRef* ref = av_buffer_create( const_cast<uint8_t*>( rgb ), stride_ * h_, noop_free, nullptr, 0 ); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     if ( !ref )
         return;
     p->buf = ref;  // packet takes over the reference

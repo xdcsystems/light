@@ -9,6 +9,7 @@
 #include <thread>
 #include <sys/stat.h>  // stat(): startup node fallback
 #include <unistd.h>
+#include <cmath>
 
 #include "pipeline.hpp"
 #include "coco_names.h"
@@ -187,8 +188,10 @@ Pipeline::Pipeline( const Config& cfg )
             // w = model_w, h = cam_h * (model_w / cam_w) — for the default
             // 1280x720 camera and a 640x640 tensor that is 640x360 (16:9).
             // The encoder derives the same band geometry from these numbers.
+
             const float s = static_cast<float>( model_w_ ) / cfg_.cam_w;
-            const int band_h = static_cast<int>( cfg_.cam_h * s + 0.5f );
+            const int band_h = static_cast<int>( lroundf( cfg_.cam_h * s ) );
+
             enc_.emplace( model_w_, band_h, cfg_.net_fps, cfg_.net_port, cfg_.net_host, cfg_.net_bitrate, model_w_, model_h_ );
             if ( cfg_.net_host.empty() )
             {

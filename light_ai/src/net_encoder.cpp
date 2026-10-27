@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <cmath>
 
 #include <im2d.h>
 #include <rga.h>
@@ -79,8 +80,10 @@ NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host
     // h = cam_h * (model_w / cam_w); with that w the scale below is
     // s = model_w / w = 1, so band_h_ == h_ and band_top_ = (model_h_ - h_)/2
     // (640x640 tensor, 1280x720 camera -> 640x360, band y=[140,500)).
+
     const float s = static_cast<float>( model_w_ ) / static_cast<float>( w_ );
-    band_h_ = static_cast<int>( static_cast<float>( h_ ) * s + 0.5f );
+    band_h_ = static_cast<int>( lroundf( static_cast<float>( h_ ) * s ) );
+
     if ( band_h_ > model_h_ )
         band_h_ = model_h_;
     band_top_ = ( model_h_ - band_h_ ) / 2;
@@ -242,19 +245,23 @@ void NetEncoder::serve()
             pollfd pf {};
             pf.fd = lfd;
             pf.events = POLLIN;
+
             while ( !quit_.load() && ::poll( &pf, 1, 200 ) == 0 )
             {}
+
             if ( quit_.load() )
             {
                 avformat_free_context( fc );
                 break;
             }
-            cfd = ::accept( lfd, nullptr, nullptr );
+
+            cfd = ::accept4( lfd, nullptr, nullptr, SOCK_CLOEXEC );
             if ( cfd < 0 )
             {
                 avformat_free_context( fc );
                 continue;
             }
+
             int one = 1;
             ::setsockopt( cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );
             const int sndbuf = 262144;  // запас на микроподлагивания сети

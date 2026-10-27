@@ -4,7 +4,6 @@
 #include <iostream>
 
 #include "yolo_postprocess.hpp"
-#include "math.h"
 #include "rknn_engine.hpp"
 
 namespace

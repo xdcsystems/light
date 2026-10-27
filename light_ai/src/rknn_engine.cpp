@@ -8,7 +8,7 @@ RknnEngine::RknnEngine( const char* model_path )
 {
     std::cout << "loading model: " << model_path << '\n';
 
-    if ( rknn_init( &ctx_, const_cast<char*>( model_path ), 0, 0, nullptr ) != RKNN_SUCC )
+    if ( rknn_init( &ctx_, const_cast<char*>( model_path ), 0, 0, nullptr ) != RKNN_SUCC ) // NOLINT(cppcoreguidelines-pro-type-const-cast)
     {
         ctx_ = 0;
         throw std::runtime_error( std::string( "rknn_init failed for " ) + model_path );
