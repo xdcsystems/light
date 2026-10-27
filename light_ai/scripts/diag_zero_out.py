@@ -15,7 +15,7 @@ def dump(name, outs):
 
 
 rk = RKNNLite()
-assert rk.load_rknn('yolov5s_relu.rknn') == 0
+assert rk.load_rknn(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'misc', 'yolov5s_relu.rknn')) == 0
 assert rk.init_runtime(core_mask=RKNNLite.NPU_CORE_0) == 0
 
 for name, x in [

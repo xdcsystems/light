@@ -351,7 +351,7 @@ fresh clone, place the .rknn files next to the executable — the
 
 ## Run
     sudo LD_LIBRARY_PATH=/usr/local/lib ./build/light_ai \
-        --device /dev/video20 --model ./yolov5s_relu_int8_v3.rknn --frames 3000 \
+        --device /dev/video20 --model ./misc/yolov5s_relu_int8_v3.rknn --frames 3000 \
         --net --net-h264 --core 7
 
 Defaults: /dev/video20, 1280x720 MJPEG; the model default is still the M1

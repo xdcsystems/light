@@ -9,7 +9,7 @@ w, h = 640, 640
 img = np.frombuffer(d[i:], np.uint8).reshape(h, w, 3)
 
 rk = RKNNLite()
-assert rk.load_rknn('yolov5s_relu.rknn') == 0
+assert rk.load_rknn(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'misc', 'yolov5s_relu.rknn')) == 0
 assert rk.init_runtime(core_mask=RKNNLite.NPU_CORE_0) == 0
 outs = rk.inference(inputs=[img[None]], data_format='nhwc')
 

@@ -7,7 +7,7 @@ import numpy as np
 from rknnlite.api import RKNNLite
 
 MODEL = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'yolov5s_relu.rknn'))
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'misc', 'yolov5s_relu.rknn'))
 EXPECTED_SHAPES = {(1, 255, 80, 80), (1, 255, 40, 40), (1, 255, 20, 20)}
 
 
