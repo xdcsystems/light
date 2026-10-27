@@ -342,6 +342,13 @@ and costs zero CPU writes into the NPU tensor.
 ## Build
     ./scripts/build.sh
 
+Models are NOT tracked by git (*.rknn is ignored): they are build
+artifacts of the Colab quantization pipeline (see Platform constraints
+and M2.4) and live on each machine, transferred out of band. After a
+fresh clone, place the .rknn files next to the executable — the
+--model flag takes any path. The rkmpp wheel in misc/ stays tracked
+(0.6 MB, toolkit reproducibility).
+
 ## Run
     sudo LD_LIBRARY_PATH=/usr/local/lib ./build/light_ai \
         --device /dev/video20 --model ./yolov5s_relu_int8_v3.rknn --frames 3000 \
