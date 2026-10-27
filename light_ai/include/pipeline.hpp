@@ -10,14 +10,15 @@
 #include "gpu_box_drawer.hpp"
 #include "box_smoother.hpp"
 
-struct Config {
+struct Config
+{
     std::string device = "/dev/video20";
-    std::string model  = "/usr/share/model/RK3588/mobilenet_v1.rknn";
+    std::string model = "/usr/share/model/RK3588/mobilenet_v1.rknn";
     //int cam_w = 1920, cam_h = 1080;
     int cam_w = 1280, cam_h = 720;
     // Two-pass RGA kicks in only when the source exceeds 8x the model input
     // per axis (checked in the Pipeline ctor); at 720p -> 640 it stays dormant.
-    bool dump_cal = false;   // dump one model-input frame to /tmp/cal.ppm
+    bool dump_cal = false;  // dump one model-input frame to /tmp/cal.ppm
     // Calibration dataset: --cal N saves up to N model-input frames into
     // dataset/ (one every --cal-interval frames) for int8 quantization.
     int cal_frames = 0;
@@ -26,7 +27,7 @@ struct Config {
     int frames = 300;
     // Detection thresholds, CLI-tunable via --conf / --iou.
     float conf_thr = 0.25f;
-    float iou_thr  = 0.45f;
+    float iou_thr = 0.45f;
     // NPU core selection (M2.5): 0 = AUTO (runtime default, no call),
     // 1 = core 0, 3 = cores 0+1, 7 = cores 0+1+2 (rknn_set_core_mask).
     int core = 0;
@@ -37,21 +38,22 @@ struct Config {
     // M3.5 phase A0: raw preview server (RGB888 tensor -> NUT over TCP).
     bool net = false;
     int net_port = 1234;
-    int net_fps = 25;   // pacing of the preview stream, FPS
+    int net_fps = 25;  // pacing of the preview stream, FPS
     // M3.5 phase B: h264_rkmpp + MPEG-TS instead of raw NUT. --net-h264.
     bool net_h264 = false;
-    int net_bitrate = 12000;   // kbps, --net-bitrate
+    int net_bitrate = 12000;  // kbps, --net-bitrate
 
     // M3.10: per-frame box CSV for the jitter A/B (raw vs smoothed).
     std::string box_log;
-    std::string net_host;      // UDP destination, --net-host (required with --net-h264)
+    std::string net_host;  // UDP destination, --net-host (required with --net-h264)
     // M3.7: force the CPU box-drawing path (A/B vs the GPU drawer).
     bool cpu_draw = false;
 };
 
-class Pipeline {
+class Pipeline
+{
 public:
-    explicit Pipeline(const Config& cfg);
+    explicit Pipeline( const Config& cfg );
     int run();
 
 private:
@@ -63,7 +65,7 @@ private:
     RknnEngine npu_;
     int aux_fd_ = -1;
     int model_w_ = 0;
-    int  model_h_ = 0;   // taken from the model, not from flags
+    int model_h_ = 0;  // taken from the model, not from flags
     bool cal_done_ = false;
     int cal_saved_ = 0;
     int last_cal_ = -1;
@@ -72,7 +74,7 @@ private:
     std::optional<NetEncoder> enc_;
     std::optional<GpuBoxDrawer> drawer_;
 
-    BoxSmoother smoother_;   // M3.10 EMA box smoothing + jitter log
+    BoxSmoother smoother_;  // M3.10 EMA box smoothing + jitter log
 
     // Per-frame detection buffers: preallocated members, cleared each
     // frame — zero heap traffic in the steady-state path.

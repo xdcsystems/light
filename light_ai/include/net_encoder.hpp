@@ -17,49 +17,48 @@
 // as the pipeline starts: UDP has no "connect", the viewer joins whenever
 // it wants (VLC: udp://@:1234). A lost packet glitches briefly until the
 // next IDR instead of stalling the whole flow like TCP over Wi-Fi.
-class NetEncoder {
+class NetEncoder
+{
 public:
-    NetEncoder(int w, int h, int fps, int port,
-               const std::string& host, int bitrate_kbps,
-               int model_w, int model_h);
+    NetEncoder( int w, int h, int fps, int port, const std::string& host, int bitrate_kbps, int model_w, int model_h );
     ~NetEncoder();
 
     // Called once per frame from the pipeline loop. tensor_fd is the
     // dma-buf of the NPU input tensor (RGB888, w x h); boxes are drawn.
-    void publish(int tensor_fd, int acquire_fence_fd = -1);
+    void publish( int tensor_fd, int acquire_fence_fd = -1 );
 
     // M3.5: publish the FULL decoder frame (cam_w x cam_h, YUV422SP
     // dma-buf) BEFORE the RGA letterbox pass — by fd only, zero
     // pixel copies. Implementation lives in net_encoder.cpp.
-    void publish_full_frame(int yuv_fd);
+    void publish_full_frame( int yuv_fd );
 
 private:
     void serve();
-    bool send_frame(void* fc, void* st);
+    bool send_frame( void* fc, void* st );
 
     const int w_, h_, fps_, port_, bitrate_kbps_;
     const std::string host_;
     std::thread thread_;
-    std::atomic<bool> quit_{false};
-    std::atomic<bool> error_{false};
+    std::atomic<bool> quit_ { false };
+    std::atomic<bool> error_ { false };
 
     std::mutex mx_;
     std::condition_variable cv_;
-    void* fc_ = nullptr;        // AVFormatContext* (mpegts over UDP)
-    void* st_ = nullptr;        // AVStream*
-    void* enc_ = nullptr;       // AVCodecContext* (h264_rkmpp)
-    void* frame_ = nullptr;     // AVFrame* (NV12 over an MPP DRM buffer)
-    void* pkt_ = nullptr;       // AVPacket*
+    void* fc_ = nullptr;     // AVFormatContext* (mpegts over UDP)
+    void* st_ = nullptr;     // AVStream*
+    void* enc_ = nullptr;    // AVCodecContext* (h264_rkmpp)
+    void* frame_ = nullptr;  // AVFrame* (NV12 over an MPP DRM buffer)
+    void* pkt_ = nullptr;    // AVPacket*
     MppBufferGroup buf_group_ = nullptr;
-    MppBuffer bufs_[2] = {nullptr, nullptr};   // ping-pong NV12 dma-bufs
+    MppBuffer bufs_[2] = { nullptr, nullptr };  // ping-pong NV12 dma-bufs
     uint32_t cur_ = 0;
-    int tensor_fd_ = -1;        // dma-buf fd of the NPU tensor (set in publish)
-    int acq_fd_ = -1;    // draw fence fd, consumed by RGA in send_frame
-    bool full_frame_ = false;   // true: tensor_fd_ is the decoder's
-                                // YUV422SP frame (publish_full_frame);
-                                // false: RGB888 NPU tensor (publish)
-    int64_t frame_step_ = 1;    // pts increment in the muxer's time base
+    int tensor_fd_ = -1;       // dma-buf fd of the NPU tensor (set in publish)
+    int acq_fd_ = -1;          // draw fence fd, consumed by RGA in send_frame
+    bool full_frame_ = false;  // true: tensor_fd_ is the decoder's
+                               // YUV422SP frame (publish_full_frame);
+                               // false: RGB888 NPU tensor (publish)
+    int64_t frame_step_ = 1;   // pts increment in the muxer's time base
     uint64_t pts_ = 0;
-    int model_w_ = 0, model_h_ = 0;   // NPU tensor geometry (RGB888)
-    int band_top_ = 0, band_h_ = 0;   // visible letterbox band in the tensor
+    int model_w_ = 0, model_h_ = 0;  // NPU tensor geometry (RGB888)
+    int band_top_ = 0, band_h_ = 0;  // visible letterbox band in the tensor
 };

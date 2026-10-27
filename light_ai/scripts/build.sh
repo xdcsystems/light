@@ -16,5 +16,5 @@ done
 
 echo "==> CMake + build:"
 mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake .. -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Release
 make -j"$(nproc)"

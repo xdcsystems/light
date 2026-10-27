@@ -12,27 +12,29 @@
 // Colors are in tensor RGB888 semantics (byte0 = R); the implementation
 // swaps R/B internally — the dma-buf reads as BGR to the GPU (calibrated
 // by tools/egl_probe.cpp).
-struct GpuBox {
-    float x0, y0, x1, y1;   // tensor pixels, top-left origin
+struct GpuBox
+{
+    float x0, y0, x1, y1;  // tensor pixels, top-left origin
     uint8_t r, g, b, a;
 };
 
 using GpuBoxList = PodList<GpuBox, 128>;
 
-class GpuBoxDrawer {
+class GpuBoxDrawer
+{
 public:
     GpuBoxDrawer();
     ~GpuBoxDrawer();
-    GpuBoxDrawer(const GpuBoxDrawer&) = delete;
-    GpuBoxDrawer& operator=(const GpuBoxDrawer&) = delete;
+    GpuBoxDrawer( const GpuBoxDrawer & ) = delete;
+    GpuBoxDrawer &operator=( const GpuBoxDrawer & ) = delete;
 
     // EGL/GBM display + surfaceless GLES3 context + shader + VBO.
     bool init();
     // Imports the NPU tensor dma-buf as an EGLImage-backed FBO.
-    bool attachTensor(int tensorDmaFd, int w, int h, uint32_t stride);
+    bool attachTensor( int tensorDmaFd, int w, int h, uint32_t stride );
     // Async GPU draw: 1-px outlines for all boxes in ONE draw call
     // (batched VBO, per-vertex color).
-    void draw(const GpuBox* boxes, int n);
+    void draw( const GpuBox *boxes, int n );
     // Blocks until all GPU writes from draw() are visible to CPU/RGA.
     // Native fence (EGL_ANDROID_native_fence_sync) when available,
     // glFinish() otherwise. The fence wait is bounded (100 ms cap) with
@@ -52,34 +54,31 @@ private:
     // Extension entry points: never assumed to be linkable, always via
     // eglGetProcAddress with a null check (the probe proved libmali does
     // not export all of them as symbols).
-    typedef EGLImageKHR (EGLAPIENTRYP P_CreateImage)
-        (EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint *);
-    typedef EGLBoolean (EGLAPIENTRYP P_DestroyImage)(EGLDisplay, EGLImageKHR);
-    typedef EGLSyncKHR (EGLAPIENTRYP P_CreateSync)(EGLDisplay, EGLenum,
-                                                   const EGLint *);
-    typedef EGLBoolean (EGLAPIENTRYP P_DestroySync)(EGLDisplay, EGLSyncKHR);
-    typedef EGLBoolean (EGLAPIENTRYP P_ClientWaitSync)(EGLDisplay, EGLSyncKHR,
-                                                       EGLint, EGLTimeKHR);
-    typedef EGLint (EGLAPIENTRYP P_DupNativeFenceFDANDROID)(EGLDisplay, EGLSyncKHR);
-    typedef EGLDisplay (EGLAPIENTRYP P_GetPlatformDisplayEXT)
-        (EGLenum, void *, const EGLint *);
-    typedef void (GL_APIENTRYP P_ImageTargetTexture2DOES)(GLenum, GLeglImageOES);
-    typedef void (GL_APIENTRYP P_GenVertexArrays)(GLsizei, GLuint *);
-    typedef void (GL_APIENTRYP P_DeleteVertexArrays)(GLsizei, const GLuint *);
-    typedef void (GL_APIENTRYP P_BindVertexArray)(GLuint);
+    typedef EGLImageKHR( EGLAPIENTRYP P_CreateImage )( EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint * );
+    typedef EGLBoolean( EGLAPIENTRYP P_DestroyImage )( EGLDisplay, EGLImageKHR );
+    typedef EGLSyncKHR( EGLAPIENTRYP P_CreateSync )( EGLDisplay, EGLenum, const EGLint * );
+    typedef EGLBoolean( EGLAPIENTRYP P_DestroySync )( EGLDisplay, EGLSyncKHR );
+    typedef EGLBoolean( EGLAPIENTRYP P_ClientWaitSync )( EGLDisplay, EGLSyncKHR, EGLint, EGLTimeKHR );
+    typedef EGLint( EGLAPIENTRYP P_DupNativeFenceFDANDROID )( EGLDisplay, EGLSyncKHR );
+    typedef EGLDisplay( EGLAPIENTRYP P_GetPlatformDisplayEXT )( EGLenum, void *, const EGLint * );
+    typedef void( GL_APIENTRYP P_ImageTargetTexture2DOES )( GLenum, GLeglImageOES );
+    typedef void( GL_APIENTRYP P_GenVertexArrays )( GLsizei, GLuint * );
+    typedef void( GL_APIENTRYP P_DeleteVertexArrays )( GLsizei, const GLuint * );
+    typedef void( GL_APIENTRYP P_BindVertexArray )( GLuint );
 
     // GL/EGL state by value: no heap, no pimpl. The old State* was the
     // only raw owning pointer in the production code (audit 2026-10-27).
-    struct State {
+    struct State
+    {
         EGLDisplay dpy = EGL_NO_DISPLAY;
         EGLContext ctx = nullptr;
         EGLImageKHR img = EGL_NO_IMAGE_KHR;
         GLuint tex = 0, fbo = 0, prog = 0, vbo = 0, vao = 0;
         GLint apos = -1, acol = -1;
-        bool es3 = false;           // ES3 context with VAO entry points
+        bool es3 = false;  // ES3 context with VAO entry points
         int w = 0, h = 0;
         uint32_t stride = 0;
-        int gbm_fd = -1;            // the GBM device lives on this fd
+        int gbm_fd = -1;  // the GBM device lives on this fd
         void *gbm_dev = nullptr;
         void *dl_gbm = nullptr;
         bool native_fence = false;
@@ -105,6 +104,6 @@ private:
     void setup_attribs();
 
 private:  // data
-    State st_{};
+    State st_ {};
     bool ready_ = false;
 };
