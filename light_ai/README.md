@@ -633,13 +633,14 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
         root-caused and fixed 2026-10-27, see Platform
         constraints) — watch on future runs. Seen again on the
         2026-10-26 pull run, still benign.
-        Update 2026-10-28: the installed line now carries the rkmpp
-        EOS fixes (f5f6da6337 + 129a3cf0d7, upstream port open as
-        PR #273) — they target exactly the encoder teardown/flush
-        path (double deinit of bufferless EOS frames, duplicate EOS
-        on repeated send(NULL)). The shutdown warning may be the same
-        symptom: re-check on the next h264 pull run against the
-        rebuilt binary; if clean, close this note.
+        Update 2026-10-28 (closure): h264 pull run against the rebuilt
+        binary (installed .103, EOS fixes f5f6da6337 + 129a3cf0d7),
+        1200 frames, viewer attached from connect through shutdown —
+        stderr clean, no ref_count warning at teardown (the final
+        mpp_buffer line is the normal service_deinit info, not the
+        warning). Note closed: the symptom was the encoder
+        teardown/flush path, covered by the EOS fixes (PR #273).
+        tools/test_rkmpp_flush.c removed with the closure.  
 - [x] M3.6 (closed negative): box drawing via RGA — planned, probed
       live with yolov5 detections, retired. The open check (a) turned
       out fatal: RGA fill is not routable on this board (see Platform
