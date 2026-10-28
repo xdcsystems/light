@@ -98,7 +98,8 @@ NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host
     {
         throw std::runtime_error( "net encoder: mpp_buffer_group_get failed" );
     }
-    const size_t bytes = static_cast<size_t>( w_ ) * h_ * 3 / 2;
+    vstride_ = ( h_ + 15 ) & ~15;  // MPP encoders want a 16-aligned ver_stride
+    const size_t bytes = static_cast<size_t>( w_ ) * vstride_ * 3 / 2;
     for ( auto& b : bufs_ )
     {
         if ( mpp_buffer_get( buf_group_, &b, bytes ) != MPP_OK )
@@ -122,7 +123,14 @@ NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host
     enc_ = ctx;
     ctx->width = w_;
     ctx->height = h_;
-    ctx->pix_fmt = AV_PIX_FMT_NV12;
+    // DRM_PRIME input: the wrapper takes the frame as a DRM descriptor and
+    // imports our dma-buf by fd (rkmpp_submit_frame, DRM_PRIME branch) -
+    // zero CPU pixel copies. sw_pix_fmt carries the underlying NV12: the
+    // wrapper derives MPP_FMT_YUV420SP from it while pix_fmt is the hw
+    // container. With DRM_PRIME the wrapper skips creating its own
+    // hwdevice/hwframes pools entirely (encode_init returns early).
+    ctx->pix_fmt = AV_PIX_FMT_DRM_PRIME;
+    ctx->sw_pix_fmt = AV_PIX_FMT_NV12;
     ctx->time_base = AVRational { 1, fps_ };
     ctx->framerate = AVRational { fps_, 1 };
     ctx->bit_rate = static_cast<int64_t>( bitrate_kbps_ ) * 1000;
@@ -474,7 +482,10 @@ bool NetEncoder::send_frame( void* fcp, void* stp )
     srect.y = band_top_;
     srect.width = model_w_;
     srect.height = band_h_;
-    rga_buffer_t dst = wrapbuffer_fd( mpp_buffer_get_fd( mb ), w_, h_, RK_FORMAT_YCbCr_420_SP );
+    // Explicit strides: the VU plane lands at w * vstride_ - exactly where
+    // the DRM descriptor below reports it (the default tight h would put
+    // chroma where the encoder cfg does not look).
+    rga_buffer_t dst = wrapbuffer_fd( mpp_buffer_get_fd( mb ), w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
 
     // RGA-fence support is absent in this kernel driver: the acquire
     // fence passed to improcess was silently ignored (boxes vanished).
@@ -498,16 +509,33 @@ bool NetEncoder::send_frame( void* fcp, void* stp )
     }
 
     AVFrame* fr = static_cast<AVFrame*>( frame_ );
-    uint8_t* base = static_cast<uint8_t*>( mpp_buffer_get_ptr( mb ) );
-    fr->format = AV_PIX_FMT_NV12;
+    // DRM_PRIME path: hand the wrapper our ping-pong dma-buf by fd. The
+    // descriptor is a per-buffer member reused every send - the wrapper
+    // clones the frame at submit time and never re-reads the descriptor
+    // afterwards (the first frame only, cfg_init gate), so reuse while an
+    // older clone is still queued is safe: the clone holds the no-op
+    // AVBufferRef for refcounting only. The wrapper imports the fd into
+    // its own MPP group and releases it with the packet INPUT_FRAME meta.
+    AVDRMFrameDescriptor& desc = desc_[cur_];
+    desc.nb_objects = 1;
+    desc.objects[0].fd = mpp_buffer_get_fd( mb );
+    desc.objects[0].size = mpp_buffer_get_size( mb );
+    desc.objects[0].format_modifier = DRM_FORMAT_MOD_LINEAR;
+    desc.nb_layers = 1;
+    desc.layers[0].format = DRM_FORMAT_NV12;
+    desc.layers[0].nb_planes = 2;
+    desc.layers[0].planes[0].object_index = 0;
+    desc.layers[0].planes[0].offset = 0;
+    desc.layers[0].planes[0].pitch = w_;
+    desc.layers[0].planes[1].object_index = 0;
+    desc.layers[0].planes[1].offset = w_ * vstride_;
+    desc.layers[0].planes[1].pitch = w_;
+    fr->format = AV_PIX_FMT_DRM_PRIME;
     fr->width = w_;
     fr->height = h_;
-    fr->data[0] = base;
-    fr->data[1] = base + static_cast<size_t>( w_ ) * h_;
-    fr->linesize[0] = w_;
-    fr->linesize[1] = w_;
     fr->pts = static_cast<int64_t>( pts_ );
-    fr->buf[0] = av_buffer_create( base, static_cast<size_t>( w_ ) * h_ * 3 / 2, noop_free, nullptr, 0 );
+    fr->data[0] = reinterpret_cast<uint8_t*>( &desc );
+    fr->buf[0] = av_buffer_create( reinterpret_cast<uint8_t*>( &desc ), sizeof( desc ), noop_free, nullptr, 0 );
     if ( !fr->buf[0] )
     {
         std::cerr << "enc: av_buffer_create failed\n";

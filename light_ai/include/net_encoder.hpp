@@ -6,6 +6,14 @@
 #include <string>
 #include <thread>
 
+// DRM frame descriptor for the encoder zero-copy input: the ping-pong
+// dma-bufs are wrapped as AV_PIX_FMT_DRM_PRIME frames and imported by
+// the rkmpp wrapper by fd - no CPU pixel copies anywhere in the path.
+#include <libavutil/hwcontext_drm.h>
+// DRM_FORMAT_* constants (NV12, MOD_LINEAR) live in drm_fourcc.h;
+// hwcontext_drm.h declares the descriptor struct but does not pull it in.
+#include <libdrm/drm_fourcc.h>
+
 // Same include form as mpp_decoder.hpp: <rockchip/rk_mpi.h> resolves to
 // the self-built /usr/local/include/rockchip headers. The quoted form
 // "rk_mpi.h" hits the distro /usr/include/rockchip instead, and the two
@@ -47,10 +55,12 @@ private:
     MppBufferGroup buf_group_ = nullptr;
     MppBuffer bufs_[2] = { nullptr, nullptr };  // ping-pong NV12 dma-bufs
     uint32_t cur_ = 0;
+    AVDRMFrameDescriptor desc_[2] {};  // per-buffer DRM descriptors (DRM_PRIME)
     int tensor_fd_ = -1;       // dma-buf fd of the NPU tensor (set in publish)
     int acq_fd_ = -1;          // draw fence fd, consumed by RGA in send_frame
     int64_t frame_step_ = 1;   // pts increment in the muxer's time base
     uint64_t pts_ = 0;
     int model_w_ = 0, model_h_ = 0;  // NPU tensor geometry (RGB888)
     int band_top_ = 0, band_h_ = 0;  // visible letterbox band in the tensor
+    int vstride_ = 0;  // NV12 ver stride (16-aligned h), set in the ctor
 };
