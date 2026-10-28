@@ -497,6 +497,14 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
 - [x] M2.3: readable report (COCO-80 class names), CLI --conf/--iou with
       validation; cleanup: class-aware NMS, symmetric box clamping, letterbox
       geometry now read from RgaResizer (single source of truth).
+- [ ] M2.4-b: model-optimization backlog (reconstructed 2026-10-28;
+      the original deferred-step list lived only in the 2026-10-26
+      session chat and the Colab notebooks — git carries no other
+      trace): (a) formal day A/B for v3 — the model notes still say
+      "day A/B pending" (night A/B x3 done, see M2.4); (b) MMSE
+      re-quant with a larger sample budget — 50 samples fit the
+      Colab 12 GB, 200 OOM (see the M2.4 recipe); (c) further
+      deferred steps: transcribe from the Colab notebooks.
 - [x] M2.4: int8 quantization — CLOSED 2026-10-26 on v3 (day-4
       daytime recalibration). v3 recipe: calibrated on 60 fresh day-4
       daytime frames, quant config mean=0/std=255 -> canonical input scale
