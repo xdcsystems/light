@@ -567,39 +567,30 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
         pixel-accurate debugging, but saturates a LAN link.
       - UDP push (--net-host <pc-ip>) stays the legacy opt-in (the
         Windows IPv6-bind lesson below applies to push mode only).
-      NOT yet implemented: NetControl — the run is still configured
-      by CLI flags, restart per change. Scope additions (owner
-      request 2026-10-26): (1) NetControl priority raised —
-      on/off/fps/quality (low/mid/high -> bitrate/fps mapping) +
-      status, control TCP port next to the stream port; (2) owner
-      decision: PULL model is the product, push-unicast stays an
-      optional flag; (3) the early open questions are resolved by the
-      same decision: transport = pull (push optional), port 1234,
-      LAN trust model stands. RTSP phase B is the next transport
-      target — h264, many viewers, standard player UX
-      (rtsp://<board>:8554/live). NetControl commands
-      (on/off/fps/quality/status) apply to whichever pull server is
-      active. FrameTap full-frame path (publish_full_frame) sits in
-      the code, clean stream without overlays, unused by the
-      pipeline — reconcile during NetControl work.
-      net/ family (design): NetControl (TCP listener, iostream,
-      commands on/off/fps/quality — dynamic start/stop without
-      restart), FrameTap (tap the full 1280x720 frame after MPP
-      decode, before RGA letterbox; the frame goes to the encoder
-      AS-IS — no RGA2 pass needed, RGA3 stays pinned to the model),
+      NetControl DESCOPED (owner decision 2026-10-28): the pull
+      model makes stream on/off implicit — publish() is a no-op
+      with no viewer, a stalled viewer is dropped (SO_SNDTIMEO)
+      and the listener reopens — no explicit control is needed;
+      fps/quality are startup flags (--net-fps/--net-bitrate),
+      per-run changes are not required. Revisit only if headless
+      remote control (no SSH) or M5 per-stream control ever
+      demands it. RTSP phase B stays the transport target,
+      independent of NetControl. FrameTap full-frame path removed
+      the same day (owner decision): publish_full_frame (clean
+      stream without overlays) deleted from the code — the
+      overlayed model-input stream is the only wanted preview;
+      FrameTap as a design element dies with it.
+      net/ family (design, after the descoping — see above):
       NetEncoder (libavcodec h264_rkmpp wrapper — the installed
       self-built ffmpeg (8.1 line, libavcodec 62.28.103, tip
       129a3cf0d7) has rkmpp ENCODERS, the hardware does the encode,
       zero-CPU like the MPP decoder; the tree carries the rkmpp EOS
-      fixes also upstreamed as PR #273; encoder accepts nv16 == our
-      YUV422SP, smoke-tested 720p lavfi: 60 frames, 20.4x at nv12 /
-      12.4x at nv16, valid MPEG-TS out; qp_*/intra-refresh available,
+      fixes also upstreamed as PR #273; qp_*/intra-refresh available,
       rc_mode REJECTED by the live encoder — see Platform
       constraints), NetSink (phase B: RTSP;
       phase C: WebRTC via libdatachannel only if remote access is
       ever needed). H.264 packets = second legal memcpy alongside
-      the MJPEG packet. nv16 path still to be confirmed on live
-      camera frames. Preview path is strictly opt-in, never part of
+      the MJPEG packet. Preview path is strictly opt-in, never part of
       the standard run or benchmarks. Priority vs M4: owner decision
       — if netsend is a working tool, it goes first (it is also the
       debug tool for M4).
@@ -607,8 +598,8 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       - 2026-10-24: phase A landed as raw NUT over TCP:1234, not the
         designed h264 first (libavformat 62 from the self-built
         ffmpeg 8.1, ABI pin, see Platform constraints); the tap was
-        the 640x640 model input — the designed full-frame tap exists
-        now as publish_full_frame (unused, see above).
+        the designed full-frame tap was publish_full_frame
+        (removed 2026-10-28 with the FrameTap descoping, see above).
       - 2026-10-25: live streaming verified (continuous frames with
         YOLO overlays; the earlier "first frame only" issue gone).
         h264_rkmpp MPEG-TS/UDP landed as the tensor path: the
