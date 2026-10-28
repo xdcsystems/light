@@ -117,7 +117,9 @@ post-processing.
                viewer is the h264 TCP pull (NetEncoder); raw NUT runs
                ~246 Mbps (640x640 rgb24 @ 25 fps) vs ~12 Mbps h264.
 - NetEncoder : h264 preview (--net --net-h264): h264_rkmpp hardware
-               encode (self-built ffmpeg 8.1), MPEG-TS. Transport:
+               encode (self-built ffmpeg 8.1, installed libavcodec
+               62.28.103 with the rkmpp EOS fixes, 2026-10-28),
+               MPEG-TS. Transport:
                TCP pull by default (empty --net-host — the encoder
                listens on --net-port and the viewer connects to the
                board's LAN IP, so the run command carries no
@@ -279,6 +281,15 @@ post-processing.
   libav* runtime — chromium/VLC/mpv depend on it and apt would cascade
   them away; the dev packages can stay too, PKG_CONFIG_LIBDIR hides
   them from cmake.
+  Note (2026-10-28): inside the self-built stack TWO lines share the
+  SONAME 62: the installed 8.1.3 line (local master 129a3cf0d7,
+  libavcodec.so.62.28.103) and the nyanmisaka master + EOS-fix port
+  (PR #273, branch xdc-rkmpp-eos-fixes-v2) — the latter is built
+  in-tree for tests only. A stray `make install` from the wrong tree
+  would silently flip the whole system between lines — never install
+  in-tree builds without an explicit decision (see STATE-NOTES.md in
+  ~/work/ffmpeg-rockchip). light_ai was rebuilt 2026-10-28 against
+  the installed .103.
 - h264_rkmpp rc_mode: the live encoder does NOT accept rc_mode (log line:
   "enc: rc_mode option not accepted"); the stream runs CBR at
   --net-bitrate (default 12000 kbps). Fine for the preview; revisit when
@@ -376,9 +387,13 @@ fresh clone, place the .rknn files next to the executable — the
 (0.6 MB, toolkit reproducibility).
 
 ## Run
-    sudo LD_LIBRARY_PATH=/usr/local/lib ./build/light_ai \
+    sudo ./build/light_ai \
         --device /dev/video20 --model ./misc/yolov5s_relu_int8_v3.rknn --frames 3000 \
         --net --net-h264 --core 7
+
+(LD_LIBRARY_PATH=/usr/local/lib was required earlier; since the
+2026-10-28 rebuild ldconfig resolves /usr/local/lib — ldd verified.
+Reinstate the prefix only if the ldconfig cache is ever reset.)
 
 Defaults: /dev/video20, 1280x720 MJPEG; the model default is still the M1
 mobilenet_v1 relic — always pass --model for detection runs. A missing
@@ -532,7 +547,8 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       the recall risk. 640x640 stays; model-side resize levers are
       exhausted — remaining FPS levers are on the platform side.
 - [ ] M3.5: netsend — network preview subsystem (design agreed
-      2026-10-24). STATUS 2026-10-26 (day session, v2 model): phase A
+      2026-10-24). STATUS 2026-10-26 (day session, v2 model —
+      superseded by v3 later the same day, see M2.4): phase A
       LIVE on both transports, PULL is the product.
       - h264 TCP pull (product path, VERIFIED live 2026-10-26):
         net_encoder listens on --net-port (default 1234), the viewer
@@ -571,13 +587,15 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       restart), FrameTap (tap the full 1280x720 frame after MPP
       decode, before RGA letterbox; the frame goes to the encoder
       AS-IS — no RGA2 pass needed, RGA3 stays pinned to the model),
-      NetEncoder (libavcodec h264_rkmpp wrapper — the self-built
-      ffmpeg d90e3a1c18 has rkmpp ENCODERS, the hardware does the
-      encode, zero-CPU like the MPP decoder; encoder accepts nv16 ==
-      our YUV422SP, smoke-tested 720p lavfi: 60 frames, 20.4x at
-      nv12 / 12.4x at nv16, valid MPEG-TS out; rc_mode VBR/CBR/CQP,
-      qp_*, intra-refresh available — the LIVE encoder rejected
-      rc_mode, see Platform constraints), NetSink (phase B: RTSP;
+      NetEncoder (libavcodec h264_rkmpp wrapper — the installed
+      self-built ffmpeg (8.1 line, libavcodec 62.28.103, tip
+      129a3cf0d7) has rkmpp ENCODERS, the hardware does the encode,
+      zero-CPU like the MPP decoder; the tree carries the rkmpp EOS
+      fixes also upstreamed as PR #273; encoder accepts nv16 == our
+      YUV422SP, smoke-tested 720p lavfi: 60 frames, 20.4x at nv12 /
+      12.4x at nv16, valid MPEG-TS out; qp_*/intra-refresh available,
+      rc_mode REJECTED by the live encoder — see Platform
+      constraints), NetSink (phase B: RTSP;
       phase C: WebRTC via libdatachannel only if remote access is
       ever needed). H.264 packets = second legal memcpy alongside
       the MJPEG packet. nv16 path still to be confirmed on live
@@ -615,6 +633,13 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
         root-caused and fixed 2026-10-27, see Platform
         constraints) — watch on future runs. Seen again on the
         2026-10-26 pull run, still benign.
+        Update 2026-10-28: the installed line now carries the rkmpp
+        EOS fixes (f5f6da6337 + 129a3cf0d7, upstream port open as
+        PR #273) — they target exactly the encoder teardown/flush
+        path (double deinit of bufferless EOS frames, duplicate EOS
+        on repeated send(NULL)). The shutdown warning may be the same
+        symptom: re-check on the next h264 pull run against the
+        rebuilt binary; if clean, close this note.
 - [x] M3.6 (closed negative): box drawing via RGA — planned, probed
       live with yolov5 detections, retired. The open check (a) turned
       out fatal: RGA fill is not routable on this board (see Platform
@@ -740,8 +765,10 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
         DetList fed them to BoxSmoother every frame).
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
-      even a 10-15 ms yolov8n@640x640 fits the frame budget without
-      pipelining while the source stays at 20-30 FPS).
+      even a hypothetical 10-15 ms model@640x640 would fit the frame budget
+      without pipelining while the source stays at 20-30 FPS — the measured
+      yolov8n is 65 ms (M2-alt), so the figure is a target for a future
+      lighter head, not a measurement).
 
 - [ ] M5: multi-camera (proposal, owner decision 2026-10-26): 3x USB
       cameras from different room angles. Platform budget fits: 3x MJPEG
