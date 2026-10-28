@@ -605,9 +605,12 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       fps/quality are startup flags (--net-fps/--net-bitrate),
       per-run changes are not required. Revisit only if headless
       remote control (no SSH) or M5 per-stream control ever
-      demands it. RTSP phase B stays the transport target,
-      independent of NetControl. FrameTap full-frame path removed
-      the same day (owner decision): publish_full_frame (clean
+      demands it. RTSP phase B and NetSink (RTSP/WebRTC) are DESCOPED
+      (owner decision 2026-10-28): not needed in the foreseeable
+      future — the h264 TCP pull is the final preview transport;
+      revisit only with a concrete remote-viewing requirement.
+      FrameTap full-frame path removed the same day (owner decision):
+      publish_full_frame (clean
       stream without overlays) deleted from the code — the
       overlayed model-input stream is the only wanted preview;
       FrameTap as a design element dies with it.
@@ -618,10 +621,10 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       zero-CPU like the MPP decoder; the tree carries the rkmpp EOS
       fixes also upstreamed as PR #273; qp_*/intra-refresh available,
       rc_mode REJECTED by the live encoder — see Platform
-      constraints), NetSink (phase B: RTSP;
-      phase C: WebRTC via libdatachannel only if remote access is
-      ever needed). H.264 packets = second legal memcpy alongside
-      the MJPEG packet. Preview path is strictly opt-in, never part of
+      NetSink (RTSP/WebRTC) — descoped 2026-10-28 with RTSP phase B
+      (owner decision, see above; not a live plan). H.264 packets =
+      second legal memcpy alongside the MJPEG packet.
+      Preview path is strictly opt-in, never part of
       the standard run or benchmarks. Priority vs M4: owner decision
       — if netsend is a working tool, it goes first (it is also the
       debug tool for M4).
