@@ -798,6 +798,18 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
         a side effect: the 32-slot tracker no longer churns on ~30
         duplicate copies of one object per frame (the old accumulating
         DetList fed them to BoxSmoother every frame).
+- [ ] M6: toolchain hygiene (recorded 2026-10-27 by owner, restored
+      from session notes 2026-10-28): (a) clang-format — one enforced
+      style across the tree; the recurring whitespace-only artifacts
+      (empty lines sneaking into headers, see the pipeline.hpp restore
+      of 2026-10-28) are the symptom this closes; (b) gtest unit
+      tests — GoogleTest against the pure-CPU logic that today is
+      verified only by live runs: yolo postprocess decode (grid/anchor
+      math, NMS, letterbox mapping T) and BoxSmoother (EMA, IoU
+      matching, miss decay). Hardware stages (MPP/RGA/RKNN/encoder)
+      stay out of unit scope — live-run territory. Open sub-questions:
+      the exact .clang-format profile (reference files: gpu_box_drawer
+      style per Rules) and the first covered module.
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
       even a hypothetical 10-15 ms model@640x640 would fit the frame budget
