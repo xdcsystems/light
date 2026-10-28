@@ -87,12 +87,12 @@ MppDecoder::~MppDecoder()
     if ( !ctx_ )
         return;
     mpi_->reset( ctx_ );
-    mpp_destroy( ctx_ );
-    ctx_ = nullptr;
-    mpi_ = nullptr;
-    // Critical order: the packet holds a reference to a buffer from pkt_group_,
-    // so it must be released BEFORE its buffer group. The reversed order
-    // leaks one packet-sized drm buffer (~33 KB).
+
+    // Critical order: release every MPP object that may hold references to
+    // buffers BEFORE mpp_destroy(). MPP tears down its internal buffer pools
+    // during destroy, and a later mpp_frame_deinit/mpp_packet_deinit would
+    // decrement refcounts in an already-freed pool ("non-positive ref_count"
+    // + "invalid mem pool ptr" at exit).
     if ( pkt_ )
     {
         mpp_packet_deinit( &pkt_ );
@@ -109,6 +109,10 @@ MppDecoder::~MppDecoder()
         mpp_buffer_put( aux_ );
         aux_ = nullptr;
     }
+
+    mpp_destroy( ctx_ );
+    ctx_ = nullptr;
+    mpi_ = nullptr;
 
     if ( out_group_ )
     {
@@ -219,9 +223,6 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
         // Return the task BEFORE touching out_frame_
         mpi_->enqueue( ctx_, MPP_PORT_OUTPUT, task );
 
-        mpp_frame_deinit( &out_frame_ );
-        out_frame_ = nullptr;
-        mpp_frame_init( &out_frame_ );
         mpp_frame_set_width( out_frame_, w );
         mpp_frame_set_height( out_frame_, h );
         mpp_frame_set_fmt( out_frame_, MPP_FMT_YUV422SP );
@@ -232,6 +233,8 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
             mpi_->control( ctx_, MPP_DEC_SET_INFO_CHANGE_READY, nullptr );
             return -8;
         }
+        // In-place re-set: the task meta we just returned still holds this
+        // same frame object, so it must not be destroyed and re-created.
         mpp_frame_set_buffer( out_frame_, b );
         mpp_buffer_put( b );
 

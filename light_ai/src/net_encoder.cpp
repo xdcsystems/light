@@ -159,7 +159,33 @@ NetEncoder::~NetEncoder()
     if ( thread_.joinable() )
         thread_.join();
     if ( enc_ )
+    {
+        // Drain the encoder: send EOF and collect any pending packets so
+        // the rkmpp wrapper releases its queued MppFrames while its own
+        // MPP context is still alive. Without the flush the wrapper tears
+        // down its pools first and then runs mpp_frame_deinit on the
+        // leftovers — "non-positive ref_count" / "invalid mem pool ptr"
+        // at exit.
+        auto* ctx = static_cast<AVCodecContext*>( enc_ );
+        // Drain only if frames were actually encoded: EOF on an idle
+        // encoder makes the wrapper's flush path touch an already-torn-down
+        // MPP pool ("invalid mem pool ptr" at exit, idle-run case).
+        if ( pts_ > 0 && avcodec_send_frame( ctx, nullptr ) == 0 )
+        {
+            AVPacket* pkt = static_cast<AVPacket*>( pkt_ );
+            for ( ;; )
+            {
+                const int r = avcodec_receive_packet( ctx, pkt );
+                if ( r == 0 )
+                {
+                    av_packet_unref( pkt );
+                    continue;
+                }
+                break;  // EAGAIN / EOF / error — nothing left to drain
+            }
+        }
         avcodec_free_context( reinterpret_cast<AVCodecContext**>( &enc_ ) );
+    }
     if ( frame_ )
         av_frame_free( reinterpret_cast<AVFrame**>( &frame_ ) );
     if ( pkt_ )
