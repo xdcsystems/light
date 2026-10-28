@@ -12,3 +12,4 @@ temp*.txt
 # разрешаем коммит артефактов
 !misc/README.md
 !misc/*.whl
+tidy-report.txt
