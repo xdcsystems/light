@@ -443,30 +443,6 @@ void NetEncoder::publish( int tensor_fd, int acquire_fence_fd )
     }                            // stale fence
     tensor_fd_ = tensor_fd;      // RGA source for this frame
     acq_fd_ = acquire_fence_fd;  // consumed by send_frame
-
-    full_frame_ = false;  // tensor path: source is RGB888
-    if ( !send_frame( fc_, st_ ) )
-    {
-        error_.store( true );
-        cv_.notify_all();  // serve() closes and reopens the UDP path
-    }
-}
-
-// M3.5: publish the FULL decoder frame (cam_w x cam_h, YUV422SP dma-buf)
-// BEFORE the RGA letterbox pass. RGA converts it to NV12 on the way into
-// the encoder's own ping-pong dma-buf — zero CPU pixel copies. The improcess
-// call is a single-op (im2d, sync defaults to 1), so it completes before
-// this call returns: the decoder pool may safely reuse fd_src for the next
-// frame right after requeue.
-void NetEncoder::publish_full_frame( int yuv_fd )
-{
-    if ( quit_.load() )
-        return;
-    std::lock_guard<std::mutex> lk( mx_ );
-    if ( !fc_ || !enc_ )
-        return;
-    tensor_fd_ = yuv_fd;
-    full_frame_ = true;
     if ( !send_frame( fc_, st_ ) )
     {
         error_.store( true );
@@ -488,27 +464,16 @@ bool NetEncoder::send_frame( void* fcp, void* stp )
     cur_ ^= 1u;
     MppBuffer mb = bufs_[cur_];
 
-    // M3.5: the source is either the NPU tensor (RGB888, tensor path) or
-    // the decoder's full frame (YUV422SP, publish_full_frame). RGA does
-    // the 422SP->420SP conversion on the fly — no CPU copies either way.
-    rga_buffer_t src;
+    // Tensor path: crop the visible letterbox band out of the RGB888
+    // model tensor and convert it to NV12 at 1:1 (no upscale). The
+    // boxes are already in the band (GPU drawer + sync_cpu before
+    // publish), so they ride along into the stream for free.
+    rga_buffer_t src = wrapbuffer_fd( tensor_fd_, model_w_, model_h_, RK_FORMAT_RGB_888 );
     im_rect srect = { 0, 0, 0, 0 };
-    if ( full_frame_ )
-    {
-        src = wrapbuffer_fd( tensor_fd_, w_, h_, RK_FORMAT_YCbCr_422_SP );
-    }
-    else
-    {
-        // Tensor path: crop the visible letterbox band out of the RGB888
-        // model tensor and convert it to NV12 at 1:1 (no upscale). The
-        // boxes are already in the band (GPU drawer + sync_cpu before
-        // publish), so they ride along into the stream for free.
-        src = wrapbuffer_fd( tensor_fd_, model_w_, model_h_, RK_FORMAT_RGB_888 );
-        srect.x = 0;
-        srect.y = band_top_;
-        srect.width = model_w_;
-        srect.height = band_h_;
-    }
+    srect.x = 0;
+    srect.y = band_top_;
+    srect.width = model_w_;
+    srect.height = band_h_;
     rga_buffer_t dst = wrapbuffer_fd( mpp_buffer_get_fd( mb ), w_, h_, RK_FORMAT_YCbCr_420_SP );
 
     // RGA-fence support is absent in this kernel driver: the acquire
