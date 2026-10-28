@@ -7,8 +7,9 @@ post-processing.
 ## Rules of the project
 - GStreamer is forbidden (owner's decision).
 - A frame exists only as a dma-buf; pixel copies through the CPU are forbidden.
-  The only allowed memcpy is the compressed MJPEG frame (~25 KB) into the
-  decoder packet buffer.
+  The only permitted copies are the compressed MJPEG frame (~25 KB)
+  into the decoder packet buffer and the compressed h264 packets out
+  of the encoder (both are compressed byte streams, never pixels).
 - I/O is iostream-only: no printf/sprintf/snprintf anywhere. All diagnostics
   go through std::cout / std::cerr.
 - Include order: system/service headers first (angle brackets), the
@@ -128,7 +129,9 @@ post-processing.
                AFTER box drawing: RGA crops the visible letterbox
                band (srect y=[lb_top, lb_top+lb_h)) and converts
                RGB888 -> NV12 1:1 into its own ping-pong MPP dma-bufs
-               — no upscale, zero CPU pixels. The stream size is the
+               — no upscale, zero CPU pixels (the frames leave for the
+               encoder as zero-copy DRM_PRIME descriptors, 2026-10-28,
+               see the enc notes below). The stream size is the
                band's native size (640x360 for the default 1280x720
                camera). One viewer at a time; no encode until the
                first viewer connects; a stalled viewer is dropped via
@@ -290,6 +293,22 @@ post-processing.
   in-tree builds without an explicit decision (see STATE-NOTES.md in
   ~/work/ffmpeg-rockchip). light_ai was rebuilt 2026-10-28 against
   the installed .103.
+- rkmpp encoder input: hand hardware buffers as DRM_PRIME
+  descriptors, never as system-memory pixels. The wrapper
+  (rkmppenc.c) routes any non-DRM_PRIME frame through
+  av_hwframe_get_buffer + av_hwframe_transfer_data — a full-frame
+  CPU copy plus per-frame descriptor/map allocations on every
+  encode call (2026-10-28: this was the monotonic enc 1.8 ->
+  ~15 ms drift; fixed by the DRM_PRIME input, 801ba85). Two review
+  myths closed by reading the wrapper: (a) "missing hw_context" is
+  not a thing — rkmpp_encode_init creates its own RKMPP hwdevice
+  and internal frames pool when none is set (log line "Created a
+  RKMPP hardware device"); (b) with DRM_PRIME input encode_init
+  returns BEFORE creating those pools and imports the caller fd
+  via mpp_buffer_import — zero copies. The wrapper derives the
+  vertical stride from the descriptor's chroma plane offset/pitch,
+  so the 16-aligned ver stride must be set in BOTH the RGA
+  destination and the descriptor (MPP log: stride [640:368]).
 - h264_rkmpp rc_mode: the live encoder does NOT accept rc_mode (log line:
   "enc: rc_mode option not accepted"); the stream runs CBR at
   --net-bitrate (default 12000 kbps). Fine for the preview; revisit when
@@ -357,6 +376,18 @@ vs 49.6-49.8 baseline), FPS unchanged (~20.1-20.3). Decision (owner):
 publish is measured whole, the fence-poll stays inside enc — the poll
 wait is ~0 (single draw call per frame), and a future growth of enc
 with a flat encode time would flag a GPU-path regression on its own.
+Update 2026-10-28 (DRM_PRIME zero-copy input, 801ba85): the wrapper
+system-memory input path did av_hwframe_get_buffer + a full-frame CPU
+copy (av_hwframe_transfer_data, ~345 KB/frame) on every encode call;
+with the input switched to DRM_PRIME descriptor import enc is flat
+1.0-1.4 ms from the first block after connect (the "inflated first
+block" note above no longer applies) across a 1200-frame run — the
+1.8 -> ~15 ms in-run growth is gone, sum and FPS stay flat
+(39.6-40.0 ms, ~25.1 FPS). MPP confirms the descriptor geometry on
+the live log: "set prep cfg w:h [640:360] stride [640:368]"
+(16-aligned ver stride) replaces the startup default [640:384] on
+the first frame; colors verified clean on the stream (no chroma
+misalignment).
 
 ## Scripts
 - scripts/test_inference.py — RKNNLite smoke test: shapes, non-negativity
@@ -632,6 +663,18 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
         warning). Note closed: the symptom was the encoder
         teardown/flush path, covered by the EOS fixes (PR #273).
         tools/test_rkmpp_flush.c removed with the closure.  
+      - 2026-10-28: encoder input switched to zero-copy DRM_PRIME
+        (801ba85): the ping-pong NV12 dma-bufs are allocated with a
+        16-aligned ver stride (360 -> 368 rows) and handed to
+        h264_rkmpp as AVDRMFrameDescriptors (chroma plane at
+        w * vstride); the wrapper imports the fd (mpp_buffer_import)
+        — zero CPU pixel copies, the per-frame system-memory copy
+        path is retired. Verified live (1200 frames, viewer
+        attached): MPP accepts the descriptor geometry ("stride
+        [640:368]"), enc flat 1.0-1.4 ms (the 1.8 -> ~15 ms drift
+        is gone), colors clean on the stream. The earlier "missing
+        hw_context" review hypothesis was disproven by reading
+        rkmppenc.c — see Platform constraints, rkmpp encoder input.
 - [x] M3.6 (closed negative): box drawing via RGA — planned, probed
       live with yolov5 detections, retired. The open check (a) turned
       out fatal: RGA fill is not routable on this board (see Platform
