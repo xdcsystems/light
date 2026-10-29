@@ -13,3 +13,6 @@ temp*.txt
 !misc/README.md
 !misc/*.whl
 tidy-report.txt
+
+# clangd index cache
+.cache/
