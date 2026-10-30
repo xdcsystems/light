@@ -16,3 +16,7 @@ tidy-report.txt
 
 # clangd index cache
 .cache/
+dataset_day3/
+dataset_dusk/
+artifacts/
+misc/preds_*.csv
