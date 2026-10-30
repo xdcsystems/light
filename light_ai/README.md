@@ -133,7 +133,8 @@ post-processing.
                encoder as zero-copy DRM_PRIME descriptors, 2026-10-28,
                see the enc notes below). The stream size is the
                band's native size (640x360 for the default 1280x720
-               camera). One viewer at a time; no encode until the
+               camera; 640x480 at the 1280x960 working mode since
+               2026-10-30). One viewer at a time; no encode until the
                first viewer connects; a stalled viewer is dropped via
                SO_SNDTIMEO (2 s). Late joiners via repeated
                PAT/PMT/SDT.
@@ -159,13 +160,15 @@ post-processing.
   within the limit) with imconfig as a belt-and-suspenders pin.
 - Camera fps is exposure-dependent: ~30 FPS in daylight (measured at
   640x480, M1), ~20-24 FPS in the evening in every resolution alike
-  (640x480, 1280x720, 1920x1080) — pre-YOLO numbers; the 720p
+  (640x480, 1280x720, 1280x960, 1920x1080) — pre-YOLO numbers; the 720p
   yolov5s_relu_int8 steady state with a viewer attached is ~26 FPS
   (see the 720p section below), although the UVC descriptor advertises
   30/1 in all modes. Forcing exposure (exposure_absolute=33) does not lift
   the ceiling — Manual exposure is a no-op on this camera, and FPS
   pacing is a discrete firmware state (see the camera facts
-  below). 1080p in daylight: not yet measured.
+  below). 1280x960 in daylight (2026-10-30): pacing held 20 FPS in
+  the steady runs (600 frames in 30.6-30.9 s) — see the 960p
+  performance section. 1080p in daylight: not yet measured.
 - Camera is USB2-only BY SPEC (Canyon CNS-CWC5 = Sunplus 1bcf:2283,
   bcdUSB 2.00): always enumerates on the hub's USB2 half (480M),
   SuperSpeed half stays empty — normal. USB bandwidth is a non-issue
@@ -212,20 +215,42 @@ post-processing.
   Letterbox geometry is derived from the model, not hard-coded. Examples:
   1280x720 -> 224x224: s = 7/40, lb_h = 126, lb_top = 49;
   1280x720 -> 640x640: s = 1/2,  lb_h = 360, lb_top = 140.
+  1280x960 -> 640x640: s = 1/2,  lb_h = 480, lb_top = 80.
   Detection mapping T: x_scene = x_det * cam_w / model_w, y_scene =
   (y_det - lb_top) * cam_w / model_w; detections on the bars (y_det outside
   the band) are filtered.
 - The calibration dump file is created by whatever user runs the binary;
   a dump left by a root run cannot be overwritten by a normal user run
   ("calibration dump failed"). Clean it up between sudo and non-sudo runs.
+- NPU multi-core (verified 2026-10-30; runtime version confirmed via
+  `strings /lib/librknnrt.so` -> "librknnrt version: 2.5.0"): a single
+  RKNN context is NEVER split across cores. Under --core 1 debugfs
+  shows only Core0 busy (~30%), Core1/2 idle; under --core 7 all three
+  read ~11-13% — the same total work seen through core rotation /
+  counter smoothing, NOT layer parallelism. Mask A/B (600 frames,
+  steady): --core 1/3/7 -> infer 32.5/32.6/30.0 ms — the mask buys
+  <=2.5 ms, not a 3x split. Version triples in build logs (rga_api
+  1.10.6 etc.) belong to other components, not the RKNN runtime.
+  Multi-core throughput comes from parallel contexts, one per core
+  (the M5 pattern); bench_npu's 15.4 ms@012 is consistent with that
+  reading — to reconcile in M2.6.
 - yolov5 .rknn outputs are native fp16 (float16, NCHW) — no CPU-side
   dequantization needed; the lite-runtime wraps them as float32.
 - int8-quantized yolov5s_relu_int8.rknn: built with rknn-toolkit2 2.5.0
   on Colab. v1: calibrated on 50 night frames (--cal 50 --cal-interval 4);
   v2: recalibrated on dataset_mix (25 day + 25 night frames) —
-  see INT8 vs FP32 validation. v3 (current; formal A/B done for night, day A/B pending):
+  see INT8 vs FP32 validation. v3 (night A/B done, day A/B pending; superseded as the
+  working model by int8_mmse, 2026-10-30):
   recalibrated on 60 fresh day-4 daytime frames with mean=0/std=255 ->
   canonical input scale 1/255 (0.00392157) — see M2.4.
+  int8_mmse (WORKING MODEL since 2026-10-30): mmse-quantized on
+  dataset_mix (the same 50-frame set as v2); input zp=-128,
+  scale=0.00436174 (fitted, same as v2 — raw RGB byte writes remain
+  correct). Daytime steady session (1280x960, conf 0.25): infer
+  identical to v3 (~29.5-30.3 ms, one NPU core either way), but
+  detections steadier — cup and dining table present in nearly every
+  60-frame block vs episodic on v3; working conf 0.25. Night A/B for
+  mmse: pending (M2.6).
   MmseQuant2 is memory-hungry: 50 samples fit in 12 GB, 200 OOM. Outputs
   are int8 (per-channel scale/zp) — RknnEngine requests fp16 conversion
   via set_io_mem, the runtime dequantizes into the zero-copy buffer.
@@ -389,7 +414,27 @@ the live log: "set prep cfg w:h [640:360] stride [640:368]"
 the first frame; colors verified clean on the stream (no chroma
 misalignment).
 
+## Measured performance (1280x960 MJPEG, yolov5s_relu_int8 @ 640x640, daytime, steady, viewer attached)
+
+Current working mode (2026-10-30): full-frame 2 Mp, single-pass RGA
+("aux not needed: 1280x960 fits single-pass into 640x640"), letterbox
+band 640x480 (lb_top=80). Steady [timing] avg/60: cam 14.4-18.2,
+dec 1.3-1.4, rga 1.1, infer 29.0-30.3 (identical for v3 and int8_mmse
+within noise), enc 1.0-1.4 with a viewer attached; sum 49.5-50.2 ms
+-> ~20.0 FPS steady; wall clock 600 frames in 30.6-30.9 s ->
+19.4-19.6 FPS. Source-bound at 20-FPS pacing. Quality vs 720p:
+4x pixels in the tensor (visible band 640x480 vs 640x360) — cup
+(~0.25-0.32) and dining table detected in nearly every steady block,
+3-5 detections per frame typical. Mask A/B and the single-core
+finding: see Platform constraints (NPU multi-core) and M2.5. Lighter
+models are REJECTED by owner decision 2026-10-30 (quality first) —
+the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
+960p dump — M2.6.
+
 ## Scripts
+- scripts/set_governors.sh — pins CPU/NPU/DDR governors to
+  performance (sudo). Run before any benchmark: the cores-012 infer
+  figures are CPU-frequency dependent (see M2.5).
 - scripts/test_inference.py — RKNNLite smoke test: shapes, non-negativity
   (ReLU check), PASS/FAIL exit code.
 - scripts/diag_zero_out.py  — multi-input diagnostic (noise/zeros/gray) for
@@ -419,14 +464,16 @@ fresh clone, place the .rknn files next to the executable — the
 
 ## Run
     sudo ./build/light_ai \
-        --device /dev/video20 --model ./misc/yolov5s_relu_int8_v3.rknn --frames 3000 \
+        --device /dev/video20 --model ./misc/yolov5s_relu_int8_mmse.rknn --frames 3000 \
         --net --net-h264 --core 7
 
 (LD_LIBRARY_PATH=/usr/local/lib was required earlier; since the
 2026-10-28 rebuild ldconfig resolves /usr/local/lib — ldd verified.
 Reinstate the prefix only if the ldconfig cache is ever reset.)
 
-Defaults: /dev/video20, 1280x720 MJPEG; the model default is still the M1
+Defaults: /dev/video20, 1280x960 MJPEG (since 2026-10-30 — full-frame
+2 Mp, letterbox band 640x480, see the 960p performance section); the
+model default is still the M1
 mobilenet_v1 relic — always pass --model for detection runs. A missing
 configured node (ENOENT) is not fatal: the pipeline falls back to
 find_usb_capture_node() and adopts the winner (startup fallback, M3.8);
@@ -503,8 +550,24 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       trace): (a) formal day A/B for v3 — the model notes still say
       "day A/B pending" (night A/B x3 done, see M2.4); (b) MMSE
       re-quant with a larger sample budget — 50 samples fit the
-      Colab 12 GB, 200 OOM (see the M2.4 recipe); (c) further
+      Colab 12 GB, 200 OOM (see the M2.4 recipe; an mmse model exists and is the working
+      model since 2026-10-30 — see the int8 notes in Platform
+      constraints); (c) further
       deferred steps: transcribe from the Colab notebooks.
+- [ ] M2.6: v4 recalibration under the 1280x960 pipeline + mmse A/B
+      (plan fixed 2026-10-30). Quality-first framing: lighter models
+      (yolov5n, 512x512) REJECTED by owner decision — see the 960p
+      section; one model = one NPU core (Platform constraints), so
+      FPS work is frozen at ~20 FPS source-bound. Steps:
+      (a) fresh dump from the 960p pipeline (--cal 100
+      --cal-interval 15, ~120 MB on /tmp) -> re-quant via the
+      model-zoo convert.py with mmse -> yolov5s_relu_int8_v4.rknn;
+      (b) A/B v4 vs int8_mmse on the SAME static scene within one
+      session (M2.4 methodology lesson): steady-block presence of
+      cup/dining table and conf bands, not infer only;
+      (c) reconcile bench_npu 15.4 ms@012 against the single-core
+      finding (parallel-contexts hypothesis -> M5);
+      (d) night A/B for the winner.
 - [x] M2.4: int8 quantization — CLOSED 2026-10-26 on v3 (day-4
       daytime recalibration). v3 recipe: calibrated on 60 fresh day-4
       daytime frames, quant config mean=0/std=255 -> canonical input scale
@@ -569,6 +632,16 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       NPU load during a cores-012 run (debugfs, sampled mid-run):
       Core0 20% / Core1 19% / Core2 16% — the work is actually spread
       across all three cores, evenly within counter resolution.
+      Update 2026-10-30 (supersedes the spread reading): 1280x960
+      pipeline, daytime, steady, mask A/B 600 frames each: --core 1
+      32.5 ms / --core 3 32.6 / --core 7 30.0 (<=2.5 ms gain; the
+      earlier 25.1->21.2 delta does not reproduce on v3/mmse at this
+      pacing). Debugfs, --core 1: only Core0 busy ~30%, Core1/2 at
+      zero — single-core execution; --core 7 reads ~11-13% per core
+      (same total work through rotation/counter smoothing, not layer
+      parallelism) — the earlier 20/19/16% reading is re-interpreted
+      the same way. The 21.2 ms figure quoted in
+      scripts/set_governors.sh belongs to the older setup.
 - [x] M3-alt: NV12-family model input — probed and closed negative. The
       RKNPU2 API on board (rknn_type.h / rknn_api.h) has no YUV tensor
       types: rknn_tensor_type is numeric only (FLOAT/INT/BFLOAT),
@@ -836,6 +909,12 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       scheduler. NPU fits: ~3x current load is ~50% per core; pure infer
       is 15.4 ms/frame regardless of stream count — scheduling strategy
       (round-robin frames vs 3 RKNN contexts) is an open question.
+      Update 2026-10-30: the one-model-one-core finding (Platform
+      constraints) settles the scheduling question in favor of 3
+      RKNN contexts with masks 1/2/4 — a single context never uses
+      more than one core; single-context infer reads ~30 ms, so the
+      3-context ceiling is ~90 FPS inference-side, camera pacing
+      permitting.
       Pipeline refactor: an array of cam+dec+rga chains, each with its
       own dma-buf/tensor pool, plus a round-robin dispatcher; per-cam
       BoxSmoother. Fusion is NOT volumetric on this NPU (BEV/3D

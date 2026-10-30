@@ -15,7 +15,7 @@ struct Config
     std::string device = "/dev/video20";
     std::string model = "/usr/share/model/RK3588/mobilenet_v1.rknn";
     //int cam_w = 1920, cam_h = 1080;
-    int cam_w = 1280, cam_h = 720;
+    int cam_w = 1280, cam_h = 960;
     // Two-pass RGA kicks in only when the source exceeds 8x the model input
     // per axis (checked in the Pipeline ctor); at 720p -> 640 it stays dormant.
     bool dump_cal = false;  // dump one model-input frame to /tmp/cal.ppm

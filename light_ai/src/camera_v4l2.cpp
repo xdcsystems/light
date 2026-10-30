@@ -97,6 +97,21 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
         return -1;
     }
 
+    // Ask explicitly for the highest declared interval. The Sunplus FW
+    // accepts this request and honors it when AE picks a short exposure;
+    // in dim light it still throttles to its own rhythm — the request is
+    // harmless and documents intent. Best-effort: never fatal.
+    v4l2_streamparm parm {};
+    parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    parm.parm.capture.timeperframe.numerator = 1;
+    parm.parm.capture.timeperframe.denominator = 30;
+    if ( xioctl_r( VIDIOC_S_PARM, &parm ) == 0 )
+    {
+        const unsigned d = parm.parm.capture.timeperframe.denominator;
+        if ( d != 30 )
+            std::cerr << "camera: requested 30 fps, driver set " << d << "\n";
+    }
+
     v4l2_requestbuffers req {};
     req.count = kBufCount;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
