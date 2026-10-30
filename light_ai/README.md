@@ -1022,12 +1022,17 @@ Status 2026-10-30 (v3-vs-v4 A/B):
   the steadiest night profile (coverage 49/50, no lost detections).
 - Verdict (2026-10-30, evening): v4 survives the night profile —
   v3-equivalent except one isolated lost detection. M2.6 (d) is
-  closed as INT8-vs-INT8; a formal fp16-reference night check and
-  the M2.4-b (a) day A/B vs fp16 remain open.
-- Working-model decision (owner): int8_mmse vs v4 — mmse is
-  steadier at night (49/50 coverage, no losses), v4 is fresher
-  (960p-pipeline calibration, higher dusk score 0.491 vs 0.478).
-  Both are defensible; pending owner's call.
+  closed as INT8-vs-INT8. Open after the owner decision: a live
+  night session (mmse vs v4) and the M2.4-b (a) day A/B vs fp16.
+- Working-model decision (owner, 2026-10-30 evening): int8_mmse
+  STAYS the working model — steadier at night (49/50 coverage, no
+  losses) and proven across the live sessions. v4 is kept as the
+  day/dusk candidate (fresher 960p calibration, higher dusk score
+  0.491 vs 0.478). Formal closure: a live night session A/B
+  (mmse vs v4, same static scene, steady blocks) — no fresh night
+  dump is taken for now: no recalibration is currently motivated
+  (v4 == v3 on all three profiles); a dump would only serve a
+  future v5.
 
 ## INT8 vs FP32 validation (2026-10-26, yolov5s_relu_int8_v2)
 
