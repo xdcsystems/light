@@ -1022,17 +1022,23 @@ Status 2026-10-30 (v3-vs-v4 A/B):
   the steadiest night profile (coverage 49/50, no lost detections).
 - Verdict (2026-10-30, evening): v4 survives the night profile —
   v3-equivalent except one isolated lost detection. M2.6 (d) is
-  closed as INT8-vs-INT8. Open after the owner decision: a live
-  night session (mmse vs v4) and the M2.4-b (a) day A/B vs fp16.
+  closed as INT8-vs-INT8. The live night session (mmse vs v4)
+  ran the same evening: EQUAL — mmse confirmed as the working
+  model. Still open: the M2.4-b (a) day A/B vs fp16.
 - Working-model decision (owner, 2026-10-30 evening): int8_mmse
   STAYS the working model — steadier at night (49/50 coverage, no
   losses) and proven across the live sessions. v4 is kept as the
   day/dusk candidate (fresher 960p calibration, higher dusk score
-  0.491 vs 0.478). Formal closure: a live night session A/B
-  (mmse vs v4, same static scene, steady blocks) — no fresh night
-  dump is taken for now: no recalibration is currently motivated
-  (v4 == v3 on all three profiles); a dump would only serve a
-  future v5.
+  0.491 vs 0.478). Closure (same evening): live night session done — mmse vs v4,
+  600 frames each, conf 0.25, static scene, /dev/video20.
+  RESULT: EQUAL. Steady blocks 120-599: no block diverges
+  (2.02-2.05 vs 2.00-2.17 det/frame); chair 100% presence both,
+  mean conf 0.827 vs 0.832; potted plant in every frame both,
+  mean conf 0.670 vs 0.719; vase 4% frames both (mmse scores it
+  higher: 0.413/0.571 vs 0.285/0.345); zero anomalous frames in
+  either run. Infer on the night camera = 24 ms, same as day —
+  no night NPU penalty. First two blocks (warmup tail, vase
+  fading at mmse start) are excluded, per M2.4 protocol.
 
 ## INT8 vs FP32 validation (2026-10-26, yolov5s_relu_int8_v2)
 
