@@ -252,8 +252,9 @@ post-processing.
   60-frame block vs episodic on v3; working conf 0.25. Night A/B for
   mmse: pending (M2.6).
   v4 (2026-10-30): mmse on the fresh 960p daytime dump (dataset_day3,
-  50 of 100 frames); day and dusk A/B vs v3 — equal (see INT8 build
-  history); night A/B vs fp16 pending (M2.6 (d)).
+  50 of 100 frames); day, dusk and night A/Bs vs v3 — equal (see INT8
+  build history; night includes one isolated lost detection at
+  n2_cal_0040).
   MmseQuant2 is memory-hungry: 50 samples fit in 12 GB, 200 OOM. Outputs
   are int8 (per-channel scale/zp) — RknnEngine requests fp16 conversion
   via set_io_mem, the runtime dequantizes into the zero-copy buffer.
@@ -572,15 +573,16 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       dataset_day3) -> re-quant via the model-zoo convert.py with
       mmse -> yolov5s_relu_int8_v4.rknn (48 min Colab — see INT8
       build history);
-      (b) PARTIAL 2026-10-30: A/Bs ran as v3-vs-v4 on the day and
-      dusk dumps — v4 == v3 on both profiles (numbers in INT8
-      build history); the planned same-scene v4-vs-int8_mmse A/B
-      is still pending — fold into the night session;
+      (b) DONE 2026-10-30: three-way A/B (v3/v4/int8_mmse) on the
+      day, dusk and night dumps within one session — see INT8
+      build history;
       (c) reconcile bench_npu 15.4 ms@012 against the single-core
       finding (parallel-contexts hypothesis -> M5);
-      (d) night A/B for the winner — pending: tonight,
-      dataset_mix, gamma 2.0 -> uint8 -> /255 preprocessing,
-      conf 0.18.
+      (d) DONE 2026-10-30 (INT8-vs-INT8): night A/B on dataset_mix,
+      gamma 2.0, conf 0.18 — v4 == v3 except one isolated lost
+      detection (n2_cal_0040; details in INT8 build history).
+      Remaining from (b)+(d): the owner's working-model call
+      (int8_mmse vs v4) and a formal fp16-reference check.
 - [x] M2.4: int8 quantization — CLOSED 2026-10-26 on v3 (day-4
       daytime recalibration). v3 recipe: calibrated on 60 fresh day-4
       daytime frames, quant config mean=0/std=255 -> canonical input scale
@@ -960,9 +962,9 @@ Versions in misc/ (build lineage):
   filename was evidently reused across builds; treat the M2.4
   record as the current v3 state.
 - yolov5s_relu_int8_v4.rknn — mmse on the fresh 960p daytime dump
-  (dataset_day3: 50 frames, every 2nd of 100). Day and dusk A/B
-  vs v3 — equal (2026-10-30, status below); night A/B pending
-  (M2.6 (d)).
+  (dataset_day3: 50 frames, every 2nd of 100). Day, dusk and night
+  A/Bs vs v3 — equal (2026-10-30, status below; night: one isolated
+  frame loss, see below).
 
 v4 recipe (build_v4.py; Colab notebook Untitled2.ipynb, a copy is
 saved as colab_v4_recipe.ipynb in artifacts): mean [0,0,0],
@@ -1007,11 +1009,25 @@ Status 2026-10-30 (v3-vs-v4 A/B):
   dusk score is even slightly higher for v4 (0.491 vs 0.478).
 - Note: these are INT8-vs-INT8 A/Bs; the v3-vs-fp16 day A/B of
   M2.4-b (a) stays open.
-- Remaining: the night A/B — tonight after ~16:30, dataset_mix,
-  gamma 2.0 -> uint8 -> /255 preprocessing, conf 0.18; verify
-  first that tools/ab_run.py carries the gamma flag (check
-  --help). The planned same-scene v4-vs-int8_mmse A/B (M2.6 (b))
-  folds into the same session.
+- Night (dataset_mix, 50 frames, --gamma 2.0, conf 0.18;
+  v3/v4/mmse): 102/106/98 detections over 48/47/49 of 50 frames —
+  no night blindness in any version. IoU v3-vs-v4: 98 matched,
+  7 v3-only / 8 v4-only, all in the 0.18-0.24 band EXCEPT ONE:
+  n2_cal_0040 — v3 cls56 0.3574, mmse cls56 0.3808 (boxes agree
+  within ~1 px), v4 sees NOTHING on that frame. A zone trace of
+  that object across all 23 n2 frames: detected by v3 20/23,
+  v4 19/23, mmse 20/23 — v4's miss is a single-frame quantization
+  collapse, not systematic blindness (frames 0032/0072/0080 are
+  missed by ALL three: edge-object absence, cf. M2.4). mmse stays
+  the steadiest night profile (coverage 49/50, no lost detections).
+- Verdict (2026-10-30, evening): v4 survives the night profile —
+  v3-equivalent except one isolated lost detection. M2.6 (d) is
+  closed as INT8-vs-INT8; a formal fp16-reference night check and
+  the M2.4-b (a) day A/B vs fp16 remain open.
+- Working-model decision (owner): int8_mmse vs v4 — mmse is
+  steadier at night (49/50 coverage, no losses), v4 is fresher
+  (960p-pipeline calibration, higher dusk score 0.491 vs 0.478).
+  Both are defensible; pending owner's call.
 
 ## INT8 vs FP32 validation (2026-10-26, yolov5s_relu_int8_v2)
 
