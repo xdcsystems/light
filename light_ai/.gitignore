@@ -20,3 +20,4 @@ dataset_day3/
 dataset_dusk/
 artifacts/
 misc/preds_*.csv
+misc/boxlog_*.csv
