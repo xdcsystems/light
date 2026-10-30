@@ -251,6 +251,9 @@ post-processing.
   detections steadier — cup and dining table present in nearly every
   60-frame block vs episodic on v3; working conf 0.25. Night A/B for
   mmse: pending (M2.6).
+  v4 (2026-10-30): mmse on the fresh 960p daytime dump (dataset_day3,
+  50 of 100 frames); day and dusk A/B vs v3 — equal (see INT8 build
+  history); night A/B vs fp16 pending (M2.6 (d)).
   MmseQuant2 is memory-hungry: 50 samples fit in 12 GB, 200 OOM. Outputs
   are int8 (per-channel scale/zp) — RknnEngine requests fp16 conversion
   via set_io_mem, the runtime dequantizes into the zero-copy buffer.
@@ -260,8 +263,9 @@ post-processing.
   (0.00392157, canonical mean/std config) — raw RGB byte writes
   remain correct for both.
   (Calibration caveat: the cal set embeds the gray-128 letterbox
-  padding, ~44% of pixels per frame — its stats partly come from
-  the fill; see dataset map.)
+  padding — ~44% of pixels per frame in the 720p-era sets, ~25% in
+  the 960p sets (640x480 band) — its stats partly come from the
+  fill; see the dataset map.)
   A/B vs fp16 (daylight, 720p, conf 0.25): infer 43.1 -> 28.1 ms (~1.55x),
   classes and boxes match within a few px, conf drop ~0.02. Night A/B:
   v1 ALARM (superseded), v2 ALARM confirmed 2026-10-26 (systematic
@@ -443,6 +447,10 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
   frame (per-head box/obj/cls ranges, hot-cell counts). Feeds the model a
   4-dim input (img[None]).
 - tools/save_board_csv.py   — RKNNLite predictions dump (misc/board_preds.csv).
+- tools/ab_run.py — static-frame A/B between two .rknn models over a
+  file pattern (RKNNLite): --model, --pattern, --out, --conf; writes
+  a per-frame predictions CSV. The v3-vs-v4 day/dusk A/Bs (INT8
+  build history) ran through it.
 - tools/compare.py + tools/list_missed.py — INT8 vs FP32 comparison
   (IoU>0.5 + class match, mean |dscore|); see INT8 vs FP32 validation.
 - tools/probe_dark_heads.py, probe_gamma_sweep.py, probe_adaptive.py,
@@ -559,15 +567,20 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       (yolov5n, 512x512) REJECTED by owner decision — see the 960p
       section; one model = one NPU core (Platform constraints), so
       FPS work is frozen at ~20 FPS source-bound. Steps:
-      (a) fresh dump from the 960p pipeline (--cal 100
-      --cal-interval 15, ~120 MB on /tmp) -> re-quant via the
-      model-zoo convert.py with mmse -> yolov5s_relu_int8_v4.rknn;
-      (b) A/B v4 vs int8_mmse on the SAME static scene within one
-      session (M2.4 methodology lesson): steady-block presence of
-      cup/dining table and conf bands, not infer only;
+      (a) DONE 2026-10-30: fresh dump from the 960p pipeline
+      (--cal 100 --cal-interval 15, ~120 MB on /tmp, now
+      dataset_day3) -> re-quant via the model-zoo convert.py with
+      mmse -> yolov5s_relu_int8_v4.rknn (48 min Colab — see INT8
+      build history);
+      (b) PARTIAL 2026-10-30: A/Bs ran as v3-vs-v4 on the day and
+      dusk dumps — v4 == v3 on both profiles (numbers in INT8
+      build history); the planned same-scene v4-vs-int8_mmse A/B
+      is still pending — fold into the night session;
       (c) reconcile bench_npu 15.4 ms@012 against the single-core
       finding (parallel-contexts hypothesis -> M5);
-      (d) night A/B for the winner.
+      (d) night A/B for the winner — pending: tonight,
+      dataset_mix, gamma 2.0 -> uint8 -> /255 preprocessing,
+      conf 0.18.
 - [x] M2.4: int8 quantization — CLOSED 2026-10-26 on v3 (day-4
       daytime recalibration). v3 recipe: calibrated on 60 fresh day-4
       daytime frames, quant config mean=0/std=255 -> canonical input scale
@@ -931,6 +944,75 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       recalibration only if the lighting regime differs materially
       (v1->v2 precedent), conf band re-checked from logs on day one.
 
+## INT8 build history (rknn-toolkit2 2.5.0, Colab)
+
+Versions in misc/ (build lineage):
+- yolov5s_relu.rknn — fp16-convert build without quantization; the
+  accuracy reference for every A/B.
+- yolov5s_relu_int8.rknn — v1: default KLD quantization, mixed
+  calibration; superseded (night ALARM — see M2.4).
+- yolov5s_relu_int8_mmse.rknn / _v2.rknn — mmse, 50 frames
+  (dataset_mix); the working model since 2026-10-30.
+- yolov5s_relu_int8_v3.rknn — mmse. The build records disagree:
+  one history notes a 6000-frame evening dump
+  (cal_evening_6000.tgz), M2.4 records 60 fresh day-4 daytime
+  frames with the canonical 1/255 scale (0.00392157) — the same
+  filename was evidently reused across builds; treat the M2.4
+  record as the current v3 state.
+- yolov5s_relu_int8_v4.rknn — mmse on the fresh 960p daytime dump
+  (dataset_day3: 50 frames, every 2nd of 100). Day and dusk A/B
+  vs v3 — equal (2026-10-30, status below); night A/B pending
+  (M2.6 (d)).
+
+v4 recipe (build_v4.py; Colab notebook Untitled2.ipynb, a copy is
+saved as colab_v4_recipe.ipynb in artifacts): mean [0,0,0],
+std [255,255,255], quant_img_RGB2BGR=False,
+quantized_method='channel', quantized_algorithm='mmse',
+target_platform='rk3588', optimization_level=3,
+do_quantization=True, dataset = 50 png. Build time 48 min (mmse
+~31 s per iteration, 90 iterations; Colab log: DONE 2884.1 s).
+
+Toolkit facts (Colab side):
+- Colab does NOT support swap (fallocate / loop device / separate
+  disk are all rejected by the kernel): mmse memory is capped by
+  the 12 GB RAM -> at most 50 frames of 960p calibration.
+  Verified.
+- Expected input scale under mmse: ~0.004-0.0045. A flat 1/255
+  (0.00392157) is the signature of the default algorithm, not
+  mmse. Verify after each build: grep 'scale' build_v4.log.
+- Toolkit 2.5.0 converts input AND outputs to int8 by default;
+  deploying through the Runtime API means accounting for the
+  dequant scale. RknnEngine already rewrites the output attr to
+  FLOAT16 so the runtime dequantizes into the zero-copy buffer
+  (see RknnEngine) — postprocess stays untouched; the "outputs
+  are native fp16" note above refers to non-quantized builds.
+- onnx source: yolov5s_relu.onnx, 28.9 MB, wget from
+  ftrg.zbox.filez.com (link alive on 2026-10-30).
+- Calibration dumps are duplicated to Drive; artifacts live in
+  Drive (yolov5_rknn) and on the board (misc/). Colab-side
+  files: postprocess.py (YOLOv5 decode: anchors 80/40/20,
+  strides 8/16/32, NMS; input = 3 maps (255,H,W) post-sigmoid)
+  and build_v4.py.
+
+Status 2026-10-30 (v3-vs-v4 A/B):
+- Day (dataset_day2, 50 frames): conf 0.25 — 101 vs 101
+  detections; the discrepancies are threshold noise (cls 39,
+  scores 0.256/0.259).
+- Dusk (dataset_dusk, 100 frames, brightness ~86 vs ~116
+  daytime): conf 0.18 — 223 vs 227 detections, ALL discrepancies
+  sit in the 0.18-0.24 score band (mostly cls 56; symmetric
+  split: 12 v4-only vs 8 v3-only, 37 IoU-matched); conf 0.25 —
+  186 vs 186, two frames differ by one detection.
+- Verdict: v4 == v3 on the daytime and dusk profiles; the mean
+  dusk score is even slightly higher for v4 (0.491 vs 0.478).
+- Note: these are INT8-vs-INT8 A/Bs; the v3-vs-fp16 day A/B of
+  M2.4-b (a) stays open.
+- Remaining: the night A/B — tonight after ~16:30, dataset_mix,
+  gamma 2.0 -> uint8 -> /255 preprocessing, conf 0.18; verify
+  first that tools/ab_run.py carries the gamma flag (check
+  --help). The planned same-scene v4-vs-int8_mmse A/B (M2.6 (b))
+  folds into the same session.
+
 ## INT8 vs FP32 validation (2026-10-26, yolov5s_relu_int8_v2)
 
 Purpose: verify the freshly calibrated int8 model (v2) against a float32
@@ -984,20 +1066,31 @@ Conclusions:
 
 ## Night session findings (2026-10-26): dark frames and gamma verdict
 
-Dataset map (owner's clarification):
-- dataset/        — DAYTIME calibration dump, day 4 (2026-10-26),
-  60 frames cal_00XX.ppm. Pre-letterboxed 640x640 network input:
-  gray-128 padding (rows 0-139 and 500-639, ~44% of pixels),
-  content 640x360 centered. One static daytime view; people
-  intermittently cross the scene, occluding the lower half
-  (Rmean 78-82 -> 53-57 in occluded frames, upper half unchanged,
-  k=1.0). Quantization input for v3 (built 20:20 same day).
-  Replaces the former day-2 daytime dump.
+Dataset map (owner's clarification; current as of 2026-10-30):
+- dataset_day2    — day-2 daytime dump, 50 frames cal_00XX.ppm
+  (brightness two clusters: ~89 and ~114). The day A/B reference
+  for the v3-vs-v4 comparison (2026-10-30).
+- dataset_day3    — fresh 960p daytime dump (2026-10-30,
+  --cal 100 --cal-interval 15): 100 frames, brightness ~116
+  uniform. The quantization source of v4 (every 2nd frame = 50).
+- dataset_dusk    — dusk dump (2026-10-30, same protocol): 100
+  frames, brightness ~86 (vs ~116 daytime). cal_0000.ppm is an
+  AE-settling outlier (brightness 35) — exclude it from any
+  future calibration.
+- The former day-4 daytime dump (the old dataset/, 60 frames:
+  pre-letterboxed 640x640 network input, gray-128 padding rows
+  0-139 and 500-639, ~44% of pixels, content 640x360 centered;
+  one static daytime view; people intermittently cross the scene,
+  occluding the lower half, Rmean 78-82 -> 53-57 in occluded
+  frames, upper half unchanged, k=1.0; v3's quantization input,
+  built 20:20 on 2026-10-26) is archived — duplicated to Drive.
+  The dataset/ path was reused for fresh dumps (2026-10-30:
+  dataset -> dataset_day3, then a fresh dump -> dataset_dusk).
 - dataset_night/  — NIGHT calibration dump, day 1, the buggy
   pipeline that periodically produced row-tear artifacts.
   Hardest conditions for the model; all gamma probes ran on it.
   All cal_XXXX frame references in this section and in the
-  dark-frame probes point HERE, not to the day-4 dataset/
+  dark-frame probes point HERE, not to the daytime dumps
 - dataset_mix/    — calibration dump assembled proportionally
   from day-2 and night-1 frames; THE calibration set of
   int8_v2 / int8_mmse (50 frames: n1_cal_* every 2nd of 50,
