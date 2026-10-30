@@ -1039,6 +1039,17 @@ Status 2026-10-30 (v3-vs-v4 A/B):
   either run. Infer on the night camera = 24 ms, same as day —
   no night NPU penalty. First two blocks (warmup tail, vase
   fading at mmse start) are excluded, per M2.4 protocol.
+- Conf-0.18 control (same evening, 240 frames each, static
+  scene): cup and dining table ABSENT at 0.18 in both models —
+  night absence, not a threshold effect. mmse again the
+  conservative profile: vase in 14/240 frames (5%) vs 63/240
+  (26%) for v4; weak (<0.30) off-profile detections 36 vs 162.
+  Class-set divergence 70/240 frames, all driven by the
+  0.18-0.26 noise band (vase episodes, phantom potted plant at
+  ~(471,578)); main profile (chair + potted plant) intact in
+  both. v4 note: empty frame 0 (cold-start miss) — second
+  early-frame collapse pattern after M2.4 v3/vase. Decision
+  unchanged: mmse stays the working model.
 
 ## INT8 vs FP32 validation (2026-10-26, yolov5s_relu_int8_v2)
 
