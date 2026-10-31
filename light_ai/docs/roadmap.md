@@ -58,13 +58,12 @@ refer to README.md sections (../README.md).
       mmse -> yolov5s_relu_int8_v4.rknn (48 min Colab — see INT8
       build history);
       (b) DONE 2026-10-30: three-way A/B (v3/v4/int8_mmse) on the
-      day, dusk and night dumps within one session — see INT8
-      build history;
+      day, dusk and night dumps within one session — see docs/state.md (INT8 build history);
       (c) reconcile bench_npu 15.4 ms@012 against the single-core
       finding (parallel-contexts hypothesis -> M5);
       (d) DONE 2026-10-30 (INT8-vs-INT8): night A/B on dataset_mix,
       gamma 2.0, conf 0.18 — v4 == v3 except one isolated lost
-      detection (n2_cal_0040; details in INT8 build history).
+      detection (n2_cal_0040; details in docs/state.md (INT8 build history).
       Remaining from (b)+(d): the owner's working-model call
       (int8_mmse vs v4) and a formal fp16-reference check.
 - [x] M2.4: int8 quantization — CLOSED 2026-10-26 on v3 (day-4

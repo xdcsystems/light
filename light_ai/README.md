@@ -240,7 +240,7 @@ post-processing.
 - int8-quantized yolov5s_relu_int8.rknn: built with rknn-toolkit2 2.5.0
   on Colab. v1: calibrated on 50 night frames (--cal 50 --cal-interval 4);
   v2: recalibrated on dataset_mix (25 day + 25 night frames) —
-  see INT8 vs FP32 validation. v3 (night A/B done, day A/B pending; superseded as the
+  see docs/state.md (INT8 vs FP32 validation). v3 (night A/B done, day A/B pending; superseded as the
   working model by int8_mmse, 2026-10-30):
   recalibrated on 60 fresh day-4 daytime frames with mean=0/std=255 ->
   canonical input scale 1/255 (0.00392157) — see M2.4.
@@ -253,8 +253,7 @@ post-processing.
   60-frame block vs episodic on v3; working conf 0.25. Night A/B for
   mmse: pending (M2.6).
   v4 (2026-10-30): mmse on the fresh 960p daytime dump (dataset_day3,
-  50 of 100 frames); day, dusk and night A/Bs vs v3 — equal (see INT8
-  build history; night includes one isolated lost detection at
+  50 of 100 frames); day, dusk and night A/Bs vs v3 — equal (see docs/state.md INT8 build history; night includes one isolated lost detection at
   n2_cal_0040).
   MmseQuant2 is memory-hungry: 50 samples fit in 12 GB, 200 OOM. Outputs
   are int8 (per-channel scale/zp) — RknnEngine requests fp16 conversion
@@ -267,7 +266,7 @@ post-processing.
   (Calibration caveat: the cal set embeds the gray-128 letterbox
   padding — ~44% of pixels per frame in the 720p-era sets, ~25% in
   the 960p sets (640x480 band) — its stats partly come from the
-  fill; see the dataset map.)
+  fill; see docs/state.md (dataset map).)
   A/B vs fp16 (daylight, 720p, conf 0.25): infer 43.1 -> 28.1 ms (~1.55x),
   classes and boxes match within a few px, conf drop ~0.02. Night A/B:
   v1 ALARM (superseded), v2 ALARM confirmed 2026-10-26 (systematic
@@ -451,12 +450,11 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
 - tools/save_board_csv.py   — RKNNLite predictions dump (misc/board_preds.csv).
 - tools/ab_run.py — static-frame A/B between two .rknn models over a
   file pattern (RKNNLite): --model, --pattern, --out, --conf; writes
-  a per-frame predictions CSV. The v3-vs-v4 day/dusk A/Bs (INT8
-  build history) ran through it.
+  a per-frame predictions CSV. The v3-vs-v4 day/dusk A/Bs (INT8 build history - docs/state.md) ran through it.
 - tools/compare.py + tools/list_missed.py — INT8 vs FP32 comparison
-  (IoU>0.5 + class match, mean |dscore|); see INT8 vs FP32 validation.
+  (IoU>0.5 + class match, mean |dscore|); see docs/state.md (INT8 vs FP32 validation).
 - tools/probe_dark_heads.py, probe_gamma_sweep.py, probe_adaptive.py,
-  probe_gamma3_det.py — dark-frame probes (see Night session findings;
+  probe_gamma3_det.py — dark-frame probes (see docs/state.md, Night session findings;
   gamma3 results in misc/gamma3_det.csv).
 - tools/peek_dark.py — renders the reference dark frames to PNG
   (dataset_night/, hardcoded triple, ignores CLI args); dark-band
