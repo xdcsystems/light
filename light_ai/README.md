@@ -480,9 +480,7 @@ fresh clone, place the .rknn files next to the executable — the
 Reinstate the prefix only if the ldconfig cache is ever reset.)
 
 Defaults: /dev/video20, 1280x960 MJPEG (since 2026-10-30 — full-frame
-2 Mp, letterbox band 640x480, see the 960p performance section); the
-model default is still the M1
-mobilenet_v1 relic — always pass --model for detection runs. A missing
+2 Mp, letterbox band 640x480, see the 960p performance section); the model default is the working INT8 model (misc/, see Build); --model overrides it. A missing
 configured node (ENOENT) is not fatal: the pipeline falls back to
 find_usb_capture_node() and adopts the winner (startup fallback, M3.8);
 non-ENOENT open errors (EBUSY/EACCES) stay fatal. Options:

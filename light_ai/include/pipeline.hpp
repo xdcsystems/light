@@ -13,7 +13,7 @@
 struct Config
 {
     std::string device = "/dev/video20";
-    std::string model = "/usr/share/model/RK3588/mobilenet_v1.rknn";
+    std::string model = "./misc/yolov5s_relu_int8_mmse.rknn";
     //int cam_w = 1920, cam_h = 1080;
     int cam_w = 1280, cam_h = 960;
     // Two-pass RGA kicks in only when the source exceeds 8x the model input
