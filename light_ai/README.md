@@ -514,11 +514,185 @@ Viewer (pull, product path): ffplay -fflags nobuffer
 tcp://<board-ip>:1234
 Viewer (UDP push, legacy, low-latency, M3.9): ffplay -fflags
 nobuffer -flags low_delay -framedrop -probesize 32
--analyzeduration 0 -vf setpts=0 -f mpegts udp://0.0.0.0:1234 — an
-explicit IPv4 bind is required on Windows hosts (udp://@:1234
-binds :: / IPv6 and silently receives no IPv4 packets; verified
-with Get-NetUDPEndpoint). --cpu-draw forces CPU box drawing even
-when the GPU drawer is up (A/B baseline; default is GPU drawing).
+-analyzeduration 0 -vf setpts=0 -f mpegts
+udp://0.0.0.0:1234 — an explicit IPv4 bind is required on Windows
+hosts (udp://@:1234 binds :: / IPv6 and silently receives no IPv4
+packets; verified with Get-NetUDPEndpoint).
+On the legacy Windows laptop the maintained viewer is mpv (dxva2-copy
+decode, auto-reconnect loop) — see the Viewer section below; the ffplay
+lines above stay the generic reference. --cpu-draw forces CPU
+box drawing even when the GPU drawer is up (A/B baseline; default
+is GPU drawing).
+
+## Viewer (mpv, legacy Windows laptop; recorded 2026-10-31)
+
+The daily viewer record for the viewing box: Core 2 Duo T9550, ATI Mobility
+Radeon HD 3400 (legacy driver 8.970.100.0, 2013-04-24 — the final release for
+this series), DirectX 10.1 (no D3D11 at all), UVD2 h264 decode via DXVA2,
+OpenGL without WGL_NV_DX_interop; a clean Windows build, mpv 0.41 64-bit.
+The stream is the h264 TCP pull (tcp://192.168.1.10:1234, MPEG-TS confirmed
+by the demuxer log: "Found 'mpegts' at score=100") — the 640x480 band of the
+1280x960 working mode (see NetEncoder). Note on cadence: the stream is paced
+by --net-fps (default 25), but camera pacing is a discrete firmware state
+{20, 25, 30} (see Platform constraints) — a cadence mismatch is a pacing
+level, not a player defect.
+
+Established facts:
+1. gpu-next does not work: libplacebo requires D3D11, the GPU has none —
+   error 0x887a0004. Closed.
+2. Zero-copy (dxva2 without -copy) is unreachable, all three contexts
+   verified: win (WGL — no direct interop exists), angle (silent crash
+   0xC0000005 in the interop code on the legacy driver; WER logs
+   "faulting module: unknown"), dxinterop ("WGL_NV_DX_interop is not
+   supported"). Do not re-probe.
+3. Working combo: vo=gpu + gpu-api=opengl + gpu-context=win +
+   hwdec=dxva2-copy. Decode runs in UVD2 in hardware, output is a real GPU
+   path. INVALID_ENUM noise at texture creation is driver chatter, the
+   picture is unaffected. Working-DXVA2 signature: the VO line
+   "[gpu] 640x480 nv12" (a software decode would print yuv420p).
+4. hwdec=auto is rejected: mpv probes d3d11va -> nvdec -> vaapi ->
+   d3d11va-copy before reaching dxva2-copy — four device creations per
+   start, including the noisy but by-design "Failed to create D3D11 Device
+   (0x887a0004)". The explicit hwdec name removes the probes and makes the
+   start deterministic.
+5. "non-existing PPS 0 referenced" at connect is the mid-GOP norm: the
+   decoder waits for the next keyframe, the messages die down by
+   themselves.
+6. The board drops the stream (~29 s and ~117 s in different runs) — an
+   auto-reconnect loop is mandatory. ffmpeg reconnect* options do NOT
+   apply to tcp:// (log-confirmed: "Could not set AVOption reconnect='1'"
+   — the options exist for the HTTP protocol only); the reconnect is
+   implemented as a bat loop or a Lua script, nothing else.
+7. Start timing (3 runs per config, medians): ~0.73 s base; demuxer-
+   lavf-analyzeduration=0 and demuxer-lavf-probe-info=no measure zero
+   (even -15..20 ms) — MPEG-TS is identified instantly, acceleration
+   options are useless. recv_buffer_size does not move the start either.
+   The ~0.73 s is connect + wait for the next keyframe (board GOP) — not
+   addressable from the player.
+8. low-latency profile duplicates: explicit no-cache /
+   demuxer-readahead-secs=0 / demuxer-max-bytes are redundant — the
+   profile already carries cache=no, stream-buffer-size=4k,
+   demuxer-readahead-secs=0 etc. (visible via --show-profile=low-latency).
+9. Timing fork: --untimed is minimal latency but judders 25 fps on a
+   60 Hz monitor (verified); --opengl-swapinterval=0 keeps the picture
+   smooth, preserves PTS timing, costs +1-2 vsync frames. Chosen by the
+   photo-timestamp measurement (below).
+
+Launch. No config file is used (%APPDATA%\mpv\mpv.conf removed — all
+options on the command line). C:\mpv64\watch.bat:
+
+    @echo off
+    :loop
+    echo %date% %time% >> C:\mpv64\restarts.log
+    mpv.com --vo=gpu --gpu-api=opengl --gpu-context=win --hwdec=dxva2-copy --profile=low-latency --network-timeout=5 --opengl-swapinterval=0 "--stream-lavf-o=recv_buffer_size=32768,tcp_nodelay=1" tcp://192.168.1.10:1234
+    timeout /t 1 >nul
+    goto loop
+
+One-shot from PowerShell:
+
+    mpv.com --vo=gpu --gpu-api=opengl --gpu-context=win --hwdec=dxva2-copy --profile=low-latency --network-timeout=5 --opengl-swapinterval=0 "--stream-lavf-o=recv_buffer_size=32768,tcp_nodelay=1" tcp://192.168.1.10:1234
+
+Option notes:
+- hwdec=dxva2-copy — hardware decode without probing; the copy at
+  640x480 is negligible (fact 2).
+- profile=low-latency — disables mpv buffering (incl. cache=no and the
+  trimmed demuxer buffers; no separate lines needed, fact 8).
+- network-timeout=5 — a hung socket (board silent, TCP not broken)
+  unfreezes within 5 s instead of the FFmpeg default 60 s.
+- opengl-swapinterval=0 — see fact 9; replace with --untimed if the
+  photo-timestamp run shows the latency returned to 1.5-2 s (smoothness
+  traded for minimal delay, at the cost of judder).
+- stream-lavf-o=recv_buffer_size=32768,tcp_nodelay=1 — a trimmed socket
+  receive buffer (insurance against Windows autotuning; measured: no
+  effect, no harm either) and Nagle off.
+- The bat loop IS the auto-reconnect: after each drop (EOF) a 1 s pause
+  and a reconnect. Full picture freeze per drop ~1.5-2 s (1 s timeout +
+  ~0.73 s start) — shrinkable only by a shorter board GOP.
+
+bat nuances: stop the monitoring with Ctrl+C in the console window or by
+closing it; q inside mpv triggers an instant restart (by design). The
+echo line timestamps every drop into restarts.log — the per-run drop
+frequency is read off it; remove the line if the log is unwanted.
+
+Latency so far:
+
+| Configuration            | Lag                                    |
+|--------------------------|----------------------------------------|
+| default mpv              | 1-2 s                                  |
+| + low-latency            | 1-2 s                                  |
+| + untimed                | ~1 s                                   |
+| + swapinterval=0 (smooth)| UNMEASURED — photo-timestamp run pending|
+
+The residual second most likely lives in the board encoder (GOP/buffers) —
+not reachable from the player. Honest measurement: burn a timecode (or a
+clock) into the board frame, photograph the monitor so both the stream and
+the laptop clock are in one shot; the difference is the end-to-end latency,
+~±50 ms accuracy. A --vo=null comparison separates the network+decoder part
+from the output path. Player-side cross-check: ffplay -fflags nobuffer
+-rtbufsize 100k tcp://192.168.1.10:1234 — a second there means dig into the
+board settings.
+
+Next latency front lives on the BOARD side (recorded 2026-10-31, folded
+into the M3.9 follow-up):
+- GOP 25 frames (1 s) or shorter — drives both the ~0.73 s start and the
+  post-drop recovery time;
+- B-frames off (low-delay / zerolatency in the encoder);
+- UDP/RTP output instead of TCP, if the board can: a lost TCP packet
+  head-of-line-blocks everything behind it until retransmission.
+
+Diagnostic cheat sheet:
+
+    # board port alive
+    Test-NetConnection 192.168.1.10 -Port 1234
+
+    # log folder (mpv does NOT create it)
+    New-Item -ItemType Directory -Force C:\mpv64
+
+    # decode+network without graphics
+    mpv.com --vo=null --profile=low-latency tcp://192.168.1.10:1234
+
+    # output without OpenGL (plan B)
+    mpv.com --vo=gdi --profile=low-latency tcp://192.168.1.10:1234
+
+    # start timing: the "playback restart complete" marker in the log
+    mpv.com --vo=null --frames=30 --profile=low-latency --hwdec=dxva2-copy --log-file=C:\mpv64\log.txt tcp://192.168.1.10:1234
+
+    # option acceptance check (silence in the grep = accepted; "Could not set" = rejected)
+    mpv.com -v --frames=1 ... --log-file=C:\mpv64\opt.log tcp://192.168.1.10:1234
+    Select-String -Path C:\mpv64\opt.log -Pattern "Could not set"
+
+    # crash code decode
+    echo $LASTEXITCODE
+    Get-WinEvent -LogName Application -MaxEvents 5 | Where-Object Id -eq 1000 | Format-List TimeCreated, Message
+
+    # log to file
+    mpv.com ... --log-file=C:\mpv64\log.txt
+
+    # options and profiles of this exact build
+    mpv.com --list-options | findstr /i angle
+    mpv.com --show-profile=low-latency
+
+    # the GPU
+    Get-CimInstance Win32_VideoController | Format-List Name, DriverVersion, DriverDate
+
+Launch mpv.com (the console host), not mpv.exe — the GUI build prints
+nothing to the console.
+
+Constraints to remember:
+- Zero-copy is impossible on this machine by construction; dxva2-copy at
+  640x480 is practically indistinguishable by load — the copy is
+  negligible, the decode is hardware anyway.
+- dxva2 WITHOUT -copy is documented as "not safe" in mpv (timestamp
+  corruption, crashes on broken drivers) — nothing is lost.
+- untimed judders at 25 fps on a 60 Hz monitor (2-2-2-3 cadence); the
+  smooth alternative is --opengl-swapinterval=0.
+- A bare tcp:// without a container is sensitive to a dirty bitstream
+  from the board: garbage bytes truncate the decode to the next
+  keyframe — self-healing with a short GOP, not with a long one.
+
+Two spots remain unverified: the actual latency with opengl-swapinterval=0
+(the table row and fact 9 await the photo-timestamp run). Fill in the
+number after the run and the record is fully closed.
 
 ## Roadmap
 - [x] M1: baseline run with mobilenet_v1, honest FPS measurement.
@@ -761,7 +935,7 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
         mpp_buffer line is the normal service_deinit info, not the
         warning). Note closed: the symptom was the encoder
         teardown/flush path, covered by the EOS fixes (PR #273).
-        tools/test_rkmpp_flush.c removed with the closure.  
+        tools/test_rkmpp_flush.c removed with the closure.
       - 2026-10-28: encoder input switched to zero-copy DRM_PRIME
         (801ba85): the ping-pong NV12 dma-bufs are allocated with a
         16-aligned ver stride (360 -> 368 rows) and handed to
@@ -863,6 +1037,10 @@ when the GPU drawer is up (A/B baseline; default is GPU drawing).
       ever accumulates: source pts from
       camera wallclock instead of the fixed 3600-tick step (21-26 real
       FPS vs 25 declared); muxer omit_video_pes_length stays untouched.
+      2026-10-31, from the mpv viewer session: the next latency front is
+      the board encoder — GOP 25 frames or shorter (start and post-drop
+      recovery are keyframe-bound), B-frames off, UDP/RTP instead of TCP
+      (head-of-line blocking); see the Viewer section.
 
 - [x] M3.10: detection smoothing — closed 2026-10-26. BoxSmoother
       (include/box_smoother.hpp): EMA on box coords (alpha=0.5,
