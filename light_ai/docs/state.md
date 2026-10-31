@@ -234,3 +234,69 @@ Gamma 3.0 verdict (tools/probe_gamma3_det.py, int8_v2, full decode+NMS, band
 - Remaining dark-frame lever: fresh clean night dump -> v3 recalibration
   (DONE 2026-10-26 — M2.4 closed on v3).
 
+
+## NPU pool probe (2026-10-31): 3-context pool scaling (M5 groundwork)
+
+Purpose: verify that N contexts of one model pinned to NPU cores
+0/1/2 actually scale (M5 pattern from README) before it becomes a
+design constant; also measure the yolov5m outlook. Disposable probe:
+tools/bench_npu_pool.cpp (iostream-only, zero heap in the loop,
+statics-exempt as a tool). Built directly with g++ (not via the
+project build script).
+
+Method:
+- One model (misc/yolov5s_relu_int8_mmse.rknn), 3 rknn_contexts.
+- Weight sharing: worker ctx 0 via rknn_init, workers 1-2 via
+  rknn_dup_context — confirmed working on the board toolchain
+  (duped contexts run independently, see core loads below).
+- Inputs: zero-copy via rknn_create_mem + rknn_set_io_mem
+  (size_with_stride), one-time gray-128 fill (bench-only, not a
+  frame path). Outputs: zero-copy, 3 per context.
+- Core pinning: rknn_set_core_mask, RKNN_NPU_CORE_0/1/2, one
+  context per core.
+- Timing: pure rknn_run loop, steady_clock, 10-frame warmup per
+  context untimed; governors set to performance beforehand
+  (set_governors.sh: cpu perf, npu 1 GHz, dmc 2.4 GHz).
+- Two runs, 600 frames per phase each; parallel observation:
+  /sys/kernel/debug/rknpu/load in a second console.
+
+Results:
+- serial (core0 only): 22.53 / 22.50 ms/frame (two runs).
+- pool (3 workers, one per core, parallel):
+  9.39 / 7.86 ms/frame effective; scaling 2.40x / 2.86x.
+- Core load during pool phase: ~67% on ALL THREE cores — duped
+  contexts do spread across cores (hypothesis "all contexts land
+  on core0" refuted live; cf. M2.5 mask note: --core 7 mask
+  gained <=2.5 ms — the difference is explicit per-core pinning).
+
+Findings:
+- serial pure-infer (22.5 ms) vs prod steady-state (29.5 ms):
+  the ~7 ms delta is DDR contention with live neighbors
+  (cam/dec/rga/enc) — both numbers are correct, they measure
+  different surroundings. For M5 planning, use the prod figure.
+- Scaling 2.4-2.86x matches community practice (pool of contexts,
+  e.g. rknn-cpp-Multithreading: ~2.4x on yolov5s; 3.0x is not
+  reachable — DDR-bound, cores sit at ~67%).
+- Toolkit note: the board rknn_api.h is 1.x-era — no
+  RKNN_QUERY_NUM_OUTPUT; output count goes through
+  RKNN_QUERY_IN_OUT_NUM (rknn_input_output_num.n_output).
+  rknn_init with size=0 = model path-as-string (our first run
+  passed the path as a buffer — "rknn model is too small").
+
+yolov5m outlook (estimate, not measured): m-infer ~85 ms/core
+(x2.9 FLOPs vs s) -> effective ~30-35 ms/frame at the measured
+2.4-2.86x scaling -> ~20+ FPS steady within the same ~20 ms
+non-infer budget. The single-context m-projection (~10 FPS) is
+therefore beaten by the pool. Remaining price: +2 frames latency
+(~100 ms) — owner's decision, pending the end-to-end photo
+latency measurement (below).
+
+Open items:
+- End-to-end latency baseline BEFORE any M5 integration: photo
+  method (millisecond timer + viewer on one screen, 20-30 shots,
+  median + p90; viewer is networked — ping stability check first,
+  see conversation notes). Re-measure after M5 to verify the
+  predicted ~+100 ms.
+- bench_npu_pool.cpp: currently built ad hoc; either promote to a
+  CMake tool target or keep as disposable (decide on next tools/
+  pass).
