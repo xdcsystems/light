@@ -3,7 +3,7 @@
 The accumulating record that used to live at the end of README.md:
 INT8 build history, INT8 vs FP32 validation and the night-session
 findings (incl. the dataset map). Pointers like [Platform constraints],
-[M2.4], [M2.6] below refer to README.md sections (../README.md).
+[M2.4], [M2.6] below refer to README.md sections (../README.md); milestone IDs [M2.4], [M2.6] live in roadmap.md alongside this file.
 
 ## INT8 build history (rknn-toolkit2 2.5.0, Colab)
 
