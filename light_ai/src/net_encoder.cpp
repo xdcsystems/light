@@ -63,55 +63,52 @@ namespace
         return fd;
     }
 
-}  // namespace
+    bool is_idr( const AVPacket* q )
+    {
+        for ( size_t i = 0; i + 4 <= (size_t)q->size; ++i )
+            if ( q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
+            {
+                const uint8_t t = q->data[i+3] & 0x1F;
+                if ( t == 5 ) return true;
+                if ( t == 6 || t == 7 || t == 8 || t == 9 ) continue;
+                return false;
+            }
+        return false;
+    }
 
-namespace {
-
-bool is_idr( const AVPacket* q )
-{
-    for ( size_t i = 0; i + 4 <= (size_t)q->size; ++i )
-        if ( q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
+    bool hdr_capture( const AVPacket* q, std::vector< uint8_t >& out )
+    {
+        // Anchor at the first start code: both 3-byte (00 00 01) and
+        // 4-byte (00 00 00 01) prefixes occur in the wild; anchoring
+        // on 3-byte only silently matched nothing on 4-byte input.
+        size_t i = 0;
+        while ( i + 3 <= (size_t)q->size &&
+                !( q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 ) )
+            ++i;
+        if ( i + 4 > (size_t)q->size )
+            return false;
+        bool saw_sps = false;
+        while ( i + 4 <= (size_t)q->size && q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
         {
             const uint8_t t = q->data[i+3] & 0x1F;
-            if ( t == 5 ) return true;
-            if ( t == 6 || t == 7 || t == 8 || t == 9 ) continue;
-            return false;
+            if ( t == 7 ) saw_sps = true;
+            if ( t == 5 || t == 1 || t == 10 ) break;  // slice/EoS NAL: header ends here
+            size_t j = i + 3;
+            while ( j + 3 <= (size_t)q->size && !( q->data[j] == 0 && q->data[j+1] == 0 && q->data[j+2] == 1 ) ) ++j;
+            i = j;
         }
-    return false;
-}
-bool hdr_capture( const AVPacket* q, std::vector< uint8_t >& out )
-{
-    // Anchor at the first start code: both 3-byte (00 00 01) and
-    // 4-byte (00 00 00 01) prefixes occur in the wild; anchoring
-    // on 3-byte only silently matched nothing on 4-byte input.
-    size_t i = 0;
-    while ( i + 3 <= (size_t)q->size &&
-            !( q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 ) )
-        ++i;
-    if ( i + 4 > (size_t)q->size )
+        if ( saw_sps && i > 0 )
+        {
+            out.assign( q->data, q->data + i );
+            return true;
+        }
         return false;
-    bool saw_sps = false;
-    while ( i + 4 <= (size_t)q->size && q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
-    {
-        const uint8_t t = q->data[i+3] & 0x1F;
-        if ( t == 7 ) saw_sps = true;
-        if ( t == 5 || t == 1 || t == 10 ) break;  // slice/EoS NAL: header ends here
-        size_t j = i + 3;
-        while ( j + 3 <= (size_t)q->size && !( q->data[j] == 0 && q->data[j+1] == 0 && q->data[j+2] == 1 ) ) ++j;
-        i = j;
     }
-    if ( saw_sps && i > 0 )
-    {
-        out.assign( q->data, q->data + i );
-        return true;
-    }
-    return false;
-}
-bool starts_with( const AVPacket* q, const std::vector< uint8_t >& h )
-{
-    return !h.empty() && q->size >= (int)h.size() && memcmp( q->data, h.data(), h.size() ) == 0;
-}
 
+    bool starts_with( const AVPacket* q, const std::vector< uint8_t >& h )
+    {
+        return !h.empty() && q->size >= (int)h.size() && memcmp( q->data, h.data(), h.size() ) == 0;
+    }
 }  // namespace
 
 NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host, int bitrate_kbps, int model_w, int model_h )
@@ -308,8 +305,7 @@ NetEncoder::~NetEncoder()
             }
             // P2-b: the drain verdict goes to stdout for the phase-test record.
             std::cout << "enc: drain: " << pulled << " packet(s), "
-                      << ( eof ? "EOF reached"
-                               : "NO EOF (EAGAIN x" ) ;
+                      << ( eof ? "EOF reached" : "NO EOF (EAGAIN x" ) ;
             if ( !eof )
                 std::cout << eagains << ")";
             std::cout << "\n";
@@ -340,7 +336,8 @@ void NetEncoder::serve()
 {
     // Пустой host_ = pull-режим: слушаем TCP, зритель подключается сам.
     const bool tcp_pull = host_.empty();
-    const std::string url = tcp_pull ? std::string() : ( "udp://" + host_ + ':' + std::to_string( port_ ) + "?pkt_size=1316" );
+    const std::string url = tcp_pull ? std::string() 
+                                     : ( "udp://" + host_ + ':' + std::to_string( port_ ) + "?pkt_size=1316" );
 
     int lfd = -1;
     if ( tcp_pull )
@@ -352,254 +349,18 @@ void NetEncoder::serve()
             error_.store( true );
             return;
         }
-        std::cout << "enc: PULL mode: listening on tcp port " << port_ << " (viewer: ffplay -fflags nobuffer tcp://<board-ip>:" << port_
-                  << ")\n";
+        std::cout << "enc: PULL mode: listening on tcp port " << port_ << 
+                     " (viewer: ffplay -fflags nobuffer tcp://<board-ip>:" << port_ << ")\n";
     }
 
     while ( !quit_.load() )
     {
         error_.store( false );
 
-        AVFormatContext* fc = nullptr;
-        if ( avformat_alloc_output_context2( &fc, nullptr, "mpegts", tcp_pull ? nullptr : url.c_str() ) < 0 || !fc )
-        {
-            std::cerr << "enc: avformat_alloc_output_context2 failed\n";
-            std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
-            continue;
-        }
-        // Live stream: the muxer must not hold packets for batching.
-        // Defaults (max_delay 0.7 s, preload 0.5 s, buffered file I/O)
-        // make the TS writer emit data in bursts - on Wi-Fi that reads as
-        // periodic client-side buffering. Flush every packet instead.
-        fc->max_delay = 0;
-        fc->flush_packets = 1;
-
-        AVIOContext* pb = nullptr;
-        uint8_t* iobuf = nullptr;
-        int cfd = -1;
-
-        auto close_transport = [&]() {
-            if ( tcp_pull )
-            {
-                if ( pb )
-                    avio_context_free( &pb );
-                if ( iobuf )
-                {
-                    av_free( iobuf );
-                    iobuf = nullptr;
-                }
-                if ( cfd >= 0 )
-                {
-                    ::close( cfd );
-                    cfd = -1;
-                }
-            }
-            else if ( pb )
-            {
-                avio_closep( &pb );
-            }
-        };
-
-        if ( tcp_pull )
-        {
-            // Ждём зрителя; poll не даёт циклу крутиться вхолостую и не
-            // блокирует выход по quit_.
-            pollfd pf {};
-            pf.fd = lfd;
-            pf.events = POLLIN;
-
-            while ( !quit_.load() && ::poll( &pf, 1, 200 ) == 0 )
-            {}
-
-            if ( quit_.load() )
-            {
-                avformat_free_context( fc );
-                break;
-            }
-
-            cfd = ::accept4( lfd, nullptr, nullptr, SOCK_CLOEXEC );
-            if ( cfd < 0 )
-            {
-                avformat_free_context( fc );
-                continue;
-            }
-
-            int one = 1;
-            ::setsockopt( cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );
-            const int sndbuf = 262144;  // запас на микроподлагивания сети
-            ::setsockopt( cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof( sndbuf ) );
-            const timeval tv { 2, 0 };  // зависший зритель отваливается, а не морозит конвейер
-            ::setsockopt( cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
-            std::cout << "enc: viewer connected (tcp)\n";
-
-            iobuf = static_cast<uint8_t*>( av_malloc( 32768 ) );
-            pb = iobuf ? avio_alloc_context( iobuf, 32768, 1, &cfd, nullptr, tcp_write_cb, nullptr ) : nullptr;
-            if ( !pb )
-            {
-                if ( iobuf )
-                    av_free( iobuf );
-                ::close( cfd );
-                avformat_free_context( fc );
-                continue;
-            }
-            fc->pb = pb;
-            fc->flags |= AVFMT_FLAG_CUSTOM_IO;
-        }
-        else
-        {
-            // UDP: без рукопожатия и слушателя — сокет открывается один
-            // раз, пакеты пушатся вне зависимости от зрителя.
-            const int ret = avio_open( &pb, url.c_str(), AVIO_FLAG_WRITE );
-            if ( ret < 0 )
-            {
-                std::cerr << "enc: udp open failed: " << av_err_str( ret ) << '\n';
-                avformat_free_context( fc );
-                std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
-                continue;
-            }
-            fc->pb = pb;
-        }
-
-        AVStream* st = avformat_new_stream( fc, nullptr );
-        if ( !st )
-        {
-            close_transport();
-            avformat_free_context( fc );
-            continue;
-        }
-        if ( !st->codecpar )
-        {
-            st->codecpar = avcodec_parameters_alloc();
-            if ( !st->codecpar )
-            {
-                close_transport();
-                avformat_free_context( fc );
-                continue;
-            }
-        }
-        st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-        st->codecpar->codec_id = AV_CODEC_ID_H264;
-        st->codecpar->format = AV_PIX_FMT_NV12;
-        st->codecpar->width = w_;
-        st->codecpar->height = h_;
-        st->codecpar->bit_rate = static_cast<AVCodecContext*>( enc_ )->bit_rate;
-        st->time_base = vfr_ ? AVRational { 1, 90000 } : AVRational { 1, fps_ };
-        st->avg_frame_rate = vfr_ ? AVRational { 0, 1 } : AVRational { fps_, 1 };
-
-        // Live-stream patch: повторять PAT/PMT/SDT в эфире, чтобы приёмник
-        // мог подключиться в любой момент, а не только на старте потока.
-        AVDictionary* mux_opts = nullptr;
-        av_dict_set( &mux_opts, "mpegts_flags", "+pat_pmt_at_frames+resend_headers", 0 );
-        av_dict_set( &mux_opts, "pat_period", "0.1", 0 );
-        av_dict_set( &mux_opts, "sdt_period", "0.25", 0 );
-        int ret2 = avformat_write_header( fc, &mux_opts );
-        av_dict_free( &mux_opts );
-        if ( ret2 < 0 )
-        {
-            std::cerr << "enc: write_header failed: " << av_err_str( ret2 ) << '\n';
-            close_transport();
-            avformat_free_context( fc );
-            std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
-            continue;
-        }
-        const AVRational tb = st->time_base;
-        frame_step_ = vfr_ ? 1 : av_rescale_q( 1, AVRational { 1, fps_ }, tb );
-        if ( frame_step_ < 1 )
-            frame_step_ = 1;
-        if ( vfr_ )
-            std::cout << "enc: stream time_base " << tb.num << '/' << tb.den << " (VFR: pts from dequeue times)\n";
-        else
-            std::cout << "enc: stream time_base " << tb.num << '/' << tb.den << ", pts step " << frame_step_ << "\n";
-        if ( tcp_pull )
-        {
-            std::cout << "enc: tcp pull streaming " << w_ << 'x' << h_ << " h264 (mpegts) on port " << port_ << '\n';
-        }
-        else
-        {
-            std::cout << "enc: udp streaming " << w_ << 'x' << h_ << " h264 (mpegts) -> " << host_ << ':' << port_ << '\n';
-        }
-
-        {
-            std::lock_guard<std::mutex> lk( mx_ );
-            fc_ = fc;
-            st_ = st;
-            pts_ = 0;
-            ts_base_ = -1;  // M4: VFR pts restart from zero per session
-            active_.store( true );
-        }
-
-        // Batch C: drain the encoder packet queue into the muxer. The
-        // pipeline thread never blocks on the network from here on:
-        // a slow viewer stalls this loop, not publish().
-        for ( ;; )
-        {
-            AVPacket* p = nullptr;
-            {
-                std::unique_lock<std::mutex> plk( pkt_mx_ );
-                pkt_cv_.wait( plk, [this] {
-                    return quit_.load() || error_.load() || !pkts_.empty();
-                } );
-                if ( quit_.load() || error_.load() )
-                    break;
-                p = pkts_.front();
-                pkts_.pop_front();
-            }
-            // Late-join support (moved from send_frame): capture the
-            // parameter-set prefix from the first key packet and prepend
-            // it to every following IDR; the TS muxer tolerates the
-            // duplicate. hdr_ stays a member (no function-local statics).
-            AVPacket* dup = nullptr;
-            if ( is_idr( p ) )
-            {
-                if ( hdr_.empty() && hdr_capture( p, hdr_ ) )
-                    std::cout << "enc: h264 header captured: " << hdr_.size() << " bytes, repeating on every IDR\n";
-                else if ( !hdr_.empty() && !starts_with( p, hdr_ ) )
-                {
-                    dup = av_packet_alloc();
-                    if ( dup && av_new_packet( dup, hdr_.size() + (size_t)p->size ) >= 0 )
-                    {
-                        memcpy( dup->data, hdr_.data(), hdr_.size() );
-                        memcpy( dup->data + hdr_.size(), p->data, p->size );
-                        av_packet_copy_props( dup, p );
-                        if ( !hdr_logged_ )
-                        {
-                            std::cout << "enc: header repeat active\n";
-                            hdr_logged_ = true;
-                        }
-                    }
-                    else
-                    {
-                        av_packet_free( &dup );
-                        dup = nullptr;
-                    }
-                }
-            }
-            const int r = av_interleaved_write_frame( fc, dup ? dup : p );
-            av_packet_free( &p );
-            av_packet_free( &dup );
-            if ( r < 0 )
-            {
-                std::cerr << "enc: write failed: " << av_err_str( r ) << '\n';
-                error_.store( true );
-                break;
-            }
-        }
-        {
-            std::lock_guard<std::mutex> lk( mx_ );
-            active_.store( false );
-            fc_ = nullptr;
-            st_ = nullptr;
-        }
-        // Leftover queued packets are dead weight now: free them.
-        {
-            std::lock_guard<std::mutex> plk( pkt_mx_ );
-            for ( AVPacket* q : pkts_ )
-                av_packet_free( &q );
-            pkts_.clear();
-        }
-        av_write_trailer( fc );  // best effort
-        close_transport();
-        avformat_free_context( fc );
+        // Session body extracted (tidy: readability-function-size).
+        // continue;/break; became return;: each failure path now falls
+        // through to serve()'s trailing print + UDP backoff, same as before.
+        run_session( lfd, tcp_pull, url );
         if ( !quit_.load() )
         {
             std::cout << ( tcp_pull ? "enc: viewer gone, waiting for the next one\n" : "enc: udp path reset, reopening in 500 ms\n" );
@@ -785,4 +546,274 @@ bool NetEncoder::send_frame( AVStream* stp )
     ++pts_;
     ++frames_sent_;
     return true;
+}
+
+// Batch C follow-up: the mux side of serve(), split out for tidy
+// (readability-function-size). drain_queue() owns the wait/pop loop;
+// mux_write() writes one packet with the late-join IDR-prepend logic.
+// hdr_/hdr_logged_ stay members; is_idr/hdr_capture/starts_with are the
+// file-local helpers above.
+void NetEncoder::drain_queue( AVFormatContext* fc )
+{
+    for ( ;; )
+    {
+        AVPacket* p = nullptr;
+        {
+            std::unique_lock<std::mutex> plk( pkt_mx_ );
+            pkt_cv_.wait( plk, [this] {
+                return quit_.load() || error_.load() || !pkts_.empty();
+            } );
+            if ( quit_.load() || error_.load() )
+                return;
+            p = pkts_.front();
+            pkts_.pop_front();
+        }
+        // Takes ownership of p: freed inside on every path.
+        const int r = mux_write( fc, p );
+        if ( r < 0 )
+        {
+            std::cerr << "enc: write failed: " << av_err_str( r ) << '\n';
+            error_.store( true );
+            return;
+        }
+    }
+}
+
+int NetEncoder::mux_write( AVFormatContext* fc, AVPacket* pkt )
+{
+    // Late-join support (moved from send_frame): capture the
+    // parameter-set prefix from the first key packet and prepend it to
+    // every following IDR; the TS muxer tolerates the duplicate.
+    AVPacket* dup = nullptr;
+    if ( is_idr( pkt ) )
+    {
+        if ( hdr_.empty() && hdr_capture( pkt, hdr_ ) )
+            std::cout << "enc: h264 header captured: " << hdr_.size()
+                      << " bytes, repeating on every IDR\n";
+        else if ( !hdr_.empty() && !starts_with( pkt, hdr_ ) )
+        {
+            dup = av_packet_alloc();
+            if ( dup && av_new_packet( dup, hdr_.size() + (size_t)pkt->size ) >= 0 )
+            {
+                memcpy( dup->data, hdr_.data(), hdr_.size() );
+                memcpy( dup->data + hdr_.size(), pkt->data, pkt->size );
+                av_packet_copy_props( dup, pkt );
+                if ( !hdr_logged_ )
+                {
+                    std::cout << "enc: header repeat active\n";
+                    hdr_logged_ = true;
+                }
+            }
+            else
+            {
+                av_packet_free( &dup );
+                dup = nullptr;
+            }
+        }
+    }
+    const int r = av_interleaved_write_frame( fc, dup ? dup : pkt );
+    av_packet_free( &pkt );
+    av_packet_free( &dup );
+    return r;
+}
+
+// One viewer-session iteration, moved verbatim out of serve()'s loop
+// (tidy: readability-function-size). Owns the transport setup (TCP
+// pull or UDP push), the stream setup and the teardown. Paths that
+// used continue;/break; return; the caller prints the recovery note
+// and applies the UDP backoff.
+
+void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
+{
+    AVFormatContext* fc = nullptr;
+    if ( avformat_alloc_output_context2( &fc, nullptr, "mpegts", tcp_pull ? nullptr : url.c_str() ) < 0 || !fc )
+    {
+        std::cerr << "enc: avformat_alloc_output_context2 failed\n";
+        std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
+        return;
+    }
+    // Live stream: the muxer must not hold packets for batching.
+    // Defaults (max_delay 0.7 s, preload 0.5 s, buffered file I/O)
+    // make the TS writer emit data in bursts - on Wi-Fi that reads as
+    // periodic client-side buffering. Flush every packet instead.
+    fc->max_delay = 0;
+    fc->flush_packets = 1;
+
+    AVIOContext* pb = nullptr;
+    uint8_t* iobuf = nullptr;
+    int cfd = -1;
+
+    auto close_transport = [&]() {
+        if ( tcp_pull )
+        {
+            if ( pb )
+                avio_context_free( &pb );
+            if ( iobuf )
+            {
+                av_free( iobuf );
+                iobuf = nullptr;
+            }
+            if ( cfd >= 0 )
+            {
+                ::close( cfd );
+                cfd = -1;
+            }
+        }
+        else if ( pb )
+        {
+            avio_closep( &pb );
+        }
+    };
+
+    if ( tcp_pull )
+    {
+        // Ждём зрителя; poll не даёт циклу крутиться вхолостую и не
+        // блокирует выход по quit_.
+        pollfd pf {};
+        pf.fd = lfd;
+        pf.events = POLLIN;
+
+        while ( !quit_.load() && ::poll( &pf, 1, 200 ) == 0 )
+        {}
+
+        if ( quit_.load() )
+        {
+            avformat_free_context( fc );
+            return;
+        }
+
+        cfd = ::accept4( lfd, nullptr, nullptr, SOCK_CLOEXEC );
+        if ( cfd < 0 )
+        {
+            avformat_free_context( fc );
+            return;
+        }
+
+        int one = 1;
+        ::setsockopt( cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );
+        const int sndbuf = 262144;  // запас на микроподлагивания сети
+        ::setsockopt( cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof( sndbuf ) );
+        const timeval tv { 2, 0 };  // зависший зритель отваливается, а не морозит конвейер
+        ::setsockopt( cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
+        std::cout << "enc: viewer connected (tcp)\n";
+
+        iobuf = static_cast<uint8_t*>( av_malloc( 32768 ) );
+        pb = iobuf ? avio_alloc_context( iobuf, 32768, 1, &cfd, nullptr, tcp_write_cb, nullptr ) : nullptr;
+        if ( !pb )
+        {
+            if ( iobuf )
+                av_free( iobuf );
+            ::close( cfd );
+            avformat_free_context( fc );
+            return;
+        }
+        fc->pb = pb;
+        fc->flags |= AVFMT_FLAG_CUSTOM_IO;
+    }
+    else
+    {
+        // UDP: без рукопожатия и слушателя — сокет открывается один
+        // раз, пакеты пушатся вне зависимости от зрителя.
+        const int ret = avio_open( &pb, url.c_str(), AVIO_FLAG_WRITE );
+        if ( ret < 0 )
+        {
+            std::cerr << "enc: udp open failed: " << av_err_str( ret ) << '\n';
+            avformat_free_context( fc );
+            std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
+            return;
+        }
+        fc->pb = pb;
+    }
+
+    AVStream* st = avformat_new_stream( fc, nullptr );
+    if ( !st )
+    {
+        close_transport();
+        avformat_free_context( fc );
+        return;
+    }
+    if ( !st->codecpar )
+    {
+        st->codecpar = avcodec_parameters_alloc();
+        if ( !st->codecpar )
+        {
+            close_transport();
+            avformat_free_context( fc );
+            return;
+        }
+    }
+    st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
+    st->codecpar->codec_id = AV_CODEC_ID_H264;
+    st->codecpar->format = AV_PIX_FMT_NV12;
+    st->codecpar->width = w_;
+    st->codecpar->height = h_;
+    st->codecpar->bit_rate = static_cast<AVCodecContext*>( enc_ )->bit_rate;
+    st->time_base = vfr_ ? AVRational { 1, 90000 } : AVRational { 1, fps_ };
+    st->avg_frame_rate = vfr_ ? AVRational { 0, 1 } : AVRational { fps_, 1 };
+
+    // Live-stream patch: повторять PAT/PMT/SDT в эфире, чтобы приёмник
+    // мог подключиться в любой момент, а не только на старте потока.
+    AVDictionary* mux_opts = nullptr;
+    av_dict_set( &mux_opts, "mpegts_flags", "+pat_pmt_at_frames+resend_headers", 0 );
+    av_dict_set( &mux_opts, "pat_period", "0.1", 0 );
+    av_dict_set( &mux_opts, "sdt_period", "0.25", 0 );
+    int ret2 = avformat_write_header( fc, &mux_opts );
+    av_dict_free( &mux_opts );
+    if ( ret2 < 0 )
+    {
+        std::cerr << "enc: write_header failed: " << av_err_str( ret2 ) << '\n';
+        close_transport();
+        avformat_free_context( fc );
+        std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
+        return;
+    }
+    const AVRational tb = st->time_base;
+    frame_step_ = vfr_ ? 1 : av_rescale_q( 1, AVRational { 1, fps_ }, tb );
+    if ( frame_step_ < 1 )
+        frame_step_ = 1;
+    if ( vfr_ )
+        std::cout << "enc: stream time_base " << tb.num << '/' << tb.den << " (VFR: pts from dequeue times)\n";
+    else
+        std::cout << "enc: stream time_base " << tb.num << '/' << tb.den << ", pts step " << frame_step_ << "\n";
+    if ( tcp_pull )
+    {
+        std::cout << "enc: tcp pull streaming " << w_ << 'x' << h_ << " h264 (mpegts) on port " << port_ << '\n';
+    }
+    else
+    {
+        std::cout << "enc: udp streaming " << w_ << 'x' << h_ << " h264 (mpegts) -> " << host_ << ':' << port_ << '\n';
+    }
+
+    {
+        std::lock_guard<std::mutex> lk( mx_ );
+        fc_ = fc;
+        st_ = st;
+        pts_ = 0;
+        ts_base_ = -1;  // M4: VFR pts restart from zero per session
+        active_.store( true );
+    }
+
+    // Batch C: drain the encoder packet queue into the muxer. The
+    // pipeline thread never blocks on the network from here on: a slow
+    // viewer stalls this loop, not publish(). The wait/pop loop and the
+    // per-packet write with the IDR-prepend logic moved to drain_queue()
+    // and mux_write() (tidy: readability-function-size).
+    drain_queue( fc );
+
+    {
+        std::lock_guard<std::mutex> lk( mx_ );
+        active_.store( false );
+        fc_ = nullptr;
+        st_ = nullptr;
+    }
+    // Leftover queued packets are dead weight now: free them.
+    {
+        std::lock_guard<std::mutex> plk( pkt_mx_ );
+        for ( AVPacket* q : pkts_ )
+            av_packet_free( &q );
+        pkts_.clear();
+    }
+    av_write_trailer( fc );  // best effort
+    close_transport();
+    avformat_free_context( fc );
 }

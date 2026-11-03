@@ -59,6 +59,13 @@ public:
 private:
     void serve();
     bool send_frame( AVStream* st );
+    // Batch C follow-up: the mux side split out of serve() for tidy
+    // (readability-function-size). drain_queue() owns the wait/pop
+    // loop, mux_write() writes one packet with the IDR-prepend logic;
+    // hdr_/hdr_logged_ stay members.
+    void drain_queue( AVFormatContext* fc );
+    void run_session( int lfd, bool tcp_pull, const std::string& url );
+    int mux_write( AVFormatContext* fc, AVPacket* pkt );
     bool prep_frame( int tensor_fd, MppBuffer mb );
 
     const int w_, h_, fps_, port_, bitrate_kbps_;

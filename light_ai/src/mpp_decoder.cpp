@@ -110,8 +110,8 @@ MppDecoder::~MppDecoder()
             break;
         if ( mpi_->dequeue( ctx_, MPP_PORT_INPUT, &t ) != MPP_OK || !t )
             break;
-        mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, NULL );
-        mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, NULL );
+        mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, nullptr );
+        mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, nullptr );
     }
     for ( int i = 0; i < 32; i++ ) {
         MppTask t = nullptr;
@@ -119,8 +119,8 @@ MppDecoder::~MppDecoder()
             break;
         if ( mpi_->dequeue( ctx_, MPP_PORT_OUTPUT, &t ) != MPP_OK || !t )
             break;
-        mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, NULL );
-        mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, NULL );
+        mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, nullptr );
+        mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, nullptr );
     }
 
     // Critical order: release every MPP object that may hold references to
@@ -238,7 +238,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
         // queue state is broken: log it loudly, no third attempt.
         // Packet is dropped with the failed task: clear the dangling
         // KEY_INPUT_PACKET pointer before the task goes back to the port.
-        mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, NULL );
+        mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, nullptr );
         if ( mpi_->enqueue( ctx_, MPP_PORT_INPUT, task ) != MPP_OK )
         {
             std::cerr << "dec: task re-enqueue failed, decoder queue state broken\n";
@@ -295,7 +295,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
         std::cerr << "dec: info_change " << w << 'x' << h << " buf_size=" << bs << '\n';
 
         // Return the task BEFORE touching out_frame_
-        mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, NULL );
+        mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, nullptr );
         mpi_->enqueue( ctx_, MPP_PORT_OUTPUT, task );
 
         mpp_frame_set_width( out_frame_, w );
@@ -340,7 +340,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
         }
     }
 
-    mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, NULL );
+    mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, nullptr );
     mpi_->enqueue( ctx_, MPP_PORT_OUTPUT, task );
     // The output task is back in the free list, the decoder no longer
     // references the packet: safe point for deinit (instead of the top
