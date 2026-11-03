@@ -32,6 +32,30 @@ extern "C"
 }
 
 #include "net_encoder.hpp"
+#include <cstddef>  // offsetof
+
+// Mirror of RKMPPEncContext (ffmpeg-rockchip, libavcodec/rkmppenc.h):
+// the rkmpp wrapper keeps the raw MppCtx/MppApi handles in its private
+// context. We reach them to force an IDR for a late-joining viewer
+// (MPP_ENC_SET_IDR_FRAME) without patching ffmpeg or MPP. Field order
+// is pinned by the wrapper AVOptions OFFSET() table, so the asserts
+// catch any layout drift at compile time.
+struct RKMPPPriv
+{
+    const AVClass* av_class;
+    MppApi* mapi;
+    MppCtx mctx;
+    AVBufferRef* hwdevice;
+    AVBufferRef* hwframe;
+    MppEncCfg mcfg;
+};
+static_assert( offsetof( RKMPPPriv, av_class ) == 0, "rkmpp priv layout drift" );
+static_assert( offsetof( RKMPPPriv, mapi ) == 8, "rkmpp priv layout drift" );
+static_assert( offsetof( RKMPPPriv, mctx ) == 16, "rkmpp priv layout drift" );
+static_assert( offsetof( RKMPPPriv, hwdevice ) == 24, "rkmpp priv layout drift" );
+static_assert( offsetof( RKMPPPriv, hwframe ) == 32, "rkmpp priv layout drift" );
+static_assert( offsetof( RKMPPPriv, mcfg ) == 40, "rkmpp priv layout drift" );
+
 #include "av_common.hpp"
 
 namespace
@@ -502,6 +526,22 @@ bool NetEncoder::send_frame( AVStream* stp )
         return false;
     }
 
+    // 7c forced-IDR: a fresh viewer session forces the next encoded frame
+    // to be an IDR, so a late join starts within a frame or two instead
+    // of waiting for the GOP boundary. The rkmpp wrapper ignores
+    // frame->key_frame, so reach MPP through its private context
+    // (RKMPPPriv above).
+    if ( force_idr_.exchange( false ) )
+    {
+        RKMPPPriv* priv = reinterpret_cast< RKMPPPriv* >( enc_->priv_data );
+        if ( priv && priv->mctx && priv->mapi )
+        {
+            MPP_RET rc = priv->mapi->control( priv->mctx, MPP_ENC_SET_IDR_FRAME, nullptr );
+            if ( rc != MPP_OK )
+                std::cerr << "enc: MPP_ENC_SET_IDR_FRAME failed: " << rc << char(10);
+        }
+    }
+
     int ret = avcodec_send_frame( ctx, fr );
     av_frame_unref( fr );  // drop the buffer ref; the tensor/MPP memory stays
     if ( ret < 0 )
@@ -711,6 +751,7 @@ bool NetEncoder::open_transport( int lfd, const std::string& url, AVFormatContex
         const timeval tv { 2, 0 };  // зависший зритель отваливается, а не морозит конвейер
         ::setsockopt( t.cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
         std::cout << "enc: viewer connected (tcp)\n";
+        force_idr_.store( true );  // next encoded frame must be an IDR
 
         t.iobuf = static_cast<uint8_t*>( av_malloc( 32768 ) );
         t.pb = t.iobuf ? avio_alloc_context( t.iobuf, 32768, 1, &t.cfd, nullptr, tcp_write_cb, nullptr ) : nullptr;

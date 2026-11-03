@@ -101,6 +101,10 @@ private:
     std::condition_variable cv_;
     AVFormatContext* fc_ = nullptr;  // mpegts: TCP pull or UDP push
     AVStream* st_ = nullptr;
+    // 7c: set after a viewer accepts; the next encode becomes an IDR
+    // (the rkmpp wrapper ignores frame->key_frame, so we go via MPP).
+    std::atomic< bool > force_idr_ { false };
+
     AVCodecContext* enc_ = nullptr;  // h264_rkmpp
     AVFrame* frame_ = nullptr;  // NV12 over an MPP DRM buffer
     AVPacket* pkt_ = nullptr;
