@@ -524,3 +524,56 @@ Backlog: P2 candidate "shutdown-path double packet_deinit" — needs
 src/mpp_decoder.cpp + src/net_encoder.cpp teardown review. Not
 reproducible on demand (phase-dependent; try Ctrl-C at different
 points of the run and record which phase produces the prints).
+
+## Pipeline unification (2026-11-03): unified slot-ring path (M4 follow-up)
+
+Three commits over origin/master: 50ff7d4 (FrameTrace), 4b50a36
+(unified path), 11d6d67 (cleanup).
+
+- FrameTrace: per-frame timing record (cam/dec/rga/infer/enc) replaces
+  the four bare doubles in Slot and the positional arguments of
+  Timings::add. Ownership: dispatch fills cam/dec/rga, the worker fills
+  infer, publish fills enc and hands the whole record to Timings::add.
+  Verified live: [timing] format and dec/rga/infer/enc values identical
+  to the 11-01/11-02 baselines; cam differs only by daylight (night
+  ~46 -> day ~35, wall 20 -> ~25 FPS — the VFR follow-source pacing
+  documented in Config, not a refactor effect).
+- Unified path: pool 1 == ring of one. dispatch() then an immediate
+  publish_oldest() that blocks on the worker's DONE — the legacy
+  synchronous semantics with a single code path. The inlined
+  single-context block is GONE (diffstat -168/+29); the drain loop lost
+  its npool_>1 gate. pool 3 keeps publish-before-reuse unchanged.
+- ASYNC VERIFIED live (11-03, pool 3): cam ~35-36 ms alongside infer
+  ~45.5 ms and wall ~25 FPS — the pipeline thread does not wait on
+  inference; three frames in flight, source-bound, as before.
+- NEW FINDING (11-03): pool 1 with --core 7 (mask 0x7 = all three
+  cores) splits the model across NPU cores -> infer 22.5-23.5 ms/frame,
+  vs pool 3 where each engine is pinned to ONE core and takes ~45.5 ms.
+  Both modes are camera-bound (~25 FPS wall identical); the difference
+  is LATENCY: pool-1 sum ~39.6 ms (honest CFR accounting) vs the pool-3
+  in-flight window ~85 ms. Best low-latency mode: --pool 1 --core 7.
+  PENDING: reconcile vs the 10-30 registry row "30.0 ms (--core 7)"
+  (see note below) and add a pure-figure row on the next bench pass.
+- Accounting note: on the unified path pool-1 infer is measured in the
+  worker thread after wake (rknn_run + postprocess, no pacing stall,
+  wake-up excluded). The prod figure landed near the pure serial bench
+  (22.5 ms, 10-31) instead of the old ~30 ms prod row — consistent with
+  the DDR-contention model but not yet reconciled; do not cite the two
+  eras against each other until the bench pass.
+- Cleanup (11d6d67): dead dets_raw_ member removed (its only writer
+  died with the single path); stale "single-context" comments fixed
+  (Config pool note, npus_ header note, core-pinning note); duplicate
+  letterbox comment collapsed. Verified by a 600-frame pool-1 run:
+  steady sum 39.4-39.8 ms, viewer EIO handled cleanly mid-run
+  ("viewer gone, waiting for the next one"), Ctrl-C graceful shutdown
+  at frame 567 with correct TOTAL.
+- Logging gotcha (not a bug, verified 11-03): stdout through a pipe is
+  block-buffered; MPP deinit lines on stderr (unbuffered) can appear
+  to interleave MID-log between stdout chunks (PID check: our own
+  process). Direct terminal output preserves order (deinit strictly at
+  the end). When order matters: run direct, or split stderr to a file.
+- clang-tidy 11929 (src/mpp_decoder.cpp, started 11-02) hung >14 h
+  with ~zero CPU; killed 11-03. Re-lint pending on the updated
+  pipeline/mpp sources. SPSC queue refactor (pub_head_/pub_n_ ->
+  a real queue) deferred deliberately: the drop/bounded-wait/pool_discard
+  machinery just stabilized, not touched in the same day.
