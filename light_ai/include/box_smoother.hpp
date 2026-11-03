@@ -131,12 +131,12 @@ public:
         for ( int k = 0; k < raw.n; ++k )
         {
             const Detection& d = raw.d[k];
-            log_ << "raw," << d.cls << ',' << d.conf << ',' << d.x << ',' << d.y << ',' << d.w << ',' << d.h << '\n';
+            log_ << "raw," << d << '\n';
         }
         for ( int k = 0; k < smooth.n; ++k )
         {
             const Detection& d = smooth.d[k];
-            log_ << "sm," << d.cls << ',' << d.conf << ',' << d.x << ',' << d.y << ',' << d.w << ',' << d.h << '\n';
+            log_ << "sm," << d << '\n';
         }
     }
 

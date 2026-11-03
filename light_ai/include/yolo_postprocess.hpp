@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pod_list.hpp"
+#include <ostream>
 
 class RknnEngine;
 
@@ -10,6 +11,15 @@ struct Detection
     int cls;           // COCO class id
     float conf;        // obj * best-class probability
 };
+
+// Writes the Detection fields in the CSV order used by the box
+// smoother log: cls,conf,x,y,w,h (comma-separated, no prefix and
+// no newline - the caller supplies the row prefix and terminator).
+inline std::ostream& operator<<( std::ostream& os, const Detection& d )
+{
+    return os << d.cls << ',' << d.conf << ',' << d.x << ',' << d.y
+              << ',' << d.w << ',' << d.h;
+}
 
 // Decodes the three yolov5 heads (fp16 NCHW, post-sigmoid) of the engine,
 // applies conf threshold + NMS, filters bar detections and maps the rest
