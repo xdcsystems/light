@@ -221,6 +221,9 @@ NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host
     // VFR from dequeue times.
     ctx->framerate = vfr_ ? AVRational { 25, 1 } : AVRational { fps_, 1 };
     ctx->bit_rate = static_cast<int64_t>( bitrate_kbps_ ) * 1000;
+    // gop_size reaches MPP as rc:gop (rkmpp_set_enc_cfg,
+    // line ~452 of libavcodec/rkmppenc.c). Verified empirically:
+    // I-frames every 26 in a captured stream (GOP 25).
     ctx->gop_size = vfr_ ? 25 : fps_;  // 1 s: a late joiner waits at most one GOP
     ctx->max_b_frames = 0;  // no reorder: minimal latency
     // Non-fatal: option names differ between ffmpeg-rockchip builds.
