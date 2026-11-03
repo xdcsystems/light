@@ -70,58 +70,57 @@ namespace
         return inter / ( area_a + area_b - inter + 1e-6f );
     }
 
-}  // namespace
-
-void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float model_w, float model_h, float lb_top, float lb_h,
-        DetList& out, float conf_thr, float iou_thr )
-{
-    // Letterbox geometry must fit the model input: the band is rows
-    // [lb_top, lb_top + lb_h) of the model frame. A violation here would
-    // silently misplace every detection, so it is a hard error.
-    if ( lb_top < 0.0f || lb_top + lb_h > model_h )
-    {
-        std::cerr << "yolo_postprocess: letterbox band [" << lb_top << ", " << lb_top + lb_h << ") does not fit model height " << model_h
-                  << '\n';
-        out.clear();
-        return;
-    }
-
-    // Fresh frame: out is a preallocated pipeline member (DetList), it
-    // is never reconstructed between calls — clear it at entry. Without
-    // this, detections from previous frames accumulate until the 128
-    // cap saturates and the visible box set freezes (regression from
-    // 7c99906, caught live on 2026-10-27).
-    out.clear();
-
     // Candidate buffer on the stack: fixed capacity, no heap. The early
     // cut (obj < 0.05f) keeps the real flow to single digits; the cap
     // is a safety net.
     constexpr int k_max_cand = 1024;
-    std::array<Box, k_max_cand> cand{};
-    int nc = 0;
 
-    const float scale = cam_w / model_w;  // uniform, by width
-
-    for ( size_t gi = 0; gi < npu.output_attrs().size() && gi < 3; ++gi )
+    // Stage 2/2 of yolo_postprocess(): class-aware greedy NMS over the
+    // candidates (standard yolov5 behaviour: boxes of different classes
+    // never suppress each other), then the coordinate transform back to
+    // camera pixels and emission into the preallocated detector list.
+    void emit_nms( std::array<Box, k_max_cand>& cand, int nc, float iou_thr, float scale, float lb_top, float cam_w, float cam_h,
+            DetList& out )
     {
-        const auto& attr = npu.output_attrs()[gi];
-        const uint16_t* data = reinterpret_cast<const uint16_t*>( npu.output_data( gi ) );
-        if ( !data || attr.n_dims != 4 )
-            continue;
-
-        // NCHW: dims = {1, 255, h, w}
-        const int h = static_cast<int>( attr.dims[2] );
-        const int w = static_cast<int>( attr.dims[3] );
-        const int stride = 8 << gi;
-        const int per = static_cast<int>( attr.dims[1] ) / 3;  // 85 = 4+1+80
-        if ( per * 3 != static_cast<int>( attr.dims[1] ) )
+        std::sort( cand.begin(), cand.begin() + nc, []( const Box& a, const Box& b ) {
+            return a.conf > b.conf;
+        } );
+        std::array<uint8_t, k_max_cand> sup {};
+        for ( int i = 0; i < nc; ++i )
         {
-            std::cerr << "yolo: unexpected head layout (per="
-                      << per << ", ch=" << attr.dims[1]
-                      << ")\n";
-            continue;  // not a 3-anchor yolov5 head - skip
+            if ( sup[i] )
+                continue;
+            for ( int j = i + 1; j < nc; ++j )
+            {
+                if ( !sup[j] && cand[i].cls == cand[j].cls && iou( cand[i], cand[j] ) > iou_thr )
+                    sup[j] = true;
+            }
+            const Box& b = cand[i];
+            Detection d{};
+            d.x = std::max( 0.0f, b.x1 * scale );
+            d.y = std::max( 0.0f, ( b.y1 - lb_top ) * scale );
+            d.w = std::min( cam_w - d.x, ( b.x2 - b.x1 ) * scale );
+            d.h = std::min( cam_h - d.y, ( b.y2 - b.y1 ) * scale );
+            d.cls = b.cls;
+            d.conf = b.conf;
+            // Degenerate-box guard: a candidate whose x1 exceeded model_w
+            // clamps d.x to cam_w, leaving d.w <= 0 (same for h). Such a box
+            // would ride the smoother and the drawing paths with broken
+            // geometry. Skip it before any consumer sees it.
+            if ( d.w <= 0.0f || d.h <= 0.0f )
+                continue;
+            out.push( d );
         }
+    }
 
+    // Stage 1/2 of yolo_postprocess(): decode one yolov5 head into
+    // candidate boxes. The tensor is channel-major fp16: element
+    // (c, gy, gx) lives at c*h*w + gy*w + gx, the anchor slot is
+    // k*per*cell_hw further. The obj pre-check stays before the class
+    // scan - that order is the confidence shortcut.
+    void collect_head( int gi, const uint16_t* data, int h, int w, int per, int stride, float lb_top, float lb_h, float conf_thr,
+            std::array<Box, k_max_cand>& cand, int& nc )
+    {
         for ( int gy = 0; gy < h; ++gy )
         {
             for ( int gx = 0; gx < w; ++gx )
@@ -157,53 +156,74 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
                     const float cy = ( fp16_to_float( data[off + 1 * cell_hw] ) * 2.0f - 0.5f + gy ) * stride;
                     const float bw = fp16_to_float( data[off + 2 * cell_hw] );
                     const float bh = fp16_to_float( data[off + 3 * cell_hw] );
-                    const float w = ( bw * 2.0f ) * ( bw * 2.0f ) * an[0];
-                    const float h = ( bh * 2.0f ) * ( bh * 2.0f ) * an[1];
+                    const float bw_px = ( bw * 2.0f ) * ( bw * 2.0f ) * an[0];
+                    const float bh_px = ( bh * 2.0f ) * ( bh * 2.0f ) * an[1];
 
                     // NaN guard: NaN in any coordinate would sail through
                     // every plain < / || filter below and land in the box list.
-                    if ( cx != cx || cy != cy || w != w || h != h )
+                    if ( cx != cx || cy != cy || bw_px != bw_px || bh_px != bh_px )
                         continue;
 
                     if ( cy < lb_top || cy >= lb_top + lb_h )
                         continue;  // bar
 
                     if ( nc < k_max_cand )
-                        cand[nc++] = { cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, conf, best - 5 };
+                        cand[nc++] = { cx - bw_px / 2, cy - bh_px / 2, cx + bw_px / 2, cy + bh_px / 2, conf, best - 5 };
                 }
             }
         }
     }
 
-    // NMS: greedy, class-aware (standard yolov5 behaviour): boxes of
-    // different classes never suppress each other.
-    std::sort( cand.begin(), cand.begin() + nc, []( const Box& a, const Box& b ) {
-        return a.conf > b.conf;
-    } );
-    std::array<uint8_t, k_max_cand> sup {};
-    for ( int i = 0; i < nc; ++i )
+}  // namespace
+
+void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float model_w, float model_h, float lb_top, float lb_h,
+        DetList& out, float conf_thr, float iou_thr )
+{
+    // Letterbox geometry must fit the model input: the band is rows
+    // [lb_top, lb_top + lb_h) of the model frame. A violation here would
+    // silently misplace every detection, so it is a hard error.
+    if ( lb_top < 0.0f || lb_top + lb_h > model_h )
     {
-        if ( sup[i] )
-            continue;
-        for ( int j = i + 1; j < nc; ++j )
-        {
-            if ( !sup[j] && cand[i].cls == cand[j].cls && iou( cand[i], cand[j] ) > iou_thr )
-                sup[j] = true;
-        }
-        const Box& b = cand[i];
-        Detection d{};
-        d.x = std::max( 0.0f, b.x1 * scale );
-        d.y = std::max( 0.0f, ( b.y1 - lb_top ) * scale );
-        d.w = std::min( cam_w - d.x, ( b.x2 - b.x1 ) * scale );
-        d.h = std::min( cam_h - d.y, ( b.y2 - b.y1 ) * scale );
-        d.cls = b.cls;
-        d.conf = b.conf;
-        // Degenerate-box guard: a candidate whose x1 exceeded model_w
-        // clamps d.x to cam_w, leaving d.w <= 0 (same for h). Such a box
-        // would ride the smoother and the drawing paths with broken
-        // geometry. Skip it before any consumer sees it.
-        if ( d.w <= 0.0f || d.h <= 0.0f )
-            continue;
-        out.push( d );
+        std::cerr << "yolo_postprocess: letterbox band [" << lb_top << ", " << lb_top + lb_h << ") does not fit model height " << model_h
+                  << '\n';
+        out.clear();
+        return;
     }
+
+    // Fresh frame: out is a preallocated pipeline member (DetList), it
+    // is never reconstructed between calls — clear it at entry. Without
+    // this, detections from previous frames accumulate until the 128
+    // cap saturates and the visible box set freezes (regression from
+    // 7c99906, caught live on 2026-10-27).
+    out.clear();
+
+    std::array<Box, k_max_cand> cand{};
+    int nc = 0;
+
+    const float scale = cam_w / model_w;  // uniform, by width
+
+    for ( size_t gi = 0; gi < npu.output_attrs().size() && gi < 3; ++gi )
+    {
+        const auto& attr = npu.output_attrs()[gi];
+        const uint16_t* data = reinterpret_cast<const uint16_t*>( npu.output_data( gi ) );
+        if ( !data || attr.n_dims != 4 )
+            continue;
+
+        // NCHW: dims = {1, 255, h, w}
+        const int h = static_cast<int>( attr.dims[2] );
+        const int w = static_cast<int>( attr.dims[3] );
+        const int stride = 8 << gi;
+        const int per = static_cast<int>( attr.dims[1] ) / 3;  // 85 = 4+1+80
+        if ( per * 3 != static_cast<int>( attr.dims[1] ) )
+        {
+            std::cerr << "yolo: unexpected head layout (per="
+                      << per << ", ch=" << attr.dims[1]
+                      << ")\n";
+            continue;  // not a 3-anchor yolov5 head - skip
+        }
+
+        collect_head( gi, data, h, w, per, stride, lb_top, lb_h, conf_thr, cand, nc );
+    }
+
+    emit_nms( cand, nc, iou_thr, scale, lb_top, cam_w, cam_h, out );
 }
