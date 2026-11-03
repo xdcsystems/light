@@ -162,14 +162,28 @@ MppDecoder::~MppDecoder()
 
 int MppDecoder::decode( const uint8_t* data, size_t size )
 {
+    ++frames_;
+    int rc = make_packet( data, size );
+    if ( rc != 0 )
+        return rc;
+    rc = submit_input();
+    if ( rc != 0 )
+        return rc;
+    return retrieve_output();
+}
+
+// Phase 1/3: validate the input and build the input packet. Returns 0
+// on success or a negative decode() code (-1: bad input, -1: no SOI,
+// -2: packet buffer allocation). On success pkt_ is fully initialized
+// and not yet referenced by the decoder.
+int MppDecoder::make_packet( const uint8_t* data, size_t size )
+{
     if ( !ok_ || !data || size == 0 )
     {
         std::cerr << "dec[" << frames_ << "]: BAD INPUT ok=" << ok_ << " data=" << static_cast<const void*>( data ) << " size=" << size
                   << '\n';
-        ++frames_;
         return -1;
     }
-    ++frames_;
 
     // Mid-stream fragment guard: a complete camera MJPEG frame always
     // starts with SOI (FFD8). Packets torn out of the middle of the
@@ -199,7 +213,15 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
     mpp_packet_init_with_buffer( &pkt_, pbuf );  // the packet holds its own reference
     mpp_buffer_put( pbuf );                      // release ours
     mpp_packet_set_pts( pkt_, ++pts_ );
+    return 0;
+}
 
+// Phase 2/3: hand the packet to the decoder. On entry the packet is
+// owned by us; on success it is enqueued and the decoder holds it in
+// the task meta. On any failure (-3/-4/-5) no enqueue happened, so the
+// packet is dropped here - the decoder provably holds no reference.
+int MppDecoder::submit_input()
+{
     // Input: wait for a free task (bounded: the input queue is a few
     // tasks deep, a free task must appear within a frame interval)
     if ( mpi_->poll( ctx_, MPP_PORT_INPUT, static_cast<MppPollType>( kTaskPollMs ) ) != MPP_OK )
@@ -241,7 +263,15 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
         drop_packet();
         return -5;
     }
+    return 0;
+}
 
+// Phase 3/3: wait for the decoded frame and hand it back. On -6/-7 the
+// input task (holding pkt_ in its meta) is still queued inside the
+// decoder: reset() flushes all queued tasks and releases their meta
+// references, only after it is drop_packet() safe.
+int MppDecoder::retrieve_output()
+{
     // Output: wait for the decoded frame (bounded: steady decode is
     // ~2-3 ms; a timeout means MPP is wedged — surface it instead of
     // hanging the pipeline thread forever)
@@ -258,7 +288,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
         drop_packet();
         return -6;
     }
-    task = nullptr;
+    MppTask task = nullptr;
     if ( mpi_->dequeue( ctx_, MPP_PORT_OUTPUT, &task ) != MPP_OK || !task )
     {
         // See the -6 path: the input task is still inside the decoder,
