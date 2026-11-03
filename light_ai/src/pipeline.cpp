@@ -19,7 +19,9 @@ namespace
 {
     using clk = std::chrono::steady_clock;
 
-    inline double ms( clk::time_point a, clk::time_point b ) { return std::chrono::duration<double, std::milli>( b - a ).count(); }
+    inline double ms( clk::time_point a, clk::time_point b ) { 
+        return std::chrono::duration<double, std::milli>( b - a ).count(); 
+    }
 
     struct Timings
     {

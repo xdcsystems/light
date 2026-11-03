@@ -2,10 +2,9 @@
 
 #include <cstring>
 #include <iostream>
+#include <rockchip/mpp_log.h>
 
 #include "mpp_decoder.hpp"
-
-#include <rockchip/mpp_log.h>
 
 // MPP logs its version banner, rc/prep config and teardown meta dumps
 // at info/error level by default. Silence it for production runs;

@@ -19,7 +19,11 @@ namespace
     // The packet references the NPU tensor memory; unref must never free it.
     void noop_free( void*, uint8_t* ) {}
 
-}  // namespace
+    // ffmpeg AVIO interrupt callback (statics rule): file-local free
+    // function; the opaque context carries the quit flag pointer, not
+    // the object, so no private access is needed.
+    int preview_interrupt_cb( void* arg ) { return static_cast<std::atomic<bool>*>( arg )->load() ? 1 : 0; }
+}  // anonymous namespace
 
 NetPreview::NetPreview( int w, int h, int stride, int fps, int port )
   : w_( w ), h_( h ), stride_( stride ), fps_( fps > 0 ? fps : 25 ), port_( port )
@@ -46,14 +50,6 @@ NetPreview::~NetPreview()
     }
     avformat_network_deinit();
 }
-
-// ffmpeg AVIO interrupt callback (statics rule): file-local free
-// function; the opaque context carries the quit flag pointer, not
-// the object, so no private access is needed.
-namespace
-{
-    int preview_interrupt_cb( void* arg ) { return static_cast<std::atomic<bool>*>( arg )->load() ? 1 : 0; }
-}  // anonymous namespace
 
 void NetPreview::serve()
 {

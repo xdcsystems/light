@@ -363,7 +363,9 @@ void NetEncoder::serve()
         run_session( lfd, tcp_pull, url );
         if ( !quit_.load() )
         {
-            std::cout << ( tcp_pull ? "enc: viewer gone, waiting for the next one\n" : "enc: udp path reset, reopening in 500 ms\n" );
+            std::cout << ( tcp_pull ? "enc: viewer gone, waiting for the next one" 
+                                    : "enc: udp path reset, reopening in 500 ms" ) << "\n";
+
             if ( !tcp_pull )
                 std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
         }

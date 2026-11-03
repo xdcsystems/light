@@ -159,8 +159,7 @@ void GpuBoxDrawer::setup_attribs() const
     }
 }
 
-GpuBoxDrawer::GpuBoxDrawer()
-= default;
+GpuBoxDrawer::GpuBoxDrawer() = default;
 
 GpuBoxDrawer::~GpuBoxDrawer()
 {
@@ -276,17 +275,21 @@ bool GpuBoxDrawer::init()
 
     EGLConfig cfg = nullptr;
     EGLint n = 0;
-    const EGLint cattr[] = { EGL_SURFACE_TYPE,
-            EGL_PBUFFER_BIT,
-            EGL_RENDERABLE_TYPE,
-            EGL_OPENGL_ES2_BIT,
-            EGL_RED_SIZE,
-            8,
-            EGL_GREEN_SIZE,
-            8,
-            EGL_BLUE_SIZE,
-            8,
-            EGL_NONE };
+    
+    const EGLint cattr[] = { 
+        EGL_SURFACE_TYPE,
+        EGL_PBUFFER_BIT,
+        EGL_RENDERABLE_TYPE,
+        EGL_OPENGL_ES2_BIT,
+        EGL_RED_SIZE,
+        8,
+        EGL_GREEN_SIZE,
+        8,
+        EGL_BLUE_SIZE,
+        8,
+        EGL_NONE 
+    };
+
     if ( !eglChooseConfig( st_.dpy, cattr, &cfg, 1, &n ) || n < 1 )
     {
         const EGLint cattr2[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE };
@@ -338,19 +341,22 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
         return true;  // idempotent: the pool attaches each slot once
     make_current();
 
-    EGLint iattr[] = { EGL_WIDTH,
-            w,
-            EGL_HEIGHT,
-            h,
-            EGL_LINUX_DRM_FOURCC_EXT,
-            DRM_FORMAT_RGB888,
-            EGL_DMA_BUF_PLANE0_FD_EXT,
-            tensor_dma_fd,
-            EGL_DMA_BUF_PLANE0_OFFSET_EXT,
-            0,
-            EGL_DMA_BUF_PLANE0_PITCH_EXT,
-            (EGLint)stride,
-            EGL_NONE };
+    EGLint iattr[] = { 
+        EGL_WIDTH,
+        w,
+        EGL_HEIGHT,
+        h,
+        EGL_LINUX_DRM_FOURCC_EXT,
+        DRM_FORMAT_RGB888,
+        EGL_DMA_BUF_PLANE0_FD_EXT,
+        tensor_dma_fd,
+        EGL_DMA_BUF_PLANE0_OFFSET_EXT,
+        0,
+        EGL_DMA_BUF_PLANE0_PITCH_EXT,
+        (EGLint)stride,
+        EGL_NONE 
+    };
+    
     si.img = st_.create_image( st_.dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, ( EGLClientBuffer ) nullptr, iattr );
     if ( si.img == EGL_NO_IMAGE_KHR )
     {

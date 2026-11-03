@@ -285,8 +285,7 @@ int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::s
             if ( !digits )
                 continue;
             const std::string p = "/dev/" + n;
-            struct stat cst
-            {};
+            struct stat cst {};
             if ( stat( p.c_str(), &cst ) == 0 && usb_capture_node( p ) )
                 cands[static_cast<int>( std::strtol( n.c_str() + 5, nullptr, 10 ) )] = p;
         }
