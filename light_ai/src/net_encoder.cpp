@@ -571,6 +571,7 @@ int64_t NetEncoder::packet_pts()
 // file-local helpers above.
 void NetEncoder::drain_queue( AVFormatContext* fc )
 {
+    bool want_idr = true;  // per-session: join mid-GOP drops to the first IDR
     while ( !quit_.load() && !error_.load() )  // same predicate as the wait below
     {
         AVPacket* p = nullptr;
@@ -585,6 +586,14 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
             pkts_.pop_front();
         }
         // Takes ownership of p: freed inside on every path.
+        // Wait-for-IDR: everything before the first keyframe of a
+        // fresh session is undecodable for the new viewer - drop it.
+        if ( want_idr && !is_idr( p ) )
+        {
+            av_packet_free( &p );
+            continue;
+        }
+        want_idr = false;
         const int r = mux_write( fc, p );
         if ( r < 0 )
         {
