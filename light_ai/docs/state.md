@@ -650,3 +650,44 @@ LIGHTING AS A TEST VARIABLE (2026-11-03, corrective):
   not cite the two figures against each other until understood.
 - Protocol note for future sessions: record the light state per
   run (or fix exposure) before comparing timings.
+
+TIDY PASS (0693149, 2026-11-03 evening):
+- mpp_decoder: NULL -> nullptr in 7 task-meta calls
+  (modernize-use-nullptr); no behavior change.
+- net_encoder: serve() exceeded the tidy size limit after
+  batch C. Split: drain_queue() + mux_write() own the mux side
+  (wait/pop loop, per-packet write with the IDR-prepend logic);
+  run_session() owns one viewer-session iteration (transport
+  setup, stream setup, teardown), moved verbatim with
+  continue;/break; -> return;. serve() keeps the loop, the
+  tail print and the 500 ms UDP backoff: ~270 -> 37 lines,
+  run_session() 193, limit 200.
+- Two uniform error-path deltas (never observed live):
+  stream-setup failures share one 500 ms backoff, and the
+  write_header path sleeps before the teardown.
+- Verified: build clean, tidy clean on both files, viewer
+  smoke (full run: connect -> header captured 39 bytes ->
+  ~25 FPS -> clean EOF; kill run: write failed -> viewer gone
+  -> enc=0.0 -> clean EOF, pipeline unaffected after the
+  disconnect).
+
+CONSIDERED AND REJECTED - tidy size limit on the hot paths (2026-11-03):
+- run() (pipeline.cpp) and yolo_postprocess() also exceed the
+  200-line limit. Verdict: NOT split. Both are hot-path
+  monoliths where a mechanical split risks correctness for a
+  stylistic check (fifo ordering, tensor-band addressing,
+  cache-local loop structure); the net_encoder split was safe
+  because the moved code was self-contained per session.
+  Revisit only if either grows and gains a natural seam.
+
+TIDY INFRASTRUCTURE (2026-11-03):
+- build-tidy compiles without the board's -mtune=...cortex-a55
+  (clang 11 rejects the dotted core-name form; tidy is a
+  diagnostics pass, not codegen - board flags stay in
+  build.sh).
+- tidy_run.sh runs clang-tidy per file with per-file timeouts,
+  logs under /tmp/tidy/.
+- Patch-scripting lesson from this session: brace/count
+  asserts must COMPUTE their delta from the patch strings, not
+  carry a remembered constant - a stale constant failed twice
+  before the computed form passed on the first try.
