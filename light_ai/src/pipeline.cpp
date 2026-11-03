@@ -521,7 +521,7 @@ Pipeline::~Pipeline()
 void Pipeline::worker_loop( int slot )
 {
     Slot& sl = slots_[slot];
-    for ( ;; )
+    while ( !quit_.load() )  // the only exit is the quit check after the wait
     {
         {
             std::unique_lock<std::mutex> lk( sl.mx );

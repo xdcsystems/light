@@ -65,6 +65,7 @@ private:
     // hdr_/hdr_logged_ stay members.
     void drain_queue( AVFormatContext* fc );
     void run_session( int lfd, bool tcp_pull, const std::string& url );
+    int64_t packet_pts();  // pts of the next frame; may set ts_base_
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
     bool prep_frame( int tensor_fd, MppBuffer mb );
 

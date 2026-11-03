@@ -488,10 +488,7 @@ bool NetEncoder::send_frame( AVStream* stp )
     // M4: CFR — sequential pts in the codec time base; VFR — real dequeue
     // times (µs -> 1/90000 ticks), per-session base, fallback to a 25 fps
     // grid if the pipeline did not provide a timestamp.
-    const int64_t fpts = vfr_
-            ? ( ts_us_ >= 0 ? av_rescale( ts_us_ - ( ts_base_ < 0 ? ( ts_base_ = ts_us_ ) : ts_base_ ), 90000, 1000000 )
-                            : static_cast<int64_t>( frames_sent_ ) * 3600 )
-            : static_cast<int64_t>( pts_ );
+    const int64_t fpts = packet_pts();
     fr->pts = fpts;
     fr->data[0] = reinterpret_cast<uint8_t*>( &desc );
     fr->buf[0] = av_buffer_create( reinterpret_cast<uint8_t*>( &desc ), sizeof( desc ), noop_free, nullptr, 0 );
@@ -510,16 +507,9 @@ bool NetEncoder::send_frame( AVStream* stp )
     }
 
     AVPacket* pkt = static_cast<AVPacket*>( pkt_ );
-    for ( ;; )
+    ret = avcodec_receive_packet( ctx, pkt );
+    while ( ret >= 0 )  // drains the burst; EAGAIN/EOF end it
     {
-        ret = avcodec_receive_packet( ctx, pkt );
-        if ( ret == AVERROR( EAGAIN ) || ret == AVERROR_EOF )
-            break;
-        if ( ret < 0 )
-        {
-            std::cerr << "enc: receive_packet: " << av_err_str( ret ) << '\n';
-            return false;
-        }
         pkt->stream_index = st->index;
         pkt->pts = pkt->dts = fpts * frame_step_;
         // Batch C: the pipeline thread no longer touches the network.
@@ -542,10 +532,32 @@ bool NetEncoder::send_frame( AVStream* stp )
             pkt_cv_.notify_one();
         }
         av_packet_unref( pkt );
+        ret = avcodec_receive_packet( ctx, pkt );
+    }
+    if ( ret != AVERROR( EAGAIN ) && ret != AVERROR_EOF )
+    {
+        std::cerr << "enc: receive_packet: " << av_err_str( ret ) << '\n';
+        return false;
     }
     ++pts_;
     ++frames_sent_;
     return true;
+}
+
+// M4 pts selection, extracted from send_frame() for readability:
+// CFR gets the sequential codec pts; VFR rescales the dequeue
+// timestamp (us -> 1/90000 ticks) against the per-session base
+// (initialized on the first timestamped packet) or falls back to
+// a 25 fps grid.
+int64_t NetEncoder::packet_pts()
+{
+    if ( !vfr_ )
+        return static_cast<int64_t>( pts_ );
+    if ( ts_us_ < 0 )
+        return static_cast<int64_t>( frames_sent_ ) * 3600;  // 25 fps grid
+    if ( ts_base_ < 0 )
+        ts_base_ = ts_us_;  // per-session base on the first timestamp
+    return av_rescale( ts_us_ - ts_base_, 90000, 1000000 );
 }
 
 // Batch C follow-up: the mux side of serve(), split out for tidy
@@ -555,7 +567,7 @@ bool NetEncoder::send_frame( AVStream* stp )
 // file-local helpers above.
 void NetEncoder::drain_queue( AVFormatContext* fc )
 {
-    for ( ;; )
+    while ( !quit_.load() && !error_.load() )  // same predicate as the wait below
     {
         AVPacket* p = nullptr;
         {
