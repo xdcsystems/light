@@ -574,6 +574,19 @@ Three commits over origin/master: 50ff7d4 (FrameTrace), 4b50a36
   the end). When order matters: run direct, or split stderr to a file.
 - clang-tidy 11929 (src/mpp_decoder.cpp, started 11-02) hung >14 h
   with ~zero CPU; killed 11-03. Re-lint pending on the updated
-  pipeline/mpp sources. SPSC queue refactor (pub_head_/pub_n_ ->
-  a real queue) deferred deliberately: the drop/bounded-wait/pool_discard
-  machinery just stabilized, not touched in the same day.
+  pipeline/mpp sources.
+- CORRECTED (11-03, same day): the "SPSC queue refactor" naming in
+  the first draft of this note was wrong. The publish FIFO
+  (pub_slots_/pub_head_/pub_n_) has no producer/consumer thread split:
+  dispatch, publish_oldest, drain and pool_discard ALL run on the
+  pipeline thread, so it was never a concurrency problem — just three
+  loose fields. It is now a plain PubFifo struct (fixed depth 3,
+  push/front/pop, no locks by design).
+- CONSIDERED AND REJECTED (11-03): lock-free slot-state handover
+  (QUEUED->DONE via atomics instead of the slot mutex + cv). Rationale:
+  measured contention is negligible — the worker runs rknn_run and
+  postprocess WITHOUT holding the slot mutex by design, so the mutex
+  is only touched on state transitions; the gain is unmeasurable while
+  the correctness risk (memory barriers, slot-reuse races, interaction
+  with the drop/bounded-wait/pool_discard handover) is real. Recorded
+  so a future "optimizer" finds the verdict instead of re-deriving it.
