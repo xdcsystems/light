@@ -74,7 +74,7 @@ namespace
             // --- flags (no value) ---
             { "--dump-cal",
                     { false,
-                            "collect calibration dataset",
+                            "write one model-input frame to /tmp/cal.ppm",
                             []( Config& c, const char* ) {
                                 c.dump_cal = true;
                                 return true;

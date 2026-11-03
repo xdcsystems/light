@@ -250,9 +250,10 @@ Pipeline::Pipeline( const Config& cfg )
             // to that destination.
             // M3.5: the h264 encoder consumes the NPU input tensor AFTER
             // box drawing, at the NATIVE letterbox-band size (no upscale):
-            // w = model_w, h = cam_h * (model_w / cam_w) — for the default
-            // 1280x720 camera and a 640x640 tensor that is 640x360 (16:9).
-            // The encoder derives the same band geometry from these numbers.
+            // w = model_w, h = cam_h * (model_w / cam_w). The default
+            // 1280x960 camera and a 640x640 tensor produce 640x480;
+            // 1280x720 produces 640x360. The encoder derives the same
+            // band geometry from these numbers.
 
             const float s = static_cast<float>( model_w_ ) / cfg_.cam_w;
             const int band_h = static_cast<int>( lroundf( cfg_.cam_h * s ) );
@@ -836,11 +837,13 @@ int Pipeline::publish_oldest()
 void Pipeline::cal_dump_maybe( RknnEngine& e, int frame_idx )
 {
     // Calibration dump: P6 PPM of the model input. The only diagnostic
-    // CPU pixel read. --dump-cal writes a single /tmp/cal.ppm; --cal N
-    // saves up to N frames (one every --cal-interval) into dataset/.
-    const bool cal_wanted = cfg_.dump_cal || ( cfg_.cal_frames > 0 && cal_saved_ < cfg_.cal_frames );
+    // CPU pixel read. --dump-cal writes /tmp/cal.ppm once per run.
+    // --cal N saves up to N frames (one every --cal-interval). With
+    // --dump-cal set, the single file wins and the series is skipped.
+    const bool dump_once = cfg_.dump_cal && !cal_done_;
+    const bool series_wanted = !cfg_.dump_cal && cfg_.cal_frames > 0 && cal_saved_ < cfg_.cal_frames;
     const bool cal_due = !cal_done_ || ( frame_idx - last_cal_ >= cfg_.cal_interval );
-    if ( !cal_wanted || !cal_due )
+    if ( !( dump_once || ( series_wanted && cal_due ) ) )
         return;
     const size_t bytes = static_cast<size_t>( model_w_ ) * model_h_ * 3;
     std::string path = "/tmp/cal.ppm";

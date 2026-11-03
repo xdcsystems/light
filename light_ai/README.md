@@ -11,14 +11,18 @@ post-processing.
   The only permitted copies are the compressed MJPEG frame (~25 KB)
   into the decoder packet buffer and the compressed h264 packets out
   of the encoder (both are compressed byte streams, never pixels).
-- I/O is iostream-only: no printf/sprintf/snprintf anywhere. All diagnostics
-  go through std::cout / std::cerr.
+- I/O in src/ and include/ is iostream-only: no printf/sprintf/snprintf.
+  All diagnostics go through std::cout / std::cerr. tools/ is exempt
+  (the disposable probes use printf).
 - Include order: system/service headers first (angle brackets), the
   project's own headers last (quotes). Reference: gpu_box_drawer.cpp.
 - Header layout: within each visibility section (public/private),
   member functions and data members live in SEPARATE blocks — functions
-  first, then a fresh visibility label for the data. Reference:
-  camera_v4l2.hpp (xioctl in its own private: block, data in the next).
+  first, then a fresh visibility label for the data. Followed by
+  camera_v4l2.hpp (xioctl in its own private: block, data in the next),
+  net_preview.hpp, box_smoother.hpp and gpu_box_drawer.hpp.
+  pipeline.hpp and net_encoder.hpp keep functions and data in a single
+  private: section (pipeline.hpp places the methods after the data).
 - Dynamic memory allocation is forbidden: no new/delete, no
   std::unique_ptr/shared_ptr anywhere, no heap in recovery
   paths. Data lives in fixed-size members; mutable identity
@@ -28,14 +32,18 @@ post-processing.
   pointers) is forbidden. Reference: camera_v4l2.hpp +
   pipeline.cpp + pod_list.hpp (fixed-capacity lists in the detection
   path).
-- Statics are forbidden: no static data members, no static
-  member functions, no function-local statics. Shared state
-  lives with the owning layer as a regular member; file-local
-  helpers become free functions inside an anonymous namespace
-  in the layer's .cpp. Compile-time class constants use an
-  unscoped enum (camera_v4l2.hpp kBufCount); references:
-  camera_v4l2.cpp / gpu_box_drawer.cpp / net_preview.cpp
-  (anon-namespace helpers), box_smoother.hpp (plain member).
+- Statics are forbidden on the frame path: no static member
+  functions, no function-local statics. Shared state lives with
+  the owning layer as a regular member; file-local helpers
+  become free functions inside an anonymous namespace in the
+  layer's .cpp (camera_v4l2.cpp / gpu_box_drawer.cpp /
+  net_preview.cpp). Integer compile-time counts use an unscoped
+  enum where that is the local style (camera_v4l2.hpp kBufCount,
+  gpu_box_drawer.hpp kSlots). Named compile-time constants that
+  are not integers are static constexpr (box_smoother.hpp
+  kMatchThr / kAlpha / …); net_encoder.hpp kBufCount is static
+  constexpr as well. One file-scope static remains: MppLogQuieter
+  in mpp_decoder.cpp, which silences the MPP banner at startup.
   tools/ is exempt (disposable probes).
 - No virtual functions, no inheritance hierarchies: zero vtables, zero
   dynamic polymorphism. Layer boundaries are the composition of concrete
@@ -151,7 +159,9 @@ post-processing.
 - NetPreview : opt-in preview stream (--net): TCP server on port 1234,
                sends the model-input frame (640x640 letterboxed rgb24)
                as rawvideo inside a NUT container, paced by --net-fps
-               (default 25). VLC plays it directly (tcp://IP:1234) —
+               (default 25; a value <= 0 is paced at 25 as well — VFR
+               follow-source applies to the h264 encoder only). VLC
+               plays it directly (tcp://IP:1234) —
                no decoder needed on the viewer side. One viewer at a
                time. Status 2026-10-26: diagnostic viewer — the daily
                viewer is the h264 TCP pull (NetEncoder); raw NUT runs
@@ -171,9 +181,9 @@ post-processing.
                — no upscale, zero CPU pixels (the frames leave for the
                encoder as zero-copy DRM_PRIME descriptors, 2026-10-28,
                see the enc notes below). The stream size is the
-               band's native size (640x360 for the default 1280x720
-               camera; 640x480 at the 1280x960 working mode since
-               2026-10-30). One viewer at a time; no encode until the
+               band's native size: 640x480 for the default 1280x960
+               camera (since 2026-10-30); 640x360 at 1280x720.
+               One viewer at a time; no encode until the
                first viewer connects; a stalled viewer is dropped via
                SO_SNDTIMEO (2 s). Late joiners via repeated
                PAT/PMT/SDT.
@@ -349,10 +359,13 @@ rate control a nominal fps (25) while pts stay per-dequeue
   byte-array input given data_format='nhwc' does NOT raise: inference()
   silently returns None (no exception). Always check for None; never
   assume a zero-detection run means "no detections". Working recipes:
-  raw uint8 + img[None] with NO data_format kwarg (tools/save_board_csv.py),
-  or float input + data_format='nhwc'. inputs_pass_through, when used,
-  also needs the 4-dim shape.
-- Default resolution is 1280x720: same model input geometry as 1080p
+  raw uint8 + img[None] with NO data_format kwarg (tools/oracle_check.py,
+  pix[np.newaxis]), or float input + data_format='nhwc'.
+  tools/save_board_csv.py also omits data_format, but it loads
+  yolov5s_relu_int8_v2.rknn and feeds gamma-2.0 uint8, not the raw dump.
+  inputs_pass_through, when used, also needs the 4-dim shape.
+- 1280x720 was the default until 2026-10-30 (the current default is
+  1280x960, see Run): same model input geometry as 1080p
   (identical s, band and T), but single-pass RGA and cheaper MJPEG decode.
 
 - RGA fill/rectangle is KNOWN-BROKEN on this board — do not use it for
@@ -519,10 +532,13 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
   frame (per-head box/obj/cls ranges, hot-cell counts). Feeds the model a
   4-dim input (img[None]).
 - tools/save_board_csv.py   — RKNNLite predictions dump (misc/board_preds.csv).
+  Loads yolov5s_relu_int8_v2.rknn from the working directory and applies
+  gamma 2.0 before inference (no data_format kwarg).
 - tools/oracle_check.py — inference parity check: C++ detections (--box-log
   "raw" lines) vs an independent RKNNLite oracle over --dump-cal PPM dumps.
-  Feed recipe: raw uint8 + img[None], no data_format kwarg (the
-  save_board_csv.py path, calibrated against misc/board_preds.csv);
+  Feed recipe: raw uint8 + img[None], no data_format kwarg
+  (pix[np.newaxis] in oracle_check.py, calibrated against
+  misc/board_preds.csv);
   best-frame matching across --cal-interval (dump numbering follows the
   FRAME counter, not the dump slot). Usage: oracle_check.py <dump_dir>
   <box-log.csv>; PASS/FAIL exit code. 2026-11-01 verdict (pool + base):
@@ -548,16 +564,18 @@ Target CPU flags (CMakeLists.txt TARGET_CPU_FLAGS, 2026-11-02):
 -mcpu=cortex-a76 -mtune=cortex-a76.cortex-a55. The dot form is legal
 only in -mtune (GCC 10.2 rejects -mcpu=cortex-a76+cortex-a55: "+"
 there means a feature modifier). Measured effect on the camera-bound
-pipeline: none (sum 95.5 ms, ~20.0 FPS before and after — the
+pipeline: none (sum 95.2-95.8 ms, ~20.0 FPS before and after — the
 boundary is the camera pacing, inference lives on the NPU); kept as
-a documentation of intent.
+a documentation of intent. The range is the registry entry in
+docs/state.md.
 
 Models are NOT tracked by git (*.rknn is ignored): they are build
 artifacts of the Colab quantization pipeline (see Platform constraints
-and M2.4) and live on each machine, transferred out of band. After a
-fresh clone, place the .rknn files next to the executable — the
---model flag takes any path. The rkmpp wheel in misc/ stays tracked
-(0.6 MB, toolkit reproducibility).
+and M2.4) and live on each machine, transferred out of band. The
+built-in default is ./misc/yolov5s_relu_int8_mmse_v5.rknn, resolved
+from the working directory (sudo ./build/light_ai run from light_ai/).
+--model takes any path. A wheel placed in misc/ is trackable
+(light_ai/.gitignore un-ignores misc/*.whl); no .whl is in the tree.
 
 ## Run
     sudo ./build/light_ai \
@@ -569,21 +587,26 @@ fresh clone, place the .rknn files next to the executable — the
 Reinstate the prefix only if the ldconfig cache is ever reset.)
 
 Defaults: /dev/video20, 1280x960 MJPEG (since 2026-10-30 — full-frame
-2 Mp, letterbox band 640x480, see the 960p performance section); the model default is the working INT8 model (misc/, see Build); --model overrides it.
+2 Mp, letterbox band 640x480, see the 960p performance section); the model default is ./misc/yolov5s_relu_int8_mmse_v5.rknn from the working directory (see Build); --model overrides it.
+--frames 300 (the Run line above passes 3000), --conf 0.25, --iou 0.45,
+--cal-interval 15, --net-fps 25, --pool 0. --pool 0 and --pool 1 are
+the single NPU context. The Run line's --pool 3 is the M5 three-context
+run. --net-fps 0 is VFR follow-source on the h264 encoder; the raw NUT
+preview treats a non-positive fps as 25.
 Note (2026-11-01, updated 11-02): the Run line relies on the
 built-in default model (yolov5s_relu_int8_mmse_v5.rknn — the working
 model per docs/state.md; --model overrides). M5 standard run:
 --pool 3 (NPU context pool) + --net-fps 0 (VFR follow-source pts);
---core is ignored with pool > 1 (the pool pins its own masks).
+--core is ignored with --pool 3 (the pool pins masks 1/2/4 itself).
 A missing
 configured node (ENOENT) is not fatal: the pipeline falls back to
 find_usb_capture_node() and adopts the winner (startup fallback, M3.8);
 non-ENOENT open errors (EBUSY/EACCES) stay fatal. Options:
 --help/-h prints the option list (generated from the parser table).
 --device, --model, --frames, --w, --h, --dump-cal, --conf, --iou,
---core 0|1|3|7 (NPU core pinning: 0=AUTO default, 1=core0, 3=0+1,
-7=0+1+2; measured: infer 25.1->21.2 ms on 012, FPS unchanged —
-source-bound, M2.5),
+--core 0|1|2|3|4|7 (NPU core pinning: 0=AUTO default, 1/2/4 = core
+0/1/2, 3=0+1, 7=0+1+2; ignored with --pool 3; measured: infer
+25.1->21.2 ms on 012, FPS unchanged — source-bound, M2.5),
 --cal N, --cal-interval K (--cal saves up to N model-input frames into
 dataset/, one every K frames — the int8 calibration dataset collector;
 one frame is ~1.2 MB, so 200 frames are ~240 MB on /tmp's storage).
@@ -607,15 +630,16 @@ Numeric values are strictly validated (garbage is an error, not a
 silent zero).
 
 --net enables the preview server (NUT container, raw model-input
-rgb24, tcp port 1234); --net-fps N paces the stream (default 25).
+rgb24, tcp port 1234); --net-fps N paces the stream (default 25;
+on this NUT path a value <= 0 is also 25).
 --net-h264 switches the preview to the h264 path (h264_rkmpp,
 MPEG-TS): the stream is the letterbox band at its native size
-(640x360 for the default 1280x720 camera), with YOLO boxes drawn
-in. Transport: TCP pull by default — the board listens on
---net-port (default 1234), the viewer connects by the board's LAN
-IP; --net-host <pc-ip> switches to the legacy UDP push to that
-destination. Bitrate via --net-bitrate (default 12000 kbps; 2500
-is plenty for 640x360).
+(640x480 for the default 1280x960 camera; 640x360 at 1280x720),
+with YOLO boxes drawn in. Transport: TCP pull by default — the
+board listens on --net-port (default 1234), the viewer connects by
+the board's LAN IP; --net-host <pc-ip> switches to the legacy UDP
+push to that destination. Bitrate via --net-bitrate (default 12000
+kbps; 2500 is plenty for 640x360).
 Viewer (pull, product path): ffplay -fflags nobuffer
 tcp://<board-ip>:1234
 Viewer (UDP push, legacy, low-latency, M3.9): ffplay -fflags
@@ -770,12 +794,12 @@ comparison separates the network+decoder part from the output path.
 Player-side cross-check: ffplay -fflags nobuffer -rtbufsize 100k
 tcp://192.168.1.10:1234.
 
-Board-side backlog (recorded 2026-10-31, folded into the M3.9 follow-up):
-- B-frames off (low-delay / zerolatency in the encoder) — cut the
-  per-frame encoder reorder delay; GOP 25 is already confirmed live
-  (see above).
-- UDP/RTP output instead of TCP, if the board can: a lost TCP packet
-  head-of-line-blocks everything behind it until retransmission.
+Board-side notes (recorded 2026-10-31, updated 2026-11-03):
+- B-frames are off: NetEncoder sets max_b_frames = 0, so the encoder
+  does not reorder frames. GOP 25 is confirmed live for VFR
+  (--net-fps 0); a positive --net-fps sets gop_size to that fps.
+- UDP push is --net-host. RTP is not implemented. A lost TCP packet
+  still head-of-line-blocks everything behind it until retransmission.
 
 
 Constraints to remember (revised):
