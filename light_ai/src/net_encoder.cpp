@@ -17,6 +17,8 @@
 #include <rga.h>
 constexpr int kPktQDepth = 3;  // encoder -> serve packet queue depth (frames)
 
+#include <memory>
+
 extern "C"
 {
 #include <libavformat/avformat.h>
@@ -631,55 +633,51 @@ int NetEncoder::mux_write( AVFormatContext* fc, AVPacket* pkt )
     return r;
 }
 
-// One viewer-session iteration, moved verbatim out of serve()'s loop
-// (tidy: readability-function-size). Owns the transport setup (TCP
-// pull or UDP push), the stream setup and the teardown. Paths that
-// used continue;/break; return; the caller prints the recovery note
-// and applies the UDP backoff.
+// One viewer-session iteration: allocate the muxer context, open the
+// transport (TCP pull or UDP push), set up the stream and drain the
+// encoder packet queue into the muxer. Context and transport teardown
+// is RAII (unique_ptr deleter + Transport destructor): every early
+// return below releases exactly what the former close_transport();
+// avformat_free_context() paths released, in the same order.
 
-void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
+// Transport teardown: one point, shared by the destructor and the
+// session lifetimes. Verbatim from the former close_transport lambda
+// in run_session(); members replace the lambda captures.
+NetEncoder::Transport::~Transport()
 {
-    AVFormatContext* fc = nullptr;
-    if ( avformat_alloc_output_context2( &fc, nullptr, "mpegts", tcp_pull ? nullptr : url.c_str() ) < 0 || !fc )
-    {
-        std::cerr << "enc: avformat_alloc_output_context2 failed\n";
-        std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
-        return;
-    }
-    // Live stream: the muxer must not hold packets for batching.
-    // Defaults (max_delay 0.7 s, preload 0.5 s, buffered file I/O)
-    // make the TS writer emit data in bursts - on Wi-Fi that reads as
-    // periodic client-side buffering. Flush every packet instead.
-    fc->max_delay = 0;
-    fc->flush_packets = 1;
+    close();
+}
 
-    AVIOContext* pb = nullptr;
-    uint8_t* iobuf = nullptr;
-    int cfd = -1;
-
-    auto close_transport = [&]() {
-        if ( tcp_pull )
-        {
-            if ( pb )
-                avio_context_free( &pb );
-            if ( iobuf )
-            {
-                av_free( iobuf );
-                iobuf = nullptr;
-            }
-            if ( cfd >= 0 )
-            {
-                ::close( cfd );
-                cfd = -1;
-            }
-        }
-        else if ( pb )
-        {
-            avio_closep( &pb );
-        }
-    };
-
+void NetEncoder::Transport::close()
+{
     if ( tcp_pull )
+    {
+        if ( pb )
+            avio_context_free( &pb );
+        if ( iobuf )
+        {
+            av_free( iobuf );
+            iobuf = nullptr;
+        }
+        if ( cfd >= 0 )
+        {
+            ::close( cfd );
+            cfd = -1;
+        }
+    }
+    else if ( pb )
+    {
+        avio_closep( &pb );
+    }
+}
+
+// Transport setup, verbatim move out of run_session(): TCP pull
+// (poll the listener, accept, socket options, custom AVIO over the
+// fd) or UDP push (avio_open, no handshake). The sleep on the UDP
+// failure path stays here, exactly where it was in run_session().
+bool NetEncoder::open_transport( int lfd, const std::string& url, AVFormatContext* fc, Transport& t )
+{
+    if ( t.tcp_pull )
     {
         // Ждём зрителя; poll не даёт циклу крутиться вхолостую и не
         // блокирует выход по quit_.
@@ -691,71 +689,57 @@ void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
         {}
 
         if ( quit_.load() )
-        {
-            avformat_free_context( fc );
-            return;
-        }
+            return false;
 
-        cfd = ::accept4( lfd, nullptr, nullptr, SOCK_CLOEXEC );
-        if ( cfd < 0 )
-        {
-            avformat_free_context( fc );
-            return;
-        }
+        t.cfd = ::accept4( lfd, nullptr, nullptr, SOCK_CLOEXEC );
+        if ( t.cfd < 0 )
+            return false;
 
         int one = 1;
-        ::setsockopt( cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );
+        ::setsockopt( t.cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );
         const int sndbuf = 262144;  // запас на микроподлагивания сети
-        ::setsockopt( cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof( sndbuf ) );
+        ::setsockopt( t.cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof( sndbuf ) );
         const timeval tv { 2, 0 };  // зависший зритель отваливается, а не морозит конвейер
-        ::setsockopt( cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
+        ::setsockopt( t.cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
         std::cout << "enc: viewer connected (tcp)\n";
 
-        iobuf = static_cast<uint8_t*>( av_malloc( 32768 ) );
-        pb = iobuf ? avio_alloc_context( iobuf, 32768, 1, &cfd, nullptr, tcp_write_cb, nullptr ) : nullptr;
-        if ( !pb )
-        {
-            if ( iobuf )
-                av_free( iobuf );
-            ::close( cfd );
-            avformat_free_context( fc );
-            return;
-        }
-        fc->pb = pb;
+        t.iobuf = static_cast<uint8_t*>( av_malloc( 32768 ) );
+        t.pb = t.iobuf ? avio_alloc_context( t.iobuf, 32768, 1, &t.cfd, nullptr, tcp_write_cb, nullptr ) : nullptr;
+        if ( !t.pb )
+            return false;
+        fc->pb = t.pb;
         fc->flags |= AVFMT_FLAG_CUSTOM_IO;
+        return true;
     }
     else
     {
         // UDP: без рукопожатия и слушателя — сокет открывается один
         // раз, пакеты пушатся вне зависимости от зрителя.
-        const int ret = avio_open( &pb, url.c_str(), AVIO_FLAG_WRITE );
+        const int ret = avio_open( &t.pb, url.c_str(), AVIO_FLAG_WRITE );
         if ( ret < 0 )
         {
             std::cerr << "enc: udp open failed: " << av_err_str( ret ) << '\n';
-            avformat_free_context( fc );
             std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
-            return;
+            return false;
         }
-        fc->pb = pb;
+        fc->pb = t.pb;
+        return true;
     }
+}
 
+// Stream setup, verbatim move out of run_session(): create the
+// stream, fill the codec parameters, write the header with the
+// live-stream mpegts options, derive frame_step_ and print the
+// session log lines. false = any of the three setup failures.
+bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, bool tcp_pull )
+{
     AVStream* st = avformat_new_stream( fc, nullptr );
     if ( !st )
-    {
-        close_transport();
-        avformat_free_context( fc );
-        return;
-    }
-    if ( !st->codecpar )
-    {
-        st->codecpar = avcodec_parameters_alloc();
-        if ( !st->codecpar )
-        {
-            close_transport();
-            avformat_free_context( fc );
-            return;
-        }
-    }
+        return false;
+    // codecpar is allocated by avformat_new_stream itself
+    //(libavformat/options.c: st->codecpar = 
+    // avcodec_parameters_alloc(), with its own fail path):
+    // the former manual fallback here was dead code.
     st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
     st->codecpar->codec_id = AV_CODEC_ID_H264;
     st->codecpar->format = AV_PIX_FMT_NV12;
@@ -776,10 +760,8 @@ void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
     if ( ret2 < 0 )
     {
         std::cerr << "enc: write_header failed: " << av_err_str( ret2 ) << '\n';
-        close_transport();
-        avformat_free_context( fc );
         std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
-        return;
+        return false;
     }
     const AVRational tb = st->time_base;
     frame_step_ = vfr_ ? 1 : av_rescale_q( 1, AVRational { 1, fps_ }, tb );
@@ -797,10 +779,45 @@ void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
     {
         std::cout << "enc: udp streaming " << w_ << 'x' << h_ << " h264 (mpegts) -> " << host_ << ':' << port_ << '\n';
     }
+    *st_out = st;
+    return true;
+}
+
+// One viewer-session iteration: allocate the muxer context, open the
+// transport (TCP pull or UDP push), set up the stream and drain the
+// encoder packet queue into the muxer. Context and transport teardown
+// is RAII (unique_ptr deleter + Transport destructor): every early
+// return below releases exactly what the former close_transport();
+// avformat_free_context() paths released, in the same order.
+void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
+{
+    AVFormatContext* raw = nullptr;
+    if ( avformat_alloc_output_context2( &raw, nullptr, "mpegts", tcp_pull ? nullptr : url.c_str() ) < 0 || !raw )
+    {
+        std::cerr << "enc: avformat_alloc_output_context2 failed\n";
+        std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
+        return;
+    }
+    // Live stream: the muxer must not hold packets for batching.
+    // Defaults (max_delay 0.7 s, preload 0.5 s, buffered file I/O)
+    // make the TS writer emit data in bursts - on Wi-Fi that reads as
+    // periodic client-side buffering. Flush every packet instead.
+    raw->max_delay = 0;
+    raw->flush_packets = 1;
+    std::unique_ptr<AVFormatContext, decltype( &avformat_free_context )> fc( raw, &avformat_free_context );
+
+    Transport t;
+    t.tcp_pull = tcp_pull;
+    if ( !open_transport( lfd, url, fc.get(), t ) )
+        return;
+
+    AVStream* st = nullptr;
+    if ( !setup_stream( fc.get(), &st, tcp_pull ) )
+        return;
 
     {
         std::lock_guard<std::mutex> lk( mx_ );
-        fc_ = fc;
+        fc_ = fc.get();
         st_ = st;
         pts_ = 0;
         ts_base_ = -1;  // M4: VFR pts restart from zero per session
@@ -812,7 +829,7 @@ void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
     // viewer stalls this loop, not publish(). The wait/pop loop and the
     // per-packet write with the IDR-prepend logic moved to drain_queue()
     // and mux_write() (tidy: readability-function-size).
-    drain_queue( fc );
+    drain_queue( fc.get() );
 
     {
         std::lock_guard<std::mutex> lk( mx_ );
@@ -827,7 +844,5 @@ void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
             av_packet_free( &q );
         pkts_.clear();
     }
-    av_write_trailer( fc );  // best effort
-    close_transport();
-    avformat_free_context( fc );
+    av_write_trailer( fc.get() );  // best effort
 }

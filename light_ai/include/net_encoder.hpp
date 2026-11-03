@@ -30,6 +30,7 @@ typedef struct AVCodecContext AVCodecContext;
 typedef struct AVFrame AVFrame;
 typedef struct AVPacket AVPacket;
 typedef struct AVStream AVStream;
+typedef struct AVIOContext AVIOContext;
 
 // M3.5 phase B2: hardware-encoded preview (h264_rkmpp) in MPEG-TS.
 // Default transport is TCP pull: the board listens on net_port, the
@@ -65,6 +66,27 @@ private:
     // hdr_/hdr_logged_ stay members.
     void drain_queue( AVFormatContext* fc );
     void run_session( int lfd, bool tcp_pull, const std::string& url );
+
+    // One viewer session's transport (TCP pull or UDP push), RAII:
+    // the destructor is the single teardown point, the early-return
+    // paths of run_session() free everything by scope exit.
+    struct Transport
+    {
+        AVIOContext* pb = nullptr;
+        uint8_t* iobuf = nullptr;
+        int cfd = -1;
+        bool tcp_pull = false;
+
+        ~Transport();
+        void close();
+    };
+
+    // Transport setup (accept + socket options / avio_open) and the
+    // stream setup (new_stream + header + mpegts options). Both are
+    // verbatim moves out of run_session().
+    bool open_transport( int lfd, const std::string& url, AVFormatContext* fc, Transport& t );
+    bool setup_stream( AVFormatContext* fc, AVStream** st, bool tcp_pull );
+
     int64_t packet_pts();  // pts of the next frame; may set ts_base_
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
     bool prep_frame( int tensor_fd, MppBuffer mb );
