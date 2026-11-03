@@ -20,6 +20,7 @@
 #include <string_view>
 
 #include "gpu_box_drawer.hpp"
+#include <drm/drm_fourcc.h>
 
 #ifndef EGL_PLATFORM_GBM_KHR
 #define EGL_PLATFORM_GBM_KHR 0x31D6
@@ -342,7 +343,7 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
             EGL_HEIGHT,
             h,
             EGL_LINUX_DRM_FOURCC_EXT,
-            /* DRM_FORMAT_RGB888 */ 0x34324752,
+            DRM_FORMAT_RGB888,
             EGL_DMA_BUF_PLANE0_FD_EXT,
             tensor_dma_fd,
             EGL_DMA_BUF_PLANE0_OFFSET_EXT,
