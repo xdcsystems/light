@@ -2,6 +2,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -50,9 +51,14 @@ public:
     // ignored in the fixed-fps mode.
     void publish( int tensor_fd, int acquire_fence_fd = -1, int64_t ts_us = -1 );
 
+    // Batch C: true while the stream path is live (viewer connected in
+    // PULL mode / UDP path open). The pipeline gates GPU box drawing
+    // on it: recognition runs continuously, output does not.
+    bool viewer_active() const { return active_.load(); }
+
 private:
     void serve();
-    bool send_frame( AVFormatContext* fc, AVStream* st );
+    bool send_frame( AVStream* st );
     bool prep_frame( int tensor_fd, MppBuffer mb );
 
     const int w_, h_, fps_, port_, bitrate_kbps_;
@@ -77,6 +83,12 @@ private:
     MppBuffer bufs_[kBufCount] = { nullptr, nullptr, nullptr };  // ping-pong NV12 dma-bufs
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
+    // Batch C: encoder -> serve() packet queue. A separate mutex from
+    // mx_: network-side wakeups never touch the encode critical section.
+    std::mutex pkt_mx_;
+    std::condition_variable pkt_cv_;
+    std::deque<AVPacket*> pkts_;
+    int pkt_drops_ = 0;
     std::atomic<bool> active_ { false };  // stream path live (serve sets/clears under mx_)
     int acq_fd_ = -1;          // draw fence fd, consumed by RGA in send_frame
     int64_t frame_step_ = 1;   // pts increment in the muxer's time base

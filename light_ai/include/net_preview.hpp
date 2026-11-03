@@ -26,6 +26,10 @@ typedef struct AVStream AVStream;
 class NetPreview
 {
 public:
+
+    // True while a TCP viewer is attached. The pipeline gates GPU box
+    // drawing on it: no viewer - no draw.
+    bool viewer_connected() const { return connected_.load(); }
     NetPreview( int w, int h, int stride, int fps, int port );
     ~NetPreview();
 

@@ -15,6 +15,7 @@
 
 #include <im2d.h>
 #include <rga.h>
+constexpr int kPktQDepth = 3;  // encoder -> serve packet queue depth (frames)
 
 extern "C"
 {
@@ -228,6 +229,10 @@ NetEncoder::~NetEncoder()
     {
         std::lock_guard<std::mutex> lk( mx_ );
         cv_.notify_all();
+    }
+    {
+        std::lock_guard<std::mutex> plk( pkt_mx_ );
+        pkt_cv_.notify_all();
     }
     if ( thread_.joinable() )
         thread_.join();
@@ -523,19 +528,74 @@ void NetEncoder::serve()
             active_.store( true );
         }
 
-        // Park until quit or a write error; UDP writes do not block on a
-        // dead viewer, TCP drops the stalled one via SO_SNDTIMEO.
+        // Batch C: drain the encoder packet queue into the muxer. The
+        // pipeline thread never blocks on the network from here on:
+        // a slow viewer stalls this loop, not publish().
+        for ( ;; )
         {
-            std::unique_lock<std::mutex> lk( mx_ );
-            cv_.wait( lk, [this] {
-                return quit_.load() || error_.load();
-            } );
+            AVPacket* p = nullptr;
+            {
+                std::unique_lock<std::mutex> plk( pkt_mx_ );
+                pkt_cv_.wait( plk, [this] {
+                    return quit_.load() || error_.load() || !pkts_.empty();
+                } );
+                if ( quit_.load() || error_.load() )
+                    break;
+                p = pkts_.front();
+                pkts_.pop_front();
+            }
+            // Late-join support (moved from send_frame): capture the
+            // parameter-set prefix from the first key packet and prepend
+            // it to every following IDR; the TS muxer tolerates the
+            // duplicate. hdr_ stays a member (no function-local statics).
+            AVPacket* dup = nullptr;
+            if ( is_idr( p ) )
+            {
+                if ( hdr_.empty() && hdr_capture( p, hdr_ ) )
+                    std::cout << "enc: h264 header captured: " << hdr_.size() << " bytes, repeating on every IDR\n";
+                else if ( !hdr_.empty() && !starts_with( p, hdr_ ) )
+                {
+                    dup = av_packet_alloc();
+                    if ( dup && av_new_packet( dup, hdr_.size() + (size_t)p->size ) >= 0 )
+                    {
+                        memcpy( dup->data, hdr_.data(), hdr_.size() );
+                        memcpy( dup->data + hdr_.size(), p->data, p->size );
+                        av_packet_copy_props( dup, p );
+                        if ( !hdr_logged_ )
+                        {
+                            std::cout << "enc: header repeat active\n";
+                            hdr_logged_ = true;
+                        }
+                    }
+                    else
+                    {
+                        av_packet_free( &dup );
+                        dup = nullptr;
+                    }
+                }
+            }
+            const int r = av_interleaved_write_frame( fc, dup ? dup : p );
+            av_packet_free( &p );
+            av_packet_free( &dup );
+            if ( r < 0 )
+            {
+                std::cerr << "enc: write failed: " << av_err_str( r ) << '\n';
+                error_.store( true );
+                break;
+            }
         }
         {
             std::lock_guard<std::mutex> lk( mx_ );
             active_.store( false );
             fc_ = nullptr;
             st_ = nullptr;
+        }
+        // Leftover queued packets are dead weight now: free them.
+        {
+            std::lock_guard<std::mutex> plk( pkt_mx_ );
+            for ( AVPacket* q : pkts_ )
+                av_packet_free( &q );
+            pkts_.clear();
         }
         av_write_trailer( fc );  // best effort
         close_transport();
@@ -576,7 +636,10 @@ void NetEncoder::publish( int tensor_fd, int acquire_fence_fd, int64_t ts_us )
     if ( !prep_frame( tensor_fd, bufs_[cur_] ) )
     {
         error_.store( true );
-        cv_.notify_all();  // serve() closes and reopens the stream path
+        {
+            std::lock_guard<std::mutex> nlk( pkt_mx_ );
+            pkt_cv_.notify_all();  // serve() closes and reopens the stream path
+        }
         return;
     }
 
@@ -585,10 +648,13 @@ void NetEncoder::publish( int tensor_fd, int acquire_fence_fd, int64_t ts_us )
     if ( !fc_ || !enc_ )
         return;  // viewer dropped while cropping: frame dropped with it
 
-    if ( !send_frame( fc_, st_ ) )
+    if ( !send_frame( st_ ) )
     {
         error_.store( true );
-        cv_.notify_all();  // serve() closes and reopens the stream path
+        {
+            std::lock_guard<std::mutex> nlk( pkt_mx_ );
+            pkt_cv_.notify_all();  // serve() closes and reopens the stream path
+        }
     }
 }
 
@@ -626,9 +692,8 @@ bool NetEncoder::prep_frame( int tensor_fd, MppBuffer mb )
     return true;
 }
 
-bool NetEncoder::send_frame( AVFormatContext* fcp, AVStream* stp )
+bool NetEncoder::send_frame( AVStream* stp )
 {
-    auto* fc = static_cast<AVFormatContext*>( fcp );
     auto* st = static_cast<AVStream*>( stp );
     auto* ctx = static_cast<AVCodecContext*>( enc_ );
 
@@ -696,47 +761,26 @@ bool NetEncoder::send_frame( AVFormatContext* fcp, AVStream* stp )
         }
         pkt->stream_index = st->index;
         pkt->pts = pkt->dts = fpts * frame_step_;
-        // Late-join support: SPS/PPS travel only in the very first packet,
-        // so a client connecting mid-GOP cannot decode until the next IDR
-        // (mpv: 'non-existing PPS 0' spam, broken first second). Capture
-        // the parameter-set prefix from the first key packet and prepend
-        // it to every following IDR; the TS muxer tolerates the duplicate.
-        // The parameter-set prefix lives in the hdr_ member (project
-        // rule: no function-local statics outside tools/).
-        AVPacket* dup = nullptr;
-        if ( is_idr( pkt ) )
+        // Batch C: the pipeline thread no longer touches the network.
+        // Clone the packet (deep copy) and hand it to serve()'s drain
+        // loop; the original is unreffed immediately. Mux-side header
+        // capture/prepend moved to serve() with the rest of the mux.
+        AVPacket* copy = av_packet_clone( pkt );
+        if ( copy )
         {
-            if ( hdr_.empty() && hdr_capture( pkt, hdr_ ) )
-                std::cout << "enc: h264 header captured: " << hdr_.size() << " bytes, repeating on every IDR\n";
-            else if ( !hdr_.empty() && !starts_with( pkt, hdr_ ) )
+            std::lock_guard<std::mutex> plk( pkt_mx_ );
+            if ( pkts_.size() >= kPktQDepth )
             {
-                dup = av_packet_alloc();
-                if ( dup && av_new_packet( dup, hdr_.size() + (size_t)pkt->size ) >= 0 )
-                {
-                    memcpy( dup->data, hdr_.data(), hdr_.size() );
-                    memcpy( dup->data + hdr_.size(), pkt->data, pkt->size );
-                    av_packet_copy_props( dup, pkt );
-                    if ( !hdr_logged_ )
-                    {
-                        std::cout << "enc: header repeat active\n";
-                        hdr_logged_ = true;
-                    }
-                }
-                else
-                {
-                    av_packet_free( &dup );
-                    dup = nullptr;
-                }
+                av_packet_free( &pkts_.front() );
+                pkts_.pop_front();
+                ++pkt_drops_;
+                if ( pkt_drops_ == 1 || ( pkt_drops_ % 300 ) == 0 )
+                    std::cerr << "enc: packet queue full, dropped " << pkt_drops_ << " packet(s)\n";
             }
+            pkts_.push_back( copy );
+            pkt_cv_.notify_one();
         }
-        const int r = av_interleaved_write_frame( fc, dup ? dup : pkt );
         av_packet_unref( pkt );
-        av_packet_free( &dup );
-        if ( r < 0 )
-        {
-            std::cerr << "enc: write failed: " << av_err_str( r ) << '\n';
-            return false;
-        }
     }
     ++pts_;
     ++frames_sent_;

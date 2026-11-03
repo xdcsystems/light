@@ -637,53 +637,61 @@ int Pipeline::publish_oldest()
         }
         if ( preview_ || enc_ )
         {
-            // Boxes mapped to tensor coordinates ONCE for both drawing
-            // paths — the same geometry as the legacy block (det_color).
-            const float s = static_cast<float>( model_w_ ) / cfg_.cam_w;
-            const float lb_top = sl.lb_top;
-            boxes_.clear();
-            for ( int k = 0; k < dets_.n; ++k )
+            // Viewer gating (rule: output only for a connected viewer,
+            // recognition never gates). Both flags are per-frame atomics:
+            // a late joiner misses at most one frame of boxes. With no
+            // viewer the GPU draw pass is skipped entirely - the encoder
+            // gate would drop the frame anyway, this just saves the draw.
+            const bool enc_live = enc_ && enc_->viewer_active();
+            const bool prev_live = preview_ && preview_->viewer_connected();
+            if ( enc_live || prev_live )
             {
-                const Detection& d = dets_.d[k];
-                GpuBox b{};
-                b.x0 = d.x * s;
-                b.y0 = d.y * s + lb_top;
-                b.x1 = ( d.x + d.w ) * s;
-                b.y1 = ( d.y + d.h ) * s + lb_top;
-                if ( b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f )
-                    continue;
-                det_color( d.cls, b.r, b.g, b.b );
-                b.a = 255;
-                boxes_.push( b );
-            }
-            int fence = -1;  // GPU draw fence, consumed by enc publish
-            if ( drawer_ )
-            {
-                drawer_->draw_slot( ps, boxes_.d.data(), boxes_.n );
-                fence = drawer_->export_fence();
-                if ( preview_ || fence < 0 )
+                // Boxes mapped to tensor coordinates ONCE for both drawing
+                // paths - the same geometry as the legacy block (det_color).
+                const float s = static_cast<float>( model_w_ ) / cfg_.cam_w;
+                const float lb_top = sl.lb_top;
+                boxes_.clear();
+                for ( int k = 0; k < dets_.n; ++k )
                 {
-                    drawer_->sync_cpu();
-                    if ( fence >= 0 )
-                        ::close( fence );
-                    fence = -1;
+                    const Detection& d = dets_.d[k];
+                    GpuBox b{};
+                    b.x0 = d.x * s;
+                    b.y0 = d.y * s + lb_top;
+                    b.x1 = ( d.x + d.w ) * s;
+                    b.y1 = ( d.y + d.h ) * s + lb_top;
+                    if ( b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f )
+                        continue;
+                    det_color( d.cls, b.r, b.g, b.b );
+                    b.a = 255;
+                    boxes_.push( b );
                 }
-            }
-            else
-            {
-                draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ), model_w_, model_h_, model_w_ * 3, boxes_.d.data(),
-                        boxes_.n );
-            }
-            if ( preview_ )
-            {
-                preview_->publish( static_cast<const uint8_t*>( sl.eng->input_data() ) );
-            }
-            if ( enc_ )
-            {
-                const auto t5 = clk::now();
-                enc_->publish( sl.eng->input_fd(), fence, sl.ts_us );
-                const auto t6 = clk::now();
-                enc_ms = ms( t5, t6 );
+                int fence = -1;  // GPU draw fence, consumed by enc publish
+                if ( drawer_ )
+                {
+                    drawer_->draw_slot( ps, boxes_.d.data(), boxes_.n );
+                    fence = drawer_->export_fence();
+                    if ( preview_ || fence < 0 )
+                    {
+                        drawer_->sync_cpu();
+                        if ( fence >= 0 )
+                            ::close( fence );
+                        fence = -1;
+                    }
+                }
+                else
+                {
+                    draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ), model_w_, model_h_, model_w_ * 3, boxes_.d.data(),
+                            boxes_.n );
+                }
+                if ( prev_live )
+                    preview_->publish( static_cast<const uint8_t*>( sl.eng->input_data() ) );
+                if ( enc_live )
+                {
+                    const auto t5 = clk::now();
+                    enc_->publish( sl.eng->input_fd(), fence, sl.ts_us );
+                    const auto t6 = clk::now();
+                    enc_ms = ms( t5, t6 );
+                }
             }
         }
     }
