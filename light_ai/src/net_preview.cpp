@@ -12,6 +12,7 @@ extern "C"
 }
 
 #include "net_preview.hpp"
+#include "av_common.hpp"
 
 namespace
 {
@@ -85,9 +86,7 @@ void NetPreview::serve()
         av_dict_free( &opts );
         if ( ret < 0 )
         {
-            char err[64];
-            av_strerror( ret, err, sizeof( err ) );
-            std::cerr << "net: waiting for viewer: " << err << '\n';
+            std::cerr << "net: waiting for viewer: " << av_err_str( ret ) << '\n';
             avformat_free_context( fc );
             if ( quit_.load() )
                 break;
@@ -135,9 +134,7 @@ void NetPreview::serve()
         int ret2 = avformat_write_header( fc, nullptr );
         if ( ret2 < 0 )
         {
-            char err[64];
-            av_strerror( ret2, err, sizeof( err ) );
-            std::cerr << "net: write_header failed: " << err << '\n';
+            std::cerr << "net: write_header failed: " << av_err_str( ret2 ) << '\n';
             avio_closep( &pb );
             avformat_free_context( fc );
             if ( quit_.load() )
@@ -213,9 +210,7 @@ void NetPreview::publish( const uint8_t* rgb )
     av_packet_unref( p );  // drops the buffer ref (no-op free), tensor intact
     if ( ret < 0 )
     {
-        char err[64];
-        av_strerror( ret, err, sizeof( err ) );
-        std::cerr << "net: write failed: " << err << '\n';
+        std::cerr << "net: write failed: " << av_err_str( ret ) << '\n';
         error_.store( true );
         connected_.store( false, std::memory_order_release );
         cv_.notify_all();  // serve() closes and waits for a new viewer
