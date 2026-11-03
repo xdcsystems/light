@@ -53,6 +53,7 @@ public:
 private:
     void serve();
     bool send_frame( AVFormatContext* fc, AVStream* st );
+    bool prep_frame( int tensor_fd, MppBuffer mb );
 
     const int w_, h_, fps_, port_, bitrate_kbps_;
     const std::string host_;
@@ -76,7 +77,7 @@ private:
     MppBuffer bufs_[kBufCount] = { nullptr, nullptr, nullptr };  // ping-pong NV12 dma-bufs
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
-    int tensor_fd_ = -1;       // dma-buf fd of the NPU tensor (set in publish)
+    std::atomic<bool> active_ { false };  // stream path live (serve sets/clears under mx_)
     int acq_fd_ = -1;          // draw fence fd, consumed by RGA in send_frame
     int64_t frame_step_ = 1;   // pts increment in the muxer's time base
     uint64_t pts_ = 0;

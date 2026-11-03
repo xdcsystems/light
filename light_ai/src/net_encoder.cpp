@@ -520,6 +520,7 @@ void NetEncoder::serve()
             st_ = st;
             pts_ = 0;
             ts_base_ = -1;  // M4: VFR pts restart from zero per session
+            active_.store( true );
         }
 
         // Park until quit or a write error; UDP writes do not block on a
@@ -532,6 +533,7 @@ void NetEncoder::serve()
         }
         {
             std::lock_guard<std::mutex> lk( mx_ );
+            active_.store( false );
             fc_ = nullptr;
             st_ = nullptr;
         }
@@ -551,16 +553,7 @@ void NetEncoder::serve()
 
 void NetEncoder::publish( int tensor_fd, int acquire_fence_fd, int64_t ts_us )
 {
-    if ( quit_.load() )
-    {
-        if ( acquire_fence_fd >= 0 )
-            ::close( acquire_fence_fd );
-        return;
-    }
-
-    std::lock_guard<std::mutex> lk( mx_ );
-
-    if ( !fc_ || !enc_ )
+    if ( quit_.load() || !active_.load() )
     {
         if ( acquire_fence_fd >= 0 )
             ::close( acquire_fence_fd );
@@ -571,10 +564,27 @@ void NetEncoder::publish( int tensor_fd, int acquire_fence_fd, int64_t ts_us )
     {
         ::close( acq_fd_ );
         acq_fd_ = -1;
-    }                            // stale fence
-    tensor_fd_ = tensor_fd;      // RGA source for this frame
-    acq_fd_ = acquire_fence_fd;  // consumed by send_frame
-    ts_us_ = ts_us;              // M4: dequeue time for the VFR pts
+    }
+    acq_fd_ = acquire_fence_fd;
+    ts_us_ = ts_us;
+    cur_ = ( cur_ + 1 ) % kBufCount;
+
+    // Fence wait + RGA crop run OUTSIDE the lock: the critical section
+    // below now covers only encode + mux. The pipeline thread is the
+    // sole user of cur_/bufs_/acq_fd_ here; serve() touches none of
+    // them, and the destructor joins this thread before freeing.
+    if ( !prep_frame( tensor_fd, bufs_[cur_] ) )
+    {
+        error_.store( true );
+        cv_.notify_all();  // serve() closes and reopens the stream path
+        return;
+    }
+
+    std::lock_guard<std::mutex> lk( mx_ );
+
+    if ( !fc_ || !enc_ )
+        return;  // viewer dropped while cropping: frame dropped with it
+
     if ( !send_frame( fc_, st_ ) )
     {
         error_.store( true );
@@ -582,39 +592,21 @@ void NetEncoder::publish( int tensor_fd, int acquire_fence_fd, int64_t ts_us )
     }
 }
 
-bool NetEncoder::send_frame( AVFormatContext* fcp, AVStream* stp )
+// RGA prep for the current frame: wait out the GPU draw fence (this RGA
+// driver ignores input fences, so ordering is a poll) and crop the
+// letterbox band of the model tensor into the ping-pong NV12 buffer mb.
+bool NetEncoder::prep_frame( int tensor_fd, MppBuffer mb )
 {
-    auto* fc = static_cast<AVFormatContext*>( fcp );
-    auto* st = static_cast<AVStream*>( stp );
-    auto* ctx = static_cast<AVCodecContext*>( enc_ );
-
-    // Triple buffer (P1-4): RGA never writes into a plane an older encode
-    // still holds. improcess is the synchronous single-op form: it returns
-    // with the dst already finished for the CPU-side encoder read.
-    // Ordering vs the GPU drawer is guaranteed upstream by poll() on
-    // the exported draw fence (acq_fd_).
-    cur_ = ( cur_ + 1 ) % kBufCount;
-    MppBuffer mb = bufs_[cur_];
-
-    // Tensor path: crop the visible letterbox band out of the RGB888
-    // model tensor and convert it to NV12 at 1:1 (no upscale). The
-    // boxes are already in the band (GPU drawer + sync_cpu before
-    // publish), so they ride along into the stream for free.
-    rga_buffer_t src = wrapbuffer_fd( tensor_fd_, model_w_, model_h_, RK_FORMAT_RGB_888 );
+    rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888 );
     im_rect srect = { 0, 0, 0, 0 };
     srect.x = 0;
     srect.y = band_top_;
     srect.width = model_w_;
     srect.height = band_h_;
     // Explicit strides: the VU plane lands at w * vstride_ - exactly where
-    // the DRM descriptor below reports it (the default tight h would put
-    // chroma where the encoder cfg does not look).
+    // the DRM descriptor below reports it.
     rga_buffer_t dst = wrapbuffer_fd( mpp_buffer_get_fd( mb ), w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
 
-    // RGA-fence support is absent in this kernel driver: the acquire
-    // fence passed to improcess was silently ignored (boxes vanished).
-    // The draw fence is a plain sync_file fd: wait via poll() — much
-    // cheaper than sync_cpu(), same ordering guarantee for RGA.
     if ( acq_fd_ >= 0 )
     {
         pollfd pf {};
@@ -628,9 +620,19 @@ bool NetEncoder::send_frame( AVFormatContext* fcp, AVStream* stp )
     const IM_STATUS rs = improcess( src, dst, {}, srect, {}, {}, 0 );
     if ( (int)rs <= 0 )
     {
-        std::cerr << "enc: RGA convert failed: " << imStrError( rs ) << '\n';
+        std::cerr << "enc: RGA convert failed: " << imStrError( rs ) << "\n";
         return false;
     }
+    return true;
+}
+
+bool NetEncoder::send_frame( AVFormatContext* fcp, AVStream* stp )
+{
+    auto* fc = static_cast<AVFormatContext*>( fcp );
+    auto* st = static_cast<AVStream*>( stp );
+    auto* ctx = static_cast<AVCodecContext*>( enc_ );
+
+    MppBuffer mb = bufs_[cur_];  // rotated and RGA-filled by publish/prep_frame
 
     AVFrame* fr = static_cast<AVFrame*>( frame_ );
     // DRM_PRIME path: hand the wrapper our ping-pong dma-buf by fd. The
