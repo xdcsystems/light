@@ -590,3 +590,63 @@ Three commits over origin/master: 50ff7d4 (FrameTrace), 4b50a36
   the correctness risk (memory barriers, slot-reuse races, interaction
   with the drop/bounded-wait/pool_discard handover) is real. Recorded
   so a future "optimizer" finds the verdict instead of re-deriving it.
+
+## Encoder lock split, mux decoupling and viewer gating (2026-11-03, evening)
+
+Two commits after the pipeline unification: dbc6fbc (batch B) and
+6535c60 (batch C).
+
+Batch B (dbc6fbc): publish() held mx_ across the draw-fence poll
+(worst case ~200 ms under the lock) and the RGA crop. prep_frame()
+now runs on the pipeline thread before the lock; the critical
+section covers only encode + mux. Readiness is gated by the atomic
+active_ set by serve() under mx_. A/B vs the stashed baseline on
+the same scene: identical timings (pool 1 ~49.5 ms, pool 3 ~95.4
+ms) - the split is semantic, not a speed change.
+
+Batch C (6535c60):
+- Mux decoupled from the pipeline thread: send_frame clones each
+  received packet into a 3-deep queue (pkt_mx_/pkt_cv_, separate
+  from mx_ so network wakeups never touch the encode critical
+  section; drop-oldest with a rate-limited note) and serve()
+  drains it into the muxer. The pipeline thread never touches the
+  network. pts is assigned in send_frame BEFORE the queue, so mux
+  latency cannot shift VFR timings. send_frame() no longer takes
+  the muxer context.
+- Viewer gating (the standing rule: output only for a connected
+  viewer, recognition never gates): publish_oldest() checks
+  enc_->viewer_active() (new getter over active_) and
+  preview_->viewer_connected() (new getter over connected_)
+  before the GPU draw pass. With no viewers the draw+fence work
+  is skipped and the encoder gate drops the frame. Both checks
+  are per-frame atomics; a late joiner misses at most one frame
+  of boxes. hdr_ capture moved with the mux into serve().
+
+Verification (2026-11-03 evening):
+- No-viewer run: no "header captured"/"viewer connected" lines,
+  enc = 0.0 in every timing block, wall recovered to ~24-25 FPS.
+- Viewer kill mid-run: "write failed: EIO" from the drain loop,
+  "viewer gone", timing blocks on both sides smooth; no
+  "packet queue full" events. Header repeat (39 bytes)
+  reproduced from the drain loop.
+- Reference in LIGHT conditions, both patches in: pool 1 sum
+  39.5-40.1 ms, ~25 FPS, enc 0.0 (no viewer) / <=0.8 (viewer).
+  All 2026-11-03 evening numbers are on the bottle-in-scene
+  composition; cross-session comparisons need the same scene AND
+  the same light (see the lighting note below).
+
+LIGHTING AS A TEST VARIABLE (2026-11-03, corrective):
+- Autoexposure ties the source frame rate to scene brightness:
+  in darkness the source sat at the ~20 FPS pacing level and sum
+  rose to ~49.5 (pool 1) / ~95.4 (pool 3); after the lights were
+  turned on the SAME scene and pipeline give sum ~39.6-40.1 and
+  wall ~25 FPS. The midday "regression" hunt (the bottle was
+  blamed) was wrong - lighting explains it; the bottle
+  explanation is superseded.
+- The infer drop ~29 -> ~22 ms with the light on is not
+  explained by the scene itself (int8 inference should not
+  depend on frame content); working hypothesis: DVFS/governor
+  pacing with rarer camera frames in the dark. UNVERIFIED; do
+  not cite the two figures against each other until understood.
+- Protocol note for future sessions: record the light state per
+  run (or fix exposure) before comparing timings.
