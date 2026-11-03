@@ -40,16 +40,16 @@ namespace
                 pool = p;
         }
 
-        void add( double c, double d, double r, double i, double e )
+        void add( const FrameTrace& tr )
         {
             if ( total == 0 )
                 t0 = clk::now();
             ++total;
-            cam += c;
-            dec += d;
-            rga += r;
-            infer += i;
-            enc += e;
+            cam += tr.cam;
+            dec += tr.dec;
+            rga += tr.rga;
+            infer += tr.infer;
+            enc += tr.enc;
             if ( ++n % 60 == 0 )
                 report( "avg/60" );
         }
@@ -616,7 +616,13 @@ int Pipeline::run()
             }
             ++ok;
         }
-        g_t.add( ms( t0, t1 ), ms( t1, t2 ), ms( t2, t3 ), ms( t3b, t4 ), enc_ms );
+        FrameTrace tr;
+        tr.cam = ms( t0, t1 );
+        tr.dec = ms( t1, t2 );
+        tr.rga = ms( t2, t3 );
+        tr.infer = ms( t3b, t4 );
+        tr.enc = enc_ms;
+        g_t.add( tr );
     }
 
     if ( stop_.load() )
@@ -676,7 +682,7 @@ void Pipeline::worker_loop( int slot )
         if ( rga_ok )
         {
             okr = ( sl.eng->run() == 0 );
-            sl.infer_ms = ms( ti0, clk::now() );
+            sl.tr.infer = ms( ti0, clk::now() );
             if ( okr )
             {
                 yolo_postprocess( *sl.eng, static_cast<float>( cfg_.cam_w ), static_cast<float>( cfg_.cam_h ),
@@ -686,7 +692,7 @@ void Pipeline::worker_loop( int slot )
         }
         else
         {
-            sl.infer_ms = 0.0;  // legacy: run() is short-circuited on a failed RGA
+            sl.tr.infer = 0.0;  // legacy: run() is short-circuited on a failed RGA
         }
         sl.npu_ok = rga_ok && okr;
         {
@@ -715,9 +721,9 @@ void Pipeline::dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, in
         sl.rga_ok = rga_ok;
         sl.npu_ok = false;
         sl.drop = false;
-        sl.cam_ms = cam_ms;
-        sl.dec_ms = dec_ms;
-        sl.rga_ms = rga_ms;
+        sl.tr.cam = cam_ms;
+        sl.tr.dec = dec_ms;
+        sl.tr.rga = rga_ms;
         sl.lb_top = lb_top;
         sl.lb_h = lb_h;
         sl.st = Slot::QUEUED;
@@ -824,7 +830,8 @@ int Pipeline::publish_oldest()
             }
         }
     }
-    g_t.add( sl.cam_ms, sl.dec_ms, sl.rga_ms, sl.infer_ms, enc_ms );
+    sl.tr.enc = enc_ms;
+    g_t.add( sl.tr );
     sl.st = Slot::FREE;
     sl.frame = -1;
     lk.unlock();

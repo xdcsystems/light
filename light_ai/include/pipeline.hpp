@@ -18,6 +18,17 @@
 #include "gpu_box_drawer.hpp"
 #include "box_smoother.hpp"
 
+// Per-frame timing, single storage: dispatch fills cam/dec/rga,
+// the worker fills infer, publish fills enc; Timings::add consumes
+// the whole record.
+struct FrameTrace {
+    double cam = 0.0;
+    double dec = 0.0;
+    double rga = 0.0;
+    double infer = 0.0;
+    double enc = 0.0;
+};
+
 struct Config
 {
     std::string device = "/dev/video20";
@@ -124,7 +135,7 @@ private:
         bool npu_ok = false;             // worker verdict, read at publish
         bool drop = false;               // publish gave up: the worker frees the slot itself
         float lb_top = 0, lb_h = 0;      // letterbox geometry at dispatch
-        double cam_ms = 0, dec_ms = 0, rga_ms = 0, infer_ms = 0;
+        FrameTrace tr;  // per-frame timings: dispatch->cam/dec/rga, worker->infer, publish->enc
         std::mutex mx;
         std::condition_variable cv;
         enum St : uint8_t { FREE, QUEUED, DONE } st = FREE;
