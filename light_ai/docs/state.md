@@ -691,3 +691,24 @@ TIDY INFRASTRUCTURE (2026-11-03):
   asserts must COMPUTE their delta from the patch strings, not
   carry a remembered constant - a stale constant failed twice
   before the computed form passed on the first try.
+
+READABILITY PASS (post-tidy, 2026-11-03 evening):
+- The pts ternary in send_frame (CFR/VFR with a hidden ts_base_
+  side effect) -> packet_pts() guard-clause ladder; the
+  receive_packet drain in send_frame -> pre-call + while
+  ( ret >= 0 ) + post-loop error check; for(;;) headers replaced
+  with real conditions where the exits are named: drain_queue ->
+  while ( !quit_ && !error_ ), worker_loop -> while ( !quit_ ).
+- camera: dequeue's poll EINTR retry folded into poll_ready()
+  (xioctl-style); dequeue header while ( !have ) with named
+  exits; teardown index loop -> range-based for (tidy
+  modernize-loop-convert; first camera tidy pass, stale
+  pre-patch finding).
+- Verified: build clean, tidy clean on net_encoder/camera/
+  mpp_decoder, viewer smoke: header 39 bytes, sum 39.4-39.8
+  ms ~25 FPS, clean EOF; pts path unchanged.
+- Patch-scripting lesson, second half: brace braces '{}' of
+  declarations count too - a hand-written delta missed the
+  initializer and the computed check failed before write.
+  Rule extended: no hand-written counters at all; every delta
+  comes from counting the patch strings.
