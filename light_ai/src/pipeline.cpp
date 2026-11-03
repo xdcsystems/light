@@ -457,7 +457,7 @@ int Pipeline::run()
         // legacy synchronous semantics. pool 3 keeps publish-before-reuse.
         const double cam_ms = ms( t0, t1 );
         const double dec_ms = ms( t1, t2 );
-        if ( pub_n_ == npool_ )
+        if ( pub_.n == npool_ )
             ok += publish_oldest();
         int slot = -1;
         for ( int k = 0; k < npool_; ++k )
@@ -488,7 +488,7 @@ int Pipeline::run()
         std::cout << "stop: signal received, draining and flushing...\n";
 
     // M4: drain the ring — publish whatever the workers already finished.
-    while ( pub_n_ > 0 )
+    while ( pub_.n > 0 )
         ok += publish_oldest();
 
     const double wall = std::chrono::duration<double>( clk::now() - t_start ).count();
@@ -587,14 +587,13 @@ void Pipeline::dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, in
         sl.lb_h = lb_h;
         sl.st = Slot::QUEUED;
     }
-    pub_slots_[( pub_head_ + pub_n_ ) % 3] = slot;
-    ++pub_n_;
+    pub_.push( slot );
     sl.cv.notify_one();
 }
 
 int Pipeline::publish_oldest()
 {
-    const int ps = pub_slots_[pub_head_];
+    const int ps = pub_.front();
     Slot& sl = slots_[ps];
     std::unique_lock<std::mutex> lk( sl.mx );
     // Bounded wait (P0-2): rknn_run normally always completes; a
@@ -614,8 +613,7 @@ int Pipeline::publish_oldest()
         std::cerr << "pipeline: publish wait gave up on slot " << ps << " (st="
                   << static_cast<int>( sl.st ) << "), frame " << sl.frame << " dropped\n";
         lk.unlock();
-        pub_head_ = ( pub_head_ + 1 ) % 3;
-        --pub_n_;
+        pub_.pop();
         return 0;
     }
 
@@ -694,8 +692,7 @@ int Pipeline::publish_oldest()
     sl.st = Slot::FREE;
     sl.frame = -1;
     lk.unlock();
-    pub_head_ = ( pub_head_ + 1 ) % 3;
-    --pub_n_;
+    pub_.pop();
     return sl.npu_ok ? 1 : 0;
 }
 
@@ -745,9 +742,9 @@ void Pipeline::cal_dump_maybe( RknnEngine& e, int frame_idx )
 
 void Pipeline::pool_discard()
 {
-    while ( pub_n_ > 0 )
+    while ( pub_.n > 0 )
     {
-        Slot& sl = slots_[pub_slots_[pub_head_]];
+        Slot& sl = slots_[pub_.front()];
         std::unique_lock<std::mutex> lk( sl.mx );
         // The worker may still be mid-infer on this slot: wait for DONE
         // (rknn_run always completes; quit_ is not set here), then free
@@ -758,7 +755,6 @@ void Pipeline::pool_discard()
         sl.st = Slot::FREE;
         sl.frame = -1;
         lk.unlock();
-        pub_head_ = ( pub_head_ + 1 ) % 3;
-        --pub_n_;
+        pub_.pop();
     }
 }

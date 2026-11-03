@@ -78,6 +78,31 @@ struct Config
     bool cpu_draw = false;
 };
 
+// Publish FIFO: strictly single-threaded — dispatch, publish, drain
+// and pool_discard all run on the pipeline thread, so no locks by
+// design. Depth 3 == the maximum NPU pool size.
+struct PubFifo
+{
+    int slots[3] = {};
+    int head = 0;
+    int n = 0;
+
+    void push( int s )
+    {
+        slots[( head + n ) % 3] = s;
+        ++n;
+    }
+    int front() const
+    {
+        return slots[head];
+    }
+    void pop()
+    {
+        head = ( head + 1 ) % 3;
+        --n;
+    }
+};
+
 class Pipeline
 {
 public:
@@ -143,9 +168,7 @@ private:
     std::vector<std::thread> workers_;   // one per pooled engine
     std::atomic<bool> quit_ { false };
     std::atomic<bool> stop_ { false };  // P1-6: set by the signal handler
-    int pub_slots_[3] = { 0, 0, 0 };     // FIFO of slots awaiting publish
-    int pub_head_ = 0;
-    int pub_n_ = 0;
+    PubFifo pub_;
 
     void worker_loop( int slot );
     int publish_oldest();                // returns 1 if the frame was valid
