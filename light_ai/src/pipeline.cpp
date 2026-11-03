@@ -183,9 +183,9 @@ Pipeline::Pipeline( const Config& cfg )
             throw std::runtime_error( "rknn setup_io failed" );
         }
     }
-    // M2.5/M4: core pinning. The single path keeps cfg_.core verbatim
-    // (AUTO by default — the A/B baseline is untouched). The pool pins
-    // its own: one engine per core, via the per-core flags 1/2/4.
+    // M2.5/M4: core pinning. Pool 1 keeps cfg_.core verbatim (AUTO by
+    // default — the A/B baseline is untouched). The pool pins its own:
+    // one engine per core, via the per-core flags 1/2/4.
     if ( npool_ == 1 )
     {
         if ( cfg_.core != 0 )
@@ -227,10 +227,8 @@ Pipeline::Pipeline( const Config& cfg )
         throw std::runtime_error( "rknn: input tensor is not 4-D NHWC" );
     }
 
-    // Gray letterbox bars: RGA writes only the visible band (drect), so the
-    // 128-fill done here survives every frame.
-    // M4: gray letterbox bars on every pooled tensor — RGA writes only
-    // the visible band (drect), so the 128-fill survives every frame.
+    // Gray letterbox bars on every pooled tensor: RGA writes only the
+    // visible band (drect), so the 128-fill done here survives every frame.
     for ( auto& e : npus_ )
         std::memset( e.input_data(), 128, e.input_size() );
 

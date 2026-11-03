@@ -50,8 +50,8 @@ struct Config
     // 1/2/4 = core 0/1/2, 3 = cores 0+1, 7 = cores 0+1+2
     // (rknn_set_core_mask). Ignored when pool > 1 (the pool pins its own).
     int core = 0;
-    // M4: context pool. 0/1 = the single-context path (byte-identical
-    // baseline); 3 = three engines on one model, pinned one per NPU core,
+    // M4: context pool. 0/1 = ring of one (single engine, synchronous
+    // semantics); 3 = three engines on one model, pinned one per NPU core,
     // inference moved to worker threads and overlapped with the rest.
     int pool = 0;
     // Model input size is NOT a config option: it is read from the model
@@ -94,7 +94,7 @@ private:
     std::string cam_node_;
     MppDecoder dec_;
     RgaResizer rga_;
-    // M4: context pool. npus_[0] IS the legacy single-context engine;
+    // M4: context pool. npus_[0] IS the pool-1 engine;
     // --pool 3 loads the model three times, one engine per NPU core.
     // The vector never reallocates after the ctor, so &npus_[k] stays
     // valid for the whole session.
@@ -115,7 +115,6 @@ private:
 
     // Per-frame detection buffers: preallocated members, cleared each
     // frame — zero heap traffic in the steady-state path.
-    DetList dets_raw_;
     DetList dets_;
     GpuBoxList boxes_;
 
