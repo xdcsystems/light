@@ -33,6 +33,19 @@ private:
         kTaskPollMs = 1000
     };
 
+    // Packet teardown mechanics. Deinit is legal only at points where
+    // the decoder provably holds no reference - each call site in
+    // decode() carries the reasoning in its comment. The null-check
+    // here lets every path use the same call.
+    void drop_packet()
+    {
+        if ( pkt_ )
+        {
+            mpp_packet_deinit( &pkt_ );
+            pkt_ = nullptr;
+        }
+    }
+
     MppCtx ctx_ = nullptr;
     MppApi* mpi_ = nullptr;
     MppBufferGroup out_group_ = nullptr;

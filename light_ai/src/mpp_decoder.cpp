@@ -187,11 +187,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
     // already deinit'ed - its lifetime is tied to the output dequeue (see
     // the notes at each return). This block only catches paths where the
     // decoder provably holds no reference (no enqueue has happened).
-    if ( pkt_ )
-    {
-        mpp_packet_deinit( &pkt_ );
-        pkt_ = nullptr;
-    }
+    drop_packet();
 
     MppBuffer pbuf = nullptr;
     if ( mpp_buffer_get( pkt_group_, &pbuf, size ) != MPP_OK )
@@ -211,8 +207,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
         std::cerr << "dec: no free input task in " << kTaskPollMs << " ms\n";
         // No input task was taken, the decoder holds no reference to the
         // packet: deinit here, not on the next call.
-        mpp_packet_deinit( &pkt_ );
-        pkt_ = nullptr;
+        drop_packet();
         return -3;
     }
     MppTask task = nullptr;
@@ -220,8 +215,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
     {
         std::cerr << "dec: input dequeue failed\n";
         // No task was taken, the packet is not referenced: deinit here.
-        mpp_packet_deinit( &pkt_ );
-        pkt_ = nullptr;
+        drop_packet();
         return -4;
     }
     mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, pkt_ );
@@ -244,8 +238,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
         }
         // The failed enqueue means the decoder never took the task, the
         // packet is not referenced: safe to deinit now.
-        mpp_packet_deinit( &pkt_ );
-        pkt_ = nullptr;
+        drop_packet();
         return -5;
     }
 
@@ -262,8 +255,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
         // blocked every subsequent input poll (-3 on the next frames).
         std::cerr << "dec: output not ready in " << kTaskPollMs << " ms - flushing decoder\n";
         mpi_->reset( ctx_ );
-        mpp_packet_deinit( &pkt_ );
-        pkt_ = nullptr;
+        drop_packet();
         return -6;
     }
     task = nullptr;
@@ -273,8 +265,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
         // reset() is the only way to release its packet reference.
         std::cerr << "dec: output dequeue failed - flushing decoder\n";
         mpi_->reset( ctx_ );
-        mpp_packet_deinit( &pkt_ );
-        pkt_ = nullptr;
+        drop_packet();
         return -7;
     }
 
@@ -306,8 +297,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
             std::cerr << "dec: alloc " << bs << " bytes FAILED\n";
             mpi_->control( ctx_, MPP_DEC_SET_INFO_CHANGE_READY, nullptr );
             // The info_change task has been returned: the packet is consumed.
-            mpp_packet_deinit( &pkt_ );
-            pkt_ = nullptr;
+            drop_packet();
             return -8;
         }
         // In-place re-set: the task meta we just returned still holds this
@@ -317,8 +307,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
 
         mpi_->control( ctx_, MPP_DEC_SET_INFO_CHANGE_READY, nullptr );
         // The info_change task has been returned: the packet is consumed.
-        mpp_packet_deinit( &pkt_ );
-        pkt_ = nullptr;
+        drop_packet();
         return -1;  // the info_change frame itself is skipped — this is normal
     }
     else if ( mpp_frame_get_errinfo( f ) || mpp_frame_get_discard( f ) )
@@ -345,8 +334,7 @@ int MppDecoder::decode( const uint8_t* data, size_t size )
     // references the packet: safe point for deinit (instead of the top
     // of the next call, which raced with the still-enqueued task on the
     // -6/-7 paths of the previous frame).
-    mpp_packet_deinit( &pkt_ );
-    pkt_ = nullptr;
+    drop_packet();
     return fd;
 }
 

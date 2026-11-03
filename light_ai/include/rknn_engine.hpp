@@ -55,9 +55,12 @@ public:
     // the real type is out_attrs_[i].type — yolov5s_relu yields fp16).
     const int8_t* output_data( size_t i ) const
     {
-        return ( i < out_mems_.size() && out_mems_[i] ) ? static_cast<const int8_t*>( out_mems_[i]->virt_addr ) : nullptr;
+        return ( i < out_mems_.size() && out_mems_[i] ) ? static_cast<const int8_t*>( out_mems_[i]->virt_addr ) 
+                                                        : nullptr;
     }
-    uint32_t output_size( size_t i ) const { return ( i < out_mems_.size() && out_mems_[i] ) ? out_mems_[i]->size : 0; }
+    uint32_t output_size( size_t i ) const { 
+        return ( i < out_mems_.size() && out_mems_[i] ) ? out_mems_[i]->size : 0; 
+    }
 
 private:
     rknn_context ctx_ = 0;

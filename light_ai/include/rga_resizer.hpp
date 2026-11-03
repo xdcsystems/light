@@ -26,6 +26,4 @@ public:
     // On success *geom receives the band geometry; on failure geom stays
     // untouched (h = 0 marks "no valid band").
     bool resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux, LbGeom* geom );
-
-
 };
