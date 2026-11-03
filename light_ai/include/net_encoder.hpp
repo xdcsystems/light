@@ -21,6 +21,15 @@
 #include <rockchip/rk_mpi.h>
 #include <vector>
 
+// Opaque ffmpeg types, forward-declared: the header compiles without
+// the libav* include paths, and the compiler now checks the handle
+// types at call sites instead of trusting comments.
+typedef struct AVFormatContext AVFormatContext;
+typedef struct AVCodecContext AVCodecContext;
+typedef struct AVFrame AVFrame;
+typedef struct AVPacket AVPacket;
+typedef struct AVStream AVStream;
+
 // M3.5 phase B2: hardware-encoded preview (h264_rkmpp) in MPEG-TS.
 // Default transport is TCP pull: the board listens on net_port, the
 // viewer connects when it wants (ffplay tcp://<board-ip>:1234). The
@@ -43,7 +52,7 @@ public:
 
 private:
     void serve();
-    bool send_frame( void* fc, void* st );
+    bool send_frame( AVFormatContext* fc, AVStream* st );
 
     const int w_, h_, fps_, port_, bitrate_kbps_;
     const std::string host_;
@@ -53,11 +62,11 @@ private:
 
     std::mutex mx_;
     std::condition_variable cv_;
-    void* fc_ = nullptr;     // AVFormatContext* (mpegts: TCP pull or UDP push)
-    void* st_ = nullptr;     // AVStream*
-    void* enc_ = nullptr;    // AVCodecContext* (h264_rkmpp)
-    void* frame_ = nullptr;  // AVFrame* (NV12 over an MPP DRM buffer)
-    void* pkt_ = nullptr;    // AVPacket*
+    AVFormatContext* fc_ = nullptr;  // mpegts: TCP pull or UDP push
+    AVStream* st_ = nullptr;
+    AVCodecContext* enc_ = nullptr;  // h264_rkmpp
+    AVFrame* frame_ = nullptr;  // NV12 over an MPP DRM buffer
+    AVPacket* pkt_ = nullptr;
     MppBufferGroup buf_group_ = nullptr;
     // P1-4: three buffers, not two. Two worked only at a steady frame
     // pace; with --net-fps 0 (VFR) frames arrive in clumps after a network

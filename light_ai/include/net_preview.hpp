@@ -5,6 +5,12 @@
 #include <mutex>
 #include <thread>
 
+// Opaque ffmpeg types, forward-declared: the header compiles without
+// the libav* include paths; the real includes stay in the .cpp.
+typedef struct AVFormatContext AVFormatContext;
+typedef struct AVPacket AVPacket;
+typedef struct AVStream AVStream;
+
 // M3.5 phase A0: raw preview over TCP, zero pixel copies.
 //
 // The frame IS the NPU input tensor (RGB888, model_w x model_h, gray
@@ -38,13 +44,12 @@ private:
     std::atomic<bool> connected_ { false };
     std::atomic<bool> error_ { false };
 
-    // ffmpeg types hidden behind void*: the header stays free of the
-    // ffmpeg include path (only net_preview.cpp sees the real structs).
+    // ffmpeg handles are typed via the forward declarations above.
     std::mutex mx_;
     std::condition_variable cv_;
-    void* fc_ = nullptr;       // AVFormatContext*, ready for writes
-    void* stream_ = nullptr;   // AVStream* of the video stream
-    void* pkt_ = nullptr;      // AVPacket*, allocated once
+    AVFormatContext* fc_ = nullptr;  // ready for writes
+    AVStream* stream_ = nullptr;  // of the video stream
+    AVPacket* pkt_ = nullptr;  // allocated once
     uint64_t frame_step_ = 1;  // pts increment in the muxer's time base
     uint64_t pts_ = 0;
 };

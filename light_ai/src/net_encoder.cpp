@@ -29,6 +29,7 @@ extern "C"
 }
 
 #include "net_encoder.hpp"
+#include "av_common.hpp"
 
 namespace
 {
@@ -60,6 +61,55 @@ namespace
         }
         return fd;
     }
+
+}  // namespace
+
+namespace {
+
+bool is_idr( const AVPacket* q )
+{
+    for ( size_t i = 0; i + 4 <= (size_t)q->size; ++i )
+        if ( q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
+        {
+            const uint8_t t = q->data[i+3] & 0x1F;
+            if ( t == 5 ) return true;
+            if ( t == 6 || t == 7 || t == 8 || t == 9 ) continue;
+            return false;
+        }
+    return false;
+}
+bool hdr_capture( const AVPacket* q, std::vector< uint8_t >& out )
+{
+    // Anchor at the first start code: both 3-byte (00 00 01) and
+    // 4-byte (00 00 00 01) prefixes occur in the wild; anchoring
+    // on 3-byte only silently matched nothing on 4-byte input.
+    size_t i = 0;
+    while ( i + 3 <= (size_t)q->size &&
+            !( q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 ) )
+        ++i;
+    if ( i + 4 > (size_t)q->size )
+        return false;
+    bool saw_sps = false;
+    while ( i + 4 <= (size_t)q->size && q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
+    {
+        const uint8_t t = q->data[i+3] & 0x1F;
+        if ( t == 7 ) saw_sps = true;
+        if ( t == 5 || t == 1 || t == 10 ) break;  // slice/EoS NAL: header ends here
+        size_t j = i + 3;
+        while ( j + 3 <= (size_t)q->size && !( q->data[j] == 0 && q->data[j+1] == 0 && q->data[j+2] == 1 ) ) ++j;
+        i = j;
+    }
+    if ( saw_sps && i > 0 )
+    {
+        out.assign( q->data, q->data + i );
+        return true;
+    }
+    return false;
+}
+bool starts_with( const AVPacket* q, const std::vector< uint8_t >& h )
+{
+    return !h.empty() && q->size >= (int)h.size() && memcmp( q->data, h.data(), h.size() ) == 0;
+}
 
 }  // namespace
 
@@ -397,9 +447,7 @@ void NetEncoder::serve()
             const int ret = avio_open( &pb, url.c_str(), AVIO_FLAG_WRITE );
             if ( ret < 0 )
             {
-                char err[64];
-                av_strerror( ret, err, sizeof( err ) );
-                std::cerr << "enc: udp open failed: " << err << '\n';
+                std::cerr << "enc: udp open failed: " << av_err_str( ret ) << '\n';
                 avformat_free_context( fc );
                 std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
                 continue;
@@ -443,9 +491,7 @@ void NetEncoder::serve()
         av_dict_free( &mux_opts );
         if ( ret2 < 0 )
         {
-            char err[64];
-            av_strerror( ret2, err, sizeof( err ) );
-            std::cerr << "enc: write_header failed: " << err << '\n';
+            std::cerr << "enc: write_header failed: " << av_err_str( ret2 ) << '\n';
             close_transport();
             avformat_free_context( fc );
             std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
@@ -536,7 +582,7 @@ void NetEncoder::publish( int tensor_fd, int acquire_fence_fd, int64_t ts_us )
     }
 }
 
-bool NetEncoder::send_frame( void* fcp, void* stp )
+bool NetEncoder::send_frame( AVFormatContext* fcp, AVStream* stp )
 {
     auto* fc = static_cast<AVFormatContext*>( fcp );
     auto* st = static_cast<AVStream*>( stp );
@@ -631,9 +677,7 @@ bool NetEncoder::send_frame( void* fcp, void* stp )
     av_frame_unref( fr );  // drop the buffer ref; the tensor/MPP memory stays
     if ( ret < 0 )
     {
-        char err[64];
-        av_strerror( ret, err, sizeof( err ) );
-        std::cerr << "enc: send_frame: " << err << '\n';
+        std::cerr << "enc: send_frame: " << av_err_str( ret ) << '\n';
         return false;
     }
 
@@ -645,9 +689,7 @@ bool NetEncoder::send_frame( void* fcp, void* stp )
             break;
         if ( ret < 0 )
         {
-            char err[64];
-            av_strerror( ret, err, sizeof( err ) );
-            std::cerr << "enc: receive_packet: " << err << '\n';
+            std::cerr << "enc: receive_packet: " << av_err_str( ret ) << '\n';
             return false;
         }
         pkt->stream_index = st->index;
@@ -659,50 +701,6 @@ bool NetEncoder::send_frame( void* fcp, void* stp )
         // it to every following IDR; the TS muxer tolerates the duplicate.
         // The parameter-set prefix lives in the hdr_ member (project
         // rule: no function-local statics outside tools/).
-        auto is_idr = []( const AVPacket* q ) -> bool
-        {
-            for ( size_t i = 0; i + 4 <= (size_t)q->size; ++i )
-                if ( q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
-                {
-                    const uint8_t t = q->data[i+3] & 0x1F;
-                    if ( t == 5 ) return true;
-                    if ( t == 6 || t == 7 || t == 8 || t == 9 ) continue;
-                    return false;
-                }
-            return false;
-        };
-        auto hdr_capture = []( const AVPacket* q, std::vector< uint8_t >& out ) -> bool
-        {
-            // Anchor at the first start code: both 3-byte (00 00 01) and
-            // 4-byte (00 00 00 01) prefixes occur in the wild; anchoring
-            // on 3-byte only silently matched nothing on 4-byte input.
-            size_t i = 0;
-            while ( i + 3 <= (size_t)q->size &&
-                    !( q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 ) )
-                ++i;
-            if ( i + 4 > (size_t)q->size )
-                return false;
-            bool saw_sps = false;
-            while ( i + 4 <= (size_t)q->size && q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
-            {
-                const uint8_t t = q->data[i+3] & 0x1F;
-                if ( t == 7 ) saw_sps = true;
-                if ( t == 5 || t == 1 || t == 10 ) break;  // slice/EoS NAL: header ends here
-                size_t j = i + 3;
-                while ( j + 3 <= (size_t)q->size && !( q->data[j] == 0 && q->data[j+1] == 0 && q->data[j+2] == 1 ) ) ++j;
-                i = j;
-            }
-            if ( saw_sps && i > 0 )
-            {
-                out.assign( q->data, q->data + i );
-                return true;
-            }
-            return false;
-        };
-        auto starts_with = []( const AVPacket* q, const std::vector< uint8_t >& h ) -> bool
-        {
-            return !h.empty() && q->size >= (int)h.size() && memcmp( q->data, h.data(), h.size() ) == 0;
-        };
         AVPacket* dup = nullptr;
         if ( is_idr( pkt ) )
         {
@@ -734,9 +732,7 @@ bool NetEncoder::send_frame( void* fcp, void* stp )
         av_packet_free( &dup );
         if ( r < 0 )
         {
-            char err[64];
-            av_strerror( r, err, sizeof( err ) );
-            std::cerr << "enc: write failed: " << err << '\n';
+            std::cerr << "enc: write failed: " << av_err_str( r ) << '\n';
             return false;
         }
     }
