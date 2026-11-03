@@ -326,8 +326,9 @@ Pipeline::Pipeline( const Config& cfg )
             throw std::runtime_error( "pipeline: cannot create dataset/: " + ec.message() );
         }
     }
-    // M4: bind slots to engines, then start the worker threads (pool
-    // only — with a single engine the legacy synchronous path runs).
+    // M4: bind slots to engines, then start the worker threads — the
+    // unified path routes every frame through the slot ring; with pool
+    // 1 the single worker is woken by dispatch and publish waits on it.
     for ( int k = 0; k < npool_; ++k )
         slots_[k].eng = &npus_[k];
     for ( int k = 0; k < npool_; ++k )
@@ -452,184 +453,44 @@ int Pipeline::run()
             continue;
         }
 
-        // ---- M4 pool path: ring of slots, one per engine ----
-        // Publish-before-reuse: when the ring is full, the oldest frame is
-        // published first (waiting for its worker), which frees exactly the
-        // slot RGA is about to overwrite. Frame order stays strictly
-        // sequential (BoxSmoother semantics unchanged); timings move to the
-        // publish step — the trailing g_t.add below runs for the single
-        // path only.
-        if ( npool_ > 1 )
+        // ---- unified path: every frame goes through the slot ring ----
+        // pool 1 == ring of one: dispatch, then publish immediately —
+        // the pipeline thread blocks on the worker's DONE, exactly the
+        // legacy synchronous semantics. pool 3 keeps publish-before-reuse.
+        const double cam_ms = ms( t0, t1 );
+        const double dec_ms = ms( t1, t2 );
+        if ( pub_n_ == npool_ )
+            ok += publish_oldest();
+        int slot = -1;
+        for ( int k = 0; k < npool_; ++k )
         {
-            const double cam_ms = ms( t0, t1 );
-            const double dec_ms = ms( t1, t2 );
-            if ( pub_n_ == npool_ )
-                ok += publish_oldest();
-            int slot = -1;
-            for ( int k = 0; k < npool_; ++k )
+            std::lock_guard<std::mutex> lk( slots_[k].mx );
+            if ( slots_[k].st == Slot::FREE )
             {
-                std::lock_guard<std::mutex> lk( slots_[k].mx );
-                if ( slots_[k].st == Slot::FREE )
-                {
-                    slot = k;
-                    break;
-                }
+                slot = k;
+                break;
             }
-            // Ring depth equals the pool size: after publishing the oldest
-            // frame a FREE slot is guaranteed to exist.
-            Slot& sl = slots_[slot];
-            const auto t3 = clk::now();
-            LbGeom lg {};
-            const bool rga_ok =
-                    rga_.resize( fd_src, cfg_.cam_w, cfg_.cam_h, sl.eng->input_fd(), model_w_, model_h_, aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2, &lg );
-            cal_dump_maybe( *sl.eng, i );
-            const auto t3b = clk::now();
-            const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( t0 - t_start ).count();
-            dispatch( slot, i, ts_us, rga_ok, lg.top, lg.h, cam_ms, dec_ms, ms( t3, t3b ) );
-            continue;
         }
-
+        // Ring depth equals the pool size: after publishing the oldest
+        // frame a FREE slot is guaranteed to exist.
+        Slot& sl = slots_[slot];
+        const auto t3 = clk::now();
         LbGeom lg {};
         const bool rga_ok =
-                rga_.resize( fd_src, cfg_.cam_w, cfg_.cam_h, npus_[0].input_fd(), model_w_, model_h_, aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2, &lg );
-
-        const auto t3 = clk::now();
-
-        cal_dump_maybe( npus_[0], i );
-
-        const auto t3b = clk::now();  // cal-dump file I/O is not infer
-
-        const bool npu_ok = rga_ok && ( npus_[0].run() == 0 );
-        const auto t4 = clk::now();
-        double enc_ms = 0.0;  // measured below, inside the publish branch
-
-        if ( npu_ok )
-        {
-            // Letterbox geometry from the single source of truth: RgaResizer
-            // stored it during the last resize.
-            yolo_postprocess( npus_[0],
-                    cfg_.cam_w,
-                    cfg_.cam_h,
-                    model_w_,
-                    model_h_,
-                    static_cast<float>( lg.top ),
-                    static_cast<float>( lg.h ),
-                    dets_raw_,
-                    cfg_.conf_thr,
-                    cfg_.iou_thr );
-            // M3.10: EMA smoothing on scene-coord boxes; the raw list
-            // is kept only for the --box-log jitter A/B CSV.
-            smoother_.update( dets_raw_, dets_ );
-            smoother_.log_frame( i, dets_raw_, dets_ );
-            // Throttled report: every 15th frame, up to 8 boxes per report.
-            if ( dets_.n > 0 && i % 15 == 0 )
-            {
-                std::cout << "frame " << i << ": " << dets_.n << " det(s)\n";
-                for ( int k = 0; k < dets_.n && k < 8; ++k )
-                {
-                    const Detection& d = dets_.d[k];
-                    std::cout << "  cls=" << kCocoNames[d.cls] << " conf=" << std::fixed << std::setprecision( 2 ) << d.conf << " box=("
-                              << d.x << ',' << d.y << ' ' << d.w << 'x' << d.h << ")\n";
-                }
-            }
-            if ( preview_ || enc_ )
-            {
-                // Draw after run(): RGA overwrites the band next frame, so
-                // boxes never leak into inference. Cal dumps are also clean
-                // (they happen before run()).
-                // M3.7: boxes are mapped to tensor coordinates ONCE for
-                // both drawing paths — a single source of geometry and
-                // colors (det_color); the GPU draws them in one call,
-                // the CPU fallback rasterizes the same list.
-                const float s = static_cast<float>( model_w_ ) / cfg_.cam_w;
-                const float lb_top = static_cast<float>( lg.top );
-                boxes_.clear();
-                for ( int k = 0; k < dets_.n; ++k )
-                {
-                    const Detection& d = dets_.d[k];
-                    GpuBox b{};
-                    b.x0 = d.x * s;
-                    b.y0 = d.y * s + lb_top;
-                    b.x1 = ( d.x + d.w ) * s;
-                    b.y1 = ( d.y + d.h ) * s + lb_top;
-                    if ( b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f )
-                        continue;
-                    det_color( d.cls, b.r, b.g, b.b );
-                    b.a = 255;
-                    boxes_.push( b );
-                }
-                int fence = -1;  // GPU draw fence, consumed by enc publish
-                if ( drawer_ )
-                {
-                    drawer_->draw( boxes_.d.data(), boxes_.n );
-                    // GPU writes: the NUT preview reads the tensor via CPU
-                    // and needs a hard sync_cpu(); the h264 path waits for
-                    // the exported draw fence inside the encoder (poll),
-                    // because this RGA driver ignores acquire fences.
-                    // fence < 0 -> sync_cpu fallback (no fence extension).
-                    fence = drawer_->export_fence();
-                    if ( preview_ || fence < 0 )
-                    {
-                        drawer_->sync_cpu();
-                        if ( fence >= 0 )
-                            ::close( fence );
-                        fence = -1;
-                    }
-                }
-                else
-                {
-                    // Fallback: CPU drawing. The RGA imrectangle path is
-                    // gone for good: RGA fill on RGB888 is not routable on
-                    // RK3588 (RGA3 cores cannot fill; RGA2E policy rejects
-                    // rgb888 — dmesg "invalid function policy").
-                    // --cpu-draw forces this path even when the GPU drawer
-                    // is up (A/B baseline).
-                    draw_boxes_cpu( static_cast<uint8_t*>( npus_[0].input_data() ),
-                            model_w_,
-                            model_h_,
-                            model_w_ * 3,
-                            boxes_.d.data(),
-                            boxes_.n );
-                }
-                // M3.5: NetPreview publishes the 640x640 model tensor
-                // (NUT path). NetEncoder now publishes the same tensor:
-                // the GPU/CPU drawing above has landed and is synced, so
-                // the RGA band crop carries the boxes into the stream.
-                if ( preview_ )
-                {
-                    preview_->publish( static_cast<const uint8_t*>( npus_[0].input_data() ) );
-                }
-                if ( enc_ )
-                {
-                    // Tensor path: the encoder crops the visible band out
-                    // of the tensor (boxes already drawn and synced) and
-                    // converts it to NV12 1:1 — no upscale.
-                    const auto t5 = clk::now();
-                    enc_->publish( npus_[0].input_fd(), fence,
-                            std::chrono::duration_cast<std::chrono::microseconds>( t0 - t_start ).count() );
-                    const auto t6 = clk::now();
-                    // publish() is synchronous in the pipeline thread:
-                    // fence-poll + RGA crop + encode + mux + TCP write.
-                    // Zero without a viewer (publish early-returns).
-                    enc_ms = ms( t5, t6 );
-                }
-            }
-            ++ok;
-        }
-        FrameTrace tr;
-        tr.cam = ms( t0, t1 );
-        tr.dec = ms( t1, t2 );
-        tr.rga = ms( t2, t3 );
-        tr.infer = ms( t3b, t4 );
-        tr.enc = enc_ms;
-        g_t.add( tr );
+                rga_.resize( fd_src, cfg_.cam_w, cfg_.cam_h, sl.eng->input_fd(), model_w_, model_h_, aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2, &lg );
+        cal_dump_maybe( *sl.eng, i );
+        const auto t3b = clk::now();
+        const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( t0 - t_start ).count();
+        dispatch( slot, i, ts_us, rga_ok, lg.top, lg.h, cam_ms, dec_ms, ms( t3, t3b ) );
+        if ( npool_ == 1 )
+            ok += publish_oldest();
     }
 
     if ( stop_.load() )
         std::cout << "stop: signal received, draining and flushing...\n";
 
     // M4: drain the ring — publish whatever the workers already finished.
-    while ( npool_ > 1 && pub_n_ > 0 )
+    while ( pub_n_ > 0 )
         ok += publish_oldest();
 
     const double wall = std::chrono::duration<double>( clk::now() - t_start ).count();
