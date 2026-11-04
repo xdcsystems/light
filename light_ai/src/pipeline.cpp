@@ -349,21 +349,6 @@ int Pipeline::run()
     int ok = 0;
     const auto t_start = clk::now();
 
-    // Disconnect policy: ENODEV/EIO from DQBUF mean the device is gone
-    // (unplug, USB hiccup) — worth a few timed reconnect attempts; any
-    // other errno is a hard error and ends the run with exit code 1
-    // (run() returns -1, main() maps it to 1). Exhausted reconnect
-    // attempts end the same way; a silent exit 0 on camera death is the
-    // bug this code removes. A recovery attempt consumes one frame of
-    // the --frames budget and contributes nothing to the timing stats.
-    // 20 attempts: observed USB re-enumeration on this board can take
-    // longer than the original 10x1s window allowed.
-    constexpr int k_cam_reconnect_max = 20;
-    constexpr auto k_cam_reconnect_pause = std::chrono::seconds( 1 );
-    constexpr int k_warmup_frames = 3;
-    int reconnects = 0;
-    int warmup_left = 0;  // publish-discards after reconnect
-
     smoother_.set_log( cfg_.box_log );
     for ( int i = 0; i < cfg_.frames && !stop_.load(); ++i )
     {
@@ -374,44 +359,8 @@ int Pipeline::run()
         const int idx = cam_.dequeue( &sz, &cam_err );
         if ( idx < 0 )
         {
-            // Classify the failure before acting on it.
-            const bool recoverable = ( cam_err == ENODEV || cam_err == EIO );
-            std::cerr << "camera: dequeue failed: " << strerror( cam_err ) << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
-            if ( !recoverable )
+            if ( handle_camera_failure( cam_err ) != 0 )
                 return -1;
-            bool back = false;
-            for ( int a = 1; a <= k_cam_reconnect_max; ++a )
-            {
-                std::this_thread::sleep_for( k_cam_reconnect_pause );
-                std::string node;
-                if ( find_usb_capture_node( cam_, cam_node_, node ) != 0 )
-                    continue;
-                std::string why;
-                if ( cam_.reconnect( node, &why ) == 0 )
-                {
-                    if ( node != cam_node_ )
-                    {
-                        std::cout << "camera: re-enumerated node adopted: " << cam_node_ << " -> " << node << '\n';
-                        cam_node_ = node;
-                    }
-                    ++reconnects;
-                    warmup_left = k_warmup_frames;
-                    std::cout << "camera: reconnected on attempt " << a << '\n';
-                    // M4: frames from the dead stream are never published —
-                    // drop the pending slots (their infer may still be in
-                    // flight; wait for DONE, then free without publishing).
-                    if ( npool_ > 1 )
-                        pool_discard();
-                    back = true;
-                    break;
-                }
-                std::cerr << "camera: reconnect on " << node << " failed: " << why << '\n';
-            }
-            if ( !back )
-            {
-                std::cerr << "camera: reconnect failed after " << k_cam_reconnect_max << " attempts, giving up\n";
-                return -1;
-            }
             continue;
         }
         const auto t1 = clk::now();
@@ -448,10 +397,10 @@ int Pipeline::run()
         // a two-frame gap beats phantoms on a live stream. The counter
         // counts VALID decodes only: garbage frames (fd < 0) do not
         // consume it, so publishing resumes on real data.
-        if ( warmup_left > 0 )
+        if ( warmup_left_ > 0 )
         {
-            --warmup_left;
-            if ( warmup_left == 0 )
+            --warmup_left_;
+            if ( warmup_left_ == 0 )
                 std::cout << "camera: warm-up done, publishing resumed\n";
             continue;
         }
@@ -464,58 +413,11 @@ int Pipeline::run()
         const double dec_ms = ms( t1, t2 );
         if ( pub_.n == npool_ )
             ok += publish_oldest();
-        // Claim-or-drain: a FREE slot is NOT guaranteed here. On the 5 s
-        // publish timeout the dropped slot stays in flight until its own
-        // worker finishes the in-flight rknn_run — only that worker may
-        // free it (freeing here would race the NPU tensor read). So: scan
-        // for FREE; if every slot is in flight, drain the publish queue
-        // when it has entries, otherwise sleep briefly and rescan (a
-        // rknn_run away from finishing, ~30 ms). The stop_ check keeps
-        // Ctrl-C from parking here forever on a wedged NPU.
-        int slot = -1;
-        bool starved_warned = false;
-        do
-        {
-            slot = -1;
-            for ( int k = 0; k < npool_; ++k )
-            {
-                std::lock_guard<std::mutex> lk( slots_[k].mx );
-                if ( slots_[k].st == Slot::FREE )
-                {
-                    slot = k;
-                    break;
-                }
-            }
-            if ( slot >= 0 || stop_.load() )
-                break;
-            if ( !starved_warned )
-            {
-                std::cerr << "pipeline: all " << npool_ << " slots in flight, waiting for a worker to release one\n";
-                starved_warned = true;
-            }
-            if ( pub_.n > 0 )
-                ok += publish_oldest();
-            else
-                std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
-        } while ( true );
+        const int slot = acquire_slot( ok );
         if ( slot < 0 )
             break;  // stop requested with every slot in flight: leave through the normal path
-        Slot& sl = slots_[slot];
-        const auto t3 = clk::now();
-        LbGeom lg {};
-        const bool rga_ok =
-                rga_.resize( fd_src, cfg_.cam_w, cfg_.cam_h, sl.eng->input_fd(), model_w_, model_h_, aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2, &lg );
-        cal_dump_maybe( *sl.eng, i );
-        const auto t3b = clk::now();
         const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( t0 - t_start ).count();
-        // Cross-check RGA geometry against the single-owner one (warn once).
-        if ( !lb_warned_ && ( lg.top != lb_.top || lg.h != lb_.h ) )
-        {
-            lb_warned_ = true;
-            std::cerr << "pipeline: RGA letterbox drift: top=" << lg.top
-                      << " h=" << lg.h << " vs top=" << lb_.top << " h=" << lb_.h << std::endl;
-        }
-        dispatch( slot, i, ts_us, rga_ok, lb_.top, lb_.h, cam_ms, dec_ms, ms( t3, t3b ) );
+        frame_dispatch( slot, i, fd_src, ts_us, cam_ms, dec_ms );
         if ( npool_ == 1 )
             ok += publish_oldest();
     }
@@ -528,14 +430,121 @@ int Pipeline::run()
         ok += publish_oldest();
 
     const double wall = std::chrono::duration<double>( clk::now() - t_start ).count();
-    if ( reconnects > 0 )
+    if ( reconnects_ > 0 )
     {
-        std::cout << "camera disconnects recovered: " << reconnects << '\n';
+        std::cout << "camera disconnects recovered: " << reconnects_ << '\n';
     }
     g_t.report( "TOTAL " );
     std::cout << "Processed " << ok << " frames in " << std::fixed << std::setprecision( 3 ) << wall << " s -> "
               << ( wall > 0 ? ok / wall : 0.0 ) << " FPS\n";
     return ok;
+}
+
+// Disconnect policy: ENODEV/EIO from DQBUF mean the device is gone
+// (unplug, USB hiccup) — worth a few timed reconnect attempts; any
+// other errno is a hard error and ends the run with exit code 1
+// (run() returns -1, main() maps it to 1). Exhausted reconnect
+// attempts end the same way; a silent exit 0 on camera death is the
+// bug this code removes. A recovery attempt consumes one frame of
+// the --frames budget and contributes nothing to the timing stats.
+// 20 attempts: observed USB re-enumeration on this board can take
+// longer than the original 10x1s window allowed.
+int Pipeline::handle_camera_failure( int cam_err )
+{
+    constexpr int k_cam_reconnect_max = 20;
+    constexpr auto k_cam_reconnect_pause = std::chrono::seconds( 1 );
+    constexpr int k_warmup_frames = 3;
+
+    // Classify the failure before acting on it.
+    const bool recoverable = ( cam_err == ENODEV || cam_err == EIO );
+    std::cerr << "camera: dequeue failed: " << strerror( cam_err ) << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
+    if ( !recoverable )
+        return -1;
+    for ( int a = 1; a <= k_cam_reconnect_max; ++a )
+    {
+        std::this_thread::sleep_for( k_cam_reconnect_pause );
+        std::string node;
+        if ( find_usb_capture_node( cam_, cam_node_, node ) != 0 )
+            continue;
+        std::string why;
+        if ( cam_.reconnect( node, &why ) == 0 )
+        {
+            if ( node != cam_node_ )
+            {
+                std::cout << "camera: re-enumerated node adopted: " << cam_node_ << " -> " << node << '\n';
+                cam_node_ = node;
+            }
+            ++reconnects_;
+            warmup_left_ = k_warmup_frames;
+            std::cout << "camera: reconnected on attempt " << a << '\n';
+            // M4: frames from the dead stream are never published —
+            // drop the pending slots (their infer may still be in
+            // flight; wait for DONE, then free without publishing).
+            if ( npool_ > 1 )
+                pool_discard();
+            return 0;
+        }
+        std::cerr << "camera: reconnect on " << node << " failed: " << why << '\n';
+    }
+    std::cerr << "camera: reconnect failed after " << k_cam_reconnect_max << " attempts, giving up\n";
+    return -1;
+}
+
+// Claim-or-drain: a FREE slot is NOT guaranteed here. On the 5 s
+// publish timeout the dropped slot stays in flight until its own
+// worker finishes the in-flight rknn_run — only that worker may
+// free it (freeing here would race the NPU tensor read). So: scan
+// for FREE; if every slot is in flight, drain the publish queue
+// when it has entries, otherwise sleep briefly and rescan (a
+// rknn_run away from finishing, ~30 ms). The stop_ check keeps
+// Ctrl-C from parking here forever on a wedged NPU. Returns the
+// claimed slot index, or -1 when stop was requested with every
+// slot in flight.
+int Pipeline::acquire_slot( int& ok )
+{
+    bool starved_warned = false;
+    while ( true )
+    {
+        for ( int k = 0; k < npool_; ++k )
+        {
+            std::lock_guard<std::mutex> lk( slots_[k].mx );
+            if ( slots_[k].st == Slot::FREE )
+                return k;
+        }
+        if ( stop_.load() )
+            return -1;
+        if ( !starved_warned )
+        {
+            std::cerr << "pipeline: all " << npool_ << " slots in flight, waiting for a worker to release one\n";
+            starved_warned = true;
+        }
+        if ( pub_.n > 0 )
+            ok += publish_oldest();
+        else
+            std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
+    }
+}
+
+// RGA resize into the slot tensor, optional cal dump, one-time
+// cross-check of the RGA letterbox geometry against the single-owner
+// one, then dispatch. Verbatim move out of run().
+void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms )
+{
+    Slot& sl = slots_[slot];
+    const auto t3 = clk::now();
+    LbGeom lg {};
+    const bool rga_ok =
+            rga_.resize( fd_src, cfg_.cam_w, cfg_.cam_h, sl.eng->input_fd(), model_w_, model_h_, aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2, &lg );
+    cal_dump_maybe( *sl.eng, frame_idx );
+    const auto t3b = clk::now();
+    // Cross-check RGA geometry against the single-owner one (warn once).
+    if ( !lb_warned_ && ( lg.top != lb_.top || lg.h != lb_.h ) )
+    {
+        lb_warned_ = true;
+        std::cerr << "pipeline: RGA letterbox drift: top=" << lg.top
+                  << " h=" << lg.h << " vs top=" << lb_.top << " h=" << lb_.h << std::endl;
+    }
+    dispatch( slot, frame_idx, ts_us, rga_ok, lb_.top, lb_.h, cam_ms, dec_ms, ms( t3, t3b ) );
 }
 
 // --- M4: context-pool machinery --------------------------------------------
@@ -699,114 +708,7 @@ int Pipeline::publish_oldest()
             }
         }
         if ( preview_ || enc_ )
-        {
-            // Viewer gating (rule: output only for a connected viewer,
-            // recognition never gates). Both flags are per-frame atomics:
-            // a late joiner misses at most one frame of boxes. With no
-            // viewer the GPU draw pass is skipped entirely - the encoder
-            // gate would drop the frame anyway, this just saves the draw.
-            const bool enc_live = enc_ && enc_->viewer_active();
-            const bool prev_live = preview_ && preview_->viewer_connected();
-            if ( enc_live || prev_live )
-            {
-                // Boxes mapped to tensor coordinates ONCE for both drawing
-                // paths - the same geometry as the legacy block (det_color).
-                const float s = static_cast<float>( model_w_ ) / cfg_.cam_w;
-                const float lb_top = sl.lb_top;
-                boxes_.clear();
-                for ( int k = 0; k < dets_.n; ++k )
-                {
-                    const Detection& d = dets_.d[k];
-                    GpuBox b{};
-                    b.x0 = d.x * s;
-                    b.y0 = d.y * s + lb_top;
-                    b.x1 = ( d.x + d.w ) * s;
-                    b.y1 = ( d.y + d.h ) * s + lb_top;
-                    if ( b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f )
-                        continue;
-                    det_color( d.cls, b.r, b.g, b.b );
-                    b.a = 255;
-                    boxes_.push( b );
-                }
-                // M3.11: trajectory trail -- sampled ring points as 3x3 px
-                // GpuBoxes in the same batch as the detection boxes.
-                // Scene->tensor mapping identical to the box loop above.
-                // Detection boxes win the VBO budget (128-box cap).
-                if ( trajs_.n > 0 )
-                {
-                    Tracker::TrajPoint samp[16];
-                    for ( int k = 0; k < trajs_.n; ++k )
-                    {
-                        const TrackState& t = trajs_.d[k];
-                        if ( t.state != Tracker::TRACK_CONF )
-                            continue;  // trail after confirmation only
-                        const int ns = tracker_.recent_points( t.id, 4, samp, 20 );
-                        float prev_px = 0.0f;
-                        float prev_py = 0.0f;
-                        bool have_prev = false;  // spatial dedup state (per track)
-                        for ( int j = 0; j < ns; ++j )
-                        {
-                            if ( boxes_.n >= 128 )  // PodList<GpuBox,128> cap
-                                break;
-                            const float px = samp[j].x * s;
-                            const float py = samp[j].y * s + lb_top;
-                            if ( px < 0.0f || py < 0.0f
-                                 || px >= static_cast<float>( model_w_ )
-                                 || py >= static_cast<float>( model_h_ ) )
-                                continue;
-                            if ( have_prev )
-                            {
-                                const float dx = px - prev_px;
-                                const float dy = py - prev_py;
-                                if ( dx * dx + dy * dy < 16.0f )
-                                    continue;  // too close to the previous trail point
-                            }
-                            prev_px = px;
-                            prev_py = py;
-                            have_prev = true;
-                            GpuBox p{};
-                            p.x0 = px - 1.5f;
-                            p.y0 = py - 1.5f;
-                            p.x1 = px + 1.5f;
-                            p.y1 = py + 1.5f;
-                            trail_color( t.id, p.r, p.g, p.b );
-                            int a = 255 - ( ns - 1 - j ) * 10;  // newest opaque
-                            if ( a < 60 )
-                                a = 60;
-                            p.a = static_cast<uint8_t>( a );
-                            boxes_.push( p );
-                        }
-                    }
-                }
-                int fence = -1;  // GPU draw fence, consumed by enc publish
-                if ( drawer_ )
-                {
-                    drawer_->draw_slot( ps, boxes_.d.data(), boxes_.n );
-                    fence = drawer_->export_fence();
-                    if ( preview_ || fence < 0 )
-                    {
-                        drawer_->sync_cpu();
-                        if ( fence >= 0 )
-                            ::close( fence );
-                        fence = -1;
-                    }
-                }
-                else
-                {
-                    draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ), model_w_, model_h_, model_w_ * 3, boxes_.d.data(),
-                            boxes_.n );
-                }
-                if ( prev_live )
-                    preview_->publish( static_cast<const uint8_t*>( sl.eng->input_data() ) );
-                if ( enc_live )
-                {
-                    const auto t5 = clk::now();
-                    enc_->publish( sl.eng->input_fd(), fence, sl.ts_us );
-                    const auto t6 = clk::now();
-                    enc_ms = ms( t5, t6 );
-                }
-            }
-        }
+            enc_ms = draw_and_publish( sl, ps );
     }
     sl.tr.enc = enc_ms;
     g_t.add( sl.tr );
@@ -815,6 +717,125 @@ int Pipeline::publish_oldest()
     lk.unlock();
     pub_.pop();
     return sl.npu_ok ? 1 : 0;
+}
+
+// Detection boxes and trajectory trails -> boxes_ (tensor coords).
+// M3.11: trail points are sampled ring points as 3x3 px GpuBoxes in
+// the same batch as the detection boxes. Scene->tensor mapping is
+// (s, lb_top) -- identical for both loops. Detection boxes win the
+// VBO budget (128-box cap).
+void Pipeline::fill_gpu_boxes( float s, float lb_top )
+{
+    for ( int k = 0; k < dets_.n; ++k )
+    {
+        const Detection& d = dets_.d[k];
+        GpuBox b{};
+        b.x0 = d.x * s;
+        b.y0 = d.y * s + lb_top;
+        b.x1 = ( d.x + d.w ) * s;
+        b.y1 = ( d.y + d.h ) * s + lb_top;
+        if ( b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f )
+            continue;
+        det_color( d.cls, b.r, b.g, b.b );
+        b.a = 255;
+        boxes_.push( b );
+    }
+    if ( trajs_.n > 0 )
+    {
+        // samp matches the dst_cap below; a smaller array with a
+        // larger cap overflows the stack (segfault at pts>=61).
+        Tracker::TrajPoint samp[20];
+        for ( int k = 0; k < trajs_.n; ++k )
+        {
+            const TrackState& t = trajs_.d[k];
+            if ( t.state != Tracker::TRACK_CONF )
+                continue;  // trail after confirmation only
+            const int ns = tracker_.recent_points( t.id, 4, samp, 20 );
+            float prev_px = 0.0f;
+            float prev_py = 0.0f;
+            bool have_prev = false;  // spatial dedup state (per track)
+            for ( int j = 0; j < ns; ++j )
+            {
+                if ( boxes_.n >= 128 )  // PodList<GpuBox,128> cap
+                    break;
+                const float px = samp[j].x * s;
+                const float py = samp[j].y * s + lb_top;
+                if ( px < 0.0f || py < 0.0f
+                     || px >= static_cast<float>( model_w_ )
+                     || py >= static_cast<float>( model_h_ ) )
+                    continue;
+                if ( have_prev )
+                {
+                    const float dx = px - prev_px;
+                    const float dy = py - prev_py;
+                    if ( dx * dx + dy * dy < 16.0f )
+                        continue;  // too close to the previous trail point
+                }
+                prev_px = px;
+                prev_py = py;
+                have_prev = true;
+                GpuBox p{};
+                p.x0 = px - 1.5f;
+                p.y0 = py - 1.5f;
+                p.x1 = px + 1.5f;
+                p.y1 = py + 1.5f;
+                trail_color( t.id, p.r, p.g, p.b );
+                int a = 255 - ( ns - 1 - j ) * 10;  // newest opaque
+                if ( a < 60 )
+                    a = 60;
+                p.a = static_cast<uint8_t>( a );
+                boxes_.push( p );
+            }
+        }
+    }
+}
+
+// Viewer gating (rule: output only for a connected viewer,
+// recognition never gates). Both flags are per-frame atomics:
+// a late joiner misses at most one frame of boxes. With no
+// viewer the GPU draw pass is skipped entirely - the encoder
+// gate would drop the frame anyway, this just saves the draw.
+double Pipeline::draw_and_publish( Slot& sl, int ps )
+{
+    double enc_ms = 0.0;
+    const bool enc_live = enc_ && enc_->viewer_active();
+    const bool prev_live = preview_ && preview_->viewer_connected();
+    if ( !enc_live && !prev_live )
+        return enc_ms;
+    // Boxes mapped to tensor coordinates ONCE for both drawing
+    // paths - the same geometry as the legacy block (det_color).
+    const float s = static_cast<float>( model_w_ ) / cfg_.cam_w;
+    const float lb_top = sl.lb_top;
+    boxes_.clear();
+    fill_gpu_boxes( s, lb_top );
+    int fence = -1;  // GPU draw fence, consumed by enc publish
+    if ( drawer_ )
+    {
+        drawer_->draw_slot( ps, boxes_.d.data(), boxes_.n );
+        fence = drawer_->export_fence();
+        if ( preview_ || fence < 0 )
+        {
+            drawer_->sync_cpu();
+            if ( fence >= 0 )
+                ::close( fence );
+            fence = -1;
+        }
+    }
+    else
+    {
+        draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ), model_w_, model_h_, model_w_ * 3, boxes_.d.data(),
+                boxes_.n );
+    }
+    if ( prev_live )
+        preview_->publish( static_cast<const uint8_t*>( sl.eng->input_data() ) );
+    if ( enc_live )
+    {
+        const auto t5 = clk::now();
+        enc_->publish( sl.eng->input_fd(), fence, sl.ts_us );
+        const auto t6 = clk::now();
+        enc_ms = ms( t5, t6 );
+    }
+    return enc_ms;
 }
 
 void Pipeline::cal_dump_maybe( RknnEngine& e, int frame_idx )

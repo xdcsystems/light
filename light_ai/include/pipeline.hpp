@@ -140,6 +140,8 @@ private:
     bool cal_done_ = false;
     int cal_saved_ = 0;
     int last_cal_ = -1;
+    int reconnects_ = 0;   // camera disconnects recovered this run
+    int warmup_left_ = 0;  // publish-discards after a reconnect
 
     std::optional<NetPreview> preview_;
     std::optional<NetEncoder> enc_;
@@ -186,5 +188,12 @@ private:
     void dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, int lb_top, int lb_h,
             double cam_ms, double dec_ms, double rga_ms );
     void cal_dump_maybe( RknnEngine& e, int frame_idx );  // shared by both paths
+    // M6 batch-2: run()/publish_oldest() VariableThreshold splits.
+    int handle_camera_failure( int cam_err );  // 0 = recovered, -1 = fatal
+    int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
+    void frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_us,
+            double cam_ms, double dec_ms );
+    void fill_gpu_boxes( float s, float lb_top );  // det boxes + trails -> boxes_
+    double draw_and_publish( Slot& sl, int ps );   // viewer path; returns enc_ms
     void pool_discard();                 // drop pending slots on camera recovery
 };
