@@ -38,6 +38,12 @@ namespace
         const float v = std::strtof( s, &end );
         if ( errno == ERANGE || end == s || *end != '\0' )
             return false;
+        // strtof парсит "nan"/"NAN(...)" легально и без ERANGE; NaN проходит
+        // любой range-чек выше (сравнения с NaN всегда false) и выключает
+        // порог в collect_head (сравнение "conf >= thr" тоже ложно для NaN).
+        // Отбраковываем и inf-литералы тем же предикатом.
+        if ( !std::isfinite( v ) )
+            return false;
         *out = v;
         return true;
     }

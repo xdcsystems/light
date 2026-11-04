@@ -73,19 +73,19 @@ namespace
     // Candidate buffer on the stack: fixed capacity, no heap. The early
     // cut (obj < 0.05f) keeps the real flow to single digits; the cap
     // is a safety net.
-    constexpr int k_max_cand = 1024;
+    constexpr int kMaxCand = 1024;
 
     // Stage 2/2 of yolo_postprocess(): class-aware greedy NMS over the
     // candidates (standard yolov5 behaviour: boxes of different classes
     // never suppress each other), then the coordinate transform back to
     // camera pixels and emission into the preallocated detector list.
-    void emit_nms( std::array<Box, k_max_cand>& cand, int nc, float iou_thr, float scale, float lb_top, float cam_w, float cam_h,
+    void emit_nms( std::array<Box, kMaxCand>& cand, int nc, float iou_thr, float scale, float lb_top, float cam_w, float cam_h,
             DetList& out )
     {
         std::sort( cand.begin(), cand.begin() + nc, []( const Box& a, const Box& b ) {
             return a.conf > b.conf;
         } );
-        std::array<uint8_t, k_max_cand> sup {};
+        std::array<uint8_t, kMaxCand> sup {};
         for ( int i = 0; i < nc; ++i )
         {
             if ( sup[i] )
@@ -119,7 +119,7 @@ namespace
     // k*per*cell_hw further. The obj pre-check stays before the class
     // scan - that order is the confidence shortcut.
     void collect_head( int gi, const uint16_t* data, int h, int w, int per, int stride, float lb_top, float lb_h, float conf_thr,
-            std::array<Box, k_max_cand>& cand, int& nc )
+            std::array<Box, kMaxCand>& cand, int& nc )
     {
         for ( int gy = 0; gy < h; ++gy )
         {
@@ -167,7 +167,7 @@ namespace
                     if ( cy < lb_top || cy >= lb_top + lb_h )
                         continue;  // bar
 
-                    if ( nc < k_max_cand )
+                    if ( nc < kMaxCand )
                         cand[nc++] = { cx - bw_px / 2, cy - bh_px / 2, cx + bw_px / 2, cy + bh_px / 2, conf, best - 5 };
                 }
             }
@@ -197,7 +197,7 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
     // 7c99906, caught live on 2026-10-27).
     out.clear();
 
-    std::array<Box, k_max_cand> cand{};
+    std::array<Box, kMaxCand> cand{};
     int nc = 0;
 
     const float scale = cam_w / model_w;  // uniform, by width

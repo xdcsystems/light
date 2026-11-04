@@ -128,6 +128,13 @@ private:
     int aux_fd_ = -1;
     int model_w_ = 0;
     int model_h_ = 0;  // taken from the model, not from flags
+    // Audit item 3: single-source letterbox geometry. Computed once in
+    // the ctor via RgaResizer::band_geom and fed to BOTH consumers —
+    // the encoder crop (NetEncoder ctor) and the postprocess scale
+    // (dispatch). RGA stays the pixel writer; its per-frame LbGeom is
+    // cross-checked against this one at dispatch (one-time warn).
+    LbGeom lb_ {};
+    bool lb_warned_ = false;
     bool cal_done_ = false;
     int cal_saved_ = 0;
     int last_cal_ = -1;

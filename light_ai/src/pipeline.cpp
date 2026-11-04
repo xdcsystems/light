@@ -9,7 +9,6 @@
 #include <thread>
 #include <sys/stat.h>  // stat(): startup node fallback
 #include <unistd.h>
-#include <cmath>
 
 #include "pipeline.hpp"
 #include "coco_names.h"
@@ -237,6 +236,10 @@ Pipeline::Pipeline( const Config& cfg )
     model_w_ = static_cast<int>( ia.dims[ia.n_dims - 2] );
     model_h_ = static_cast<int>( ia.dims[ia.n_dims - 3] );
 
+    // Letterbox geometry computed once via RgaResizer::band_geom:
+    // the same numbers the RGA crop writes.
+    lb_ = RgaResizer::band_geom( cfg_.cam_w, cfg_.cam_h, model_w_, model_h_ );
+
     if ( cfg_.net )
     {
         // Hard confirmation of tensor contiguity: if size_with_stride equals
@@ -252,12 +255,10 @@ Pipeline::Pipeline( const Config& cfg )
             // box drawing, at the NATIVE letterbox-band size (no upscale):
             // w = model_w, h = cam_h * (model_w / cam_w) — for the default
             // 1280x720 camera and a 640x640 tensor that is 640x360 (16:9).
-            // The encoder derives the same band geometry from these numbers.
+            // Band geometry comes from the pipeline's single LbGeom:
+            // the same numbers the RGA crop writes.
 
-            const float s = static_cast<float>( model_w_ ) / cfg_.cam_w;
-            const int band_h = static_cast<int>( lroundf( cfg_.cam_h * s ) );
-
-            enc_.emplace( model_w_, band_h, cfg_.net_fps, cfg_.net_port, cfg_.net_host, cfg_.net_bitrate, model_w_, model_h_ );
+            enc_.emplace( model_w_, lb_.h, cfg_.net_fps, cfg_.net_port, cfg_.net_host, cfg_.net_bitrate, model_w_, model_h_, lb_.top, lb_.h );
             if ( cfg_.net_host.empty() )
             {
                 std::cout << "net: h264 PULL server on port " << cfg_.net_port << ", " << cfg_.net_bitrate
@@ -461,18 +462,42 @@ int Pipeline::run()
         const double dec_ms = ms( t1, t2 );
         if ( pub_.n == npool_ )
             ok += publish_oldest();
+        // Claim-or-drain: a FREE slot is NOT guaranteed here. On the 5 s
+        // publish timeout the dropped slot stays in flight until its own
+        // worker finishes the in-flight rknn_run — only that worker may
+        // free it (freeing here would race the NPU tensor read). So: scan
+        // for FREE; if every slot is in flight, drain the publish queue
+        // when it has entries, otherwise sleep briefly and rescan (a
+        // rknn_run away from finishing, ~30 ms). The stop_ check keeps
+        // Ctrl-C from parking here forever on a wedged NPU.
         int slot = -1;
-        for ( int k = 0; k < npool_; ++k )
+        bool starved_warned = false;
+        do
         {
-            std::lock_guard<std::mutex> lk( slots_[k].mx );
-            if ( slots_[k].st == Slot::FREE )
+            slot = -1;
+            for ( int k = 0; k < npool_; ++k )
             {
-                slot = k;
-                break;
+                std::lock_guard<std::mutex> lk( slots_[k].mx );
+                if ( slots_[k].st == Slot::FREE )
+                {
+                    slot = k;
+                    break;
+                }
             }
-        }
-        // Ring depth equals the pool size: after publishing the oldest
-        // frame a FREE slot is guaranteed to exist.
+            if ( slot >= 0 || stop_.load() )
+                break;
+            if ( !starved_warned )
+            {
+                std::cerr << "pipeline: all " << npool_ << " slots in flight, waiting for a worker to release one\n";
+                starved_warned = true;
+            }
+            if ( pub_.n > 0 )
+                ok += publish_oldest();
+            else
+                std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
+        } while ( true );
+        if ( slot < 0 )
+            break;  // stop requested with every slot in flight: leave through the normal path
         Slot& sl = slots_[slot];
         const auto t3 = clk::now();
         LbGeom lg {};
@@ -481,7 +506,14 @@ int Pipeline::run()
         cal_dump_maybe( *sl.eng, i );
         const auto t3b = clk::now();
         const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( t0 - t_start ).count();
-        dispatch( slot, i, ts_us, rga_ok, lg.top, lg.h, cam_ms, dec_ms, ms( t3, t3b ) );
+        // Cross-check RGA geometry against the single-owner one (warn once).
+        if ( !lb_warned_ && ( lg.top != lb_.top || lg.h != lb_.h ) )
+        {
+            lb_warned_ = true;
+            std::cerr << "pipeline: RGA letterbox drift: top=" << lg.top
+                      << " h=" << lg.h << " vs top=" << lb_.top << " h=" << lb_.h << std::endl;
+        }
+        dispatch( slot, i, ts_us, rga_ok, lb_.top, lb_.h, cam_ms, dec_ms, ms( t3, t3b ) );
         if ( npool_ == 1 )
             ok += publish_oldest();
     }
@@ -503,7 +535,6 @@ int Pipeline::run()
               << ( wall > 0 ? ok / wall : 0.0 ) << " FPS\n";
     return ok;
 }
-
 
 // --- M4: context-pool machinery --------------------------------------------
 

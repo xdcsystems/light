@@ -20,6 +20,9 @@ class RgaResizer
 {
 public:
     RgaResizer();
+    // Single-owner letterbox geometry: one formula for the RGA crop,
+    // the encoder crop and the postprocess scale. Integer truncation.
+    static LbGeom band_geom( int w_src, int h_src, int w_dst, int h_dst );
     // src: YUV422SP (w_src x h_src), dst: RGB888 (w_dst x h_dst).
     // aux: optional intermediate dma-buf for the two-pass path when the
     // scale ratio exceeds the RGA3 per-axis limit (1/8); pass -1 if unused.

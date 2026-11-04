@@ -11,8 +11,6 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <cmath>
-
 #include <im2d.h>
 #include <rga.h>
 constexpr int kPktQDepth = 3;  // encoder -> serve packet queue depth (frames)
@@ -137,7 +135,7 @@ namespace
     }
 }  // namespace
 
-NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host, int bitrate_kbps, int model_w, int model_h )
+NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host, int bitrate_kbps, int model_w, int model_h, int band_top, int band_h )
   : w_( w )
   , h_( h )
   , fps_( fps )
@@ -152,17 +150,15 @@ NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host
 
     // Visible letterbox band inside the tensor: everything outside is the
     // gray padding memset once at startup. The stream is the band at its
-    // NATIVE size — no upscale. The pipeline passes w = model_w and
-    // h = cam_h * (model_w / cam_w); with that w the scale below is
-    // s = model_w / w = 1, so band_h_ == h_ and band_top_ = (model_h_ - h_)/2
-    // (640x640 tensor, 1280x720 camera -> 640x360, band y=[140,500)).
+    // NATIVE size — no upscale. Band geometry arrives from the Pipeline
+    // (single-owner LbGeom, the same numbers as the RGA crop and the
+    // postprocess scale — audit item 3). The clamps below stay as
+    // defensive guards only.
 
-    const float s = static_cast<float>( model_w_ ) / static_cast<float>( w_ );
-    band_h_ = static_cast<int>( lroundf( static_cast<float>( h_ ) * s ) );
-
+    band_h_ = band_h;
+    band_top_ = band_top;
     if ( band_h_ > model_h_ )
         band_h_ = model_h_;
-    band_top_ = ( model_h_ - band_h_ ) / 2;
     if ( band_top_ < 0 )
         band_top_ = 0;
     std::cout << "enc: tensor band y=[" << band_top_ << ',' << band_top_ + band_h_ << ") of " << model_w_ << 'x' << model_h_ << " -> " << w_
@@ -762,22 +758,21 @@ bool NetEncoder::open_transport( int lfd, const std::string& url, AVFormatContex
             return false;
         fc->pb = t.pb;
         fc->flags |= AVFMT_FLAG_CUSTOM_IO;
+
         return true;
     }
-    else
+
+    // UDP: без рукопожатия и слушателя — сокет открывается один
+    // раз, пакеты пушатся вне зависимости от зрителя.
+    const int ret = avio_open( &t.pb, url.c_str(), AVIO_FLAG_WRITE );
+    if ( ret < 0 )
     {
-        // UDP: без рукопожатия и слушателя — сокет открывается один
-        // раз, пакеты пушатся вне зависимости от зрителя.
-        const int ret = avio_open( &t.pb, url.c_str(), AVIO_FLAG_WRITE );
-        if ( ret < 0 )
-        {
-            std::cerr << "enc: udp open failed: " << av_err_str( ret ) << '\n';
-            std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
-            return false;
-        }
-        fc->pb = t.pb;
-        return true;
+        std::cerr << "enc: udp open failed: " << av_err_str( ret ) << '\n';
+        std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
+        return false;
     }
+    fc->pb = t.pb;
+    return true;
 }
 
 // Stream setup, verbatim move out of run_session(): create the

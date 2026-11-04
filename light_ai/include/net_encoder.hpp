@@ -42,7 +42,16 @@ typedef struct AVIOContext AVIOContext;
 class NetEncoder
 {
 public:
-    NetEncoder( int w, int h, int fps, int port, const std::string& host, int bitrate_kbps, int model_w, int model_h );
+    NetEncoder( int w, int h, 
+                int fps, 
+                int port, 
+                const std::string& host, 
+                int bitrate_kbps, 
+                int model_w, 
+                int model_h,
+                int band_top,
+                int band_h );
+                
     ~NetEncoder();
 
     // Called once per frame from the pipeline loop. tensor_fd is the

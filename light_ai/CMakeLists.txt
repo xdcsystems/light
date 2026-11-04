@@ -103,7 +103,23 @@ target_link_libraries(light_ai PRIVATE
 
 target_link_directories(light_ai PRIVATE ${AV_LIBRARY_DIRS})
 
-set(TARGET_CPU_FLAGS "-mcpu=cortex-a76 -mtune=cortex-a76.cortex-a55" CACHE STRING
+# --- CPU flags (RK3588: 4x Cortex-A76 cpu4-7 + 4x Cortex-A55 cpu0-3) --------
+# Оба кластера имеют ИДЕНТИЧНЫЙ набор фич (проверено на плате 2026-11-03,
+# /proc/cpuinfo, cpu0 == cpu4): fp asimd aes sha2 crc32 atomics (LSE) fphp
+# asimdhp lrcpc dcpop asimddp (dotprod). Поэтому бинарь с +dotprod/+crypto
+# легален на ВСЕХ восьми ядрах — pin к A76 не нужен, планировщик сам сажает
+# горячие потоки (pipeline main + workers) на A76 (2.3 ГГц), а сетевые/фоновые
+# — куда свободно. LSE-атомики (std::atomic стоп-флага) тоже разрешены на A55.
+# Clang не понимает точечную запись "cortex-a76.cortex-a55" в -mtune (она
+# легальна только в GCC для big.LITTLE), поэтому ветки раздельные.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(TARGET_CPU_FLAGS "-mcpu=cortex-a76+crypto+dotprod")
+else()
+    set(TARGET_CPU_FLAGS "-mcpu=cortex-a76+dotprod+crypto -mtune=cortex-a76.cortex-a55")
+endif()
+
+# Пользователь может переопределить: cmake -DTARGET_CPU_FLAGS="-mcpu=..." ...
+set(TARGET_CPU_FLAGS "${TARGET_CPU_FLAGS}" CACHE STRING
     "CPU flags for the target SoC")
 
 # пробелы -> точки с запятой, чтобы опции скормились компилятору по отдельности
