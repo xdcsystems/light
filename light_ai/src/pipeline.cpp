@@ -662,6 +662,18 @@ int Pipeline::publish_oldest()
         // only for the --box-log jitter A/B CSV.
         smoother_.update( sl.dets, dets_ );
         smoother_.log_frame( sl.frame, sl.dets, dets_ );
+        tracker_.update( dets_, sl.ts_us, trajs_ );
+        // Throttled trajectory report: every 15th frame.
+        if ( trajs_.n > 0 && sl.frame % 15 == 0 )
+        {
+            std::cout << "track " << sl.frame << ": " << trajs_.n << " track(s)\n";
+            for ( int k = 0; k < trajs_.n && k < 8; ++k )
+            {
+                const TrackState& t = trajs_.d[k];
+                std::cout << "  id=" << t.id << ( t.state == Tracker::TRACK_CONF ? " conf" : " tent" ) << " c=("
+                          << t.cx << ',' << t.cy << ") v=(" << t.vx << ',' << t.vy << ") pts=" << t.n_pts << '\n';
+            }
+        }
         // Throttled report: every 15th frame, up to 8 boxes per report.
         if ( dets_.n > 0 && sl.frame % 15 == 0 )
         {

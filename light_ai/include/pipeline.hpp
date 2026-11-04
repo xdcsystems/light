@@ -17,6 +17,7 @@
 #include "net_encoder.hpp"
 #include "gpu_box_drawer.hpp"
 #include "box_smoother.hpp"
+#include "tracker.hpp"
 
 // Per-frame timing, single storage: dispatch fills cam/dec/rga,
 // the worker fills infer, publish fills enc; Timings::add consumes
@@ -145,6 +146,8 @@ private:
     std::optional<GpuBoxDrawer> drawer_;
 
     BoxSmoother smoother_;  // M3.10 EMA box smoothing + jitter log
+    Tracker tracker_;
+    TrajList trajs_;
 
     // Per-frame detection buffers: preallocated members, cleared each
     // frame — zero heap traffic in the steady-state path.
