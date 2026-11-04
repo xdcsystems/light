@@ -17,8 +17,8 @@ echo -n "ahead of origin: "; git rev-list --count origin/master..master 2>/dev/n
 echo; echo "==== git: незакоммиченное (должно быть пусто) ===="
 git status --short
 
-echo; echo "==== README: записи Roadmap (все чекбоксы) ===="
-grep -n "^- \[" README.md
+echo; echo "==== docs/roadmap.md: roadmap checkboxes ===="
+grep -n '^-\[' docs/roadmap.md
 
 echo; echo "==== README: блок опций CLI ===="
 grep -n -A12 "^Options:" README.md 2>/dev/null | head -30

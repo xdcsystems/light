@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Probe yolov5s_relu output semantics on the real /tmp/cal.ppm frame."""
+import os
 import numpy as np
+
 from rknnlite.api import RKNNLite
 
 d = open('/tmp/cal.ppm', 'rb').read()

@@ -178,7 +178,7 @@ private:  // data (header-layout rule: functions first, then a
     static constexpr int kTrackCount = 32;
     // Detections beyond kMaxDet are never matched to existing tracks
     // (they pass through / spawn fresh tracks, as before) — kMaxDet is
-    // sized above the DetList capacity as a safety net.
+    // equals the DetList capacity (128) as a safety net.
     static constexpr int kMaxDet = 128;
     static constexpr int kMaxPairs = kTrackCount * kMaxDet;
 

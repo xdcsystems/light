@@ -14,11 +14,17 @@ import re, os, sys
 
 RE_FRAME  = re.compile(r'^frame (\d+): (\d+) det\(s\)')
 RE_DET    = re.compile(r'^\s+cls=(.+?) conf=([\d.]+) box=\(([-\d.]+),([-\d.]+)\s+([-\d.]+)x([-\d.]+)\)')
-RE_TIMING = re.compile(r'^\[timing\]\s+\S+\s+cam=([\d.]+)\s+dec=([\d.]+)\s+rga=([\d.]+)\s+infer=([\d.]+)\s+\|\s+sum=([\d.]+) ms -> ~([\d.]+) FPS')
+RE_TIMING = re.compile(
+    r'^\[timing\]\s+\S+\s+cam=([\d.]+)\s+dec=([\d.]+)\s+rga=([\d.]+)\s+infer=([\d.]+)\s+'
+    r'(?:post=([\d.]+)\s+enc=([\d.]+)\s+)?'          # post/enc: pool logs only (old logs lack them)
+    r'\|\s+sum=([\d.]+) ms'
+    r'(?:\s+\([^)]*\))?'                              # "(pool window latency, N in flight)"
+    r'(?:\s+->\s+~([\d.]+) FPS|\s+\|\s+wall\s+~([\d.]+) FPS)')
 RE_FINAL  = re.compile(r'^Processed (\d+) frames in ([\d.]+) s -> ([\d.]+) FPS')
 
 def parse_log(path):
     frames, timings, mpp_asserts, final = {}, [], 0, None
+    timing_skipped = 0  # [timing] lines the parser could not match (format drift alarm)
     cur = None
     with open(path, encoding='utf-8', errors='replace') as fh:
         for line in fh:
@@ -32,15 +38,23 @@ def parse_log(path):
                                         w=float(m.group(5)), h=float(m.group(6)))); continue
             m = RE_TIMING.match(line)
             if m:
+                wall = m.group(9) is not None
                 timings.append(dict(cam=float(m.group(1)), dec=float(m.group(2)),
                                     rga=float(m.group(3)), infer=float(m.group(4)),
-                                    sum=float(m.group(5)), fps=float(m.group(6)))); continue
+                                    post=float(m.group(5)) if m.group(5) else None,
+                                    enc=float(m.group(6)) if m.group(6) else None,
+                                    sum=float(m.group(7)),
+                                    fps=float(m.group(9) if wall else m.group(8)),
+                                    wall=wall)); continue
+            elif line.startswith('[timing]'):
+                timing_skipped += 1  # loud, not silent: format drift is reported
             if 'mpp_buffer: Assertion caller failed' in line:
                 mpp_asserts += 1
             m = RE_FINAL.match(line)
             if m:
                 final = dict(frames=int(m.group(1)), sec=float(m.group(2)), fps=float(m.group(3)))
-    return dict(frames=frames, timings=timings, mpp_asserts=mpp_asserts, final=final)
+    return dict(frames=frames, timings=timings, mpp_asserts=mpp_asserts, final=final,
+                timing_skipped=timing_skipped)
 
 def steady(t, warmup_blocks=1):
     return t[warmup_blocks:] if len(t) > warmup_blocks else t
@@ -104,10 +118,15 @@ def compare(la, lb, name_a='A', name_b='B', iou_thr=0.3, conf_alarm=0.07):
         out.append(f'box center shift: mean |dx|={mean([s[0] for s in shifts]):.1f} px, '
                    f'mean |dy|={mean([s[1] for s in shifts]):.1f} px (day ref: <=2 px)')
     out.append('-- timing (steady, warmup block excluded) --')
+    if any(t.get('wall') for t in ta + tb):
+        out.append('(pool runs: sum = window latency, FPS from the wall clock)')
     if ta: out.append(f'{name_a}: infer={mean([t["infer"] for t in ta]):.1f} ms  sum={mean([t["sum"] for t in ta]):.1f} ms  '
                       f'cam={mean([t["cam"] for t in ta]):.1f} ms  ~{mean([t["fps"] for t in ta]):.1f} FPS')
     if tb: out.append(f'{name_b}: infer={mean([t["infer"] for t in tb]):.1f} ms  sum={mean([t["sum"] for t in tb]):.1f} ms  '
                       f'cam={mean([t["cam"] for t in tb]):.1f} ms  ~{mean([t["fps"] for t in tb]):.1f} FPS')
+    skipped = la.get('timing_skipped', 0) + lb.get('timing_skipped', 0)
+    if skipped:
+        out.append(f'NOTE: {skipped} [timing] line(s) did not match the parser format (log format drift?)')
     ok = not phantoms and not misses and not alarms and (not dconfs or abs(mean(dconfs)) <= conf_alarm)
     out.append('VERDICT: MATCH — int8 night quality holds, M2.4 can be closed' if ok
                else 'VERDICT: ALARM — do NOT close M2.4 yet, inspect entries above')

@@ -14,12 +14,11 @@ echo "PROJ_ROOT=$PROJ_ROOT"
 echo "BUILD_DIR=$BUILD_DIR"
 
 echo "==> Prebuild checks:"
-pkg-config --modversion rockchip_mpp 2>/dev/null || true
-pkg-config --modversion librga     2>/dev/null || true
-pkg-config --modversion libavformat 2>/dev/null || true
-if [ -n "$RKNN_ROOT" ]; then
-    echo "  RKNN_ROOT=$RKNN_ROOT (explicit override)"
-fi
+[ -n "$RKNN_ROOT" ] && echo "  RKNN_ROOT=$RKNN_ROOT (explicit override)"
+for m in rockchip_mpp librga libavformat libavcodec libavutil egl glesv2; do
+    v=$(pkg-config --modversion $m 2>/dev/null)
+    if [ -n "$v" ]; then echo "  $m: $v"; else echo "  $m: NOT FOUND"; fi
+done
 
 echo "==> CMake + build:"
 # BUILD_TYPE=RelWithDebInfo scripts/build.sh  -- for gdb sessions

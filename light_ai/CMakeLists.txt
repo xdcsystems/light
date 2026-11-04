@@ -11,7 +11,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPP REQUIRED rockchip_mpp)
 pkg_check_modules(RGA REQUIRED librga)
 
-# M3.7: GPU box drawing (Mali G610) — EGL/GBM + GLES2, entry points via
+# M3.7: GPU box drawing (Mali G610) — EGL/GBM + GLES2/3 (ES3 context, ES2 fallback), entry points via
 # eglGetProcAddress at runtime; libdl for the dlopen'ed libgbm.
 pkg_check_modules(EGL REQUIRED egl glesv2)
 
