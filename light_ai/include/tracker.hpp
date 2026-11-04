@@ -57,6 +57,13 @@ public:
         kDtMaxMs = 500,     // dt clamp, ms
         kQAccel = 2000,     // process noise, px/s^2 (tuning knob)
         kRMeas = 25,        // measurement noise, px^2 (tuning knob)
+        kVClampPxs = 500,   // |v| clamp, px/s: a single wild
+                            // measurement must not give the filter
+                            // an unphysical speed
+        kMissVDrop = 90,    // per-miss velocity decay x100 (x0.90
+                            // per miss tick): damps coasting so a
+                            // missed streak cannot extrapolate the
+                            // track across the frame (id-churn fix)
         kSizeEma = 30       // box-size EMA alpha x100 (tuning knob)
     };
 

@@ -52,6 +52,8 @@ void Tracker::kf_update( AxisKF& k, float z ) const
     const float y = z - k.x;
     k.x += k0 * y;
     k.v += k1 * y;
+    const float vmax = static_cast<float>( kVClampPxs );
+    k.v = k.v > vmax ? vmax : ( k.v < -vmax ? -vmax : k.v );
     const float p00 = k.p[0];
     const float p01 = k.p[1];
     const float p10 = k.p[2];
@@ -194,6 +196,10 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
         if ( !trk_taken[i] )
         {
             ++t.miss;
+            const float drop =
+                static_cast<float>( kMissVDrop ) / 100.0f;
+            t.fx.v *= drop;
+            t.fy.v *= drop;
             if ( ( t.life == TRACK_TENT && t.miss >= kMaxTentMiss ) ||
                  ( t.life == TRACK_CONF && t.miss > kMaxMiss ) )
                 t.life = TRACK_FREE;

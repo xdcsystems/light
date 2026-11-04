@@ -22,5 +22,15 @@ if [ -n "$RKNN_ROOT" ]; then
 fi
 
 echo "==> CMake + build:"
-cmake -S "$PROJ_ROOT" -B "$BUILD_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Release
+# BUILD_TYPE=RelWithDebInfo scripts/build.sh  -- for gdb sessions
+BUILD_TYPE="${BUILD_TYPE:-Release}"
+cmake -S "$PROJ_ROOT" -B "$BUILD_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 cmake --build "$BUILD_DIR" -j"$(nproc)"
+
+if [ "${SKIP_TIDY:-0}" != "1" ]; then
+    echo "==> clang-tidy gate (SKIP_TIDY=1 to skip):"
+    bash "$PROJ_ROOT/scripts/tidy_run.sh" 600 || {
+        echo "tidy gate FAILED -- build rejected"
+        exit 1
+    }
+fi

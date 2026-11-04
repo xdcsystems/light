@@ -864,3 +864,60 @@ bottle (mean -0.13, presence 80% vs 98%), entirely inside the
 threshold band. Working model unchanged: int8_mmse_v5. Bottle-gap
 attribution (mmse-branch vs v5-specific) NOT RUN by owner decision
 (v4 optional probe skipped); recorded as a v5 observation.
+\n
+## 2026-11-04 14:45 CET -- tracker coasting fix + tidy gate (patch19/19b)
+
+FIX (id churn / phantom velocity, backlog item from the morning log):
+- Hypothesis #1 (trail) REFUTED: traj.push sits only in measure() and
+  spawn() -- FACTS only, the trail was never fed predicted points
+  (in-code comment confirms the design was deliberate).
+- Real cause: Kalman COASTING. During a miss streak the predict step
+  keeps extrapolating v; at v=-926 px/s the predicted box leaves the
+  frame, and the returning person fails the IoU gate -> new id
+  (chain 1,3,5,...,21). dt was already clamped both ways -- not the
+  culprit.
+- Fix (patch19): kVClampPxs=500 clamp in kf_update (post-correction,
+  bounds both wild measurements and accumulated coasting) +
+  kMissVDrop=90 per-miss velocity decay (x0.90/tick) in the miss
+  branch: no measurement -> trust extrapolation less. After
+  kMaxMiss=15 ticks the residual is ~0.2 of the original speed, so
+  brief occlusions still re-associate by IoU.
+- Live 900-frame run: max |v| exactly 500.00 px/s -- the clamp caught
+  a partial-box spike in action (was -926 pre-patch); coasting decays
+  visibly (v=(0.6,-46.5) after a miss streak); id=5 held 240 frames
+  through walking, crouching and partial occlusion. Gaps longer than
+  kMaxMiss spawned new ids -- legitimate behavior, not churn.
+- LESSON: damp the predictor, not the trail.
+
+BUILD INFRA (tidy gate, per owner request "tidy in every build"):
+- scripts/tidy_run.sh: DB switched build-tidy -> build (fresh
+  compile_commands on every build.sh run, no stale-second-base trap);
+  GCC big.LITTLE flag stripped into a per-run DB copy (clang rejects
+  -mtune=cortex-a76.cortex-a55 -> rc=1 on all 11 files); now fails
+  with exit 1 on any finding or hang (was: log-only).
+- scripts/build.sh: tidy gate runs after build (SKIP_TIDY=1 escape
+  for quick iteration); BUILD_TYPE env override (default Release) --
+  closes the M6 lesson-4 gdb trap (manual -DCMAKE_BUILD_TYPE was
+  overwritten every run). First full run ends "tidy: PASS (0
+  findings)" on 11 files, zero compiler warnings.
+- One-liner fixes during bring-up: mkdir -p for the per-run DB copy
+  dir (python failed, tidy ran on a nonexistent DB -> rc=1 again).
+
+PROCESS LESSON: nested heredocs need DISTINCT terminators (outer
+OUTEREOF vs inner PYEOF). Same-terminator nesting silently ends the
+outer heredoc at the inner terminator -- the rest of the script
+leaks into the shell prompt and nothing executes (caught in-terminal
+2026-11-04 before any damage; fix: always vary terminators).
+
+BACKLOG NEW ITEM: track dedupe. A single person detection can spawn
+a tentative track near an alive unmatched track (ghost id=4 beside
+id=5 at track 630, pts=6, dead by 645; same pattern at 135 with
+id=1/id=2). Likely path: partial/low-conf box fails the IoU gate vs
+the coasting track, then spawns. Candidate fix: gate spawn by
+proximity to any alive track (IoU > 0 or center distance < ~0.5*bw
+of the existing track).
+
+NEXT (candidate): short-gap survival probe -- quick dip behind the
+pedestal (< 15 frames, ~0.6 s) to directly confirm re-association;
+today's gaps were all longer than kMaxMiss, so survival is confirmed
+only indirectly (via decayed velocities). Then M3.12 planning.
