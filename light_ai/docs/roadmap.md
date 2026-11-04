@@ -540,7 +540,7 @@ refer to README.md sections (../README.md).
       verified detection-correct by tools/oracle_check.py against
       an independent RKNNLite oracle on the live pipeline (base
       and pool runs, 960p): phantoms=0 in both, dconf <= 0.0003,
-      IoU >= 0.95 on matched frames; residuals only at the 0.25
+      IoU >= 0.94 on matched frames; residuals only at the 0.25
       threshold edge (cls 60) — see docs/state.md, Pool oracle
       verification. Effective pool throughput: 45.9 ms per 3
       in-flight frames ~= 15.3 ms/frame, at the bench_npu 3-core
