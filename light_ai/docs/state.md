@@ -808,3 +808,59 @@ Lessons (this session):
 5. Patch anchors must be read from the actual file bytes, not
    reconstructed from memory: a wrapped line made the one-line tail
    anchor miss (patch16 -> 16b), the same failure class as lesson 3.
+
+
+## fp16-reference check, v5, DAY half (2026-11-04, closed): v5 vs fp16
+
+Protocol: live camera /dev/video20, 1280x960, one static scene, one
+session (~14:05 CET, daylight, auto exposure; light not touched between
+the runs), 600 frames each, conf 0.25, --core 7, pool 1, viewer
+attached (fp16's viewer dropped at ~f465 -- handled, recognition
+unaffected), box-logs: misc/v5_live_day.csv, misc/fp16_live_day.csv.
+Order: v5 -> fp16. Scene NOTE: the "bowl" label (wide low object,
+x~325, 48x31 px) is the BLUE VASE again (COCO bowl/vase ambiguity,
+visually confirmed by the owner 2026-11-04; the object MOVED since
+the night session where it sat at x~378 -- position-specific, same
+object). No "vase" class appeared today; the tall narrow object at
+x~384 reads as "bottle" consistently. The scene composition differs
+from the 11-01 night session (bottle at x~384 day vs x~444 night) --
+cross-session comparisons are orientation only; the intra-pair day
+comparison is fully valid.
+
+Performance (intra-pair, valid):
+- infer: v5 23.5-23.8 ms vs fp16 27.4-27.5 ms (~15% int8 gain; the
+  night figure was ~20% -- cross-session, do not cite against).
+- sum 39.7-40.1 ms / ~25.2 FPS BOTH runs; wall 24.35 vs 24.28 FPS --
+  source-bound, pipeline parity confirmed.
+- PACING LESSON for the registry: cam-wait mirrors the infer delta
+  (v5 cam 12.8-13.6 ms vs fp16 8.2-8.3 ms -- exactly the infer gap);
+  under CFR pacing the sum is a pacing constant, not a load metric.
+  Load is visible in infer (and the mirrored cam), NOT in sum/FPS.
+  Candidate registry row: "sum under steady CFR ~39.7-40.1 ms is
+  pacing, infer + mirrored cam is the load signal".
+
+Detections (every 15th frame, 40 samples; CSV on board for full pass):
+| object         | v5 (int8)      | fp16           | delta   | presence v5/fp16 |
+|----------------|----------------|----------------|---------|------------------|
+| chair          | 0.81-0.84      | 0.84-0.86      | ~-0.02  | 100%/100%        |
+| potted plant   | 0.73-0.80      | 0.76-0.83      | ~-0.03  | 100%/100%        |
+| bowl (= blue vase) | 0.51-0.63  | 0.58-0.66      | ~-0.03  | 100%/100%        |
+| bottle         | 0.25-0.44      | 0.27-0.55      | ~-0.13  | 32/40 vs 39/40   |
+
+- The mmse small-object signature SHRANK on the day profile: bowl gap
+  ~-0.03 (night ~-0.07, old four-way ~-0.15). v5 tracks the fp16
+  reference closer than its predecessors.
+- NEW FINDING: bottle presence gap (80% vs 98%). All 8 v5 drops sit ON
+  the 0.25 threshold (conf dips to 0.25-0.26 immediately before each
+  drop, visible in the frame reports) -- threshold-edge flicker, the
+  same class as the night 3/40 vase drops, but a wider presence gap.
+  Not a blindness: no detection was lost at conf >= 0.30.
+- No phantoms, no empty frames in either run.
+
+VERDICT: M2.6 (fp16-reference check) CLOSES 2026-11-04 -- v5 == fp16
+on the day profile for the main object set (chair/potted plant/blue
+vase at 100% presence, deltas -0.02..-0.03); the only material gap is
+bottle (mean -0.13, presence 80% vs 98%), entirely inside the
+threshold band. Working model unchanged: int8_mmse_v5. Bottle-gap
+attribution (mmse-branch vs v5-specific) NOT RUN by owner decision
+(v4 optional probe skipped); recorded as a v5 observation.
