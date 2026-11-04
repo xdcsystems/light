@@ -132,6 +132,7 @@ private:
     std::condition_variable pkt_cv_;
     std::deque<AVPacket*> pkts_;
     int pkt_drops_ = 0;
+    bool wait_key_ = true;  // pkt_mx_: drain drops packets until the next IDR (see net_encoder.cpp)
     std::atomic<bool> active_ { false };  // stream path live (serve sets/clears under mx_)
     int acq_fd_ = -1;          // draw fence fd, consumed by RGA in send_frame
     int64_t frame_step_ = 1;   // pts increment in the muxer's time base

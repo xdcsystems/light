@@ -565,11 +565,19 @@ bool NetEncoder::send_frame( AVStream* stp )
             std::lock_guard<std::mutex> plk( pkt_mx_ );
             if ( pkts_.size() >= kPktQDepth )
             {
-                av_packet_free( &pkts_.front() );
-                pkts_.pop_front();
+                // Overflow = serve() stalled (slow viewer / Wi-Fi burst).
+                // Dropping one packet tears the reference chain: every later
+                // P-frame decodes into corruption until the next IDR. Flush
+                // the whole queue, re-arm the IDR gate and force an IDR on
+                // the next frame: the gap is one frame, not a full GOP.
+                for ( AVPacket* q : pkts_ )
+                    av_packet_free( &q );
+                pkts_.clear();
+                force_idr_.store( true );
+                wait_key_ = true;
                 ++pkt_drops_;
                 if ( pkt_drops_ == 1 || ( pkt_drops_ % 300 ) == 0 )
-                    std::cerr << "enc: packet queue full, dropped " << pkt_drops_ << " packet(s)\n";
+                    std::cerr << "enc: packet queue overflow, flushed, waiting for IDR\n";
             }
             pkts_.push_back( copy );
             pkt_cv_.notify_one();
@@ -610,7 +618,15 @@ int64_t NetEncoder::packet_pts()
 // file-local helpers above.
 void NetEncoder::drain_queue( AVFormatContext* fc )
 {
-    bool want_idr = true;  // per-session: join mid-GOP drops to the first IDR
+    // Session-start gate, shared with the overflow path in send_frame:
+    // armed here (late join mid-GOP must not decode P-frames against a
+    // missing reference), re-armed by the queue flush, cleared on the
+    // first IDR reaching the queue front. Guarded by pkt_mx_ on both
+    // sides (serve thread here, pipeline thread in send_frame).
+    {
+        std::lock_guard<std::mutex> plk( pkt_mx_ );
+        wait_key_ = true;
+    }
     while ( !quit_.load() && !error_.load() )  // same predicate as the wait below
     {
         AVPacket* p = nullptr;
@@ -621,18 +637,17 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
             } );
             if ( quit_.load() || error_.load() )
                 return;
+            if ( wait_key_ && !is_idr( pkts_.front() ) )
+            {
+                av_packet_free( &pkts_.front() );
+                pkts_.pop_front();
+                continue;
+            }
+            wait_key_ = false;
             p = pkts_.front();
             pkts_.pop_front();
         }
         // Takes ownership of p: freed inside on every path.
-        // Wait-for-IDR: everything before the first keyframe of a
-        // fresh session is undecodable for the new viewer - drop it.
-        if ( want_idr && !is_idr( p ) )
-        {
-            av_packet_free( &p );
-            continue;
-        }
-        want_idr = false;
         const int r = mux_write( fc, p );
         if ( r < 0 )
         {
