@@ -25,6 +25,7 @@ namespace
     struct Timings
     {
         double cam = 0, dec = 0, rga = 0, infer = 0, enc = 0;  // sums, ms
+        double post = 0.0;
         int n = 0;
         // Pool accounting: in pool mode the per-stage sums double-count
         // the in-flight window overlap (cam wait of frame k vs infer of
@@ -50,6 +51,7 @@ namespace
             dec += tr.dec;
             rga += tr.rga;
             infer += tr.infer;
+            post += tr.post;
             enc += tr.enc;
             if ( ++n % 60 == 0 )
                 report( "avg/60" );
@@ -59,21 +61,21 @@ namespace
         {
             if ( n == 0 )
                 return;
-            const double sum = ( cam + dec + rga + infer + enc ) / n;
+            const double sum = ( cam + dec + rga + infer + post + enc ) / n;
             if ( pool > 1 )
             {
                 const double wall = total / std::chrono::duration<double>( clk::now() - t0 ).count();
                 std::cout << "[timing] " << tag << " cam=" << std::fixed << std::setprecision( 1 ) << cam / n << " dec=" << dec / n
-                          << " rga=" << rga / n << " infer=" << infer / n << " enc=" << enc / n << " | sum=" << sum
+                          << " rga=" << rga / n << " infer=" << infer / n << " post=" << post / n << " enc=" << enc / n << " | sum=" << sum
                           << " ms (pool window latency, " << pool << " in flight) | wall ~" << wall << " FPS\n";
             }
             else
             {
                 std::cout << "[timing] " << tag << " cam=" << std::fixed << std::setprecision( 1 ) << cam / n << " dec=" << dec / n
-                          << " rga=" << rga / n << " infer=" << infer / n << " enc=" << enc / n << " | sum=" << sum << " ms -> ~"
+                          << " rga=" << rga / n << " infer=" << infer / n << " post=" << post / n << " enc=" << enc / n << " | sum=" << sum << " ms -> ~"
                           << ( sum > 0 ? 1000.0 / sum : 0.0 ) << " FPS\n";
             }
-            cam = dec = rga = infer = enc = 0;
+            cam = dec = rga = infer = post = enc = 0;
             n = 0;
         }
     } g_t;
@@ -577,14 +579,17 @@ void Pipeline::worker_loop( int slot )
             sl.tr.infer = ms( ti0, clk::now() );
             if ( okr )
             {
+                const auto tp0 = clk::now();
                 yolo_postprocess( *sl.eng, static_cast<float>( cfg_.cam_w ), static_cast<float>( cfg_.cam_h ),
                         static_cast<float>( model_w_ ), static_cast<float>( model_h_ ), sl.lb_top, sl.lb_h, sl.dets, cfg_.conf_thr,
                         cfg_.iou_thr );
+                sl.tr.post = ms( tp0, clk::now() );
             }
         }
         else
         {
             sl.tr.infer = 0.0;  // legacy: run() is short-circuited on a failed RGA
+            sl.tr.post = 0.0;
         }
         sl.npu_ok = rga_ok && okr;
         {

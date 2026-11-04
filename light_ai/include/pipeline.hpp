@@ -26,6 +26,7 @@ struct FrameTrace {
     double dec = 0.0;
     double rga = 0.0;
     double infer = 0.0;
+    double post = 0.0;
     double enc = 0.0;
 };
 
