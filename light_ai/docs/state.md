@@ -751,3 +751,60 @@ READABILITY PASS (post-tidy, 2026-11-03 evening):
   sum ~86.5 ms, 25.0 FPS); slow walkers produce a near-continuous
   dashed line with stride 4 + 4 px dedup; the dark-red palette
   entry reads on white walls.
+
+
+## M6 closure (2026-11-04): run/publish_oldest split, trail buffer overflow fix
+
+Commit 92bfa25 (also carries the trail-buffer fix and the frame_dispatch
+param-name alignment; see the two lessons below on why the fixes share
+the commit).
+
+- Tidy: 0 findings on the whole tree (11 files). Both >20-variable
+  offenders are split by VERBATIM moves (rule: no behavior change):
+  run() -> handle_camera_failure() (reconnect loop; reconnects/
+  warmup_left promoted to members reconnects_/warmup_left_),
+  acquire_slot() (claim-or-drain scan), frame_dispatch() (RGA +
+  cross-check + dispatch); publish_oldest() -> fill_gpu_boxes()
+  (det boxes + trails), draw_and_publish() (viewer-gated draw/encode;
+  gate conditions inverted to an early return, same semantics).
+- Live verification (3000 frames, pool 3, h264 pull, viewer attached
+  from ~f75 to ~f2400): 24.8 FPS steady, sum ~86.5 ms, tracks up to
+  pts=300 (ring saturation), no crash; viewer disconnect mid-run
+  handled cleanly (recognition kept running, enc -> 0.0).
+- PRE-EXISTING BUG found by the live run (NOT caused by the
+  refactor): the trail path passed dst_cap=20 to
+  Tracker::recent_points with a samp[16] buffer. The function trusts
+  dst_cap and writes up to 20 TrajPoints past the array; with n>=61
+  history points the stride-4 sample yields 16+ entries and the
+  stack (incl. the return address) is clobbered -> SIGSEGV with a
+  garbled PC (two floats glued: 0x0023900043ad7c00). Crash window
+  ~frames 90-120 with a confirmed track. Fixed by aligning the
+  buffer with the documented capacity: samp[20]. Root cause of the
+  previous invisibility: earlier live runs never kept a track alive
+  long enough to reach 61+ history points.
+- gdb note: the crash reproduces under gdb, but the production
+  binary had no -g (build.sh re-runs CMake and overwrites a manual
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo). The diagnosis was made without
+  a backtrace; if gdb is needed next time, fix the build type in
+  build.sh/CMakeLists, not on the command line.
+
+Lessons (this session):
+1. Patch-script dedup check "new in src" is INVALID when the
+   replacement text equals an anchor: the 13b removal was silently
+   skipped ("already: policy-block-out") and left dead locals (4
+   unused-variable warnings caught them). Acceptance test per patch:
+   clean build, zero warnings.
+2. Long pastes with backslash+bracket sequences break in the chat
+   renderer; split patches into <=5 pieces and verify with
+   py_compile before running.
+3. When renaming a variable during a verbatim move, grep the whole
+   function body BEFORE building -- the compiler catches only
+   "not declared", not a missed second occurrence (patch15 needed
+   patch15b for the dispatch() call).
+4. A buffer-size vs capacity-parameter mismatch is invisible to the
+   compiler and to tidy -- only a live run with a long track history
+   catches it. Buffer/capacity API contracts deserve an assert or a
+   span (Tracker::recent_points is the template case).
+5. Patch anchors must be read from the actual file bytes, not
+   reconstructed from memory: a wrapped line made the one-line tail
+   anchor miss (patch16 -> 16b), the same failure class as lesson 3.
