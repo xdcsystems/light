@@ -31,7 +31,10 @@ void Tracker::reset()
 void Tracker::kf_predict( AxisKF& k, float dt ) const
 {
     k.x += k.v * dt;
-    const float p00 = k.p[0], p01 = k.p[1], p10 = k.p[2], p11 = k.p[3];
+    const float p00 = k.p[0];
+    const float p01 = k.p[1];
+    const float p10 = k.p[2];
+    const float p11 = k.p[3];
     const float dt2 = dt * dt;
     const float q = static_cast<float>( kQAccel );
     k.p[0] = p00 + dt * ( p10 + p01 ) + dt2 * p11 + q * dt2 * dt / 3.0f;
@@ -49,7 +52,10 @@ void Tracker::kf_update( AxisKF& k, float z ) const
     const float y = z - k.x;
     k.x += k0 * y;
     k.v += k1 * y;
-    const float p00 = k.p[0], p01 = k.p[1], p10 = k.p[2], p11 = k.p[3];
+    const float p00 = k.p[0];
+    const float p01 = k.p[1];
+    const float p10 = k.p[2];
+    const float p11 = k.p[3];
     k.p[0] = ( 1.0f - k0 ) * p00;
     k.p[1] = ( 1.0f - k0 ) * p01;
     k.p[2] = p10 - k1 * p00;  // original p00 -- the x update above must not leak in
@@ -188,9 +194,8 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
         if ( !trk_taken[i] )
         {
             ++t.miss;
-            if ( t.life == TRACK_TENT && t.miss >= kMaxTentMiss )
-                t.life = TRACK_FREE;
-            else if ( t.life == TRACK_CONF && t.miss > kMaxMiss )
+            if ( ( t.life == TRACK_TENT && t.miss >= kMaxTentMiss ) ||
+                 ( t.life == TRACK_CONF && t.miss > kMaxMiss ) )
                 t.life = TRACK_FREE;
         }
         if ( t.life == TRACK_FREE )

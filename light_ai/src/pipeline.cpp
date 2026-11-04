@@ -633,13 +633,13 @@ void Pipeline::dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, in
 // from the class-keyed det_color palette).
 static void trail_color( int id, uint8_t& r, uint8_t& g, uint8_t& b )
 {
-    static constexpr uint8_t kPal[8][3] = {
+    static constexpr uint8_t s_pal[8][3] = {
         { 255, 255, 0 }, { 0, 255, 255 }, { 255, 0, 255 }, { 255, 128, 0 },
         { 0, 255, 0 },   { 200, 0, 0 }, { 128, 128, 255 }, { 255, 64, 64 } };
     const int i = id & 7;
-    r = kPal[i][0];
-    g = kPal[i][1];
-    b = kPal[i][2];
+    r = s_pal[i][0];
+    g = s_pal[i][1];
+    b = s_pal[i][2];
 }
 
 int Pipeline::publish_oldest()
@@ -741,7 +741,8 @@ int Pipeline::publish_oldest()
                         if ( t.state != Tracker::TRACK_CONF )
                             continue;  // trail after confirmation only
                         const int ns = tracker_.recent_points( t.id, 4, samp, 20 );
-                        float prev_px = 0.0f, prev_py = 0.0f;
+                        float prev_px = 0.0f;
+                        float prev_py = 0.0f;
                         bool have_prev = false;  // spatial dedup state (per track)
                         for ( int j = 0; j < ns; ++j )
                         {
