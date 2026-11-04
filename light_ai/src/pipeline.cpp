@@ -635,7 +635,7 @@ static void trail_color( int id, uint8_t& r, uint8_t& g, uint8_t& b )
 {
     static constexpr uint8_t kPal[8][3] = {
         { 255, 255, 0 }, { 0, 255, 255 }, { 255, 0, 255 }, { 255, 128, 0 },
-        { 0, 255, 0 },   { 255, 255, 255 }, { 128, 128, 255 }, { 255, 64, 64 } };
+        { 0, 255, 0 },   { 200, 0, 0 }, { 128, 128, 255 }, { 255, 64, 64 } };
     const int i = id & 7;
     r = kPal[i][0];
     g = kPal[i][1];
@@ -740,7 +740,9 @@ int Pipeline::publish_oldest()
                         const TrackState& t = trajs_.d[k];
                         if ( t.state != Tracker::TRACK_CONF )
                             continue;  // trail after confirmation only
-                        const int ns = tracker_.recent_points( t.id, 8, samp, 16 );
+                        const int ns = tracker_.recent_points( t.id, 4, samp, 20 );
+                        float prev_px = 0.0f, prev_py = 0.0f;
+                        bool have_prev = false;  // spatial dedup state (per track)
                         for ( int j = 0; j < ns; ++j )
                         {
                             if ( boxes_.n >= 128 )  // PodList<GpuBox,128> cap
@@ -751,13 +753,23 @@ int Pipeline::publish_oldest()
                                  || px >= static_cast<float>( model_w_ )
                                  || py >= static_cast<float>( model_h_ ) )
                                 continue;
+                            if ( have_prev )
+                            {
+                                const float dx = px - prev_px;
+                                const float dy = py - prev_py;
+                                if ( dx * dx + dy * dy < 16.0f )
+                                    continue;  // too close to the previous trail point
+                            }
+                            prev_px = px;
+                            prev_py = py;
+                            have_prev = true;
                             GpuBox p{};
                             p.x0 = px - 1.5f;
                             p.y0 = py - 1.5f;
                             p.x1 = px + 1.5f;
                             p.y1 = py + 1.5f;
                             trail_color( t.id, p.r, p.g, p.b );
-                            int a = 255 - ( ns - 1 - j ) * 16;  // newest opaque
+                            int a = 255 - ( ns - 1 - j ) * 10;  // newest opaque
                             if ( a < 60 )
                                 a = 60;
                             p.a = static_cast<uint8_t>( a );
