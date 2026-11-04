@@ -6,15 +6,17 @@
 
 #include "mpp_decoder.hpp"
 
-// MPP logs its version banner, rc/prep config and teardown meta dumps
-// at info/error level by default. Silence it for production runs;
-// set MPP_LOG_WARN below temporarily when debugging MPP internals.
-static struct MppLogQuieter {
-    MppLogQuieter() { mpp_set_log_level( MPP_LOG_WARN ); }
-} g_mpp_log_quieter;
 
 MppDecoder::MppDecoder( int w, int h ) : w_( w ), h_( h )
 {
+    // MPP logs its version banner, rc/prep config and teardown meta dumps
+    // at info/error level by default. Silence it for production runs;
+    // raise back to MPP_LOG_DEBUG temporarily when debugging MPP internals.
+    // (Replaces the former dynamic-init file static MppLogQuieter: the
+    // project rule bans statics with constructors, and the call is
+    // idempotent, so per-Decoder invocation is safe.)
+    mpp_set_log_level( MPP_LOG_WARN );
+
     do
     {
         if ( mpp_create( &ctx_, &mpi_ ) != MPP_OK )
@@ -373,8 +375,21 @@ int MppDecoder::aux_fd( size_t bytes )
     if ( !ok_ )
         return -1;
     if ( aux_ )
-        return mpp_buffer_get_fd( aux_ );
+    {
+        // The fd contract implies "at least `bytes` usable": a second
+        // call with a larger size silently returning the old, smaller
+        // buffer would end in an out-of-bounds RGA write later. Compare
+        // against the real allocation, reallocate on mismatch.
+        const size_t have = mpp_buffer_get_size( aux_ );
+        if ( have >= bytes )
+            return mpp_buffer_get_fd( aux_ );
+        std::cerr << "dec: aux buffer too small (" << have << " < " << bytes
+                  << "), reallocating\n";
+        mpp_buffer_put( aux_ );
+        aux_ = nullptr;
+    }
     if ( mpp_buffer_get( out_group_, &aux_, bytes ) != MPP_OK )
         return -1;
     return mpp_buffer_get_fd( aux_ );
 }
+

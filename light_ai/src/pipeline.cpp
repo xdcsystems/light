@@ -710,13 +710,16 @@ int Pipeline::publish_oldest()
         if ( preview_ || enc_ )
             enc_ms = draw_and_publish( sl, ps );
     }
+
     sl.tr.enc = enc_ms;
     g_t.add( sl.tr );
+    const bool npu_ok = sl.npu_ok;  // read under the lock: after unlock
+                                    // the worker may already be refilling
     sl.st = Slot::FREE;
     sl.frame = -1;
     lk.unlock();
     pub_.pop();
-    return sl.npu_ok ? 1 : 0;
+    return npu_ok ? 1 : 0;
 }
 
 // Detection boxes and trajectory trails -> boxes_ (tensor coords).
@@ -888,14 +891,27 @@ void Pipeline::pool_discard()
     {
         Slot& sl = slots_[pub_.front()];
         std::unique_lock<std::mutex> lk( sl.mx );
-        // The worker may still be mid-infer on this slot: wait for DONE
-        // (rknn_run always completes; quit_ is not set here), then free
-        // the slot without publishing.
-        sl.cv.wait( lk, [&sl] {
-            return sl.st != Slot::QUEUED;
+        // Bounded wait (same 5 s cap as the publish wait, P0-2 class of
+        // risk): rknn_run normally completes. quit_ in the predicate
+        // means a wedged NPU during camera recovery can no longer block
+        // shutdown -- Ctrl-C releases this wait just like publish_oldest.
+        // On timeout or quit the slot is NOT freed here: the NPU may
+        // still be reading its tensor. It is marked drop instead, so the
+        // worker frees it at its DONE transition -- the same contract
+        // publish_oldest() uses on its own timeout path.
+        sl.cv.wait_for( lk, std::chrono::seconds( 5 ), [this, &sl] {
+            return quit_.load() || sl.st != Slot::QUEUED;
         } );
-        sl.st = Slot::FREE;
-        sl.frame = -1;
+        if ( sl.st == Slot::QUEUED )
+        {
+            if ( !sl.drop )
+                sl.drop = true;  // worker frees at DONE
+        }
+        else
+        {
+            sl.st = Slot::FREE;
+            sl.frame = -1;
+        }
         lk.unlock();
         pub_.pop();
     }

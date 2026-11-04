@@ -495,9 +495,15 @@ void GpuBoxDrawer::sync_cpu()
 {
     if ( st_.dpy == EGL_NO_DISPLAY )
         return;
+    // Unconditional make_current(): the fallback path below used to call
+    // glFinish() without ensuring the context is current (the fence path
+    // did it inside the branch). make_current() is a no-op when the
+    // context is already current (the hot-path case), so this costs
+    // nothing in the steady state and makes the contract total: sync_cpu()
+    // is safe from any thread state where dpy is alive.
+    make_current();
     if ( st_.native_fence )
     {
-        make_current();
         EGLSyncKHR sync = st_.create_sync( st_.dpy, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr );
         if ( sync != EGL_NO_SYNC_KHR )
         {
@@ -512,6 +518,11 @@ void GpuBoxDrawer::sync_cpu()
             std::cerr << "drawer: fence wait timed out, glFinish fallback\n";
         }
     }
+    // Known limit: glFinish() has no timeout. If the fence timed out
+    // because the GPU is wedged, this call will likely hang too -- the
+    // 100 ms cap bounds the fence path only. Documented as accepted:
+    // there is no bounded glFinish in EGL/GLES, and skipping the sync
+    // would read the tensor mid-write (worse than hanging).
     glFinish();
 }
 

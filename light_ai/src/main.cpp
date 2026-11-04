@@ -313,14 +313,31 @@ namespace
     // Pipeline::run() picks it up on the next frame and exits through the
     // normal path (ring drain, TOTAL summary, encoder flush, camera
     // STREAMOFF/teardown). The handler dereferences an atomic store only
-    // (de facto async-signal-safe); g_pipe is set right before run() and
-    // cleared right after, so it never dangles.
+    // (de facto async-signal-safe); g_pipe is owned by SignalGuard (declared
+    // after the Pipeline, so it is destroyed BEFORE it) and cleared on every
+    // exit path -- including unwinding from an exception in run() -- thus it
+    // never points at a destroyed or dying Pipeline.
     Pipeline* g_pipe = nullptr;
     void on_stop_signal( int )
     {
         if ( g_pipe )
             g_pipe->request_stop();
     }
+
+    // RAII guard for g_pipe: it must never outlive the Pipeline. Set in
+    // the ctor, cleared in the dtor; since destruction runs in reverse
+    // declaration order, the guard (declared after p) dies BEFORE p --
+    // so a signal arriving during unwinding (exception from run()) or
+    // inside ~Pipeline() can no longer touch a dead or dying object.
+    // Trivially constructible/destructible: no heap, no statics.
+    struct SignalGuard
+    {
+        explicit SignalGuard( Pipeline* p ) { g_pipe = p; }
+        ~SignalGuard() { g_pipe = nullptr; }
+        SignalGuard( const SignalGuard& ) = delete;
+        SignalGuard& operator=( const SignalGuard& ) = delete;
+    };
+
 
 }  // namespace
 
@@ -390,9 +407,9 @@ int main( int argc, char** argv )
         Pipeline p( cfg );
         std::signal( SIGINT, on_stop_signal );
         std::signal( SIGTERM, on_stop_signal );
-        g_pipe = &p;
+
+        SignalGuard guard( &p );
         const int rc = p.run();
-        g_pipe = nullptr;
         return rc > 0 ? 0 : 1;
     }
     catch ( const std::exception& e )
