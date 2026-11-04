@@ -671,14 +671,16 @@ TIDY PASS (0693149, 2026-11-03 evening):
   -> enc=0.0 -> clean EOF, pipeline unaffected after the
   disconnect).
 
-CONSIDERED AND REJECTED - tidy size limit on the hot paths (2026-11-03):
-- run() (pipeline.cpp) and yolo_postprocess() also exceed the
-  200-line limit. Verdict: NOT split. Both are hot-path
-  monoliths where a mechanical split risks correctness for a
-  stylistic check (fifo ordering, tensor-band addressing,
-  cache-local loop structure); the net_encoder split was safe
-  because the moved code was self-contained per session.
-  Revisit only if either grows and gains a natural seam.
+SUPERSEDED (2026-11-04, owner decision): the 2026-11-03
+  "NOT split" verdict on run() (pipeline.cpp) and
+  yolo_postprocess() is REVERSED -- both ARE to be refactored
+  under the 200-line limit. Part of the refactor is already
+  done in-tree WITHOUT a state record (the record was lost with
+  the tidy_run.sh removal -- see below). Backlog (M6): audit the
+  current function sizes, finish the remaining splits, record
+  each split here; the "risks correctness" concern stands as a
+  constraint -- every split goes through build + live run
+  verification, not as a mechanical whitespace-style move.
 
 TIDY INFRASTRUCTURE (2026-11-03):
 - build-tidy compiles without the board's -mtune=...cortex-a55
