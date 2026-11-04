@@ -629,6 +629,19 @@ void Pipeline::dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, in
     sl.cv.notify_one();
 }
 
+// M3.11: track-trail palette by id % 8 (track-keyed, visually distinct
+// from the class-keyed det_color palette).
+static void trail_color( int id, uint8_t& r, uint8_t& g, uint8_t& b )
+{
+    static constexpr uint8_t kPal[8][3] = {
+        { 255, 255, 0 }, { 0, 255, 255 }, { 255, 0, 255 }, { 255, 128, 0 },
+        { 0, 255, 0 },   { 255, 255, 255 }, { 128, 128, 255 }, { 255, 64, 64 } };
+    const int i = id & 7;
+    r = kPal[i][0];
+    g = kPal[i][1];
+    b = kPal[i][2];
+}
+
 int Pipeline::publish_oldest()
 {
     const int ps = pub_.front();
@@ -714,6 +727,43 @@ int Pipeline::publish_oldest()
                     det_color( d.cls, b.r, b.g, b.b );
                     b.a = 255;
                     boxes_.push( b );
+                }
+                // M3.11: trajectory trail -- sampled ring points as 3x3 px
+                // GpuBoxes in the same batch as the detection boxes.
+                // Scene->tensor mapping identical to the box loop above.
+                // Detection boxes win the VBO budget (128-box cap).
+                if ( trajs_.n > 0 )
+                {
+                    Tracker::TrajPoint samp[16];
+                    for ( int k = 0; k < trajs_.n; ++k )
+                    {
+                        const TrackState& t = trajs_.d[k];
+                        if ( t.state != Tracker::TRACK_CONF )
+                            continue;  // trail after confirmation only
+                        const int ns = tracker_.recent_points( t.id, 8, samp, 16 );
+                        for ( int j = 0; j < ns; ++j )
+                        {
+                            if ( boxes_.n >= 128 )  // PodList<GpuBox,128> cap
+                                break;
+                            const float px = samp[j].x * s;
+                            const float py = samp[j].y * s + lb_top;
+                            if ( px < 0.0f || py < 0.0f
+                                 || px >= static_cast<float>( model_w_ )
+                                 || py >= static_cast<float>( model_h_ ) )
+                                continue;
+                            GpuBox p{};
+                            p.x0 = px - 1.5f;
+                            p.y0 = py - 1.5f;
+                            p.x1 = px + 1.5f;
+                            p.y1 = py + 1.5f;
+                            trail_color( t.id, p.r, p.g, p.b );
+                            int a = 255 - ( ns - 1 - j ) * 16;  // newest opaque
+                            if ( a < 60 )
+                                a = 60;
+                            p.a = static_cast<uint8_t>( a );
+                            boxes_.push( p );
+                        }
+                    }
                 }
                 int fence = -1;  // GPU draw fence, consumed by enc publish
                 if ( drawer_ )

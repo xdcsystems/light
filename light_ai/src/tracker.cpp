@@ -208,3 +208,32 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
         out.push( s );
     }
 }
+
+
+// M3.11: trail sampling. Oldest-first output, newest point always
+// included: walk the ring backwards, keep every `stride`-th hit.
+int Tracker::recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) const
+{
+    if ( stride <= 0 || dst == nullptr || dst_cap <= 0 )
+        return 0;
+    for ( const Track& t : tracks_ )
+    {
+        if ( t.life == TRACK_FREE || t.id != id )
+            continue;
+        const Traj& tr = t.traj;
+        const int n = tr.n;
+        int w = 0;  // write index into dst
+        for ( int k = 0; k < n && w < dst_cap; ++k )
+        {
+            if ( k % stride != 0 )
+                continue;
+            const int idx = ( tr.head - 1 - k + kTrajPoints ) % kTrajPoints;
+            dst[w].ts_us = tr.p[idx].ts_us;
+            dst[w].x = tr.p[idx].x;
+            dst[w].y = tr.p[idx].y;
+            ++w;
+        }
+        return w;
+    }
+    return 0;
+}

@@ -72,14 +72,19 @@ public:
     // predicts, associates, updates the filters and the trajectories,
     // ages unmatched tracks; fills out with all alive tracks.
     void update( const DetList& dets, int64_t ts_us, TrajList& out );
-
-private:
+    // Trail sample (POD, safe to expose): one trajectory point.
     struct TrajPoint
     {
         int64_t ts_us;
         float x, y;
     };
 
+    // M3.11: copies every `stride`-th point of track `id`'s ring into
+    // dst, oldest first, newest always included; at most dst_cap points.
+    // Unknown/free id -> returns 0.
+    int recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) const;
+
+private:
     struct Traj
     {
         std::array<TrajPoint, kTrajPoints> p {};
