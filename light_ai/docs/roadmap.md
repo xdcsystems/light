@@ -371,6 +371,45 @@ refer to README.md sections (../README.md).
       (~1.5-1.7x); timing unchanged (26.2 FPS steady). Earlier ~17 px
       estimate superseded: it counted low-conf flicker
       (bottle<->vase flips, n=46 vs n=300).
+- [x] M3.10-b: Kalman trajectory tracker (reconstructed 2026-11-04 --
+      the subsystem had no roadmap record; it pre-dates M3.11):
+      greedy IoU association over a per-track constant-velocity
+      Kalman filter (one 2-state filter per axis), ring trajectory
+      per track (300 pts, ~12 s at 25 fps), no heap/statics
+      (fixed-capacity members, project rules). Consumes the SMOOTHED
+      detection list in publish_oldest(); VFR handled honestly -- dt
+      from the real timestamps, clamped (kDtMaxMs=500).
+      Size-consistency gate ([kSizeMin, kSizeMax] % of the track's
+      EMA size): a partial half-out-of-frame box must not steal the
+      IoU match and inject a velocity spike (live run 2026-11-03,
+      id=4: v_y -182 px/s on a standing person). Tentative tracks
+      confirm after kConfirmHits=3 consecutive matches; a confirmed
+      track dies after kMaxMiss=15. Throttled report: every 15th
+      frame, up to 8 tracks (id/state/c/v/n_pts).
+- [x] M3.11: trajectory trail -- CLOSED 2026-11-04. Ring points
+      rendered as 3x3 px GpuBoxes in the SAME batch as the detection
+      boxes (no new primitive, no VBO layout change): Tracker gained
+      the public recent_points(id, stride, dst, dst_cap) accessor
+      (TrajPoint moved to the public section; the ring stays
+      private). The pipeline maps samples with the SAME
+      scene->tensor mapping as the box loop (x*s, y*s + lb_top);
+      only TRACK_CONF tracks draw a trail; detection boxes win the
+      128-box VBO budget (trail pushes stop at the cap; the CPU
+      fallback draw_boxes_cpu inherits the trail for free). Palette
+      by id % 8 (trail_color, visually disjoint from det_color;
+      white -> dark red {200,0,0} after the live review -- white
+      vanished on white walls). Tuning commit 8a89e0a: stride 8->4,
+      cap 16->20 (~3.2 s window at 25 fps), spatial dedup (a point
+      is skipped if within 4 px of the previous point of the SAME
+      track; dedup state is per-track, tracks never suppress each
+      other), alpha fade step 16->10. Verified live (3000-frame run,
+      h264 pull): trail geometry correct on stream screenshots, post
+      0.7-1.1 ms / sum ~86.5 ms / 25.0 FPS unchanged -- GPU cost in
+      noise. Commits: 91f751e (trail), 8a89e0a (tuning). Patch
+      lesson (repeated): patch5 v1 anchored on the DESIGN sketch,
+      not the inserted text -- aborted safely by the anchor check;
+      anchors must be verified against the file as it IS.
+
 - [x] Refactor audit (owner-requested, closed 2026-10-27): a full pass
       over the audit checklist, all findings fixed and verified live.
       - det_color -> switch (a469e06).

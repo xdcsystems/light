@@ -712,3 +712,40 @@ READABILITY PASS (post-tidy, 2026-11-03 evening):
   initializer and the computed check failed before write.
   Rule extended: no hand-written counters at all; every delta
   comes from counting the patch strings.
+
+
+## Trail session (2026-11-04): M3.11 verification, exit Bus error, tracker notes
+
+- GitHub incident (2026-11-04): a git push failed for ~1 h with
+  "Permission denied (publickey)" on BOTH ssh 22 and ssh.github.com
+  443 while the same key worked minutes earlier -- githubstatus.com
+  carried "Incident with Pull Requests, Git Operations and Issues",
+  Git Operations Degraded (09:49-11:00 UTC window). The local SSH
+  setup was innocent; the push succeeded once the incident cleared.
+  Protocol: with an unchanged key and a sudden publickey refusal,
+  check githubstatus.com FIRST.
+- Bus error on exit (OPEN, deferred by owner decision): one
+  3000-frame run (h264 pull; viewer connected ~f60, gone ~f1020)
+  printed "Bus error" AFTER "Processed 3000 frames" -- teardown
+  phase, past the main loop. NOT reproduced by: a 300-frame run
+  with no viewer (exit 0, clean mpp_task_queue_deinit) and a
+  1200-frame run with viewer attach+detach (clean drain, EOF
+  reached, exit clean). dmesg: no Mali/dma-buf faults. Hypothesis:
+  phase-dependent teardown race (encoder/mux vs main teardown),
+  same family as the shutdown-observations P2 item. Backlog:
+  reproduce under gdb (or with a core file, ulimit -c unlimited)
+  on a 3000-frame run with a viewer detach; record `echo exit: $?`
+  per run.
+- Tracker phantom velocities (OPEN, cosmetic): during miss streaks
+  Kalman coasting lets cx/cy/vx/vy run far off-frame (observed
+  v=-926.76 px/s, c=(-6.9, 479.3); id churn 1->3->5->7->9->...->21
+  across the 3000-frame run -- a returning person fails the IoU
+  match and gets a new id). The trail is unaffected
+  (out-of-tensor points are clipped at the border check). Backlog:
+  check whether Traj::push runs during coasting (grep 'traj\.|.
+  push' in tracker.cpp); if yes -- push on measure only; consider
+  a velocity clamp / earlier give-up after N misses.
+- Trail verification (M3.11): timing unchanged (post 0.7-1.1 ms,
+  sum ~86.5 ms, 25.0 FPS); slow walkers produce a near-continuous
+  dashed line with stride 4 + 4 px dedup; the dark-red palette
+  entry reads on white walls.
