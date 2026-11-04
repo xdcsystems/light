@@ -921,3 +921,16 @@ NEXT (candidate): short-gap survival probe -- quick dip behind the
 pedestal (< 15 frames, ~0.6 s) to directly confirm re-association;
 today's gaps were all longer than kMaxMiss, so survival is confirmed
 only indirectly (via decayed velocities). Then M3.12 planning.
+
+Short-gap probe (run2, 14:47): INCONCLUSIVE for the < kMaxMiss case.
+All observed gaps were >= ~15 frames (track-report holes at
+300->465, 585->660, 720->765, 885->960, 1020->1125) -- approach
+distance made clean 0.4-0.6 s dips impossible (person fills the
+frame near the camera; the "dip" is a frame exit, seconds long).
+Positive results: clamp caught two wild spikes at exactly 500.00
+px/s (tracks 990/1005, close-range partial boxes); id=5 held 120
+frames through close-range partial occlusion (66x507 -> 392x640
+boxes); no stale-track theft after long gaps (all new ids
+legitimate); no ghost duplicates this run. REMAINING: short-gap
+survival test must start standing NEXT to the pedestal, not
+approaching it.
