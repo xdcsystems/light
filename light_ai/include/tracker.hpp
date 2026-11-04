@@ -17,6 +17,14 @@
 // VFR is handled honestly -- dt comes from the real timestamps,
 // clamped so a pause cannot explode the prediction.
 //
+// Size-consistency gate: a detection matches a track only if its w/h
+// stay within [kSizeMin, kSizeMax] percent of the track's EMA size.
+// Partial detections (a person half-out of frame) carry a full-height
+// box squeezed to a fraction of the track size -- without the gate
+// such a box steals the IoU match and injects a false velocity spike
+// (live run 2026-11-03, id=4: v_y jumped to -182 px/s on a partial
+// box while the person stood still).
+//
 // out is cleared at entry (preallocated buffer contract) and carries
 // ALL alive tracks; tentative tracks are marked TRACK_TENT, the
 // consumer filters by state.
@@ -44,6 +52,8 @@ public:
         kMaxMiss = 15,      // confirmed track dies after this many misses
         kMaxTentMiss = 2,   // tentative dies after this many misses
         kIoUGate = 30,      // min IoU x100 to accept a match
+        kSizeMin = 40,      // det/track size ratio gate, lower x100
+        kSizeMax = 200,     // det/track size ratio gate, upper x100
         kDtMaxMs = 500,     // dt clamp, ms
         kQAccel = 2000,     // process noise, px/s^2 (tuning knob)
         kRMeas = 25,        // measurement noise, px^2 (tuning knob)

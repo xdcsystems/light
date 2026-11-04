@@ -139,6 +139,16 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
             if ( t.life == TRACK_FREE || trk_taken[i] )
                 continue;
             const float v = box_iou( d.x, d.y, d.w, d.h, t.fx.x - t.bw * 0.5f, t.fy.x - t.bh * 0.5f, t.bw, t.bh );
+            // Size-consistency gate: a partial box (person half out
+            // of frame) carries a squeezed w/h -- it must not steal
+            // the match from the full-size detection.
+            if ( t.bw <= 0.0f || t.bh <= 0.0f )
+                continue;
+            const float rw = d.w / t.bw * 100.0f;
+            const float rh = d.h / t.bh * 100.0f;
+            if ( rw < static_cast<float>( kSizeMin ) || rw > static_cast<float>( kSizeMax ) ||
+                 rh < static_cast<float>( kSizeMin ) || rh > static_cast<float>( kSizeMax ) )
+                continue;
             if ( v > best_iou )
             {
                 best_iou = v;
