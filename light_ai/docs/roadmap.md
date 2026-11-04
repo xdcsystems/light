@@ -71,13 +71,24 @@ refer to README.md sections (../README.md).
       MADE: int8_mmse 2026-10-30, superseded by int8_mmse_v5
       2026-11-01 (v4-vs-v5 night/day A/B, docs/state.md). Still
       open: a formal fp16-reference check for the current working
-      model (v5) — the four-way day A/B of 2026-11-01 covered
-      v3/mmse/v4 only. Progress 2026-11-01 evening: the NIGHT half
+      model (v5) — CLOSED 2026-11-04, both halves done (night
+      2026-11-01, day 2026-11-04; see below). The four-way day A/B
+      of 2026-11-01 covered v3/mmse/v4 only. Progress 2026-11-01
+      evening: the NIGHT half
       is done live (600 frames each, one static scene with the
       restored vase) — v5 == fp16, no ALARM; the soft mmse
       small-object signature confirmed (bowl ~-0.07, presence
-      100%); record in docs/state.md. Remaining: the DAY half
-      (next daylight session, same protocol).
+      100%); record in docs/state.md. CLOSED 2026-11-04: the DAY
+      half is done live (600 frames each, one static day session,
+      conf 0.25, --core 7; scene re-arranged since the night run --
+      the blue vase moved to x~325 and is labeled "bowl" there,
+      bottle at x~384) -- v5 == fp16 on the main object set (deltas
+      -0.02..-0.03, 100% presence); the only material gap is bottle
+      (mean -0.13, presence 80% vs 98%), entirely inside the
+      threshold band. Full record: docs/state.md, "fp16-reference
+      check, v5, DAY half". Registry candidate: under steady CFR the
+      [timing] sum is a pacing constant; load is visible in infer
+      and the mirrored cam only.
 - [x] M2.4: int8 quantization — CLOSED 2026-10-26 on v3 (day-4
       daytime recalibration). v3 recipe: calibrated on 60 fresh day-4
       daytime frames, quant config mean=0/std=255 -> canonical input scale
