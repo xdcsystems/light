@@ -446,6 +446,13 @@ refer to README.md sections (../README.md).
         a side effect: the 32-slot tracker no longer churns on ~30
         duplicate copies of one object per frame (the old accumulating
         DetList fed them to BoxSmoother every frame).
+      - Spawn dedupe (2026-11-04): an unmatched detection overlapping
+        an alive track above kSpawnDedupeGate (kIoUGate/2) is
+        suppressed instead of spawning a duplicate track (commit
+        f0972d9). Verified live: 1200- and 3000-frame runs, both
+        logged suppressions were genuine duplicates of an active
+        track; a new object entering over a coasting track is not
+        yet stress-tested against this gate.
 - [x] P0/P1 hardening pass (2026-11-02, CLOSED): a reliability review
       of the whole tree before the M5 refactor; every patch is an
       anchor-verified, all-or-nothing script; every change verified
