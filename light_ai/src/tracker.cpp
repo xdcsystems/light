@@ -1,6 +1,7 @@
-#include "tracker.hpp"
-
+#include <iostream>
 #include <cmath>
+
+#include "tracker.hpp"
 
 namespace {
 
@@ -83,6 +84,36 @@ void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t
 
 void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
 {
+    // Dedupe: an unmatched detection overlapping an alive track beyond
+    // kSpawnDedupeGate is treated as a duplicate of it and dropped.
+    // The metric is the same box IoU the association uses -- symmetric
+    // in both sizes, no second notion of "closeness". Deliberately no
+    // size-consistency check here: a squeezed partial box (person half
+    // out of frame) fails that gate in association, which is exactly
+    // the path that used to spawn duplicates -- it must be suppressed,
+    // not allowed through.
+    const float nx = cx - bw * 0.5f;
+    const float ny = cy - bh * 0.5f;
+    for ( const Track& t : tracks_ )
+    {
+        if ( t.life == TRACK_FREE || t.bw <= 0.0f || t.bh <= 0.0f )
+            continue;
+        const float iou = box_iou( nx, ny, bw, bh,
+                                   t.fx.x - t.bw * 0.5f, t.fy.x - t.bh * 0.5f, t.bw, t.bh );
+
+        if ( iou * 100.0f >= static_cast<float>( kSpawnDedupeGate ) )
+        {
+            std::cerr << "Dedupe: spawn suppressed by track (id=" << t.id
+                      << ", iou=" << iou * 100.0f << "%)" << std::endl;
+            return;
+        }
+
+        // Optional: a track that has already missed frames may have
+        // drifted away from a genuinely new object standing there.
+        // Uncomment to relax the gate for such tracks:
+        // if ( t.miss > 0 ) continue;  -- must come BEFORE the IoU check
+    }
+
     for ( Track& t : tracks_ )
     {
         if ( t.life != TRACK_FREE )

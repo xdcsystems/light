@@ -64,7 +64,11 @@ public:
                             // per miss tick): damps coasting so a
                             // missed streak cannot extrapolate the
                             // track across the frame (id-churn fix)
-        kSizeEma = 30       // box-size EMA alpha x100 (tuning knob)
+        kSizeEma = 30,      // box-size EMA alpha x100 (tuning knob)
+        kSpawnDedupeGate = kIoUGate / 2  // spawn-dedupe gate, min IoU x100:
+                            // an unmatched detection overlapping an alive
+                            // track beyond this is a duplicate seen through
+                            // a gate failure (size gate, edge IoU jitter)
     };
 
     enum TrackLife
