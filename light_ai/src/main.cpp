@@ -297,6 +297,16 @@ namespace
                                 c.box_log = v;
                                 return true;
                             } } },
+            { "--net-src",
+                    { true,
+                            "network MJPEG pull source (http://host:port/path); replaces --device",
+                            []( Config& c, const char* v ) {
+                                if ( std::strncmp( v, "http://", 7 ) != 0 )
+                                    return value_error( "--net-src", v, "http://host:port/path" );
+                                c.net_src = v;
+                                c.device.clear();  // mutual exclusion by construction
+                                return true;
+                            } } },
     };
 
     void usage()
@@ -387,6 +397,21 @@ int main( int argc, char** argv )
                      "preview itself, e.g.:\n"
                      "    light_ai --net --net-h264\n";
         return 2;
+    }
+
+    // A network source replaces the USB camera entirely; the frame
+    // geometry, however, still comes from --w/--h: the RGA letterbox
+    // mapping and the encoder band are computed from them BEFORE the
+    // first frame arrives, and a mismatch with the phone's actual
+    // stream would silently stretch the image (the "substituted
+    // source is worse than a loud one" principle, M3.8). The user
+    // must state the phone's resolution explicitly.
+    if ( !cfg.net_src.empty() )
+    {
+        std::cerr << "net-src: " << cfg.net_src << "\n"
+                     "  NOTE: --w/--h must match the phone's stream resolution\n"
+                     "  (IP Webcam: the same values set in the app), e.g.:\n"
+                     "    light_ai --net-src http://<phone-ip>:8080/video --w 1280 --h 720\n";
     }
 
     // --cal-dir only makes sense with the --cal series; --dump-cal always

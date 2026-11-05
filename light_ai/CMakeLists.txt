@@ -80,8 +80,9 @@ add_executable(light_ai
     src/pipeline.cpp
     src/net_preview.cpp
     src/net_encoder.cpp
-        src/tracker.cpp
+    src/tracker.cpp
     src/gpu_box_drawer.cpp
+    src/net_mjpeg_source.cpp
 )
 
 target_include_directories(light_ai PRIVATE
