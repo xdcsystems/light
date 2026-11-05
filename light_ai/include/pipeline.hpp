@@ -1,24 +1,25 @@
 #pragma once
 #include <array>
+#include <vector>
+#include <string>
 #include <atomic>
 #include <cstdint>
 #include <condition_variable>
 #include <mutex>
 #include <optional>
-#include <string>
 #include <thread>
-#include <vector>
 #include <iostream>
 #include <variant>
-
-#include "camera_v4l2.hpp"
-#include "yolo_postprocess.hpp"
 #include <chrono>   // Timings: steady_clock stamps
 #include <iomanip>  // Timings: report formatting
 #include <iostream> // Timings: report prints
+
+#include "camera_v4l2.hpp"
+#include "yolo_postprocess.hpp"
 #include "mpp_decoder.hpp"
 #include "rga_resizer.hpp"
 #include "rknn_engine.hpp"
+#include "cal_dumper.hpp"
 #include "net_preview.hpp"
 #include "net_encoder.hpp"
 #include "gpu_box_drawer.hpp"
@@ -163,9 +164,7 @@ private:
     // cross-checked against this one at dispatch (one-time warn).
     LbGeom lb_ {};
     bool lb_warned_ = false;
-    bool cal_done_ = false;
-    int cal_saved_ = 0;
-    int last_cal_ = -1;
+    CalDumper cal_dumper_;  // cal_saved_/last_cal_/cal_done_ moved here (stage 2)
     int reconnects_ = 0;   // camera disconnects recovered this run
     int warmup_left_ = 0;  // publish-discards after a reconnect
     // Timing accumulator: the throttled avg/60 + TOTAL reports.
@@ -293,7 +292,6 @@ private:
     int publish_oldest();                // returns 1 if the frame was valid
     void dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, const LbGeom& lb,
             double cam_ms, double dec_ms, double rga_ms );
-    void cal_dump_maybe( RknnEngine& e, int frame_idx );  // shared by both paths
     // M6 batch-2: run()/publish_oldest() VariableThreshold splits.
     int handle_camera_failure( int cam_err );  // 0 = recovered, -1 = fatal
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop

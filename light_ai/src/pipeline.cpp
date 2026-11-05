@@ -1,6 +1,4 @@
 #include <cstring>
-#include <fstream>
-#include <sstream>
 #include <filesystem>
 #include <chrono>
 #include <iomanip>
@@ -160,6 +158,7 @@ Pipeline::Pipeline( const Config& cfg )
 
     model_w_ = static_cast<int>( ia.dims[ia.n_dims - 2] );
     model_h_ = static_cast<int>( ia.dims[ia.n_dims - 3] );
+    cal_dumper_.init( cfg_.dump_cal, cfg_.cal_frames, cfg_.cal_interval, cfg_.cal_dir, model_w_, model_h_ );
 
     // Letterbox geometry computed once via band_geom:
     // the same numbers the RGA crop writes.
@@ -552,7 +551,7 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
     const bool rga_ok =
             rga_.resize( fd_src, cfg_.cam_w, cfg_.cam_h, sl.eng->input_fd(), model_w_, model_h_, aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2, &lg,
                     dec_.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
-    cal_dump_maybe( *sl.eng, frame_idx );
+    cal_dumper_.maybe( frame_idx, static_cast<const uint8_t*>( sl.eng->input_data() ), sl.eng->input_size() );
     const auto t3b = clk::now();
     // Cross-check RGA geometry against the single-owner one (warn once).
     if ( !lb_warned_ && ( lg.left != lb_.left || lg.top != lb_.top || lg.w != lb_.w || lg.h != lb_.h ) )
@@ -886,53 +885,6 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
         enc_ms = ms( t5, t6 );
     }
     return enc_ms;
-}
-
-void Pipeline::cal_dump_maybe( RknnEngine& e, int frame_idx )
-{
-    // Calibration dump: 
-    // P6 PPM of the model input. The only diagnostic CPU pixel read.
-    // --dump-cal writes a single /tmp/cal.ppm;
-    // --cal N  saves up to N frames (one every --cal-interval) into dataset/.
-
-    const bool cal_wanted = cfg_.dump_cal || ( cfg_.cal_frames > 0 && cal_saved_ < cfg_.cal_frames );
-    const bool cal_due = !cal_done_ || ( frame_idx - last_cal_ >= cfg_.cal_interval );
-    if ( !cal_wanted || !cal_due )
-        return;
-    const size_t bytes = static_cast<size_t>( model_w_ ) * model_h_ * 3;
-    std::string path = "/tmp/cal.ppm";
-    if ( !cfg_.dump_cal )
-    {
-        std::ostringstream name;
-
-        // The series name follows the FRAME counter, as documented
-        // (README / tools/oracle_check.py protocol): 
-        // with --cal-interval K the files are frames 0, K, 2K, .... cal_saved_ stays as the
-        // --cal N cap. Series directory: --cal-dir overrides the default dataset/.
-
-        name << ( cfg_.cal_dir.empty() ? std::string( "dataset/cal_" )
-                                       : cfg_.cal_dir + "/cal_" )
-             << std::setw( 4 ) << std::setfill( '0' ) << frame_idx << ".ppm";
-        path = name.str();
-    }
-    std::ofstream out( path, std::ios::binary );
-    if ( out && e.input_size() >= bytes )
-    {
-        out << "P6\n" << model_w_ << ' ' << model_h_ << "\n255\n";
-        out.write( reinterpret_cast<const char*>( e.input_data() ), static_cast<std::streamsize>( bytes ) );
-        if ( cfg_.dump_cal )
-        {
-            std::cout << "calibration dump: " << path << " (" << model_w_ << 'x' << model_h_ << ")\n";
-        }
-        ++cal_saved_;
-        last_cal_ = frame_idx;
-        cal_done_ = true;
-    }
-    else
-    {
-        std::cerr << "calibration dump failed\n";
-        cal_done_ = true;  // do not retry-spam on a broken sink
-    }
 }
 
 void Pipeline::pool_discard()
