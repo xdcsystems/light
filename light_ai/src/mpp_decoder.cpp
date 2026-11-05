@@ -199,6 +199,56 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
         return -1;
     }
 
+    // Chroma-layout detection from the JPEG SOF marker. The MPP MJPEG
+    // decoder follows the stream's subsampling (4:2:0 -> 420SP, 4:2:2 ->
+    // 422SP) and ignores the fmt pre-set on the user frame (the
+    // green-bottom A/B). The RGA read side must match the actual layout,
+    // so parse SOFn here: max vertical sampling factor 2 -> 420SP,
+    // otherwise 422SP. Scan is bounded (first 2 KiB) and any parsing
+    // doubt keeps the previous value.
+    {
+        const size_t lim = size < 2048 ? size : 2048;
+        uint8_t v_max = 0;
+        for ( size_t i = 2; i + 4 <= lim; )
+        {
+            if ( data[i] != 0xFF )
+            {
+                ++i;
+                continue;
+            }
+            const uint8_t m = data[i + 1];
+            if ( m == 0x01 || ( m >= 0xD0 && m <= 0xD9 ) )
+            {
+                i += 2;
+                continue;
+            }
+            const uint16_t len = ( static_cast<uint16_t>( data[i + 2] ) << 8 ) | data[i + 3];
+            if ( len < 2 )
+                break;
+            if ( m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC )
+            {
+                // SOFn: precision(1) height(2) width(2) ncomp(1),
+                // then per component: id(1), h/v packed(1), tq(1).
+                const uint8_t ncomp = i + 8 <= size ? data[i + 7] : 0;
+                for ( int c = 0; c < ncomp && i + 8 + static_cast<size_t>( c ) * 3 + 2 < size; ++c )
+                {
+                    const uint8_t hv = data[i + 8 + static_cast<size_t>( c ) * 3 + 1];
+                    if ( ( hv & 0x0F ) > v_max )
+                        v_max = hv & 0x0F;
+                }
+                break;
+            }
+            i += 2 + len;
+        }
+        const MppFrameFormat want = v_max >= 2 ? MPP_FMT_YUV420SP : MPP_FMT_YUV422SP;
+        if ( v_max && want != out_fmt_ )
+        {
+            out_fmt_ = want;
+            std::cerr << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( v_max >= 2 ? "0" : "2" )
+                      << " -> out fmt " << ( out_fmt_ == MPP_FMT_YUV420SP ? "420SP" : "422SP" ) << '\n';
+        }
+    }
+
     // Defensive deinit: on every normal return path below the packet is
     // already deinit'ed - its lifetime is tied to the output dequeue (see
     // the notes at each return). This block only catches paths where the

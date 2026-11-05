@@ -31,6 +31,13 @@ public:
     // multi-pass RGA when the scale ratio exceeds the RGA3 limit (1/8).
     int aux_fd( size_t bytes );  // returns fd or -1; buffer lives until dtor
 
+    // Actual decoder output layout, detected per-frame from the JPEG SOF
+    // marker (see make_packet): 420SP for 4:2:0 streams, 422SP for
+    // 4:2:2/4:4:4. The RGA read side must match (the green-bottom
+    // lesson); before the first frame the value is the legacy camera
+    // default (422SP).
+    MppFrameFormat out_fmt() const { return out_fmt_; }
+
 private:
     // Bounded MPP polls: a wedged decoder must not hang the pipeline
     // thread forever: camera recovery cannot help a thread that is
@@ -63,6 +70,7 @@ private:
     MppBuffer aux_ = nullptr;
 
     int w_ = 0, h_ = 0;
+    MppFrameFormat out_fmt_ = MPP_FMT_YUV422SP;  // SOF-detected, see make_packet
     uint64_t pts_ = 0;
     int frames_ = 0;
     bool ok_ = false;
