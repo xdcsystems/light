@@ -822,9 +822,9 @@ bool NetEncoder::open_transport( int lfd, const std::string& url, AVFormatContex
 
         int one = 1;
         ::setsockopt( t.cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );
-        const int sndbuf = 262144;  // запас на микроподлагивания сети
+        const int sndbuf = 2 * 1024 * 1024;  // ~10 s of jitter buffering at 1500 kbps
         ::setsockopt( t.cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof( sndbuf ) );
-        const timeval tv { 2, 0 };  // зависший зритель отваливается, а не морозит конвейер
+        const timeval tv { 15, 0 };  // dead viewer eventually releases the socket; live jitter is absorbed by sndbuf
         ::setsockopt( t.cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
         std::cout << "enc: viewer connected (tcp)\n";
         force_idr_.store( true );  // next encoded frame must be an IDR
