@@ -9,6 +9,7 @@
 #include <thread>
 #include <vector>
 #include <iostream>
+#include <variant>
 
 #include "camera_v4l2.hpp"
 #include "yolo_postprocess.hpp"
@@ -20,6 +21,7 @@
 #include "gpu_box_drawer.hpp"
 #include "box_smoother.hpp"
 #include "tracker.hpp"
+#include "net_mjpeg_source.hpp"
 
 // Per-frame timing, single storage: dispatch fills cam/dec/rga,
 // the worker fills infer, publish fills enc; Timings::add consumes
@@ -36,6 +38,9 @@ struct FrameTrace {
 struct Config
 {
     std::string device = "/dev/video20";
+    // M5 pre-work: network MJPEG pull source (http://host:port/path).
+    // Non-empty excludes --device: exactly one source per run.
+    std::string net_src;
     std::string model = "./misc/yolov5s_relu_int8_mmse_v5.rknn";
     int cam_w = 1280, cam_h = 960;
     // Two-pass RGA kicks in only when the source exceeds 8x the model input
@@ -136,6 +141,7 @@ private:
     Config cfg_;
     CameraV4L2 cam_;
     std::string cam_node_;
+
     MppDecoder dec_;
     RgaResizer rga_;
     // M4: context pool. npus_[0] IS the pool-1 engine;
@@ -160,9 +166,21 @@ private:
     int reconnects_ = 0;   // camera disconnects recovered this run
     int warmup_left_ = 0;  // publish-discards after a reconnect
 
+    std::optional<NetMjpegSource> net_src_;  // active only with --net-src
     std::optional<NetPreview> preview_;
     std::optional<NetEncoder> enc_;
     std::optional<GpuBoxDrawer> drawer_;
+
+    // Static source selection (project rules: no virtuals/vtables): the
+    // active source is a pointer variant over the member objects;
+    // with_src() is the single dispatch point. M5: a third source type
+    // adds one alternative — call sites stay untouched.
+    std::variant<CameraV4L2*, NetMjpegSource*> src_ {};
+    template <typename F>
+    decltype(auto) with_src( F&& f )
+    {
+        return std::visit( [&f]( auto* s ) -> decltype(auto) { return f( *s ); }, src_ );
+    }
 
     BoxSmoother smoother_;  // M3.10 EMA box smoothing + jitter log
     Tracker tracker_;
@@ -188,7 +206,7 @@ private:
         bool rga_ok = false;             // captured at dispatch
         bool npu_ok = false;             // worker verdict, read at publish
         bool drop = false;               // publish gave up: the worker frees the slot itself
-        float lb_top = 0, lb_h = 0;      // letterbox geometry at dispatch
+        float lb_left = 0, lb_top = 0, lb_w = 0, lb_h = 0;  // letterbox geometry at dispatch
         FrameTrace tr;  // per-frame timings: dispatch->cam/dec/rga, worker->infer, publish->enc
         std::mutex mx;
         std::condition_variable cv;
@@ -200,9 +218,14 @@ private:
     std::atomic<bool> stop_ { false };  // P1-6: set by the signal handler
     PubFifo pub_;
 
+    bool use_net_src() const { return !cfg_.net_src.empty(); }
+    // Source bring-up (identity + setup + variant selection), extracted
+    // from the ctor: with the net source branch the ctor crossed the
+    // readability-function-size limit (225 lines / threshold 200).
+    void init_source();
     void worker_loop( int slot );
     int publish_oldest();                // returns 1 if the frame was valid
-    void dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, int lb_top, int lb_h,
+    void dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, int lb_left, int lb_top, int lb_w, int lb_h,
             double cam_ms, double dec_ms, double rga_ms );
     void cal_dump_maybe( RknnEngine& e, int frame_idx );  // shared by both paths
     // M6 batch-2: run()/publish_oldest() VariableThreshold splits.
@@ -210,7 +233,7 @@ private:
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
     void frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_us,
             double cam_ms, double dec_ms );
-    void fill_gpu_boxes( float s, float lb_top );  // det boxes + trails -> boxes_
+    void fill_gpu_boxes( float sx, float sy, float lb_left, float lb_top );  // det boxes + trails -> boxes_
     double draw_and_publish( Slot& sl, int ps );   // viewer path; returns enc_ms
     void pool_discard();                 // drop pending slots on camera recovery
 };

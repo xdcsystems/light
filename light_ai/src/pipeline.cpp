@@ -147,38 +147,15 @@ Pipeline::Pipeline( const Config& cfg )
     // this loop, so the slot pointers stay valid for the whole session.
     npool_ = cfg_.pool >= 3 ? 3 : 1;
     npus_.reserve( npool_ );
+
     for ( int k = 0; k < npool_; ++k )
         npus_.emplace_back( cfg_.model.c_str() );
 
-    cam_node_ = cfg_.device;
-    // Startup fallback for a re-enumerated camera: the configured node
-    // may be gone after a replug (verified live: video20 -> video21)
-    // while the camera itself is alive. ENOENT-only: if the node exists
-    // but setup fails (busy, permissions, wrong node type), the error
-    // stays fatal — a silently substituted source is worse than a loud
-    // one. find_usb_capture_node() skips a missing preferred path on
-    // its own (stat) and trial-setups the candidates, so fake nodes
-    // (metadata-only) are filtered there.
-    if ( !cam_node_.empty() )
-    {
-        struct stat st
-        {};
-        if ( stat( cam_node_.c_str(), &st ) != 0 )
-        {
-            std::cerr << "camera: configured node " << cam_node_ << " not present, falling back to USB discovery\n";
-            std::string found;
-            if ( find_usb_capture_node( cam_, cam_node_, found ) != 0 )
-                throw std::runtime_error( "camera: configured node " + cam_node_ + " is missing and no USB capture node found" );
-            std::cout << "camera: discovery adopted " << found << '\n';
-            cam_node_ = found;
-        }
-    }
+    // Source bring-up (identity, setup, variant selection) extracted
+    // from the ctor: with the net source branch the ctor crossed the
+    // readability-function-size limit (225 lines / threshold 200).
+    init_source();
 
-    std::string cam_why;
-    if ( cam_.setup_device( cam_node_, &cam_why ) != 0 )
-    {
-        throw std::runtime_error( "camera: " + cam_why );
-    }
     for ( auto& e : npus_ )
     {
         if ( e.setup_io() != 0 )
@@ -260,7 +237,12 @@ Pipeline::Pipeline( const Config& cfg )
             // Band geometry comes from the pipeline's single LbGeom:
             // the same numbers the RGA crop writes.
 
-            enc_.emplace( model_w_, lb_.h, cfg_.net_fps, cfg_.net_port, cfg_.net_host, cfg_.net_bitrate, model_w_, model_h_, lb_.top, lb_.h );
+            // Band-crop target: landscape crops a horizontal strip of the
+            // full tensor width; portrait a vertical strip of the full
+            // tensor height. The stream width is 16-aligned up (MPP
+            // hor_stride requirement); the tail stays gray.
+            enc_.emplace( ( lb_.w + 15 ) & ~15, lb_.h, cfg_.net_fps, cfg_.net_port, cfg_.net_host, cfg_.net_bitrate, model_w_, model_h_,
+                    lb_.top, lb_.h, lb_.left, lb_.w );
             if ( cfg_.net_host.empty() )
             {
                 std::cout << "net: h264 PULL server on port " << cfg_.net_port << ", " << cfg_.net_bitrate
@@ -341,7 +323,72 @@ Pipeline::Pipeline( const Config& cfg )
         } );
     }
 
-    cam_.start();
+    with_src( []( auto& s ) { s.start(); } );  // no-op for the net source
+}
+
+// Source bring-up: source identity (cam_node_ vs the URL), the full
+// setup for the active branch and the static variant selection.
+// Throwing: a failed connect here is fatal, same as a failed camera
+// setup (run() never sees a half-open source).
+void Pipeline::init_source()
+{
+    cam_node_ = cfg_.device;
+
+    if ( use_net_src() )
+    {
+        // Network MJPEG source: the camera stays closed, no V4L2 node.
+        // The source contract is identical, so the recovery ladder in
+        // run() works unchanged; a failed connect here is fatal, same
+        // as a failed camera setup.
+        net_src_.emplace( cfg_.cam_w, cfg_.cam_h );
+        // The URL is this source's identity: the recovery ladder
+        // passes cam_node_ to recover(), so it must hold the URL,
+        // not the (empty in net mode) --device value. A URL never
+        // re-enumerates, so recover() keeps new_id == id.
+        cam_node_ = cfg_.net_src;
+        std::string why;
+        if ( net_src_->setup_device( cfg_.net_src, &why ) != 0 )
+            throw std::runtime_error( "net-src: " + why );
+    }
+    else
+    {
+        // Startup fallback for a re-enumerated camera: the configured node
+        // may be gone after a replug (verified live: video20 -> video21)
+        // while the camera itself is alive. ENOENT-only: if the node exists
+        // but setup fails (busy, permissions, wrong node type), the error
+        // stays fatal — a silently substituted source is worse than a loud
+        // one. find_usb_capture_node() skips a missing preferred path on
+        // its own (stat) and trial-setups the candidates, so fake nodes
+        // (metadata-only) are filtered there.
+        if ( !cam_node_.empty() )
+        {
+            struct stat st
+            {};
+            if ( stat( cam_node_.c_str(), &st ) != 0 )
+            {
+                std::cerr << "camera: configured node " << cam_node_ << " not present, falling back to USB discovery\n";
+                std::string found;
+                if ( find_usb_capture_node( cam_, cam_node_, found ) != 0 )
+                    throw std::runtime_error( "camera: configured node " + cam_node_ + " is missing and no USB capture node found" );
+                std::cout << "camera: discovery adopted " << found << '\n';
+                cam_node_ = found;
+            }
+        }
+        std::string cam_why;
+        if ( cam_.setup_device( cam_node_, &cam_why ) != 0 )
+        {
+            throw std::runtime_error( "camera: " + cam_why );
+        }
+    }
+
+    // Static source selection (project rules: no virtuals): the active
+    // source is a pointer variant over the member objects. Set once
+    // here, before any use; M5 adds alternatives without touching
+    // call sites.
+    if ( use_net_src() )
+        src_ = &*net_src_;
+    else
+        src_ = &cam_;
 }
 
 int Pipeline::run()
@@ -356,7 +403,8 @@ int Pipeline::run()
 
         uint32_t sz = 0;
         int cam_err = 0;
-        const int idx = cam_.dequeue( &sz, &cam_err );
+        
+        const int idx = with_src( [&]( auto& s ) { return s.dequeue( &sz, &cam_err ); } );
         if ( idx < 0 )
         {
             if ( handle_camera_failure( cam_err ) != 0 )
@@ -376,13 +424,17 @@ int Pipeline::run()
         int fd_src = -1;
         if ( sz > 0 )
         {
-            fd_src = dec_.decode( static_cast<const uint8_t*>( cam_.buffer( idx ) ), sz );
+            fd_src = with_src( [&]( auto& s ) {
+                return dec_.decode( static_cast<const uint8_t*>( s.buffer( idx ) ), sz );
+            } );
         }
         else
         {
             std::cerr << "camera: zero-size frame skipped\n";
         }
-        cam_.requeue( idx );
+        
+        with_src( [&]( auto& s ) { s.requeue( idx ); } );
+
         const auto t2 = clk::now();
 
         // A frame that failed to decode contributes neither to ok nor to the
@@ -440,43 +492,49 @@ int Pipeline::run()
     return ok;
 }
 
-// Disconnect policy: ENODEV/EIO from DQBUF mean the device is gone
-// (unplug, USB hiccup) — worth a few timed reconnect attempts; any
-// other errno is a hard error and ends the run with exit code 1
-// (run() returns -1, main() maps it to 1). Exhausted reconnect
-// attempts end the same way; a silent exit 0 on camera death is the
-// bug this code removes. A recovery attempt consumes one frame of
-// the --frames budget and contributes nothing to the timing stats.
-// 20 attempts: observed USB re-enumeration on this board can take
-// longer than the original 10x1s window allowed.
+// Disconnect policy: ENODEV/EIO mean the source is gone (unplug, USB
+// hiccup, Wi-Fi drop) — worth timed recovery attempts; any other errno
+// is a hard error and ends the run with exit code 1 (run() returns -1,
+// main() maps it to 1). The net source reports only these two classes
+// by contract, so the ladder below is source-agnostic: the recovery
+// POLICY (attempts, pacing, warmup, pool discard) stays here, the
+// MECHANISM of one step lives in the source's recover(). A recovery
+// attempt consumes one frame of the --frames budget and contributes
+// nothing to the timing stats. 20 attempts: observed USB re-enumeration
+// on this board can take longer than the original 10x1s window allowed.
 int Pipeline::handle_camera_failure( int cam_err )
 {
     constexpr int k_cam_reconnect_max = 20;
     constexpr auto k_cam_reconnect_pause = std::chrono::seconds( 1 );
     constexpr int k_warmup_frames = 3;
 
-    // Classify the failure before acting on it.
     const bool recoverable = ( cam_err == ENODEV || cam_err == EIO );
-    std::cerr << "camera: dequeue failed: " << strerror( cam_err ) << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
+    std::cerr << "source: dequeue failed: " << strerror( cam_err )
+              << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
     if ( !recoverable )
         return -1;
     for ( int a = 1; a <= k_cam_reconnect_max; ++a )
     {
-        std::this_thread::sleep_for( k_cam_reconnect_pause );
-        std::string node;
-        if ( find_usb_capture_node( cam_, cam_node_, node ) != 0 )
-            continue;
-        std::string why;
-        if ( cam_.reconnect( node, &why ) == 0 )
+        // Stop outranks recovery: SIGINT/SIGTERM must end the run
+        // within one attempt, not after the full 20-attempt ladder.
+        if ( stop_.load() )
         {
-            if ( node != cam_node_ )
+            std::cerr << "source: stop requested, recovery aborted\n";
+            return -1;
+        }
+        std::this_thread::sleep_for( k_cam_reconnect_pause );
+        std::string new_id;
+        std::string why;
+        if ( with_src( [&]( auto& s ) { return s.recover( cam_node_, new_id, &why ); } ) == 0 )
+        {
+            if ( new_id != cam_node_ )
             {
-                std::cout << "camera: re-enumerated node adopted: " << cam_node_ << " -> " << node << '\n';
-                cam_node_ = node;
+                std::cout << "source: identity adopted: " << cam_node_ << " -> " << new_id << '\n';
+                cam_node_ = new_id;
             }
             ++reconnects_;
             warmup_left_ = k_warmup_frames;
-            std::cout << "camera: reconnected on attempt " << a << '\n';
+            std::cout << "source: reconnected on attempt " << a << '\n';
             // M4: frames from the dead stream are never published —
             // drop the pending slots (their infer may still be in
             // flight; wait for DONE, then free without publishing).
@@ -484,9 +542,9 @@ int Pipeline::handle_camera_failure( int cam_err )
                 pool_discard();
             return 0;
         }
-        std::cerr << "camera: reconnect on " << node << " failed: " << why << '\n';
+        std::cerr << "source: reconnect attempt failed: " << why << '\n';
     }
-    std::cerr << "camera: reconnect failed after " << k_cam_reconnect_max << " attempts, giving up\n";
+    std::cerr << "source: reconnect failed after " << k_cam_reconnect_max << " attempts, giving up\n";
     return -1;
 }
 
@@ -534,17 +592,18 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
     const auto t3 = clk::now();
     LbGeom lg {};
     const bool rga_ok =
-            rga_.resize( fd_src, cfg_.cam_w, cfg_.cam_h, sl.eng->input_fd(), model_w_, model_h_, aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2, &lg );
+            rga_.resize( fd_src, cfg_.cam_w, cfg_.cam_h, sl.eng->input_fd(), model_w_, model_h_, aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2, &lg,
+                    dec_.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
     cal_dump_maybe( *sl.eng, frame_idx );
     const auto t3b = clk::now();
     // Cross-check RGA geometry against the single-owner one (warn once).
-    if ( !lb_warned_ && ( lg.top != lb_.top || lg.h != lb_.h ) )
+    if ( !lb_warned_ && ( lg.left != lb_.left || lg.top != lb_.top || lg.w != lb_.w || lg.h != lb_.h ) )
     {
         lb_warned_ = true;
-        std::cerr << "pipeline: RGA letterbox drift: top=" << lg.top
-                  << " h=" << lg.h << " vs top=" << lb_.top << " h=" << lb_.h << std::endl;
+        std::cerr << "pipeline: RGA letterbox drift: x=" << lg.left << " top=" << lg.top << " w=" << lg.w << " h=" << lg.h
+                  << " vs x=" << lb_.left << " top=" << lb_.top << " w=" << lb_.w << " h=" << lb_.h << std::endl;
     }
-    dispatch( slot, frame_idx, ts_us, rga_ok, lb_.top, lb_.h, cam_ms, dec_ms, ms( t3, t3b ) );
+    dispatch( slot, frame_idx, ts_us, rga_ok, lb_.left, lb_.top, lb_.w, lb_.h, cam_ms, dec_ms, ms( t3, t3b ) );
 }
 
 // --- M4: context-pool machinery --------------------------------------------
@@ -590,8 +649,8 @@ void Pipeline::worker_loop( int slot )
             {
                 const auto tp0 = clk::now();
                 yolo_postprocess( *sl.eng, static_cast<float>( cfg_.cam_w ), static_cast<float>( cfg_.cam_h ),
-                        static_cast<float>( model_w_ ), static_cast<float>( model_h_ ), sl.lb_top, sl.lb_h, sl.dets, cfg_.conf_thr,
-                        cfg_.iou_thr );
+                        static_cast<float>( model_w_ ), static_cast<float>( model_h_ ), sl.lb_left, sl.lb_top, sl.lb_w, sl.lb_h,
+                        sl.dets, cfg_.conf_thr, cfg_.iou_thr );
                 sl.tr.post = ms( tp0, clk::now() );
             }
         }
@@ -617,7 +676,7 @@ void Pipeline::worker_loop( int slot )
     }
 }
 
-void Pipeline::dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, int lb_top, int lb_h, double cam_ms, double dec_ms, double rga_ms )
+void Pipeline::dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, int lb_left, int lb_top, int lb_w, int lb_h, double cam_ms, double dec_ms, double rga_ms )
 {
     Slot& sl = slots_[slot];
     {
@@ -630,7 +689,9 @@ void Pipeline::dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, in
         sl.tr.cam = cam_ms;
         sl.tr.dec = dec_ms;
         sl.tr.rga = rga_ms;
+        sl.lb_left = lb_left;
         sl.lb_top = lb_top;
+        sl.lb_w = lb_w;
         sl.lb_h = lb_h;
         sl.st = Slot::QUEUED;
     }
@@ -727,16 +788,16 @@ int Pipeline::publish_oldest()
 // the same batch as the detection boxes. Scene->tensor mapping is
 // (s, lb_top) -- identical for both loops. Detection boxes win the
 // VBO budget (128-box cap).
-void Pipeline::fill_gpu_boxes( float s, float lb_top )
+void Pipeline::fill_gpu_boxes( float sx, float sy, float lb_left, float lb_top )
 {
     for ( int k = 0; k < dets_.n; ++k )
     {
         const Detection& d = dets_.d[k];
         GpuBox b{};
-        b.x0 = d.x * s;
-        b.y0 = d.y * s + lb_top;
-        b.x1 = ( d.x + d.w ) * s;
-        b.y1 = ( d.y + d.h ) * s + lb_top;
+        b.x0 = d.x * sx + lb_left;
+        b.y0 = d.y * sy + lb_top;
+        b.x1 = ( d.x + d.w ) * sx + lb_left;
+        b.y1 = ( d.y + d.h ) * sy + lb_top;
         if ( b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f )
             continue;
         det_color( d.cls, b.r, b.g, b.b );
@@ -761,8 +822,8 @@ void Pipeline::fill_gpu_boxes( float s, float lb_top )
             {
                 if ( boxes_.n >= 128 )  // PodList<GpuBox,128> cap
                     break;
-                const float px = samp[j].x * s;
-                const float py = samp[j].y * s + lb_top;
+                const float px = samp[j].x * sx + lb_left;
+                const float py = samp[j].y * sy + lb_top;
                 if ( px < 0.0f || py < 0.0f
                      || px >= static_cast<float>( model_w_ )
                      || py >= static_cast<float>( model_h_ ) )
@@ -805,12 +866,14 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
     const bool prev_live = preview_ && preview_->viewer_connected();
     if ( !enc_live && !prev_live )
         return enc_ms;
-    // Boxes mapped to tensor coordinates ONCE for both drawing
-    // paths - the same geometry as the legacy block (det_color).
-    const float s = static_cast<float>( model_w_ ) / cfg_.cam_w;
+    // Boxes mapped to tensor coordinates ONCE for both drawing paths.
+    // Inverse of the postprocess mapping: det = scene * (lb / cam) + origin.
+    const float sx = sl.lb_w / static_cast<float>( cfg_.cam_w );
+    const float sy = sl.lb_h / static_cast<float>( cfg_.cam_h );
+    const float lb_left = sl.lb_left;
     const float lb_top = sl.lb_top;
     boxes_.clear();
-    fill_gpu_boxes( s, lb_top );
+    fill_gpu_boxes( sx, sy, lb_left, lb_top );
     int fence = -1;  // GPU draw fence, consumed by enc publish
     if ( drawer_ )
     {

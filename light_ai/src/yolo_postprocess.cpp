@@ -79,7 +79,7 @@ namespace
     // candidates (standard yolov5 behaviour: boxes of different classes
     // never suppress each other), then the coordinate transform back to
     // camera pixels and emission into the preallocated detector list.
-    void emit_nms( std::array<Box, kMaxCand>& cand, int nc, float iou_thr, float scale, float lb_top, float cam_w, float cam_h,
+    void emit_nms( std::array<Box, kMaxCand>& cand, int nc, float iou_thr, float sx, float sy, float lb_left, float lb_top, float cam_w, float cam_h,
             DetList& out )
     {
         std::sort( cand.begin(), cand.begin() + nc, []( const Box& a, const Box& b ) {
@@ -97,10 +97,10 @@ namespace
             }
             const Box& b = cand[i];
             Detection d{};
-            d.x = std::max( 0.0f, b.x1 * scale );
-            d.y = std::max( 0.0f, ( b.y1 - lb_top ) * scale );
-            d.w = std::min( cam_w - d.x, ( b.x2 - b.x1 ) * scale );
-            d.h = std::min( cam_h - d.y, ( b.y2 - b.y1 ) * scale );
+            d.x = std::max( 0.0f, ( b.x1 - lb_left ) * sx );
+            d.y = std::max( 0.0f, ( b.y1 - lb_top ) * sy );
+            d.w = std::min( cam_w - d.x, ( b.x2 - b.x1 ) * sx );
+            d.h = std::min( cam_h - d.y, ( b.y2 - b.y1 ) * sy );
             d.cls = b.cls;
             d.conf = b.conf;
             // Degenerate-box guard: a candidate whose x1 exceeded model_w
@@ -118,7 +118,7 @@ namespace
     // (c, gy, gx) lives at c*h*w + gy*w + gx, the anchor slot is
     // k*per*cell_hw further. The obj pre-check stays before the class
     // scan - that order is the confidence shortcut.
-    void collect_head( int gi, const uint16_t* data, int h, int w, int per, int stride, float lb_top, float lb_h, float conf_thr,
+    void collect_head( int gi, const uint16_t* data, int h, int w, int per, int stride, float lb_left, float lb_top, float lb_w, float lb_h, float conf_thr,
             std::array<Box, kMaxCand>& cand, int& nc )
     {
         for ( int gy = 0; gy < h; ++gy )
@@ -164,7 +164,7 @@ namespace
                     if ( cx != cx || cy != cy || bw_px != bw_px || bh_px != bh_px )
                         continue;
 
-                    if ( cy < lb_top || cy >= lb_top + lb_h )
+                    if ( cy < lb_top || cy >= lb_top + lb_h || cx < lb_left || cx >= lb_left + lb_w )
                         continue;  // bar
 
                     if ( nc < kMaxCand )
@@ -176,16 +176,16 @@ namespace
 
 }  // namespace
 
-void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float model_w, float model_h, float lb_top, float lb_h,
+void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float model_w, float model_h, float lb_left, float lb_top, float lb_w, float lb_h,
         DetList& out, float conf_thr, float iou_thr )
 {
     // Letterbox geometry must fit the model input: the band is rows
     // [lb_top, lb_top + lb_h) of the model frame. A violation here would
     // silently misplace every detection, so it is a hard error.
-    if ( lb_top < 0.0f || lb_top + lb_h > model_h )
+    if ( lb_top < 0.0f || lb_top + lb_h > model_h || lb_left < 0.0f || lb_left + lb_w > model_w )
     {
-        std::cerr << "yolo_postprocess: letterbox band [" << lb_top << ", " << lb_top + lb_h << ") does not fit model height " << model_h
-                  << '\n';
+        std::cerr << "yolo_postprocess: letterbox band x=[" << lb_left << ", " << lb_left + lb_w << ") y=[" << lb_top << ", "
+                  << lb_top + lb_h << ") does not fit model " << model_w << 'x' << model_h << '\n';
         out.clear();
         return;
     }
@@ -200,7 +200,13 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
     std::array<Box, kMaxCand> cand{};
     int nc = 0;
 
-    const float scale = cam_w / model_w;  // uniform, by width
+    // Axial mapping: scene = (det - band origin) * cam / band size.
+    // Landscape: the band fills the tensor width (lb_left = 0, lb_w =
+    // model_w) — identical to the legacy uniform-by-width mapping.
+    // Portrait: the band fills the tensor height; the axes scale
+    // separately (both are cam/lb for a uniform fit).
+    const float sx = cam_w / lb_w;
+    const float sy = cam_h / lb_h;
 
     for ( size_t gi = 0; gi < npu.output_attrs().size() && gi < 3; ++gi )
     {
@@ -222,8 +228,8 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
             continue;  // not a 3-anchor yolov5 head - skip
         }
 
-        collect_head( gi, data, h, w, per, stride, lb_top, lb_h, conf_thr, cand, nc );
+        collect_head( gi, data, h, w, per, stride, lb_left, lb_top, lb_w, lb_h, conf_thr, cand, nc );
     }
 
-    emit_nms( cand, nc, iou_thr, scale, lb_top, cam_w, cam_h, out );
+    emit_nms( cand, nc, iou_thr, sx, sy, lb_left, lb_top, cam_w, cam_h, out );
 }
