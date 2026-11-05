@@ -14,7 +14,7 @@
 #include <im2d.h>
 #include <rga.h>
 #include <string>
-constexpr int kPktQDepth = 3;  // encoder -> serve packet queue depth (frames)
+constexpr int kPktQDepth = 8;  // encoder -> serve packet queue depth (frames)
 
 #include <memory>
 
@@ -622,14 +622,15 @@ bool NetEncoder::send_frame( AVStream* stp )
                 // P-frame decodes into corruption until the next IDR. Flush
                 // the whole queue, re-arm the IDR gate and force an IDR on
                 // the next frame: the gap is one frame, not a full GOP.
+                const size_t ndrop = pkts_.size();
                 for ( AVPacket* q : pkts_ )
                     av_packet_free( &q );
                 pkts_.clear();
                 force_idr_.store( true );
                 wait_key_ = true;
                 ++pkt_drops_;
-                if ( pkt_drops_ == 1 || ( pkt_drops_ % 300 ) == 0 )
-                    std::cerr << "enc: packet queue overflow, flushed, waiting for IDR\n";
+                // diagnostic: every flush logged
+                    std::cerr << "enc: packet queue overflow: flushed " << ndrop << " pkts (drop " << pkt_drops_ << "), IDR next frame\n";
             }
             pkts_.push_back( copy );
             pkt_cv_.notify_one();
@@ -700,7 +701,11 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
             pkts_.pop_front();
         }
         // Takes ownership of p: freed inside on every path.
+        const auto mw_t0 = std::chrono::steady_clock::now();
         const int r = mux_write( fc, p );
+        const long mw_ms = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - mw_t0 ).count();
+        if ( mw_ms > 20 )
+            std::cerr << "enc: mux_write stalled " << mw_ms << " ms (queue was " << pkts_.size() << ")\n";
         if ( r < 0 )
         {
             if ( r == AVERROR( EPIPE ) )

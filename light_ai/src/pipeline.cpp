@@ -27,10 +27,9 @@ namespace
         return std::chrono::duration<double, std::milli>( b - a ).count(); 
     }
 
-
     // CPU access bracket for the NPU input tensor dma-buf (--cpu-draw fix).
-    // draw_boxes_cpu writes through the rknn mmap with plain stores; on a
-    // cacheable mapping the dirty lines stay in the CPU cache while RGA
+    // draw_boxes_cpu writes through the rknn mmap with plain stores; 
+    // on a cacheable mapping the dirty lines stay in the CPU cache while RGA
     // (encoder prep_frame crop) reads DRAM as a DMA master, so CPU-drawn
     // boxes/trails reach the h264 stream stale: vertical edges smear into
     // ~21-px horizontal dashes (64-byte line / 3 bytes per RGB888 pixel),
@@ -75,10 +74,10 @@ namespace
     // CPU cache for rknn_create_mem buffers, so the only reliable way to
     // make CPU stores visible to non-coherent DMA readers (RGA crop,
     // NPU, next-frame RGA rewrite) is to clean the lines ourselves.
-    // AArch64 permits userspace DC CVAC (clean by VA to the point of
-    // coherency). 64 is the AArch64 cache-line size (CLIDR_EL1 = 64 on
-    // every RK3588 core); no named constant per the project magic-number
-    // policy (see net_mjpeg_source.cpp).
+    // AArch64 permits userspace DC CVAC (clean by VA to the point of coherency). 
+    // 64 is the AArch64 cache-line size (CLIDR_EL1 = 64 on every RK3588 core);
+    // no named constant per the project magic-number policy (see net_mjpeg_source.cpp).
+
     void cache_clean( const void* p, size_t len )
     {
 #if defined( __aarch64__ )
@@ -94,7 +93,6 @@ namespace
                 const_cast<char*>( static_cast<const char*>( p ) ) + len );
 #endif
     }
-
 
     // Cache DROP (clean+invalidate) for the NPU input tensor, executed
     // right before the RGA DMA rewrite of the NEXT frame (patch 002).
@@ -121,7 +119,6 @@ namespace
 #endif
     }
 
-
     // Colors shared by the GPU and CPU drawing paths (owner's pick).
     inline void det_color( int cls, uint8_t& r, uint8_t& g, uint8_t& b )
     {
@@ -146,9 +143,10 @@ namespace
     }
 
     // M3.7 CPU baseline: 1-px outlines straight into the NPU tensor (RGB888).
-    // The caller pre-maps boxes to tensor coordinates — the same geometry as
-    // the GPU path; colors come from the box itself. Used when the GPU drawer
+    // The caller pre-maps boxes to tensor coordinates — the same geometry as the GPU path;
+    // colors come from the box itself. Used when the GPU drawer
     // is unavailable, or forced by --cpu-draw (A/B baseline).
+
     void draw_boxes_cpu( uint8_t* rgb, int w, int h, int stride, const GpuBox* boxes, int n )
     {
         auto clamp = []( int v, int hi ) {
@@ -263,26 +261,26 @@ Pipeline::Pipeline( const Config& cfg )
 
     if ( cfg_.net )
     {
-        // Hard confirmation of tensor contiguity: if size_with_stride equals
-        // w*h*3, the buffer is exactly the PPM dump layout (stride = w*3).
+        // Hard confirmation of tensor contiguity: 
+        // if size_with_stride equals w*h*3, the buffer is exactly the PPM dump layout (stride = w*3).
+
         std::cout << "net: tensor stride check: size_with_stride=" << ia.size_with_stride << " vs " << model_w_ * model_h_ * 3 << "\n";
         if ( cfg_.net_h264 )
         {
-            // M3.5 pull: empty net_host = TCP pull server (listener
-            // on net_port, the viewer connects to the board's LAN
-            // IP); a non-empty net_host keeps the legacy UDP push
-            // to that destination.
-            // M3.5: the h264 encoder consumes the NPU input tensor AFTER
-            // box drawing, at the NATIVE letterbox-band size (no upscale):
+            // M3.5 pull: empty net_host = TCP pull server 
+            // (listener on net_port, the viewer connects to the board's LAN IP); 
+            // a non-empty net_host keeps the legacy UDP push to that destination.
+            // The h264 encoder consumes the NPU input tensor AFTER box drawing, 
+            // at the NATIVE letterbox-band size (no upscale):
             // w = model_w, h = cam_h * (model_w / cam_w) — for the default
             // 1280x720 camera and a 640x640 tensor that is 640x360 (16:9).
             // Band geometry comes from the pipeline's single LbGeom:
             // the same numbers the RGA crop writes.
 
             // Band-crop target: landscape crops a horizontal strip of the
-            // full tensor width; portrait a vertical strip of the full
-            // tensor height. The stream width is 16-aligned up (MPP
-            // hor_stride requirement); the tail stays gray.
+            // full tensor width; portrait a vertical strip of the full tensor height.
+            // The stream width is 16-aligned up (MPP hor_stride requirement); the tail stays gray.
+
             enc_.emplace( model_w_, model_h_, lb_, cfg_.net_fps, cfg_.net_port, cfg_.net_host, cfg_.net_bitrate );
             if ( cfg_.net_host.empty() )
             {
@@ -301,15 +299,15 @@ Pipeline::Pipeline( const Config& cfg )
         }
     }
 
-    // M3.7: GPU box drawing (Mali G610, EGL/GBM) straight into the NPU
-    // tensor. Init once, only with a preview sink active. On failure the
-    // CPU path (net_preview::draw_boxes_rgb24) stays as the fallback.
+    // M3.7: GPU box drawing (Mali G610, EGL/GBM) straight into the NPU tensor. 
+    // Init once, only with a preview sink active. On failure the CPU path 
+    // (net_preview::draw_boxes_rgb24) stays as the fallback.
     // --cpu-draw forces the CPU path (A/B baseline).
     if ( ( preview_ || enc_ ) && !cfg_.cpu_draw )
     {
         drawer_.emplace();
-        // M4: one EGLImage per slot, attached once at startup (attach_slot
-        // is idempotent per slot); draw switches FBOs between slots.
+        // M4: one EGLImage per slot, attached once at startup (attach_slot is idempotent per slot);
+        // draw switches FBOs between slots.
         bool drew_ok = drawer_->init();
         for ( int k = 0; drew_ok && k < npool_; ++k )
         {
@@ -422,10 +420,10 @@ void Pipeline::init_source()
         }
     }
 
-    // Static source selection (project rules: no virtuals): the active
-    // source is a pointer variant over the member objects. Set once
-    // here, before any use; M5 adds alternatives without touching
-    // call sites.
+    // Static source selection (project rules: no virtuals):
+    // the active source is a pointer variant over the member objects. 
+    // Set once here, before any use; M5 adds alternatives without touching call sites.
+
     if ( use_net_src() )
         src_ = &*net_src_;
     else
@@ -462,6 +460,7 @@ int Pipeline::run()
         // into the NPU tensor, YOLO hallucinates on it and the stream
         // shows phantom boxes (observed right after a replug). Skip the
         // decode, keep the buffer cycle intact (requeue still runs).
+
         int fd_src = -1;
         if ( sz > 0 )
         {
@@ -543,6 +542,7 @@ int Pipeline::run()
 // attempt consumes one frame of the --frames budget and contributes
 // nothing to the timing stats. 20 attempts: observed USB re-enumeration
 // on this board can take longer than the original 10x1s window allowed.
+
 int Pipeline::handle_camera_failure( int cam_err )
 {
     constexpr int k_cam_reconnect_max = 20;
@@ -576,9 +576,11 @@ int Pipeline::handle_camera_failure( int cam_err )
             ++reconnects_;
             warmup_left_ = k_warmup_frames;
             std::cout << "source: reconnected on attempt " << a << '\n';
+
             // M4: frames from the dead stream are never published —
             // drop the pending slots (their infer may still be in
             // flight; wait for DONE, then free without publishing).
+
             if ( npool_ > 1 )
                 pool_discard();
             return 0;
@@ -599,6 +601,7 @@ int Pipeline::handle_camera_failure( int cam_err )
 // Ctrl-C from parking here forever on a wedged NPU. Returns the
 // claimed slot index, or -1 when stop was requested with every
 // slot in flight.
+
 int Pipeline::acquire_slot( int& ok )
 {
     bool starved_warned = false;
@@ -627,13 +630,16 @@ int Pipeline::acquire_slot( int& ok )
 // RGA resize into the slot tensor, optional cal dump, one-time
 // cross-check of the RGA letterbox geometry against the single-owner
 // one, then dispatch. Verbatim move out of run().
+
 void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms )
 {
     Slot& sl = slots_[slot];
     const auto t3 = clk::now();
+
     // Stale-line drop before the RGA rewrite: see cache_drop().
     // Full tensor: draws and preview reads from previous frames
     // may have left resident lines anywhere in it.
+
     cache_drop( sl.eng->input_data(),
             static_cast<size_t>( model_w_ ) * model_h_ * 3 );
     LbGeom lg {};
@@ -680,10 +686,12 @@ void Pipeline::worker_loop( int slot )
             if ( quit_.load() )
                 return;
         }
+
         // Infer WITHOUT holding the slot mutex: the claim scan on the main
         // thread must not block on a running rknn_run. Plain writes below
         // are published to the main thread by the lock acquire/release of
         // the DONE transition.
+
         const auto ti0 = clk::now();
         const bool rga_ok = sl.rga_ok;
         bool okr = false;
@@ -709,8 +717,10 @@ void Pipeline::worker_loop( int slot )
         {
             std::lock_guard<std::mutex> lk( sl.mx );
             sl.st = Slot::DONE;
+        
             // Publish may have given up waiting (bounded wait): free
             // the slot here -- it is already out of the publish FIFO.
+        
             if ( sl.drop )
             {
                 sl.st = Slot::FREE;
@@ -744,6 +754,7 @@ void Pipeline::dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, co
 
 // M3.11: track-trail palette by id % 8 (track-keyed, visually distinct
 // from the class-keyed det_color palette).
+
 void trail_color( int id, uint8_t& r, uint8_t& g, uint8_t& b )
 {
     constexpr uint8_t pal[8][3] = {
@@ -760,13 +771,17 @@ int Pipeline::publish_oldest()
     const int ps = pub_.front();
     Slot& sl = slots_[ps];
     std::unique_lock<std::mutex> lk( sl.mx );
-    // Bounded wait (P0-2): rknn_run normally always completes; a
-    // timeout means a wedged NPU/runtime -- drop the frame instead of
-    // hanging the whole pipeline (and Ctrl-C) forever. quit_ releases
-    // the wait on shutdown as well. The slot is NOT freed here: the
-    // worker may still be mid-infer on this tensor, handing it back
+
+    // Bounded wait (P0-2): 
+    // rknn_run normally always completes; 
+    // a timeout means a wedged NPU/runtime -- drop the frame instead of
+    // hanging the whole pipeline (and Ctrl-C) forever. 
+    // quit_ releases the wait on shutdown as well.
+    // The slot is NOT freed here: 
+    // the worker may still be mid-infer on this tensor, handing it back
     // to RGA would overwrite memory the NPU is reading. The worker
     // sees Slot::drop at its DONE transition and frees the slot.
+
     const bool done = sl.cv.wait_for( lk, std::chrono::seconds( 5 ), [this, &sl] {
         return sl.st == Slot::DONE || quit_.load();
     } );
@@ -786,9 +801,11 @@ int Pipeline::publish_oldest()
     {
         // M3.10: EMA smoothing on scene-coord boxes; the raw list is kept
         // only for the --box-log jitter A/B CSV.
+
         smoother_.update( sl.dets, dets_ );
         smoother_.log_frame( sl.frame, sl.dets, dets_ );
         tracker_.update( dets_, sl.ts_us, trajs_ );
+        
         // Throttled trajectory report: every 15th frame.
         if ( trajs_.n > 0 && sl.frame % 15 == 0 )
         {
@@ -800,6 +817,7 @@ int Pipeline::publish_oldest()
                           << t.cx << ',' << t.cy << ") v=(" << t.vx << ',' << t.vy << ") pts=" << t.n_pts << '\n';
             }
         }
+        
         // Throttled report: every 15th frame, up to 8 boxes per report.
         if ( dets_.n > 0 && sl.frame % 15 == 0 )
         {
@@ -831,6 +849,7 @@ int Pipeline::publish_oldest()
 // the same batch as the detection boxes. Scene->tensor mapping is
 // (s, lb_top) -- identical for both loops. Detection boxes win the
 // VBO budget (128-box cap).
+
 void Pipeline::fill_gpu_boxes( float sx, float sy, float lb_left, float lb_top )
 {
     for ( int k = 0; k < dets_.n; ++k )
@@ -902,6 +921,7 @@ void Pipeline::fill_gpu_boxes( float sx, float sy, float lb_left, float lb_top )
 // a late joiner misses at most one frame of boxes. With no
 // viewer the GPU draw pass is skipped entirely - the encoder
 // gate would drop the frame anyway, this just saves the draw.
+
 double Pipeline::draw_and_publish( Slot& sl, int ps )
 {
     double enc_ms = 0.0;
@@ -909,8 +929,10 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
     const bool prev_live = preview_ && preview_->viewer_connected();
     if ( !enc_live && !prev_live )
         return enc_ms;
+
     // Boxes mapped to tensor coordinates ONCE for both drawing paths.
     // Inverse of the postprocess mapping: det = scene * (lb / cam) + origin.
+
     const float sx = sl.lb.w / static_cast<float>( cfg_.cam_w );
     const float sy = sl.lb.h / static_cast<float>( cfg_.cam_h );
     const float lb_left = sl.lb.left;
@@ -933,17 +955,20 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
     else
     {
         DmaSync wr( sl.eng->input_fd(), true );
-        draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ), model_w_, model_h_, model_w_ * 3, boxes_.d.data(),
-                boxes_.n );
+        draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ), 
+                        model_w_, model_h_, model_w_ * 3, boxes_.d.data(), boxes_.n );
+    
         // Flush every CPU store to the coherence point before any DMA
         // consumer (RGA encoder crop, NPU, next-frame RGA rewrite) can
         // observe stale DRAM. See cache_clean() for why the ioctl alone
         // is not enough on this platform.
-        cache_clean( sl.eng->input_data(),
-                static_cast<size_t>( model_w_ ) * model_h_ * 3 );
+    
+        cache_clean( sl.eng->input_data(), static_cast<size_t>( model_w_ ) * model_h_ * 3 );
     }
+    
     // READ bracket covers both tensor consumers below: the NUT preview
     // (CPU read) and enc_->publish() (synchronous RGA crop to NV12).
+    
     DmaSync rd( sl.eng->input_fd(), false );
     if ( prev_live )
         preview_->publish( static_cast<const uint8_t*>( sl.eng->input_data() ) );
@@ -959,9 +984,11 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
 
 void Pipeline::cal_dump_maybe( RknnEngine& e, int frame_idx )
 {
-    // Calibration dump: P6 PPM of the model input. The only diagnostic
-    // CPU pixel read. --dump-cal writes a single /tmp/cal.ppm; --cal N
-    // saves up to N frames (one every --cal-interval) into dataset/.
+    // Calibration dump: 
+    // P6 PPM of the model input. The only diagnostic CPU pixel read.
+    // --dump-cal writes a single /tmp/cal.ppm;
+    // --cal N  saves up to N frames (one every --cal-interval) into dataset/.
+
     const bool cal_wanted = cfg_.dump_cal || ( cfg_.cal_frames > 0 && cal_saved_ < cfg_.cal_frames );
     const bool cal_due = !cal_done_ || ( frame_idx - last_cal_ >= cfg_.cal_interval );
     if ( !cal_wanted || !cal_due )
@@ -971,11 +998,12 @@ void Pipeline::cal_dump_maybe( RknnEngine& e, int frame_idx )
     if ( !cfg_.dump_cal )
     {
         std::ostringstream name;
+
         // The series name follows the FRAME counter, as documented
-        // (README / tools/oracle_check.py protocol): with --cal-interval K
-        // the files are frames 0, K, 2K, .... cal_saved_ stays as the
-        // --cal N cap.
-        // Series directory: --cal-dir overrides the default dataset/.
+        // (README / tools/oracle_check.py protocol): 
+        // with --cal-interval K the files are frames 0, K, 2K, .... cal_saved_ stays as the
+        // --cal N cap. Series directory: --cal-dir overrides the default dataset/.
+
         name << ( cfg_.cal_dir.empty() ? std::string( "dataset/cal_" )
                                        : cfg_.cal_dir + "/cal_" )
              << std::setw( 4 ) << std::setfill( '0' ) << frame_idx << ".ppm";
@@ -1007,6 +1035,7 @@ void Pipeline::pool_discard()
     {
         Slot& sl = slots_[pub_.front()];
         std::unique_lock<std::mutex> lk( sl.mx );
+
         // Bounded wait (same 5 s cap as the publish wait, P0-2 class of
         // risk): rknn_run normally completes. quit_ in the predicate
         // means a wedged NPU during camera recovery can no longer block
@@ -1015,6 +1044,7 @@ void Pipeline::pool_discard()
         // still be reading its tensor. It is marked drop instead, so the
         // worker frees it at its DONE transition -- the same contract
         // publish_oldest() uses on its own timeout path.
+        
         sl.cv.wait_for( lk, std::chrono::seconds( 5 ), [this, &sl] {
             return quit_.load() || sl.st != Slot::QUEUED;
         } );
