@@ -337,7 +337,7 @@ int CameraV4L2::xioctl_r( unsigned long req, void* arg ) const
     return r;
 }
 
-void CameraV4L2::start()
+void CameraV4L2::start() const
 {
     v4l2_buf_type t = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     xioctl( VIDIOC_STREAMON, &t );
@@ -430,4 +430,18 @@ void CameraV4L2::requeue( int index )  // NOLINT(readability-make-member-functio
         // without this log the symptom is only a mysterious cam-time growth.
         std::cerr << "camera: QBUF failed for idx=" << index << ": " << strerror( errno ) << '\n';
     }
+}
+
+
+int CameraV4L2::recover( const std::string& id, std::string& new_id, std::string* why )
+{
+    // One ladder step = node discovery (a node may have re-enumerated)
+    // + the full reconnect path. A failed discovery is a failed attempt.
+    if ( find_usb_capture_node( *this, id, new_id ) != 0 )
+    {
+        if ( why )
+            *why = "no usable USB capture node found";
+        return -1;
+    }
+    return reconnect( new_id, why );
 }

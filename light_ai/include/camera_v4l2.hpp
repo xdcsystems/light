@@ -29,7 +29,14 @@ public:
     // non-zero on failure (the cause is logged here).
     int reconnect( const std::string& dev, std::string* why );
 
-    void start();
+    // One recovery-ladder step (Pipeline::handle_camera_failure calls it
+    // through the source variant): node discovery (the node may have
+    // re-enumerated) + the full reconnect path. A failed discovery is a
+    // failed attempt. new_id: the adopted node path, unchanged when the
+    // discovery keeps id.
+    int recover( const std::string& id, std::string& new_id, std::string* why );
+
+    void start() const;
     // Returns the buffer index; size (if not null) receives the frame
     // length. On failure returns -1 and stores the errno value in *err:
     // ENODEV/EIO mean the device is gone or interrupted (recoverable),
