@@ -66,7 +66,17 @@ namespace
     {
         const int fd = *static_cast<int*>( opaque );
         const ssize_t n = ::send( fd, buf, static_cast<size_t>( buf_size ), MSG_NOSIGNAL );
-        return n <= 0 ? AVERROR( EIO ) : static_cast<int>( n );
+        if ( n > 0 )
+            return static_cast<int>( n );
+        // Map the send failure: a peer-gone disconnect (EPIPE /
+        // ECONNRESET) and a stuck viewer (SO_SNDTIMEO hit ->
+        // EAGAIN/EWOULDBLOCK) are normal session events, not I/O
+        // faults; drain_queue() reports them as such.
+        if ( errno == EPIPE || errno == ECONNRESET )
+            return AVERROR( EPIPE );
+        if ( errno == EAGAIN || errno == EWOULDBLOCK )
+            return AVERROR( ETIMEDOUT );
+        return AVERROR( EIO );
     }
 
     int open_listener( int port )
@@ -136,9 +146,9 @@ namespace
     }
 }  // namespace
 
-NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host, int bitrate_kbps, int model_w, int model_h, int band_top, int band_h, int band_left, int band_w )
-  : w_( w )
-  , h_( h )
+NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, int port, const std::string& host, int bitrate_kbps )
+  : w_( ( band.w + 15 ) & ~15 )  // MPP hor_stride: stream width 16-aligned up
+  , h_( band.h )
   , fps_( fps )
   , port_( port )
   , bitrate_kbps_( bitrate_kbps > 0 ? bitrate_kbps : 12000 )
@@ -156,10 +166,10 @@ NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host
     // postprocess scale — audit item 3). The clamps below stay as
     // defensive guards only.
 
-    band_h_ = band_h;
-    band_top_ = band_top;
-    band_w_ = band_w;
-    band_left_ = band_left;
+    band_h_ = band.h;
+    band_top_ = band.top;
+    band_w_ = band.w;
+    band_left_ = band.left;
     if ( band_h_ > model_h_ )
         band_h_ = model_h_;
     if ( band_top_ < 0 )
@@ -234,14 +244,32 @@ NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host
     // I-frames every 26 in a captured stream (GOP 25).
     ctx->gop_size = vfr_ ? 25 : fps_;  // 1 s: a late joiner waits at most one GOP
     ctx->max_b_frames = 0;  // no reorder: minimal latency
-    // Non-fatal: option names differ between ffmpeg-rockchip builds.
-    if ( av_opt_set( ctx, "rc_mode", "CBR", 0 ) < 0 )
-    {
-        std::cout << "enc: rc_mode option not accepted, encoder default stays\n";
-    }
+    // Rate control: this ffmpeg-rockchip build has no rc_mode AVOption, so
+    // the old generic-option call here never took effect ("option not
+    // accepted") and the encoder silently ran with the MPP default (VBR).
+    // The real knob is the wrapper's own MppEncCfg, reachable through its
+    // private context (RKMPPPriv above, the same channel as the forced-IDR
+    // path); CBR is applied after avcodec_open2 below.
     if ( avcodec_open2( ctx, codec, nullptr ) < 0 )
     {
         throw std::runtime_error( "net encoder: avcodec_open2(h264_rkmpp) failed" );
+    }
+    // Force CBR through MPP: see the rate-control comment above. At this
+    // point mpp_init has run and nothing has been encoded yet, so a
+    // re-issued MPP_ENC_SET_CFG is safe. Non-fatal on any mismatch.
+    RKMPPPriv* rc_priv = reinterpret_cast< RKMPPPriv* >( ctx->priv_data );
+    if ( rc_priv && rc_priv->mctx && rc_priv->mapi && rc_priv->mcfg )
+    {
+        mpp_enc_cfg_set_s32( rc_priv->mcfg, "rc:mode", MPP_ENC_RC_MODE_CBR );
+        const MPP_RET rc_set = rc_priv->mapi->control( rc_priv->mctx, MPP_ENC_SET_CFG, rc_priv->mcfg );
+        if ( rc_set == MPP_OK )
+            std::cout << "enc: rc mode CBR applied via MPP_ENC_SET_CFG\n";
+        else
+            std::cout << "enc: rc mode CBR rejected by MPP (rc " << rc_set << "), encoder default stays\n";
+    }
+    else
+    {
+        std::cout << "enc: rkmpp priv unavailable, encoder default rc stays\n";
     }
     std::cout << "enc: h264_rkmpp open: " << w_ << 'x' << h_ << ", " << bitrate_kbps_ << " kbps, gop " << ctx->gop_size << '\n';
     if ( vfr_ )
@@ -270,6 +298,14 @@ NetEncoder::~NetEncoder()
     }
     if ( thread_.joinable() )
         thread_.join();
+    // Defensive: close a fence fd if a future edit to publish() adds an
+    // early return between the fd hand-off and prep_frame(). Today the
+    // fd is always consumed, so this is a no-op.
+    if ( acq_fd_ >= 0 )
+    {
+        ::close( acq_fd_ );
+        acq_fd_ = -1;
+    }
     if ( enc_ )
     {
         // Drain the encoder: send EOF and collect EVERY pending packet
@@ -667,7 +703,12 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
         const int r = mux_write( fc, p );
         if ( r < 0 )
         {
-            std::cerr << "enc: write failed: " << av_err_str( r ) << '\n';
+            if ( r == AVERROR( EPIPE ) )
+                std::cout << "enc: viewer disconnected (tcp), session ends\n";
+            else if ( r == AVERROR( ETIMEDOUT ) )
+                std::cout << "enc: viewer stalled (send timeout), session ends\n";
+            else
+                std::cerr << "enc: write failed: " << av_err_str( r ) << " (packet lost)\n";
             error_.store( true );
             return;
         }
@@ -715,7 +756,7 @@ int NetEncoder::mux_write( AVFormatContext* fc, AVPacket* pkt )
 // One viewer-session iteration: allocate the muxer context, open the
 // transport (TCP pull or UDP push), set up the stream and drain the
 // encoder packet queue into the muxer. Context and transport teardown
-// is RAII (unique_ptr deleter + Transport destructor): every early
+// is RAII (FcGuard + Transport destructor): every early
 // return below releases exactly what the former close_transport();
 // avformat_free_context() paths released, in the same order.
 
@@ -865,7 +906,7 @@ bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, bool tcp_
 // One viewer-session iteration: allocate the muxer context, open the
 // transport (TCP pull or UDP push), set up the stream and drain the
 // encoder packet queue into the muxer. Context and transport teardown
-// is RAII (unique_ptr deleter + Transport destructor): every early
+// is RAII (FcGuard + Transport destructor): every early
 // return below releases exactly what the former close_transport();
 // avformat_free_context() paths released, in the same order.
 void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
@@ -883,20 +924,33 @@ void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
     // periodic client-side buffering. Flush every packet instead.
     raw->max_delay = 0;
     raw->flush_packets = 1;
-    std::unique_ptr<AVFormatContext, decltype( &avformat_free_context )> fc( raw, &avformat_free_context );
+    // Local guard instead of unique_ptr: the Transport pattern used
+    // above; same declaration position -> same destruction order
+    // (fc dies AFTER the Transport, as before).
+    struct FcGuard
+    {
+        AVFormatContext* p;
+        ~FcGuard()
+        {
+            if ( p )
+                avformat_free_context( p );
+        }
+        FcGuard( const FcGuard& ) = delete;
+        FcGuard& operator=( const FcGuard& ) = delete;
+    } fc { raw };
 
     Transport t;
     t.tcp_pull = tcp_pull;
-    if ( !open_transport( lfd, url, fc.get(), t ) )
+    if ( !open_transport( lfd, url, fc.p, t ) )
         return;
 
     AVStream* st = nullptr;
-    if ( !setup_stream( fc.get(), &st, tcp_pull ) )
+    if ( !setup_stream( fc.p, &st, tcp_pull ) )
         return;
 
     {
         std::lock_guard<std::mutex> lk( mx_ );
-        fc_ = fc.get();
+        fc_ = fc.p;
         st_ = st;
         pts_ = 0;
         ts_base_ = -1;  // M4: VFR pts restart from zero per session
@@ -908,7 +962,7 @@ void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
     // viewer stalls this loop, not publish(). The wait/pop loop and the
     // per-packet write with the IDR-prepend logic moved to drain_queue()
     // and mux_write() (tidy: readability-function-size).
-    drain_queue( fc.get() );
+    drain_queue( fc.p );
 
     {
         std::lock_guard<std::mutex> lk( mx_ );
@@ -923,5 +977,5 @@ void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
             av_packet_free( &q );
         pkts_.clear();
     }
-    av_write_trailer( fc.get() );  // best effort
+    av_write_trailer( fc.p );  // best effort
 }

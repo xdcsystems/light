@@ -41,14 +41,7 @@ public:
         // collected, sorted by IoU (descending) and assigned best-first —
         // the standard greedy bipartite matching. Semantics otherwise
         // unchanged: warm-up pass-through, miss expiry, out order.
-        struct Pair
-        {
-            float iou;
-            int det;
-            int trk;
-        };
-        std::array<Pair, kMaxPairs> pairs {};
-        int np = 0;
+        int np = 0;  // pairs_ is the preallocated member (data section)
         std::array<int, kMaxDet> det_trk {};
         det_trk.fill( -1 );
 
@@ -64,16 +57,16 @@ public:
                 if ( v <= kMatchThr )
                     continue;
                 if ( np < kMaxPairs )
-                    pairs[np++] = { v, i, t };
+                    pairs_[np++] = { v, i, t };
             }
         }
         // Deterministic order: IoU desc, then det index, then track index.
-        std::sort( pairs.begin(), pairs.begin() + np, []( const Pair& a, const Pair& b ) {
+        std::sort( pairs_.begin(), pairs_.begin() + np, []( const Pair& a, const Pair& b ) {
             return a.iou != b.iou ? a.iou > b.iou : ( a.det != b.det ? a.det < b.det : a.trk < b.trk );
         } );
         for ( int p = 0; p < np; ++p )
         {
-            const Pair& pr = pairs[p];
+            const Pair& pr = pairs_[p];
             if ( det_trk[pr.det] >= 0 || tracks_[pr.trk].matched )
                 continue;
             det_trk[pr.det] = pr.trk;
@@ -181,6 +174,15 @@ private:  // data (header-layout rule: functions first, then a
     // equals the DetList capacity (128) as a safety net.
     static constexpr int kMaxDet = 128;
     static constexpr int kMaxPairs = kTrackCount * kMaxDet;
+    // P1-3 matching buffer: preallocated member (architecture audit
+    // item 6: the ~48 KB array lived on update()'s stack per call).
+    struct Pair
+    {
+        float iou;
+        int det;
+        int trk;
+    };
+    std::array<Pair, kMaxPairs> pairs_ {};
 
     std::array<BoxTrack, kTrackCount> tracks_ {};
     std::ofstream log_;

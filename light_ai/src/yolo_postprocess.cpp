@@ -176,9 +176,13 @@ namespace
 
 }  // namespace
 
-void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float model_w, float model_h, float lb_left, float lb_top, float lb_w, float lb_h,
+void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float model_w, float model_h, const LbGeom& lb,
         DetList& out, float conf_thr, float iou_thr )
 {
+    const float lb_left = static_cast<float>( lb.left );
+    const float lb_w = static_cast<float>( lb.w );
+    const float lb_top = static_cast<float>( lb.top );
+    const float lb_h = static_cast<float>( lb.h );
     // Letterbox geometry must fit the model input: the band is rows
     // [lb_top, lb_top + lb_h) of the model frame. A violation here would
     // silently misplace every detection, so it is a hard error.

@@ -89,6 +89,12 @@ private:
         int w = 0, h = 0;
         uint32_t stride = 0;
 
+        // Architecture audit item 6: the draw() staging buffer is a
+        // preallocated member instead of a ~36 KB stack array. Size is
+        // fixed: 128 boxes (PodList cap) x 24 verts x 12 B = 36864;
+        // gpu_box_drawer.cpp pins the layout with a static_assert.
+        alignas( 4 ) uint8_t vstage[36864] {};
+
         // M4: per-slot import cache (context pool). Geometry (w/h/stride)
         // is shared across slots, only the dma-buf fd differs. Slot 0
         // serves the single-context path — the legacy attach_tensor()/

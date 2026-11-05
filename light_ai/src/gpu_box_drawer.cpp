@@ -18,9 +18,9 @@
 #include <cstring>
 #include <unistd.h>
 #include <string_view>
+#include <drm/drm_fourcc.h>
 
 #include "gpu_box_drawer.hpp"
-#include <drm/drm_fourcc.h>
 
 #ifndef EGL_PLATFORM_GBM_KHR
 #define EGL_PLATFORM_GBM_KHR 0x31D6
@@ -65,6 +65,10 @@ namespace
     constexpr int kMaxBoxes = 128;
     constexpr int kVertsPerBox = 4 * 6;
     constexpr GLsizeiptr kVboBytes = kMaxBoxes * kVertsPerBox * (GLsizeiptr)sizeof( BatchVert );
+    // Layout/size pin for State::vstage (the draw staging buffer now
+    // lives in the drawer state, not on the stack).
+    static_assert( kMaxBoxes * kVertsPerBox * sizeof( BatchVert ) == 36864,
+            "BatchVert size vs State::vstage drift" );
 
     // Compile/link diagnostics: libmali returns non-zero handles even for
     // failed shaders — without these checks a broken program degrades
@@ -433,7 +437,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
     // green-band test sat at the center row, which is symmetric under a
     // flip and could not catch this; a live frame did (boxes were mirrored
     // around y = h/2).
-    BatchVert v[kMaxBoxes * kVertsPerBox];  // ~36 KB on stack
+    BatchVert* v = reinterpret_cast< BatchVert* >( st_.vstage );
     int cnt = 0;
     const float xs = 2.0f / (float)st_.w;
     const float ys = 2.0f / (float)st_.h;

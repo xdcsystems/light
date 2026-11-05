@@ -6,6 +6,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include "rga_resizer.hpp"  // LbGeom: band geometry arrives as one object
 
 // DRM frame descriptor for the encoder zero-copy input: the ping-pong
 // dma-bufs are wrapped as AV_PIX_FMT_DRM_PRIME frames and imported by
@@ -42,17 +43,13 @@ typedef struct AVIOContext AVIOContext;
 class NetEncoder
 {
 public:
-    NetEncoder( int w, int h, 
-                int fps, 
-                int port, 
-                const std::string& host, 
-                int bitrate_kbps, 
-                int model_w,
+    NetEncoder( int model_w,
                 int model_h,
-                int band_top,
-                int band_h,
-                int band_left,
-                int band_w );
+                const LbGeom& band,
+                int fps,
+                int port,
+                const std::string& host,
+                int bitrate_kbps );
                 
     ~NetEncoder();
 

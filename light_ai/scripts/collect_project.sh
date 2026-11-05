@@ -12,7 +12,7 @@ shopt -s nullglob
 
 PART_BYTES=${PART_BYTES:-12000}
 
-files=(CMakeLists.txt include/*.h include/*.hpp src/*.cpp docs/* scripts/* README.md)
+files=(CMakeLists.txt include/*.h include/*.hpp src/*.cpp scripts/*)
 
 # сам скрипт из дампа выкидываем, каталоги — тоже
 filtered=()

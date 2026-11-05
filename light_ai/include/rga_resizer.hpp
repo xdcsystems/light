@@ -19,13 +19,16 @@ struct LbGeom
     int h = 0;   // landscape: the visible band is a horizontal strip [top, top + h)
 };
 
+// Single-owner letterbox geometry: one formula for the RGA crop, the
+// encoder crop and the postprocess scale. Integer truncation. Free
+// function: RgaResizer has no data members, and the project forbids
+// static member functions.
+LbGeom band_geom( int w_src, int h_src, int w_dst, int h_dst );
+
 class RgaResizer
 {
 public:
     RgaResizer();
-    // Single-owner letterbox geometry: one formula for the RGA crop,
-    // the encoder crop and the postprocess scale. Integer truncation.
-    static LbGeom band_geom( int w_src, int h_src, int w_dst, int h_dst );
     // src: YUVSP (w_src x h_src; 420SP by default, see src_fmt below),
     // dst: RGB888 (w_dst x h_dst).
     // aux: optional intermediate dma-buf for the two-pass path when the

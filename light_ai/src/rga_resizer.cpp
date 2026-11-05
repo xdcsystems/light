@@ -76,7 +76,7 @@ bool RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst
     return true;
 }
 
-LbGeom RgaResizer::band_geom( int w_src, int h_src, int w_dst, int h_dst )
+LbGeom band_geom( int w_src, int h_src, int w_dst, int h_dst )
 {
     // Single owner of the letterbox formula: resize() and the Pipeline
     // ctor both call this, so the RGA crop, the encoder crop and the

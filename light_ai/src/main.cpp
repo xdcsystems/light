@@ -9,6 +9,7 @@
 #include <string>
 #include <cmath>
 #include <csignal>
+#include <atomic>
 
 #include "pipeline.hpp"
 
@@ -327,11 +328,12 @@ namespace
     // after the Pipeline, so it is destroyed BEFORE it) and cleared on every
     // exit path -- including unwinding from an exception in run() -- thus it
     // never points at a destroyed or dying Pipeline.
-    Pipeline* g_pipe = nullptr;
+    std::atomic<Pipeline*> g_pipe { nullptr };
     void on_stop_signal( int )
     {
-        if ( g_pipe )
-            g_pipe->request_stop();
+        Pipeline* p = g_pipe.load( std::memory_order_acquire );
+        if ( p )
+            p->request_stop();
     }
 
     // RAII guard for g_pipe: it must never outlive the Pipeline. Set in
@@ -342,8 +344,8 @@ namespace
     // Trivially constructible/destructible: no heap, no statics.
     struct SignalGuard
     {
-        explicit SignalGuard( Pipeline* p ) { g_pipe = p; }
-        ~SignalGuard() { g_pipe = nullptr; }
+        explicit SignalGuard( Pipeline* p ) { g_pipe.store( p, std::memory_order_release ); }
+        ~SignalGuard() { g_pipe.store( nullptr, std::memory_order_release ); }
         SignalGuard( const SignalGuard& ) = delete;
         SignalGuard& operator=( const SignalGuard& ) = delete;
     };
@@ -406,6 +408,18 @@ int main( int argc, char** argv )
     // stream would silently stretch the image (the "substituted
     // source is worse than a loud one" principle, M3.8). The user
     // must state the phone's resolution explicitly.
+    // Mutual exclusion, loud version: --net-src clears c.device when it
+    // comes AFTER --device on the command line; the reverse order leaves
+    // both non-empty and one of them is silently ignored (the winner
+    // depends on argv order). Refuse instead of guessing.
+    if ( !cfg.net_src.empty() && !cfg.device.empty() )
+    {
+        std::cerr << "--device and --net-src are mutually exclusive; both are set:\n"
+                     "  --device: " << cfg.device << "\n"
+                     "  --net-src: " << cfg.net_src << "\n"
+                     "  Pass exactly one of them; --net-src replaces the USB camera entirely.\n";
+        return 2;
+    }
     if ( !cfg.net_src.empty() )
     {
         std::cerr << "net-src: " << cfg.net_src << "\n"
