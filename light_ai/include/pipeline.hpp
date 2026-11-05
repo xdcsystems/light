@@ -25,6 +25,7 @@
 #include "gpu_box_drawer.hpp"
 #include "box_smoother.hpp"
 #include "tracker.hpp"
+#include "console_reporter.hpp"
 #include "net_mjpeg_source.hpp"
 
 // Per-frame timing, single storage: dispatch fills cam/dec/rga,
@@ -249,6 +250,7 @@ private:
 
     BoxSmoother smoother_;  // M3.10 EMA box smoothing + jitter log
     Tracker tracker_;
+    ConsoleReporter rep_;  // throttled reports + final summary (stage 3)
     TrajList trajs_;
 
     // Per-frame detection buffers: preallocated members, cleared each

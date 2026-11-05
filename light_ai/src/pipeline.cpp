@@ -1,7 +1,6 @@
 #include <cstring>
 #include <filesystem>
 #include <chrono>
-#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
@@ -11,7 +10,6 @@
 #include <unistd.h>
 
 #include "pipeline.hpp"
-#include "coco_names.h"
 #include "yolo_postprocess.hpp"
 #include "dma_sync.hpp"
 
@@ -427,13 +425,8 @@ int Pipeline::run()
         ok += publish_oldest();
 
     const double wall = std::chrono::duration<double>( clk::now() - t_start ).count();
-    if ( reconnects_ > 0 )
-    {
-        std::cout << "camera disconnects recovered: " << reconnects_ << '\n';
-    }
     t_.report( "TOTAL " );
-    std::cout << "Processed " << ok << " frames in " << std::fixed << std::setprecision( 3 ) << wall << " s -> "
-              << ( wall > 0 ? ok / wall : 0.0 ) << " FPS\n";
+    rep_.summary( ok, wall, reconnects_ );
     return ok;
 }
 
@@ -711,29 +704,7 @@ int Pipeline::publish_oldest()
         smoother_.log_frame( sl.frame, sl.dets, dets_ );
         tracker_.update( dets_, sl.ts_us, trajs_ );
         
-        // Throttled trajectory report: every 15th frame.
-        if ( trajs_.n > 0 && sl.frame % 15 == 0 )
-        {
-            std::cout << "track " << sl.frame << ": " << trajs_.n << " track(s)\n";
-            for ( int k = 0; k < trajs_.n && k < 8; ++k )
-            {
-                const TrackState& t = trajs_.d[k];
-                std::cout << "  id=" << t.id << ( t.state == Tracker::TRACK_CONF ? " conf" : " tent" ) << " c=("
-                          << t.cx << ',' << t.cy << ") v=(" << t.vx << ',' << t.vy << ") pts=" << t.n_pts << '\n';
-            }
-        }
-        
-        // Throttled report: every 15th frame, up to 8 boxes per report.
-        if ( dets_.n > 0 && sl.frame % 15 == 0 )
-        {
-            std::cout << "frame " << sl.frame << ": " << dets_.n << " det(s)\n";
-            for ( int k = 0; k < dets_.n && k < 8; ++k )
-            {
-                const Detection& d = dets_.d[k];
-                std::cout << "  cls=" << kCocoNames[d.cls] << " conf=" << std::fixed << std::setprecision( 2 ) << d.conf << " box=("
-                          << d.x << ',' << d.y << ' ' << d.w << 'x' << d.h << ")\n";
-            }
-        }
+        rep_.report( sl.frame, dets_, trajs_ );
         if ( preview_ || enc_ )
             enc_ms = draw_and_publish( sl, ps );
     }
