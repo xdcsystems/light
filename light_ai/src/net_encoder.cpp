@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <im2d.h>
 #include <rga.h>
+#include <string>
 constexpr int kPktQDepth = 3;  // encoder -> serve packet queue depth (frames)
 
 #include <memory>
@@ -135,7 +136,7 @@ namespace
     }
 }  // namespace
 
-NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host, int bitrate_kbps, int model_w, int model_h, int band_top, int band_h )
+NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host, int bitrate_kbps, int model_w, int model_h, int band_top, int band_h, int band_left, int band_w )
   : w_( w )
   , h_( h )
   , fps_( fps )
@@ -157,12 +158,18 @@ NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host
 
     band_h_ = band_h;
     band_top_ = band_top;
+    band_w_ = band_w;
+    band_left_ = band_left;
     if ( band_h_ > model_h_ )
         band_h_ = model_h_;
     if ( band_top_ < 0 )
         band_top_ = 0;
-    std::cout << "enc: tensor band y=[" << band_top_ << ',' << band_top_ + band_h_ << ") of " << model_w_ << 'x' << model_h_ << " -> " << w_
-              << 'x' << h_ << '\n';
+    if ( band_w_ > model_w_ )
+        band_w_ = model_w_;
+    if ( band_left_ < 0 )
+        band_left_ = 0;
+    std::cout << "enc: tensor band x=[" << band_left_ << ',' << band_left_ + band_w_ << ") y=[" << band_top_ << ',' << band_top_ + band_h_
+              << ") of " << model_w_ << 'x' << model_h_ << " -> " << w_ << 'x' << h_ << '\n';
 
     // Three NV12 dma-bufs from an MPP DRM pool (P1-4): a plane held by an
     // older encode is never overwritten by RGA on the next frame; the
@@ -182,6 +189,11 @@ NetEncoder::NetEncoder( int w, int h, int fps, int port, const std::string& host
             buf_group_ = nullptr;
             throw std::runtime_error( "net encoder: mpp_buffer_get failed" );
         }
+        // Neutral gray fill: the stream width is 16-aligned up, the tail
+        // columns never receive RGA data — without the fill they would
+        // show stale frames at session start.
+        if ( void* p = mpp_buffer_get_ptr( b ) )
+            std::memset( p, 128, bytes );
     }
 
     const AVCodec* codec = avcodec_find_encoder_by_name( "h264_rkmpp" );
@@ -453,9 +465,9 @@ bool NetEncoder::prep_frame( int tensor_fd, MppBuffer mb )
 {
     rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888 );
     im_rect srect = { 0, 0, 0, 0 };
-    srect.x = 0;
+    srect.x = band_left_;
     srect.y = band_top_;
-    srect.width = model_w_;
+    srect.width = band_w_;
     srect.height = band_h_;
     // Explicit strides: the VU plane lands at w * vstride_ - exactly where
     // the DRM descriptor below reports it.
@@ -471,12 +483,16 @@ bool NetEncoder::prep_frame( int tensor_fd, MppBuffer mb )
         ::close( acq_fd_ );
         acq_fd_ = -1;
     }
-    const IM_STATUS rs = improcess( src, dst, {}, srect, {}, {}, 0 );
+    // No scaling: the dst rect matches the src band size, so the
+    // 16-aligned tail columns of the stream keep their gray fill.
+    im_rect drect = { 0, 0, band_w_, band_h_ };
+    const IM_STATUS rs = improcess( src, dst, {}, srect, drect, {}, 0 );
     if ( (int)rs <= 0 )
     {
         std::cerr << "enc: RGA convert failed: " << imStrError( rs ) << "\n";
         return false;
     }
+
     return true;
 }
 

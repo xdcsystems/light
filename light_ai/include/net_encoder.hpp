@@ -47,10 +47,12 @@ public:
                 int port, 
                 const std::string& host, 
                 int bitrate_kbps, 
-                int model_w, 
+                int model_w,
                 int model_h,
                 int band_top,
-                int band_h );
+                int band_h,
+                int band_left,
+                int band_w );
                 
     ~NetEncoder();
 
@@ -147,7 +149,8 @@ private:
     int64_t ts_base_ = -1;
     uint64_t frames_sent_ = 0;
     int model_w_ = 0, model_h_ = 0;  // NPU tensor geometry (RGB888)
-    int band_top_ = 0, band_h_ = 0;  // visible letterbox band in the tensor
+    int band_left_ = 0, band_top_ = 0;  // visible letterbox band in the tensor
+    int band_w_ = 0, band_h_ = 0;       // band size (portrait: vertical strip)
     int vstride_ = 0;  // NV12 ver stride (16-aligned h), set in the ctor
 
     // h264 parameter-set prefix captured from the first key
