@@ -275,6 +275,12 @@ int Tracker::recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) co
             dst[w].y = tr.p[idx].y;
             ++w;
         }
+        for ( int a = 0, b = w - 1; a < b; ++a, --b )
+        {
+            const TrajPoint tmp = dst[a];
+            dst[a] = dst[b];
+            dst[b] = tmp;
+        }
         return w;
     }
     return 0;

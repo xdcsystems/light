@@ -233,8 +233,8 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
                 // V is the LOW nibble. The old offsets read the width high byte as
                 // ncomp and the Nf byte as hv, so every colour JPEG produced
                 // v_max = 3 -> 420SP, even for true 4:2:2.
-                const uint8_t ncomp = i + 10 <= size ? data[i + 9] : 0;
-                for ( int c = 0; c < ncomp && i + 10 + static_cast<size_t>( c ) * 3 + 2 < size; ++c )
+                const uint8_t ncomp = i + 10 <= lim ? data[i + 9] : 0;
+                for ( int c = 0; c < ncomp && i + 10 + static_cast<size_t>( c ) * 3 + 2 < lim; ++c )
                 {
                     const uint8_t hv = data[i + 11 + static_cast<size_t>( c ) * 3];
                     if ( ( hv & 0x0F ) > v_max )

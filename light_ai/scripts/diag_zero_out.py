@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import numpy as np
+import os
 from rknnlite.api import RKNNLite
 
 rng = np.random.RandomState(42)
