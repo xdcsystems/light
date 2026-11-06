@@ -1,10 +1,8 @@
-// Publish FIFO extracted from pipeline.hpp (stage 4): strictly
-// single-threaded - dispatch, publish, drain and pool_discard all
-// run on the pipeline thread, so no locks by design. Depth 3 ==
-// the maximum NPU pool size. Body below is verbatim from pipeline.hpp.
+// Publish FIFO extracted from pipeline.hpp (stage 4).
+// Body below is verbatim from pipeline.hpp; the design contract
+// (single-threaded, depth 3) lives in the struct comment below.
 
-#ifndef SLOT_RING_HPP
-#define SLOT_RING_HPP
+#pragma once
 
 #include <cstdint>
 #include <condition_variable>
@@ -50,6 +48,14 @@ struct PubFifo
     }
     void pop()
     {
+        // Underflow guard: a stray pop() must never drive n negative --
+        // slots[(head + n) % 3] with n < 0 is a negative index (UB).
+        // Mirrors the overflow guard in push(): loud log, no corruption.
+        if ( n <= 0 )
+        {
+            std::cerr << "pubfifo: underflow (n=" << n << ", head=" << head << "), pop refused\n";
+            return;
+        }
         head = ( head + 1 ) % 3;
         --n;
     }
@@ -82,4 +88,3 @@ struct Slot
     enum St : uint8_t { FREE, QUEUED, DONE } st = FREE;
 };
 
-#endif  // SLOT_RING_HPP

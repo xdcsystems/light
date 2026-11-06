@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -34,6 +35,15 @@ typedef struct AVFrame AVFrame;
 typedef struct AVPacket AVPacket;
 typedef struct AVStream AVStream;
 typedef struct AVIOContext AVIOContext;
+
+// Owned packet handle: the mux queue holds AVPackets freed via
+// av_packet_free. The deleter is a plain function pointer so the
+// header keeps compiling without the libav* include paths; the
+// deleter body and its value live in net_encoder.cpp. The one-arg
+// unique_ptr ctor is deleted for pointer deleters, so a PktPtr
+// cannot be built without the deleter -- forgetting it is a
+// compile error, not a leak.
+using PktPtr = std::unique_ptr<AVPacket, void ( * )( AVPacket* )>;
 
 // M3.5 phase B2: hardware-encoded preview (h264_rkmpp) in MPEG-TS.
 // Default transport is TCP pull: the board listens on net_port, the
@@ -99,7 +109,7 @@ private:
     bool setup_stream( AVFormatContext* fc, AVStream** st, bool tcp_pull );
 
     int64_t packet_pts();  // pts of the next frame; may set ts_base_
-    int mux_write( AVFormatContext* fc, AVPacket* pkt );
+    int mux_write( AVFormatContext* fc, PktPtr pkt );
     bool prep_frame( int tensor_fd, MppBuffer mb );
 
 private:
@@ -133,11 +143,12 @@ private:
     // mx_: network-side wakeups never touch the encode critical section.
     std::mutex pkt_mx_;
     std::condition_variable pkt_cv_;
-    std::deque<AVPacket*> pkts_;
+    std::deque<PktPtr> pkts_;
     int pkt_drops_ = 0;
     bool wait_key_ = true;  // pkt_mx_: drain drops packets until the next IDR (see net_encoder.cpp)
     std::atomic<bool> active_ { false };  // stream path live (serve sets/clears under mx_)
-    int acq_fd_ = -1;          // draw fence fd, consumed by RGA in send_frame
+    int acq_fd_ = -1;          // draw fence fd: polled + closed in prep_frame()
+                               // (called from publish, pipeline thread; serve() never touches it)
     int64_t frame_step_ = 1;   // pts increment in the muxer's time base
     uint64_t pts_ = 0;
     // M4 follow-source (--net-fps 0): pts stamped from the real dequeue
