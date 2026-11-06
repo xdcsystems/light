@@ -28,3 +28,4 @@ dataset_night2/
 dataset_*.tgz
 *.bak-p*
 tools/bench_npu
+misc/*.whl
