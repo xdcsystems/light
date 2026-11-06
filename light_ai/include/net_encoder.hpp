@@ -5,13 +5,14 @@
 #include <deque>
 #include <mutex>
 #include <string>
+#include <vector>
 #include <thread>
-#include "rga_resizer.hpp"  // LbGeom: band geometry arrives as one object
 
 // DRM frame descriptor for the encoder zero-copy input: the ping-pong
 // dma-bufs are wrapped as AV_PIX_FMT_DRM_PRIME frames and imported by
 // the rkmpp wrapper by fd - no CPU pixel copies anywhere in the path.
 #include <libavutil/hwcontext_drm.h>
+
 // DRM_FORMAT_* constants (NV12, MOD_LINEAR) live in drm_fourcc.h;
 // hwcontext_drm.h declares the descriptor struct but does not pull it in.
 #include <libdrm/drm_fourcc.h>
@@ -21,7 +22,8 @@
 // "rk_mpi.h" hits the distro /usr/include/rockchip instead, and the two
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
-#include <vector>
+
+#include "rga_resizer.hpp"  // LbGeom: band geometry arrives as one object
 
 // Opaque ffmpeg types, forward-declared: the header compiles without
 // the libav* include paths, and the compiler now checks the handle
@@ -42,6 +44,21 @@ typedef struct AVIOContext AVIOContext;
 // flow like TCP over Wi-Fi.
 class NetEncoder
 {
+    // One viewer session's transport (TCP pull or UDP push), RAII:
+    // the destructor is the single teardown point, the early-return
+    // paths of run_session() free everything by scope exit.
+    
+    struct Transport
+    {
+        AVIOContext* pb = nullptr;
+        uint8_t* iobuf = nullptr;
+        int cfd = -1;
+        bool tcp_pull = false;
+
+        ~Transport();
+        void close();
+    };
+
 public:
     NetEncoder( int model_w,
                 int model_h,
@@ -50,7 +67,7 @@ public:
                 int port,
                 const std::string& host,
                 int bitrate_kbps );
-                
+
     ~NetEncoder();
 
     // Called once per frame from the pipeline loop. tensor_fd is the
@@ -75,20 +92,6 @@ private:
     void drain_queue( AVFormatContext* fc );
     void run_session( int lfd, bool tcp_pull, const std::string& url );
 
-    // One viewer session's transport (TCP pull or UDP push), RAII:
-    // the destructor is the single teardown point, the early-return
-    // paths of run_session() free everything by scope exit.
-    struct Transport
-    {
-        AVIOContext* pb = nullptr;
-        uint8_t* iobuf = nullptr;
-        int cfd = -1;
-        bool tcp_pull = false;
-
-        ~Transport();
-        void close();
-    };
-
     // Transport setup (accept + socket options / avio_open) and the
     // stream setup (new_stream + header + mpegts options). Both are
     // verbatim moves out of run_session().
@@ -99,6 +102,7 @@ private:
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
     bool prep_frame( int tensor_fd, MppBuffer mb );
 
+private:
     const int w_, h_, fps_, port_, bitrate_kbps_;
     const std::string host_;
     std::thread thread_;
@@ -121,7 +125,7 @@ private:
     // pace; with --net-fps 0 (VFR) frames arrive in clumps after a network
     // pause, and two buffers can run out exactly at the 3-deep rkmpp task
     // queue while an older encode still holds its plane.
-    enum { kBufCount = 3 };  // project rule: unscoped enum, not a static
+    enum { kBufCount = 3 };  
     MppBuffer bufs_[kBufCount] = { nullptr, nullptr, nullptr };  // ping-pong NV12 dma-bufs
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
