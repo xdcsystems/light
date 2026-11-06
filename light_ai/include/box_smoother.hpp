@@ -165,15 +165,18 @@ private:  // data (header-layout rule: functions first, then a
           // fresh visibility label for the data)
     // Tuning (P1-3): the literals were inline; now named, one place to
     // tune. kAlpha is the EMA weight of the TRACK (0.5 = plain average).
-    static constexpr float kMatchThr = 0.3f;
-    static constexpr float kAlpha = 0.5f;
-    static constexpr int kMaxMiss = 2;
-    static constexpr int kTrackCount = 32;
+    const float kMatchThr = 0.3f;  // plain member: enum cannot hold float
+    const float kAlpha = 0.5f;
+    enum  // project rule: unscoped enum, not a static
+    {
+        kMaxMiss = 2,
+        kTrackCount = 32,
     // Detections beyond kMaxDet are never matched to existing tracks
     // (they pass through / spawn fresh tracks, as before) — kMaxDet is
     // equals the DetList capacity (128) as a safety net.
-    static constexpr int kMaxDet = 128;
-    static constexpr int kMaxPairs = kTrackCount * kMaxDet;
+        kMaxDet = DetList::cap,
+        kMaxPairs = kTrackCount * kMaxDet,
+    };
     // P1-3 matching buffer: preallocated member (architecture audit
     // item 6: the ~48 KB array lived on update()'s stack per call).
     struct Pair

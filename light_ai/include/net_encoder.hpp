@@ -121,7 +121,7 @@ private:
     // pace; with --net-fps 0 (VFR) frames arrive in clumps after a network
     // pause, and two buffers can run out exactly at the 3-deep rkmpp task
     // queue while an older encode still holds its plane.
-    static constexpr int kBufCount = 3;
+    enum { kBufCount = 3 };  // project rule: unscoped enum, not a static
     MppBuffer bufs_[kBufCount] = { nullptr, nullptr, nullptr };  // ping-pong NV12 dma-bufs
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)

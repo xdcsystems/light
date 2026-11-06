@@ -61,15 +61,17 @@ private:
     // kNpos when absent. Const: it only scans.
     size_t net_find( const char* pat, size_t plen ) const;
 
-    static constexpr int kBufCount = 4;
-    static constexpr size_t kFrameMax = static_cast<size_t>( 1 ) << 20;  // 1 MiB per JPEG frame cap
-    static constexpr size_t kSockBuf = 32 * 1024;
-    static constexpr size_t kHdrMax = 8 * 1024;
-    static constexpr size_t kNpos = static_cast<size_t>( -1 );
-    static constexpr int kPollMs = 2000;     // per-fill watchdog, same window as the camera
-    static constexpr int kErrStreakMax = 4;  // corrupt/short-frame streak tolerance
-    static constexpr size_t kBoundaryMax = 60;
-    static constexpr size_t kPatMax = 70;
+    enum  // project rule: unscoped enum, not a static
+    {
+        kBufCount = 4,
+        kFrameMax = 1 << 20,  // 1 MiB per JPEG frame cap (cast to size_t at use sites)
+        kSockBuf = 32 * 1024,
+        kHdrMax = 8 * 1024,
+        kPollMs = 2000,      // per-fill watchdog, same window as the camera
+        kErrStreakMax = 4,   // corrupt/short-frame streak tolerance
+        kBoundaryMax = 60,
+        kPatMax = 70,
+    };
 
     int fd_ = -1;
     int err_streak_ = 0;

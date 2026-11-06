@@ -91,14 +91,14 @@ NetMjpegSource::NetMjpegSource( int width, int height ) : width_( width ), heigh
     // The closest analog of the V4L2 driver-owned buffers this class
     // stands in for. A failed mmap is not fatal here: setup_device
     // reports it and the pipeline fails loud, as everywhere.
-    const size_t bytes = static_cast<size_t>( kBufCount ) * kFrameMax;
+    const size_t bytes = static_cast<size_t>( kBufCount ) * static_cast<size_t>( kFrameMax );
     pool_ = ::mmap( nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
     if ( pool_ == MAP_FAILED )
         return;  // pool_ stays nullptr; setup_device fails loud
     for ( int k = 0; k < kBufCount; ++k )
     {
-        bufs_[k].start = static_cast<uint8_t*>( pool_ ) + static_cast<size_t>( k ) * kFrameMax;
-        bufs_[k].length = kFrameMax;
+        bufs_[k].start = static_cast<uint8_t*>( pool_ ) + static_cast<size_t>( k ) * static_cast<size_t>( kFrameMax );
+        bufs_[k].length = static_cast<size_t>( kFrameMax );
     }
 }
 
@@ -106,7 +106,7 @@ NetMjpegSource::~NetMjpegSource()
 {
     teardown();
     if ( pool_ != nullptr )
-        ::munmap( pool_, static_cast<size_t>( kBufCount ) * kFrameMax );
+        ::munmap( pool_, static_cast<size_t>( kBufCount ) * static_cast<size_t>( kFrameMax ) );
 }
 
 int NetMjpegSource::setup_device( const std::string& url, std::string* why )
@@ -243,7 +243,7 @@ int NetMjpegSource::net_fill( int timeout_ms )
         sock_end_ -= sock_pos_;
         sock_pos_ = 0;
     }
-    if ( sock_end_ == kSockBuf )
+    if ( sock_end_ == static_cast<size_t>( kSockBuf ) )
         return -2;  // wedged full: the caller's desync protocol
     pollfd p { fd_, POLLIN, 0 };
     const int pr = ::poll( &p, 1, timeout_ms > 0 ? timeout_ms : 1 );
@@ -251,7 +251,7 @@ int NetMjpegSource::net_fill( int timeout_ms )
         return errno == EINTR ? 0 : -1;
     if ( pr == 0 )
         return 0;
-    const ssize_t n = ::recv( fd_, sock_ + sock_end_, kSockBuf - sock_end_, 0 );
+    const ssize_t n = ::recv( fd_, sock_ + sock_end_, static_cast<size_t>( kSockBuf ) - sock_end_, 0 );
     if ( n <= 0 )
         return -1;  // 0 = EOF, -1 = error: the connection is gone either way
     sock_end_ += static_cast<size_t>( n );
@@ -275,7 +275,7 @@ int NetMjpegSource::read_headers( std::string* why )
     // data-volume cap, not a wall-clock one.
     while ( net_find( "\r\n\r\n", 4 ) == kNpos )
     {
-        if ( sock_end_ - sock_pos_ >= kHdrMax )
+        if ( sock_end_ - sock_pos_ >= static_cast<size_t>( kHdrMax ) )
         {
             if ( why )
                 *why = "response headers oversized";
@@ -314,11 +314,11 @@ int NetMjpegSource::read_headers( std::string* why )
     size_t v = bpos + 9;
     size_t vlen = 0;
     while ( v + vlen < hl && h[v + vlen] != '\r' && h[v + vlen] != '\n' && h[v + vlen] != '"'
-            && h[v + vlen] != ';' && vlen < kBoundaryMax )
+            && h[v + vlen] != ';' && vlen < static_cast<size_t>( kBoundaryMax ) )
         ++vlen;
     // Fail loud on an over-long boundary instead of a silent snprintf
     // truncation: a truncated pattern would desync the whole stream.
-    if ( vlen == kBoundaryMax && v + vlen < hl && h[v + vlen] != '\r' && h[v + vlen] != '\n'
+    if ( vlen == static_cast<size_t>( kBoundaryMax ) && v + vlen < hl && h[v + vlen] != '\r' && h[v + vlen] != '\n'
          && h[v + vlen] != '"' && h[v + vlen] != ';' )
     {
         if ( why )
@@ -365,7 +365,7 @@ int NetMjpegSource::read_boundary()
             sock_pos_ += f + static_cast<size_t>( bpat_len_ );
             return 0;
         }
-        if ( avail >= kSockBuf )
+        if ( avail >= static_cast<size_t>( kSockBuf ) )
             return -2;  // 32 KiB without a boundary: desynced stream
         const int r = net_fill( kPollMs );
         if ( r == -2 )
@@ -379,7 +379,7 @@ int NetMjpegSource::read_part_header( long* need )
 {
     while ( net_find( "\r\n\r\n", 4 ) == kNpos )
     {
-        if ( sock_end_ - sock_pos_ >= kSockBuf )
+        if ( sock_end_ - sock_pos_ >= static_cast<size_t>( kSockBuf ) )
             return -2;
         if ( net_fill( kPollMs ) <= 0 )
             return -1;
@@ -418,7 +418,7 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
             const size_t f = net_find( bpat_, static_cast<size_t>( bpat_len_ ) );
             if ( f != kNpos )
             {
-                if ( got + f > kFrameMax )
+                if ( got + f > static_cast<size_t>( kFrameMax ) )
                     return -2;
                 std::memcpy( dst + got, sock_ + sock_pos_, f );
                 sock_pos_ += f + static_cast<size_t>( bpat_len_ );
@@ -426,7 +426,7 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
                 return 0;
             }
             const size_t avail = sock_end_ - sock_pos_;
-            if ( got + avail > kFrameMax )
+            if ( got + avail > static_cast<size_t>( kFrameMax ) )
                 return -2;
             std::memcpy( dst + got, sock_ + sock_pos_, avail );
             sock_pos_ += avail;
@@ -435,7 +435,7 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
                 return -1;
         }
     }
-    if ( static_cast<size_t>( need ) > kFrameMax )
+    if ( static_cast<size_t>( need ) > static_cast<size_t>( kFrameMax ) )
         return -2;  // oversized "part": desynced garbage, resync
     // Copy the frame body in chunks: the socket window is refilled as
     // it drains, the watchdog covers the whole frame, not one chunk.
