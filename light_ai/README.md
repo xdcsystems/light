@@ -176,20 +176,25 @@ post-processing.
                camera; 640x480 at the 1280x960 working mode since
                2026-10-30). One viewer at a time; no encode until the
                first viewer connects; a stalled viewer is dropped via
-               SO_SNDTIMEO (2 s). Late joiners via repeated
+               SO_SNDTIMEO (15 s). Late joiners via repeated
                PAT/PMT/SDT.
                The NV12 dma-buf pool is three buffers deep (2026-11-02,
                P1-4): two could run out exactly at the 3-deep rkmpp
                task queue when VFR frames arrive in clumps after a
                network pause; the slot index advance is modulus-based.
                2026-11-01: board-side stream fixes verified live —
-               TCP_NODELAY + 256 KiB SO_SNDBUF on the accepted socket,
+               TCP_NODELAY + 2 MiB SO_SNDBUF on the accepted socket,
                max_delay=0, flush_packets=1,
                +pat_pmt_at_frames+resend_headers; --net-bitrate 3000
                confirmed by the MPP log ("set rc cbr bps [3000000:...]"),
                the viewer-side bitrate reads ~2.4 Mbps (CBR
                under-delivery on a static scene). Result: zero
                client-side "(Buffering)" per session in timed mode.
+               2026-11-06: the accepted-socket pair was retuned in code —
+               SO_SNDBUF 2 MiB (~10 s of jitter buffering at 1500 kbps),
+               SO_SNDTIMEO 15 s (a dead viewer eventually releases the
+               socket); the 2026-11-01 numbers above were updated to the
+               current values.
                Client (pull, product path): ffplay -fflags nobuffer
                tcp://<board-ip>:1234
                Client (UDP push, legacy, low latency): ffplay -fflags
@@ -465,7 +470,7 @@ and costs zero CPU writes into the NPU tensor.
 enc= stage in [timing] (2026-10-27, M3.5 item 7): the report carries a
 fifth term — the synchronous NetEncoder::publish in the pipeline thread
 (draw-fence poll + RGA band crop RGB888->NV12 + h264 encode + mux + TCP
-write; SO_SNDTIMEO caps a stalled viewer at 2 s). No viewer: enc=0.0
+write; SO_SNDTIMEO caps a stalled viewer at 15 s). No viewer: enc=0.0
 by construction (publish early-returns). Viewer attached, 300-frame
 evening run: 1.8-1.9 ms steady (the first avg/60 block after a mid-run
 connect is inflated — compare steady blocks only). The sum does NOT
