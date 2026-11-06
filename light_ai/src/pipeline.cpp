@@ -190,7 +190,7 @@ Pipeline::Pipeline( const Config& cfg )
 
     // M3.7: GPU box drawing (Mali G610, EGL/GBM) straight into the NPU tensor. 
     // Init once, only with a preview sink active. On failure the CPU path 
-    // (net_preview::draw_boxes_rgb24) stays as the fallback.
+    // (draw_boxes_cpu, this file) stays as the fallback.
     // --cpu-draw forces the CPU path (A/B baseline).
 
     if ( ( preview_ || enc_ ) && !cfg_.cpu_draw )
