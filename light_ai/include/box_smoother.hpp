@@ -18,6 +18,21 @@
 // DetList buffers (PodList — no allocations at all).
 class BoxSmoother
 {
+    struct BoxTrack
+    {
+        float x = 0, y = 0, w = 0, h = 0;
+        int cls = -1;
+        int miss = 0;
+        bool alive = false;
+        bool matched = false;
+    };
+    struct Pair
+    {
+        float iou;
+        int det;
+        int trk;
+    };
+
 public:
     void set_log( const std::string& path )
     {
@@ -134,15 +149,6 @@ public:
     }
 
 private:
-    struct BoxTrack
-    {
-        float x = 0, y = 0, w = 0, h = 0;
-        int cls = -1;
-        int miss = 0;
-        bool alive = false;
-        bool matched = false;
-    };
-
     float iou( const BoxTrack& t, const Detection& d ) const
     {
         const float x0 = t.x > d.x ? t.x : d.x;
@@ -161,13 +167,13 @@ private:
         return uni > 0.f ? inter / uni : 0.f;
     }
 
-private:  // data (header-layout rule: functions first, then a
-          // fresh visibility label for the data)
+private:
     // Tuning (P1-3): the literals were inline; now named, one place to
     // tune. kAlpha is the EMA weight of the TRACK (0.5 = plain average).
     const float kMatchThr = 0.3f;  // plain member: enum cannot hold float
     const float kAlpha = 0.5f;
-    enum  // project rule: unscoped enum, not a static
+    
+    enum
     {
         kMaxMiss = 2,
         kTrackCount = 32,
@@ -177,16 +183,10 @@ private:  // data (header-layout rule: functions first, then a
         kMaxDet = DetList::cap,
         kMaxPairs = kTrackCount * kMaxDet,
     };
+    
     // P1-3 matching buffer: preallocated member (architecture audit
     // item 6: the ~48 KB array lived on update()'s stack per call).
-    struct Pair
-    {
-        float iou;
-        int det;
-        int trk;
-    };
     std::array<Pair, kMaxPairs> pairs_ {};
-
     std::array<BoxTrack, kTrackCount> tracks_ {};
     std::ofstream log_;
 };
