@@ -99,7 +99,7 @@ private:
         // is shared across slots, only the dma-buf fd differs. Slot 0
         // serves the single-context path — the legacy attach_tensor()/
         // draw() semantics stay untouched.
-        enum { kSlots = 3 };  // project rule: unscoped enum, not a static member
+        enum { kSlots = 3 };
         struct SlotImg
         {
             EGLImageKHR img = EGL_NO_IMAGE_KHR;

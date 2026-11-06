@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <chrono>
@@ -65,67 +66,33 @@ Pipeline::Pipeline( const Config& cfg )
   , cam_( cfg_.cam_w, cfg_.cam_h )
   , dec_( cfg_.cam_w, cfg_.cam_h )
 {
-    // M4: the pool is a startup-time decision; npus_ never grows after
-    // this loop, so the slot pointers stay valid for the whole session.
-    npool_ = cfg_.pool >= 3 ? 3 : 1;
+    // M4: context pool, clamped to [1, 3]. 0/1 = ring of one (single
+    // engine, synchronous semantics); 2 = two engines pinned to cores
+    // 0/1; 3 = three engines on one model, pinned one per NPU core,
+    // inference moved to worker threads and overlapped with the rest.
+
+    npool_ = std::clamp( cfg_.pool, 1, 3 );
+    if ( cfg_.pool != npool_ )
+        std::cout << "npu: requested pool " << cfg_.pool << " clamped to " << npool_ << '\n';
     npus_.reserve( npool_ );
 
     for ( int k = 0; k < npool_; ++k )
         npus_.emplace_back( cfg_.model.c_str() );
 
-    // Source bring-up (identity, setup, variant selection) extracted
-    // from the ctor: with the net source branch the ctor crossed the
-    // readability-function-size limit (225 lines / threshold 200).
+    // Source bring-up (identity, setup, variant selection): the net
+    // branch made the ctor cross the readability-function-size limit.
     init_source();
 
     for ( auto& e : npus_ )
     {
         if ( e.setup_io() != 0 )
-        {
             throw std::runtime_error( "rknn setup_io failed" );
-        }
     }
 
-    // M2.5/M4: core pinning 
-    // Pool 1 keeps cfg_.core verbatim (AUTO by default — the A/B baseline is untouched).
-    // The pool pins its own: one engine per core, via the per-core flags 1/2/4.
-
-    if ( npool_ == 1 )
-    {
-        if ( cfg_.core != 0 )
-        {
-            if ( npus_[0].set_core_mask( static_cast<unsigned>( cfg_.core ) ) != 0 )
-            {
-                throw std::runtime_error( "rknn set_core_mask failed" );
-            }
-            std::cout << "npu: core mask 0x" << std::hex << cfg_.core << std::dec << "\n";
-        }
-    }
-    else
-    {
-        constexpr int cores[] = { 1, 2, 4 };
-        if ( npool_ > static_cast<int>( std::size( cores )) )
-        {
-            throw std::runtime_error( "npu pool size > 3 is not supported" );
-        }
-
-        for ( int k = 0; k < npool_; ++k )
-        {
-            // clang 11 analyzer cannot fold std::size() into a constant and misses the
-            // guard above; reading kCores[k] is safe because k < npool_ <= std::size(kCores).
-            // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage)
-            if ( npus_[k].set_core_mask( static_cast<unsigned>( cores[k] ) ) != 0 )
-            {
-                throw std::runtime_error( "rknn set_core_mask failed" );
-            }
-        }
-        std::cout << "npu: pool of " << npool_ << " engines, one per core\n";
-        t_.set_pool( npool_ );
-    }
+    setup_cores();
 
     // Single source of truth for the model geometry: the model file itself.
     // NHWC layout: dims = {N, H, W, C}, so W is dims[n-2] and H is dims[n-3].
-
     const rknn_tensor_attr& ia = npus_[0].input_attr();  // all engines share the model geometry
     if ( ia.n_dims < 4 )
     {
@@ -135,7 +102,6 @@ Pipeline::Pipeline( const Config& cfg )
 
     // Gray letterbox bars on every pooled tensor: RGA writes only the
     // visible band (drect), so the 128-fill done here survives every frame.
-
     for ( auto& e : npus_ )
         std::memset( e.input_data(), 128, e.input_size() );
 
@@ -145,121 +111,31 @@ Pipeline::Pipeline( const Config& cfg )
 
     // Letterbox geometry computed once via band_geom:
     // the same numbers the RGA crop writes.
-    
     lb_ = band_geom( cfg_.cam_w, cfg_.cam_h, model_w_, model_h_ );
 
-    if ( cfg_.net )
-    {
-        // Hard confirmation of tensor contiguity: 
-        // if size_with_stride equals w*h*3, the buffer is exactly the PPM dump layout (stride = w*3).
-
-        std::cout << "net: tensor stride check: size_with_stride=" << ia.size_with_stride << " vs " << model_w_ * model_h_ * 3 << "\n";
-        if ( cfg_.net_h264 )
-        {
-            // M3.5 pull: empty net_host = TCP pull server 
-            // (listener on net_port, the viewer connects to the board's LAN IP); 
-            // a non-empty net_host keeps the legacy UDP push to that destination.
-            // The h264 encoder consumes the NPU input tensor AFTER box drawing, 
-            // at the NATIVE letterbox-band size (no upscale):
-            // w = model_w, h = cam_h * (model_w / cam_w) — for the default
-            // 1280x720 camera and a 640x640 tensor that is 640x360 (16:9).
-            // Band geometry comes from the pipeline's single LbGeom:
-            // the same numbers the RGA crop writes.
-
-            // Band-crop target: landscape crops a horizontal strip of the
-            // full tensor width; portrait a vertical strip of the full tensor height.
-            // The stream width is 16-aligned up (MPP hor_stride requirement); the tail stays gray.
-
-            enc_.emplace( model_w_, model_h_, lb_, cfg_.net_fps, cfg_.net_port, cfg_.net_host, cfg_.net_bitrate );
-            if ( cfg_.net_host.empty() )
-            {
-                std::cout << "net: h264 PULL server on port " << cfg_.net_port << ", " << cfg_.net_bitrate
-                          << " kbps (viewer: ffplay tcp://<board-ip>:" << cfg_.net_port << ")\n";
-            }
-            else
-            {
-                std::cout << "net: h264 preview -> " << cfg_.net_host << ':' << cfg_.net_port << ", " << cfg_.net_bitrate << " kbps\n";
-            }
-        }
-        else
-        {
-            preview_.emplace( model_w_, model_h_, model_w_ * 3, cfg_.net_fps, cfg_.net_port );
-            std::cout << "net: preview server on port " << cfg_.net_port << "\n";
-        }
-    }
-
-    // M3.7: GPU box drawing (Mali G610, EGL/GBM) straight into the NPU tensor. 
-    // Init once, only with a preview sink active. On failure the CPU path 
-    // (draw_boxes_cpu, this file) stays as the fallback.
-    // --cpu-draw forces the CPU path (A/B baseline).
-
-    if ( ( preview_ || enc_ ) && !cfg_.cpu_draw )
-    {
-        drawer_.emplace();
-
-        // M4: one EGLImage per slot, attached once at startup (attach_slot is idempotent per slot);
-        // draw switches FBOs between slots.
-
-        bool drew_ok = drawer_->init();
-        for ( int k = 0; drew_ok && k < npool_; ++k )
-        {
-            drew_ok = drawer_->attach_slot( k, npus_[k].input_fd(), model_w_, model_h_, static_cast<uint32_t>( model_w_ ) * 3 );
-        }
-        if ( !drew_ok )
-        {
-            std::cerr << "pipeline: gpu drawer unavailable, RGA fallback\n";
-            drawer_.reset();
-        }
-        else
-        {
-            std::cout << "net: gpu box drawing active (Mali G610, EGL/GBM)\n";
-        }
-    }
-
-    // Aux buffer only for the two-pass path (source over 8x the model input).
-    // 1280x720 -> 224 is 5.7x — single pass, aux not allocated, no DRM pool split.
-    // 1920x1080 still needs the 960x540 intermediate.
-
-    if ( cfg_.cam_w > 8 * model_w_ || cfg_.cam_h > 8 * model_h_ )
-    {
-        aux_fd_ = dec_.aux_fd( static_cast<size_t>( cfg_.cam_w / 2 ) * ( cfg_.cam_h / 2 ) * 2 );
-        if ( aux_fd_ < 0 )
-        {
-            throw std::runtime_error( "pipeline: aux buffer alloc failed" );
-        }
-    }
-    else
-    {
-        std::cout << "aux not needed: "
-                  << cfg_.cam_w << 'x' 
-                  << cfg_.cam_h << " fits single-pass into "
-                  << model_w_ << 'x'
-                  << model_h_ << '\n';
-    }
+    init_net_sink( ia );
+    init_gpu_drawer();
+    init_aux();
 
     if ( cfg_.cal_frames > 0 )
     {
         std::error_code ec;
         std::filesystem::create_directories( "dataset", ec );
         if ( ec )
-        {
             throw std::runtime_error( "pipeline: cannot create dataset/: " + ec.message() );
-        }
     }
 
-    // M4: bind slots to engines,
-    // then start the worker threads — the unified path routes every frame through the slot ring; 
-    // with pool 1 the single worker is woken by dispatch and publish waits on it.
-
+    // M4: bind slots to engines, then start the worker threads — the unified
+    // path routes every frame through the slot ring; with pool 1 the single
+    // worker is woken by dispatch and publish waits on it.
     for ( int k = 0; k < npool_; ++k )
         slots_[k].eng = &npus_[k];
 
+    // No throwing steps below this line: once workers_ are started, the
+    // dtor takes over shutdown (quit_ -> notify -> join) and the ctor
+    // must not leave the object half-initialized after them.
     for ( int k = 0; k < npool_; ++k )
-    {
-        workers_.emplace_back( [this, k] {
-            worker_loop( k );
-        } );
-    }
+        workers_.emplace_back( [this, k] { worker_loop( k ); } );
 
     with_src( []( auto& s ) { s.start(); } );  // no-op for the net source
 }
@@ -332,6 +208,125 @@ void Pipeline::init_source()
         src_ = &*net_src_;
     else
         src_ = &cam_;
+}
+
+// M2.5/M4: core pinning.
+// Pool 1 keeps cfg_.core verbatim (AUTO by default — the A/B baseline is untouched).
+// The pool pins its own: one engine per core, via the per-core flags 1/2/4.
+void Pipeline::setup_cores()
+{
+    if ( npool_ == 1 )
+    {
+        if ( cfg_.core != 0 )
+        {
+            if ( npus_[0].set_core_mask( static_cast<unsigned>( cfg_.core ) ) != 0 )
+                throw std::runtime_error( "rknn set_core_mask failed" );
+            std::cout << "npu: core mask 0x" << std::hex << cfg_.core << std::dec << "\n";
+        }
+        return;
+    }
+
+    constexpr int cores[] = { 1, 2, 4 };
+    if ( npool_ > static_cast<int>( std::size( cores ) ) )
+        throw std::runtime_error( "npu pool size > 3 is not supported" );
+
+    for ( int k = 0; k < npool_; ++k )
+    {
+        // clang 11 analyzer cannot fold std::size() into a constant and misses the
+        // guard above; reading cores[k] is safe because k < npool_ <= std::size(cores).
+        // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage)
+        if ( npus_[k].set_core_mask( static_cast<unsigned>( cores[k] ) ) != 0 )
+            throw std::runtime_error( "rknn set_core_mask failed" );
+    }
+    std::cout << "npu: pool of " << npool_ << " engines, one per core\n";
+    t_.set_pool( npool_ );
+}
+
+// Preview/encoder bring-up (M3.5). Verbatim move out of the ctor.
+void Pipeline::init_net_sink( const rknn_tensor_attr& ia )
+{
+    if ( !cfg_.net )
+        return;
+
+    // Hard confirmation of tensor contiguity:
+    // if size_with_stride equals w*h*3, the buffer is exactly the PPM dump layout (stride = w*3).
+    std::cout << "net: tensor stride check: size_with_stride=" << ia.size_with_stride
+              << " vs " << model_w_ * model_h_ * 3 << "\n";
+
+    if ( cfg_.net_h264 )
+    {
+        // M3.5 pull: empty net_host = TCP pull server
+        // (listener on net_port, the viewer connects to the board's LAN IP);
+        // a non-empty net_host keeps the legacy UDP push to that destination.
+        // The h264 encoder consumes the NPU input tensor AFTER box drawing,
+        // at the NATIVE letterbox-band size (no upscale):
+        // w = model_w, h = cam_h * (model_w / cam_w) — for the default
+        // 1280x720 camera and a 640x640 tensor that is 640x360 (16:9).
+        // Band geometry comes from the pipeline's single LbGeom:
+        // the same numbers the RGA crop writes.
+
+        // Band-crop target: landscape crops a horizontal strip of the
+        // full tensor width; portrait a vertical strip of the full tensor height.
+        // The stream width is 16-aligned up (MPP hor_stride requirement); the tail stays gray.
+
+        enc_.emplace( model_w_, model_h_, lb_, cfg_.net_fps, cfg_.net_port, cfg_.net_host, cfg_.net_bitrate );
+        if ( cfg_.net_host.empty() )
+            std::cout << "net: h264 PULL server on port " << cfg_.net_port << ", " << cfg_.net_bitrate
+                      << " kbps (viewer: ffplay tcp://<board-ip>:" << cfg_.net_port << ")\n";
+        else
+            std::cout << "net: h264 preview -> " << cfg_.net_host << ':' << cfg_.net_port
+                      << ", " << cfg_.net_bitrate << " kbps\n";
+    }
+    else
+    {
+        preview_.emplace( model_w_, model_h_, model_w_ * 3, cfg_.net_fps, cfg_.net_port );
+        std::cout << "net: preview server on port " << cfg_.net_port << "\n";
+    }
+}
+
+// M3.7: GPU box drawing (Mali G610, EGL/GBM) straight into the NPU tensor.
+// Init once, only with a preview sink active. On failure the CPU path
+// (draw_boxes_cpu, this file) stays as the fallback.
+// --cpu-draw forces the CPU path (A/B baseline).
+void Pipeline::init_gpu_drawer()
+{
+    if ( ( !preview_ && !enc_ ) || cfg_.cpu_draw )
+        return;
+
+    drawer_.emplace();
+
+    // M4: one EGLImage per slot, attached once at startup (attach_slot is idempotent per slot);
+    // draw switches FBOs between slots.
+    bool drew_ok = drawer_->init();
+    for ( int k = 0; drew_ok && k < npool_; ++k )
+        drew_ok = drawer_->attach_slot( k, npus_[k].input_fd(), model_w_, model_h_,
+                static_cast<uint32_t>( model_w_ ) * 3 );
+
+    if ( !drew_ok )
+    {
+        std::cerr << "pipeline: gpu drawer unavailable, RGA fallback\n";
+        drawer_.reset();
+    }
+    else
+    {
+        std::cout << "net: gpu box drawing active (Mali G610, EGL/GBM)\n";
+    }
+}
+
+// Aux buffer only for the two-pass path (source over 8x the model input).
+// 1280x720 -> 224 is 5.7x — single pass, aux not allocated, no DRM pool split.
+// 1920x1080 still needs the 960x540 intermediate.
+void Pipeline::init_aux()
+{
+    if ( cfg_.cam_w > 8 * model_w_ || cfg_.cam_h > 8 * model_h_ )
+    {
+        aux_fd_ = dec_.aux_fd( static_cast<size_t>( cfg_.cam_w / 2 ) * ( cfg_.cam_h / 2 ) * 2 );
+        if ( aux_fd_ < 0 )
+            throw std::runtime_error( "pipeline: aux buffer alloc failed" );
+        return;
+    }
+    std::cout << "aux not needed: " << cfg_.cam_w << 'x' << cfg_.cam_h
+              << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
 }
 
 int Pipeline::run()

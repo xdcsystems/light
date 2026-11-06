@@ -219,6 +219,11 @@ private:
     // from the ctor: with the net source branch the ctor crossed the
     // readability-function-size limit (225 lines / threshold 200).
     void init_source();
+    void init_net_sink( const rknn_tensor_attr& ia );
+    void init_gpu_drawer();
+    void init_aux();
+    void setup_cores();
+
     void worker_loop( int slot );
     int publish_oldest();                // returns 1 if the frame was valid
     void dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, const LbGeom& lb,
