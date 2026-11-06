@@ -27,19 +27,8 @@
 #include "tracker.hpp"
 #include "console_reporter.hpp"
 #include "slot_ring.hpp"
+#include "frame_trace.hpp"
 #include "net_mjpeg_source.hpp"
-
-// Per-frame timing, single storage: dispatch fills cam/dec/rga,
-// the worker fills infer, publish fills enc; Timings::add consumes
-// the whole record.
-struct FrameTrace {
-    double cam = 0.0;
-    double dec = 0.0;
-    double rga = 0.0;
-    double infer = 0.0;
-    double post = 0.0;
-    double enc = 0.0;
-};
 
 struct Config
 {
