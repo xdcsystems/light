@@ -116,7 +116,7 @@ private:
     LbGeom lb_ {};
     bool lb_warned_ = false;
     CalDumper cal_dumper_;  // cal_saved_/last_cal_/cal_done_ moved here (stage 2)
-    int reconnects_ = 0;   // camera disconnects recovered this run
+    int reconnects_ = 0;   // source disconnects recovered this run
     int warmup_left_ = 0;  // publish-discards after a reconnect
     // Timing accumulator: the throttled avg/60 + TOTAL reports.
     // Shared mutable state lives in the owning layer (project rule):
@@ -224,10 +224,10 @@ private:
     void dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, const LbGeom& lb,
             double cam_ms, double dec_ms, double rga_ms );
     // M6 batch-2: run()/publish_oldest() VariableThreshold splits.
-    int handle_camera_failure( int cam_err );  // 0 = recovered, -1 = fatal
+    int handle_source_failure( int cam_err );  // 0 = recovered, -1 = fatal
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
     void frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_us,
             double cam_ms, double dec_ms );
     double draw_and_publish( Slot& sl, int ps );   // viewer path; returns enc_ms
-    void pool_discard();                 // drop pending slots on camera recovery
+    void pool_discard();                 // drop pending slots on source recovery
 };

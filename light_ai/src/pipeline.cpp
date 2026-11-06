@@ -350,7 +350,7 @@ int Pipeline::run()
         const int idx = with_src( [&]( auto& s ) { return s.dequeue( &sz, &cam_err ); } );
         if ( idx < 0 )
         {
-            if ( handle_camera_failure( cam_err ) != 0 )
+            if ( handle_source_failure( cam_err ) != 0 )
                 return -1;
             continue;
         }
@@ -442,7 +442,7 @@ int Pipeline::run()
 // nothing to the timing stats. 20 attempts: observed USB re-enumeration
 // on this board can take longer than the original 10x1s window allowed.
 
-int Pipeline::handle_camera_failure( int cam_err )
+int Pipeline::handle_source_failure( int cam_err )
 {
     constexpr int k_cam_reconnect_max = 20;
     constexpr auto k_cam_reconnect_pause = std::chrono::seconds( 1 );
@@ -782,7 +782,7 @@ void Pipeline::pool_discard()
 
         // Bounded wait (same 5 s cap as the publish wait, P0-2 class of
         // risk): rknn_run normally completes. quit_ in the predicate
-        // means a wedged NPU during camera recovery can no longer block
+        // means a wedged NPU during source recovery can no longer block
         // shutdown -- Ctrl-C releases this wait just like publish_oldest.
         // On timeout or quit the slot is NOT freed here: the NPU may
         // still be reading its tensor. It is marked drop instead, so the

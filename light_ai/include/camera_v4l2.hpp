@@ -29,7 +29,7 @@ public:
     // non-zero on failure (the cause is logged here).
     int reconnect( const std::string& dev, std::string* why );
 
-    // One recovery-ladder step (Pipeline::handle_camera_failure calls it
+    // One recovery-ladder step (Pipeline::handle_source_failure calls it
     // through the source variant): node discovery (the node may have
     // re-enumerated) + the full reconnect path. A failed discovery is a
     // failed attempt. new_id: the adopted node path, unchanged when the
