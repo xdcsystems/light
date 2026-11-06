@@ -1,11 +1,12 @@
 #pragma once
 #include <cstdint>
 
-#include "pod_list.hpp"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
+
+#include "pod_list.hpp"
 
 // M3.7: GPU-assisted box drawing straight into the NPU input tensor
 // (Mali G610 via EGL/GBM, zero CPU pixels per frame).
@@ -22,49 +23,9 @@ using GpuBoxList = PodList<GpuBox, 128>;
 
 class GpuBoxDrawer
 {
-public:
-    GpuBoxDrawer();
-    ~GpuBoxDrawer();
-    GpuBoxDrawer( const GpuBoxDrawer & ) = delete;
-    GpuBoxDrawer &operator=( const GpuBoxDrawer & ) = delete;
-
-    // EGL/GBM display + surfaceless GLES3 context + shader + VBO.
-    bool init();
-    // Imports the NPU tensor dma-buf as an EGLImage-backed FBO.
-    // M4: slot-keyed; attach_tensor()/draw() keep the single-context
-    // semantics (slot 0), the pool uses attach_slot()/draw_slot().
-    bool attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride );
-    bool attach_tensor( int tensor_dma_fd, int w, int h, uint32_t stride )
-    {
-        return attach_slot( 0, tensor_dma_fd, w, h, stride );
-    }
-    // Async GPU draw: 1-px outlines for all boxes in ONE draw call
-    // (batched VBO, per-vertex color). Switching FBOs between slots is
-    // the only added cost vs the single-tensor path.
-    void draw_slot( int slot, const GpuBox *boxes, int n );
-    void draw( const GpuBox *boxes, int n )
-    {
-        draw_slot( 0, boxes, n );
-    }
-    // Blocks until all GPU writes from draw() are visible to CPU/RGA.
-    // Native fence (EGL_ANDROID_native_fence_sync) when available,
-    // glFinish() otherwise. The fence wait is bounded (100 ms cap) with
-    // a glFinish() fallback — a wedged GPU must not hang the pipeline.
-    void sync_cpu();
-    // Export a native fence fd covering the writes of the last draw().
-    // Ownership passes to the caller, which must close() it (or wait on
-    // it, e.g. poll() in the encoder before the RGA convert; then
-    // close() it). NOTE: this RGA driver ignores acquire fences, so
-    // fd handoff to improcess is NOT a valid use.
-    // Returns -1 when the native fence extension is unavailable — the
-    // caller must fall back to sync_cpu().
-    int export_fence();
-    bool ok() const { return ready_; }
-
-private:
     // Extension entry points: never assumed to be linkable, always via
     // eglGetProcAddress with a null check (the probe proved libmali does
-    // not export all of them as symbols).
+    // not export all of them as symbols). 
     typedef EGLImageKHR( EGLAPIENTRYP P_CreateImage )( EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint * );
     typedef EGLBoolean( EGLAPIENTRYP P_DestroyImage )( EGLDisplay, EGLImageKHR );
     typedef EGLSyncKHR( EGLAPIENTRYP P_CreateSync )( EGLDisplay, EGLenum, const EGLint * );
@@ -124,6 +85,46 @@ private:
         P_BindVertexArray bind_vao = nullptr;
     };
 
+public:
+    GpuBoxDrawer();
+    ~GpuBoxDrawer();
+    GpuBoxDrawer( const GpuBoxDrawer & ) = delete;
+    GpuBoxDrawer &operator=( const GpuBoxDrawer & ) = delete;
+
+    // EGL/GBM display + surfaceless GLES3 context + shader + VBO.
+    bool init();
+    // Imports the NPU tensor dma-buf as an EGLImage-backed FBO.
+    // M4: slot-keyed; attach_tensor()/draw() keep the single-context
+    // semantics (slot 0), the pool uses attach_slot()/draw_slot().
+    bool attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride );
+    bool attach_tensor( int tensor_dma_fd, int w, int h, uint32_t stride )
+    {
+        return attach_slot( 0, tensor_dma_fd, w, h, stride );
+    }
+    // Async GPU draw: 1-px outlines for all boxes in ONE draw call
+    // (batched VBO, per-vertex color). Switching FBOs between slots is
+    // the only added cost vs the single-tensor path.
+    void draw_slot( int slot, const GpuBox *boxes, int n );
+    void draw( const GpuBox *boxes, int n )
+    {
+        draw_slot( 0, boxes, n );
+    }
+    // Blocks until all GPU writes from draw() are visible to CPU/RGA.
+    // Native fence (EGL_ANDROID_native_fence_sync) when available,
+    // glFinish() otherwise. The fence wait is bounded (100 ms cap) with
+    // a glFinish() fallback — a wedged GPU must not hang the pipeline.
+    void sync_cpu();
+    // Export a native fence fd covering the writes of the last draw().
+    // Ownership passes to the caller, which must close() it (or wait on
+    // it, e.g. poll() in the encoder before the RGA convert; then
+    // close() it). NOTE: this RGA driver ignores acquire fences, so
+    // fd handoff to improcess is NOT a valid use.
+    // Returns -1 when the native fence extension is unavailable — the
+    // caller must fall back to sync_cpu().
+    int export_fence();
+    bool ok() const { return ready_; }
+
+private:
     void done();
     void make_current();
     bool make_program();
@@ -131,7 +132,7 @@ private:
     // the VAO (ES3 path) or re-applied per draw() (GLES2 path).
     void setup_attribs() const;
 
-private:  // data
+private:
     State st_ {};
     bool ready_ = false;
 };
