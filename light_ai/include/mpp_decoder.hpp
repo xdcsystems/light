@@ -10,6 +10,15 @@
 
 class MppDecoder
 {
+    // Bounded MPP polls: a wedged decoder must not hang the pipeline
+    // thread forever: camera recovery cannot help a thread that is
+    // stuck inside decode() rather than in DQBUF. Steady decode is
+    // ~2-3 ms; 1 s is a huge margin even for the worst case.
+    enum : int
+    {
+        kTaskPollMs = 1000
+    };
+
 public:
     // w/h come from Config (validated against the camera G_FMT) instead of
     // being hard-coded: the pre-allocated output buffer must match the
@@ -39,15 +48,6 @@ public:
     MppFrameFormat out_fmt() const { return out_fmt_; }
 
 private:
-    // Bounded MPP polls: a wedged decoder must not hang the pipeline
-    // thread forever: camera recovery cannot help a thread that is
-    // stuck inside decode() rather than in DQBUF. Steady decode is
-    // ~2-3 ms; 1 s is a huge margin even for the worst case.
-    enum : int
-    {
-        kTaskPollMs = 1000
-    };
-
     // Packet teardown mechanics. Deinit is legal only at points where
     // the decoder provably holds no reference - each call site in
     // decode() carries the reasoning in its comment. The null-check
@@ -61,6 +61,7 @@ private:
         }
     }
 
+private:
     MppCtx ctx_ = nullptr;
     MppApi* mpi_ = nullptr;
     MppBufferGroup out_group_ = nullptr;
@@ -69,7 +70,8 @@ private:
     MppBufferGroup pkt_group_ = nullptr;
     MppBuffer aux_ = nullptr;
 
-    int w_ = 0, h_ = 0;
+    int w_ = 0;
+    int h_ = 0;
     MppFrameFormat out_fmt_ = MPP_FMT_YUV422SP;  // SOF-detected, see make_packet
     uint64_t pts_ = 0;
     int frames_ = 0;
