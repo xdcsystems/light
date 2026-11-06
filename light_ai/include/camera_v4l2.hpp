@@ -9,6 +9,18 @@
 // ("which node am I on") lives with the owner — Pipeline::cam_node_.
 class CameraV4L2
 {
+    struct Buffer
+    {
+        void* start = nullptr;
+        size_t length = 0;
+    };
+
+    enum : unsigned
+    {
+        kBufCount = 4,
+        kDequeuePollMs = 2000  // dequeue watchdog: no frame within this window = recoverable stall (EIO)
+    };
+
 public:
     CameraV4L2( int width, int height );
     ~CameraV4L2();
@@ -59,19 +71,9 @@ private:
     void xioctl( unsigned long req, void* arg ) const;
 
 private:
-    enum : unsigned
-    {
-        kBufCount = 4,
-        kDequeuePollMs = 2000  // dequeue watchdog: no frame within this window = recoverable stall (EIO)
-    };
     int fd_ = -1;
     int err_streak_ = 0;  // P1-7: consecutive corrupt buffers, survives dequeue() calls
     int width_ = 0, height_ = 0;
-    struct Buffer
-    {
-        void* start = nullptr;
-        size_t length = 0;
-    };
     Buffer bufs_[kBufCount];
 };
 
