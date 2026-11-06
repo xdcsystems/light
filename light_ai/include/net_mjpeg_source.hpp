@@ -15,6 +15,25 @@
 // dma-buf zero-copy, HTTP cannot.
 class NetMjpegSource
 {
+    enum
+    {
+        kBufCount = 4,
+        kFrameMax = 1 << 20,  // 1 MiB per JPEG frame cap (cast to size_t at use sites)
+        kSockBuf = 32 * 1024,
+        kHdrMax = 8 * 1024,
+        kPollMs = 2000,      // per-fill watchdog, same window as the camera
+        kErrStreakMax = 4,   // corrupt/short-frame streak tolerance
+        kBoundaryMax = 60,
+        kPatMax = 70,
+    };
+
+    struct Buffer
+    {
+        void* start = nullptr;
+        size_t length = 0;
+        bool in_flight = false;
+    };
+
 public:
     NetMjpegSource( int width, int height );
     ~NetMjpegSource();
@@ -61,28 +80,12 @@ private:
     // kNpos when absent. Const: it only scans.
     size_t net_find( const char* pat, size_t plen ) const;
 
-    enum  // project rule: unscoped enum, not a static
-    {
-        kBufCount = 4,
-        kFrameMax = 1 << 20,  // 1 MiB per JPEG frame cap (cast to size_t at use sites)
-        kSockBuf = 32 * 1024,
-        kHdrMax = 8 * 1024,
-        kPollMs = 2000,      // per-fill watchdog, same window as the camera
-        kErrStreakMax = 4,   // corrupt/short-frame streak tolerance
-        kBoundaryMax = 60,
-        kPatMax = 70,
-    };
-
+private:
     int fd_ = -1;
     int err_streak_ = 0;
     int width_ = 0, height_ = 0;
     void* pool_ = nullptr;  // one mmap block: kBufCount x kFrameMax, init-time
-    struct Buffer
-    {
-        void* start = nullptr;
-        size_t length = 0;
-        bool in_flight = false;
-    };
+    
     Buffer bufs_[kBufCount] = {};
     uint8_t sock_[kSockBuf] = {};
     size_t sock_pos_ = 0;
@@ -92,4 +95,3 @@ private:
     char bpat_[kPatMax] = {};  // "\r\n--" + boundary + "\r\n", rebuilt per connect
     int bpat_len_ = 0;
 };
-
