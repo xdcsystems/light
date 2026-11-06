@@ -94,7 +94,10 @@ post-processing.
                (BUF_FLAG_ERROR) is a class member: it survives
                dequeue() calls and is reset only by a clean frame or
                by reconnect() after a successful STREAMON.
-- MppDecoder : MJPEG -> YUV422SP decode into an external dma-buf pool,
+- MppDecoder : MJPEG -> YUV422SP decode into an external dma-buf pool
+               (adaptive, 2026-11-06: a 4:2:0 source decodes to
+               YUV420SP instead — the format is picked from the JPEG
+               sampling factors; the x2 pool covers either),
                returns the frame fd. Sized from Config, not hard-coded.
                Recovery (2026-11-02, P0-1): the packet is drained
                per call on every path (error and success) — MPP no
