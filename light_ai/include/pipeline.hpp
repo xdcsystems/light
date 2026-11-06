@@ -86,43 +86,11 @@ struct Config
 
 class Pipeline
 {
-public:
-    explicit Pipeline( const Config& cfg );
-    ~Pipeline();  // stops the workers before the engines die
-    int run();
-    // Graceful shutdown (P1-6): called from the SIGINT/SIGTERM handler;
-    // run() exits the frame loop through the normal drain/summary path.
-    void request_stop() { stop_.store( true ); }
-
-private:
-    Config cfg_;
-    CameraV4L2 cam_;
-    std::string cam_node_;
-
-    MppDecoder dec_;
-    RgaResizer rga_;
-    // M4: context pool. npus_[0] IS the pool-1 engine;
-    // --pool 3 loads the model three times, one engine per NPU core.
-    // The vector never reallocates after the ctor, so &npus_[k] stays
-    // valid for the whole session.
-    std::vector<RknnEngine> npus_;
-    int npool_ = 1;
-    int aux_fd_ = -1;
-    int model_w_ = 0;
-    int model_h_ = 0;  // taken from the model, not from flags
-    // Audit item 3: single-source letterbox geometry. Computed once in
-    // the ctor via band_geom and fed to BOTH consumers —
-    // the encoder crop (NetEncoder ctor) and the postprocess scale
-    // (dispatch). RGA stays the pixel writer; its per-frame LbGeom is
-    // cross-checked against this one at dispatch (one-time warn).
-    LbGeom lb_ {};
-    bool lb_warned_ = false;
-    CalDumper cal_dumper_;  // cal_saved_/last_cal_/cal_done_ moved here (stage 2)
-    int reconnects_ = 0;   // source disconnects recovered this run
-    int warmup_left_ = 0;  // publish-discards after a reconnect
     // Timing accumulator: the throttled avg/60 + TOTAL reports.
     // Shared mutable state lives in the owning layer (project rule):
     // a Pipeline member, not an anonymous-namespace global.
+    // Header-layout rule: internal structs live in the implicit private
+    // area before any access specifier.
     struct Timings
     {
         using clk = std::chrono::steady_clock;
@@ -182,41 +150,28 @@ private:
             n = 0;
         }
     };
-    Timings t_;
 
-    std::optional<NetMjpegSource> net_src_;  // active only with --net-src
-    std::optional<NetPreview> preview_;
-    std::optional<NetEncoder> enc_;
-    std::optional<GpuBoxDrawer> drawer_;
+public:
+    explicit Pipeline( const Config& cfg );
+    ~Pipeline();  // stops the workers before the engines die
+    int run();
+    // Graceful shutdown (P1-6): called from the SIGINT/SIGTERM handler;
+    // run() exits the frame loop through the normal drain/summary path.
+    void request_stop() { stop_.store( true ); }
+
+private:
+    bool use_net_src() const { return !cfg_.net_src.empty(); }
 
     // Static source selection (project rules: no virtuals/vtables): the
     // active source is a pointer variant over the member objects;
     // with_src() is the single dispatch point. M5: a third source type
     // adds one alternative — call sites stay untouched.
-    std::variant<CameraV4L2*, NetMjpegSource*> src_ {};
     template <typename F>
     decltype(auto) with_src( F&& f )
     {
         return std::visit( [&f]( auto* s ) -> decltype(auto) { return f( *s ); }, src_ );
     }
 
-    BoxSmoother smoother_;  // M3.10 EMA box smoothing + jitter log
-    Tracker tracker_;
-    ConsoleReporter rep_;  // throttled reports + final summary (stage 3)
-    TrajList trajs_;
-
-    // Per-frame detection buffers: preallocated members, cleared each
-    // frame — zero heap traffic in the steady-state path.
-    DetList dets_;
-    GpuBoxList boxes_;
-
-    std::array<Slot, 3> slots_ {};
-    std::vector<std::thread> workers_;   // one per pooled engine
-    std::atomic<bool> quit_ { false };
-    std::atomic<bool> stop_ { false };  // P1-6: set by the signal handler
-    PubFifo pub_;
-
-    bool use_net_src() const { return !cfg_.net_src.empty(); }
     // Source bring-up (identity + setup + variant selection), extracted
     // from the ctor: with the net source branch the ctor crossed the
     // readability-function-size limit (225 lines / threshold 200).
@@ -237,4 +192,55 @@ private:
             double cam_ms, double dec_ms );
     double draw_and_publish( Slot& sl, int ps );   // viewer path; returns enc_ms
     void pool_discard();                 // drop pending slots on source recovery
+
+private:
+    Config cfg_;
+    CameraV4L2 cam_;
+    std::string cam_node_;
+
+    MppDecoder dec_;
+    RgaResizer rga_;
+    // M4: context pool. npus_[0] IS the pool-1 engine;
+    // --pool 3 loads the model three times, one engine per NPU core.
+    // The vector never reallocates after the ctor, so &npus_[k] stays
+    // valid for the whole session.
+    std::vector<RknnEngine> npus_;
+    int npool_ = 1;
+    int aux_fd_ = -1;
+    int model_w_ = 0;
+    int model_h_ = 0;  // taken from the model, not from flags
+    // Audit item 3: single-source letterbox geometry. Computed once in
+    // the ctor via band_geom and fed to BOTH consumers —
+    // the encoder crop (NetEncoder ctor) and the postprocess scale
+    // (dispatch). RGA stays the pixel writer; its per-frame LbGeom is
+    // cross-checked against this one at dispatch (one-time warn).
+    LbGeom lb_ {};
+    bool lb_warned_ = false;
+    CalDumper cal_dumper_;  // cal_saved_/last_cal_/cal_done_ moved here (stage 2)
+    int reconnects_ = 0;   // source disconnects recovered this run
+    int warmup_left_ = 0;  // publish-discards after a reconnect
+    Timings t_;
+
+    std::optional<NetMjpegSource> net_src_;  // active only with --net-src
+    std::optional<NetPreview> preview_;
+    std::optional<NetEncoder> enc_;
+    std::optional<GpuBoxDrawer> drawer_;
+
+    std::variant<CameraV4L2*, NetMjpegSource*> src_ {};
+
+    BoxSmoother smoother_;  // M3.10 EMA box smoothing + jitter log
+    Tracker tracker_;
+    ConsoleReporter rep_;  // throttled reports + final summary (stage 3)
+    TrajList trajs_;
+
+    // Per-frame detection buffers: preallocated members, cleared each
+    // frame — zero heap traffic in the steady-state path.
+    DetList dets_;
+    GpuBoxList boxes_;
+
+    std::array<Slot, 3> slots_ {};
+    std::vector<std::thread> workers_;   // one per pooled engine
+    std::atomic<bool> quit_ { false };
+    std::atomic<bool> stop_ { false };  // P1-6: set by the signal handler
+    PubFifo pub_;
 };
