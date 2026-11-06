@@ -83,7 +83,9 @@ namespace
 }  // namespace
 
 Pipeline::Pipeline( const Config& cfg )
-  : cfg_( cfg ), cam_( cfg_.cam_w, cfg_.cam_h ), dec_( cfg_.cam_w, cfg_.cam_h )
+  : cfg_( cfg )
+  , cam_( cfg_.cam_w, cfg_.cam_h )
+  , dec_( cfg_.cam_w, cfg_.cam_h )
 {
     // M4: the pool is a startup-time decision; npus_ never grows after
     // this loop, so the slot pointers stay valid for the whole session.
@@ -105,9 +107,11 @@ Pipeline::Pipeline( const Config& cfg )
             throw std::runtime_error( "rknn setup_io failed" );
         }
     }
-    // M2.5/M4: core pinning. Pool 1 keeps cfg_.core verbatim (AUTO by
-    // default — the A/B baseline is untouched). The pool pins its own:
-    // one engine per core, via the per-core flags 1/2/4.
+
+    // M2.5/M4: core pinning 
+    // Pool 1 keeps cfg_.core verbatim (AUTO by default — the A/B baseline is untouched).
+    // The pool pins its own: one engine per core, via the per-core flags 1/2/4.
+
     if ( npool_ == 1 )
     {
         if ( cfg_.core != 0 )
@@ -140,8 +144,10 @@ Pipeline::Pipeline( const Config& cfg )
         std::cout << "npu: pool of " << npool_ << " engines, one per core\n";
         t_.set_pool( npool_ );
     }
+
     // Single source of truth for the model geometry: the model file itself.
     // NHWC layout: dims = {N, H, W, C}, so W is dims[n-2] and H is dims[n-3].
+
     const rknn_tensor_attr& ia = npus_[0].input_attr();  // all engines share the model geometry
     if ( ia.n_dims < 4 )
     {
@@ -151,6 +157,7 @@ Pipeline::Pipeline( const Config& cfg )
 
     // Gray letterbox bars on every pooled tensor: RGA writes only the
     // visible band (drect), so the 128-fill done here survives every frame.
+
     for ( auto& e : npus_ )
         std::memset( e.input_data(), 128, e.input_size() );
 
@@ -160,6 +167,7 @@ Pipeline::Pipeline( const Config& cfg )
 
     // Letterbox geometry computed once via band_geom:
     // the same numbers the RGA crop writes.
+    
     lb_ = band_geom( cfg_.cam_w, cfg_.cam_h, model_w_, model_h_ );
 
     if ( cfg_.net )
@@ -206,11 +214,14 @@ Pipeline::Pipeline( const Config& cfg )
     // Init once, only with a preview sink active. On failure the CPU path 
     // (net_preview::draw_boxes_rgb24) stays as the fallback.
     // --cpu-draw forces the CPU path (A/B baseline).
+
     if ( ( preview_ || enc_ ) && !cfg_.cpu_draw )
     {
         drawer_.emplace();
+
         // M4: one EGLImage per slot, attached once at startup (attach_slot is idempotent per slot);
         // draw switches FBOs between slots.
+
         bool drew_ok = drawer_->init();
         for ( int k = 0; drew_ok && k < npool_; ++k )
         {
@@ -228,8 +239,9 @@ Pipeline::Pipeline( const Config& cfg )
     }
 
     // Aux buffer only for the two-pass path (source over 8x the model input).
-    // 1280x720 -> 224 is 5.7x — single pass, aux not allocated, no DRM pool
-    // split. 1920x1080 still needs the 960x540 intermediate.
+    // 1280x720 -> 224 is 5.7x — single pass, aux not allocated, no DRM pool split.
+    // 1920x1080 still needs the 960x540 intermediate.
+
     if ( cfg_.cam_w > 8 * model_w_ || cfg_.cam_h > 8 * model_h_ )
     {
         aux_fd_ = dec_.aux_fd( static_cast<size_t>( cfg_.cam_w / 2 ) * ( cfg_.cam_h / 2 ) * 2 );
@@ -240,8 +252,11 @@ Pipeline::Pipeline( const Config& cfg )
     }
     else
     {
-        std::cout << "aux not needed: " << cfg_.cam_w << 'x' << cfg_.cam_h << " fits single-pass into " << model_w_ << 'x' << model_h_
-                  << '\n';
+        std::cout << "aux not needed: "
+                  << cfg_.cam_w << 'x' 
+                  << cfg_.cam_h << " fits single-pass into "
+                  << model_w_ << 'x'
+                  << model_h_ << '\n';
     }
 
     if ( cfg_.cal_frames > 0 )
@@ -253,11 +268,14 @@ Pipeline::Pipeline( const Config& cfg )
             throw std::runtime_error( "pipeline: cannot create dataset/: " + ec.message() );
         }
     }
-    // M4: bind slots to engines, then start the worker threads — the
-    // unified path routes every frame through the slot ring; with pool
-    // 1 the single worker is woken by dispatch and publish waits on it.
+
+    // M4: bind slots to engines,
+    // then start the worker threads — the unified path routes every frame through the slot ring; 
+    // with pool 1 the single worker is woken by dispatch and publish waits on it.
+
     for ( int k = 0; k < npool_; ++k )
         slots_[k].eng = &npus_[k];
+
     for ( int k = 0; k < npool_; ++k )
     {
         workers_.emplace_back( [this, k] {
@@ -272,6 +290,7 @@ Pipeline::Pipeline( const Config& cfg )
 // setup for the active branch and the static variant selection.
 // Throwing: a failed connect here is fatal, same as a failed camera
 // setup (run() never sees a half-open source).
+
 void Pipeline::init_source()
 {
     cam_node_ = cfg_.device;
@@ -282,11 +301,14 @@ void Pipeline::init_source()
         // The source contract is identical, so the recovery ladder in
         // run() works unchanged; a failed connect here is fatal, same
         // as a failed camera setup.
+
         net_src_.emplace( cfg_.cam_w, cfg_.cam_h );
+
         // The URL is this source's identity: the recovery ladder
         // passes cam_node_ to recover(), so it must hold the URL,
         // not the (empty in net mode) --device value. A URL never
         // re-enumerates, so recover() keeps new_id == id.
+
         cam_node_ = cfg_.net_src;
         std::string why;
         if ( net_src_->setup_device( cfg_.net_src, &why ) != 0 )
@@ -302,6 +324,7 @@ void Pipeline::init_source()
         // one. find_usb_capture_node() skips a missing preferred path on
         // its own (stat) and trial-setups the candidates, so fake nodes
         // (metadata-only) are filtered there.
+        
         if ( !cam_node_.empty() )
         {
             struct stat st

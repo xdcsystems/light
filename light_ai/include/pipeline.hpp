@@ -208,27 +208,6 @@ private:
     DetList dets_;
     GpuBoxList boxes_;
 
-    // --- M4: context-pool machinery (active only with --pool 3) ---
-    // A slot is a three-state cell: FREE -> QUEUED (main dispatches a
-    // frame) -> DONE (worker finished infer + postprocess) -> FREE
-    // (main published). One slot per engine; the ring depth equals the
-    // pool size, publish-before-reuse keeps tensor ownership safe and
-    // frame order strictly sequential (BoxSmoother sees the legacy order).
-    struct Slot
-    {
-        RknnEngine* eng = nullptr;
-        DetList dets;                    // worker-side postprocess output
-        int frame = -1;                  // global frame index (logs)
-        int64_t ts_us = -1;              // dequeue time, µs from start (VFR pts)
-        bool rga_ok = false;             // captured at dispatch
-        bool npu_ok = false;             // worker verdict, read at publish
-        bool drop = false;               // publish gave up: the worker frees the slot itself
-        LbGeom lb;  // letterbox geometry at dispatch (single-owner struct)
-        FrameTrace tr;  // per-frame timings: dispatch->cam/dec/rga, worker->infer, publish->enc
-        std::mutex mx;
-        std::condition_variable cv;
-        enum St : uint8_t { FREE, QUEUED, DONE } st = FREE;
-    };
     std::array<Slot, 3> slots_ {};
     std::vector<std::thread> workers_;   // one per pooled engine
     std::atomic<bool> quit_ { false };
