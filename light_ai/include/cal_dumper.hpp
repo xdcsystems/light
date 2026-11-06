@@ -5,8 +5,7 @@
 // live here, Pipeline owns the tensor and passes raw bytes. Header-only,
 // like dma_sync.hpp: one call site, no build-system churn.
 
-#ifndef CAL_DUMPER_HPP
-#define CAL_DUMPER_HPP
+#pragma once
 
 #include <cstddef>  // size_t
 #include <cstdint>  // uint8_t
@@ -90,4 +89,3 @@ private:
     bool cal_done_ = false;
 };
 
-#endif  // CAL_DUMPER_HPP

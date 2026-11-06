@@ -37,7 +37,8 @@ MppDecoder::MppDecoder( int w, int h ) : w_( w ), h_( h )
             break;
         }
 
-        // Pool for output frames. Camera stream is 4:2:2, so the buffer is x2, not x1.5
+        // Pool for output frames (DRM; the buffer size lives in the
+        // aligned-height note right below).
         if ( mpp_buffer_group_get( &out_group_, MPP_BUFFER_TYPE_DRM, MPP_BUFFER_INTERNAL, MODULE_TAG, __FUNCTION__ ) != MPP_OK )
         {
             std::cerr << "mpp_buffer_group_get failed\n";

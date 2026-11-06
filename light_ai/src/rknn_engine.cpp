@@ -147,7 +147,12 @@ int RknnEngine::set_core_mask( unsigned mask ) const
         case 7:  // RKNN_NPU_CORE_0_1_2
             break;
         default:
-            return RKNN_NPU_CORE_AUTO;  // 0 = AUTO: keep the runtime default, no call
+            if ( mask == 0 )
+                return 0;  // AUTO by design (--core 0): keep the runtime default, no call
+            // Anything else is a caller bug: silently skipping the pin
+            // would hide it behind a working-looking return of 0.
+            std::cerr << "rknn_set_core_mask: invalid mask 0x" << std::hex << mask << std::dec << ", pin skipped\n";
+            return -1;
     }
     if ( rknn_set_core_mask( ctx_, static_cast<rknn_core_mask>( mask ) ) != RKNN_SUCC )
     {

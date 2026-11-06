@@ -3,8 +3,7 @@
 // infer, publish fills enc; Pipeline::Timings::add consumes the
 // whole record. Plain POD, no dependencies.
 
-#ifndef FRAME_TRACE_HPP
-#define FRAME_TRACE_HPP
+#pragma once
 
 // Per-frame timing, single storage: dispatch fills cam/dec/rga,
 // the worker fills infer, publish fills enc; Timings::add consumes
@@ -18,4 +17,3 @@ struct FrameTrace {
     double enc = 0.0;
 };
 
-#endif  // FRAME_TRACE_HPP

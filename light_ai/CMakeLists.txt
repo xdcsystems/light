@@ -114,15 +114,19 @@ target_link_directories(light_ai PRIVATE ${AV_LIBRARY_DIRS})
 # — куда свободно. LSE-атомики (std::atomic стоп-флага) тоже разрешены на A55.
 # Clang не понимает точечную запись "cortex-a76.cortex-a55" в -mtune (она
 # легальна только в GCC для big.LITTLE), поэтому ветки раздельные.
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set(TARGET_CPU_FLAGS "-mcpu=cortex-a76+crypto+dotprod")
-else()
-    set(TARGET_CPU_FLAGS "-mcpu=cortex-a76+dotprod+crypto -mtune=cortex-a76.cortex-a55")
+# -DTARGET_CPU_FLAGS="..." из CLI попадает в кэш ДО этого блока, а DEFINED
+# видит и кэш, и обычную переменную: дефолт ставится только если
+# переопределения нет. Раньше обычный set() затенял кэш, и CLI-значение
+# молча заменялось дефолтом (флаги терялись).
+if(NOT DEFINED TARGET_CPU_FLAGS)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(TARGET_CPU_FLAGS "-mcpu=cortex-a76+crypto+dotprod")
+    else()
+        set(TARGET_CPU_FLAGS "-mcpu=cortex-a76+dotprod+crypto -mtune=cortex-a76.cortex-a55")
+    endif()
+    set(TARGET_CPU_FLAGS "${TARGET_CPU_FLAGS}" CACHE STRING
+        "CPU flags for the target SoC")
 endif()
-
-# Пользователь может переопределить: cmake -DTARGET_CPU_FLAGS="-mcpu=..." ...
-set(TARGET_CPU_FLAGS "${TARGET_CPU_FLAGS}" CACHE STRING
-    "CPU flags for the target SoC")
 
 # пробелы -> точки с запятой, чтобы опции скормились компилятору по отдельности
 string(REPLACE " " ";" TARGET_CPU_FLAGS_LIST "${TARGET_CPU_FLAGS}")

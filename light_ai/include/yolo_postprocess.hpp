@@ -1,8 +1,9 @@
 #pragma once
 
+#include <ostream>
+
 #include "pod_list.hpp"
 #include "rga_resizer.hpp"  // LbGeom: the letterbox band travels as one object
-#include <ostream>
 
 class RknnEngine;
 

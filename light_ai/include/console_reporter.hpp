@@ -3,8 +3,7 @@
 // the final Processed/FPS summary from run(). Pure output, no state;
 // the cadence and the 8-entries cap match the original verbatim.
 
-#ifndef CONSOLE_REPORTER_HPP
-#define CONSOLE_REPORTER_HPP
+#pragma once
 
 #include <iomanip>
 #include <iostream>
@@ -16,7 +15,7 @@
 class ConsoleReporter
 {
 public:
-    void report( int frame, const DetList& dets, const TrajList& trajs )
+    void report( int frame, const DetList& dets, const TrajList& trajs ) const
     {
         // Throttled trajectory report: every 15th frame.
         if ( trajs.n > 0 && frame % 15 == 0 )
@@ -43,7 +42,7 @@ public:
         }
     }
 
-    void summary( int ok, double wall, int reconnects )
+    void summary( int ok, double wall, int reconnects ) const
     {
         if ( reconnects > 0 )
             std::cout << "camera disconnects recovered: " << reconnects << '\n';
@@ -52,4 +51,3 @@ public:
     }
 };
 
-#endif  // CONSOLE_REPORTER_HPP

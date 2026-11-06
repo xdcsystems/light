@@ -294,9 +294,14 @@ rate control a nominal fps (25) while pts stay per-dequeue
   1280x720 -> 224x224: s = 7/40, lb_h = 126, lb_top = 49;
   1280x720 -> 640x640: s = 1/2,  lb_h = 360, lb_top = 140.
   1280x960 -> 640x640: s = 1/2,  lb_h = 480, lb_top = 80.
-  Detection mapping T: x_scene = x_det * cam_w / model_w, y_scene =
-  (y_det - lb_top) * cam_w / model_w; detections on the bars (y_det outside
-  the band) are filtered.
+  Detection mapping T (band-based, axial): x_scene = (x_det - lb_left) *
+  cam_w / lb_w, y_scene = (y_det - lb_top) * cam_h / lb_h, where
+  (lb_left, lb_top, lb_w, lb_h) is the letterbox band geometry — one
+  LbGeom computed once in the Pipeline ctor and shared by the RGA crop,
+  the encoder crop and this scale. Detections on the bars (outside the
+  band) are filtered. (The pre-M3.11 note "x_det * cam_w / model_w"
+  described only the landscape band, where lb_left = 0 and
+  lb_w = model_w.)
 - The calibration dump file is created by whatever user runs the binary;
   a dump left by a root run cannot be overwritten by a normal user run
   ("calibration dump failed"). Clean it up between sudo and non-sudo runs.
