@@ -133,8 +133,12 @@ namespace
                 {
                     const size_t off = base + static_cast<size_t>( k ) * per * cell_hw;
                     const float obj = fp16_to_float( data[off + 4 * cell_hw] );
-                    if ( !( obj >= 0.05f ) )
-                        continue;  // cheap early cut, below any usable conf_thr (NaN-safe)
+                    // Post-sigmoid scores are in (0, 1], so conf = obj * cls
+                    // cannot exceed obj. Anchors below conf_thr are dead.
+                    // The old 0.05 cut still walked every class channel
+                    // whenever the caller asked for a higher threshold.
+                    if ( !( obj >= conf_thr ) )
+                        continue;  // NaN-safe: NaN fails the comparison
 
                     int best = 0;
                     float best_cls = 0.0f;
@@ -219,10 +223,20 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
         if ( !data || attr.n_dims != 4 )
             continue;
 
+        // Stride from the map size, not from the output index. RKNN does
+        // not promise P3/P4/P5 order; 8<<gi silently shifts every box
+        // when the heads come out in another order.
         // NCHW: dims = {1, 255, h, w}
         const int h = static_cast<int>( attr.dims[2] );
         const int w = static_cast<int>( attr.dims[3] );
-        const int stride = 8 << gi;
+        const int mw = static_cast<int>( model_w );
+        if ( w <= 0 || mw % w != 0 )
+        {
+            std::cerr << "yolo: head " << gi << " width " << w
+                      << " does not divide model " << mw << '\n';
+            continue;
+        }
+        const int stride = mw / w;
         const int per = static_cast<int>( attr.dims[1] ) / 3;  // 85 = 4+1+80
         if ( per * 3 != static_cast<int>( attr.dims[1] ) )
         {

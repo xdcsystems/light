@@ -23,6 +23,11 @@ RgaResizer::RgaResizer()
 bool RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux, LbGeom* geom, int src_fmt )
 {
     const int src_fmt_rk = src_fmt == 0 ? RK_FORMAT_YCbCr_420_SP : RK_FORMAT_YCbCr_422_SP;
+    // Pass 2 must describe the buffer it actually reads. The intermediate
+    // is always NV12, even when the camera frame was 4:2:2. Keeping
+    // src_fmt_rk here makes RGA read that NV12 as NV16 and walk off the
+    // aux allocation (1080p two-pass path).
+    int pass_fmt = src_fmt_rk;
     // RGA3 scales at most 1/8 per axis. NOTE: integer division hides the
     // limit (1920/224 == 8, but the real ratio is 8.57) — compare by
     // multiplication.
@@ -44,6 +49,7 @@ bool RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst
         src_fd = aux_fd;
         w_src = w_aux;
         h_src = h_aux;
+        pass_fmt = RK_FORMAT_YCbCr_420_SP;
     }
 
     // Letterbox: orientation-aware uniform fit. Landscape sources
@@ -59,7 +65,7 @@ bool RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst
         return false;
     }
 
-    rga_buffer_t src = wrapbuffer_fd( src_fd, w_src, h_src, src_fmt_rk );
+    rga_buffer_t src = wrapbuffer_fd( src_fd, w_src, h_src, pass_fmt );
     rga_buffer_t dst = wrapbuffer_fd( dst_fd, w_dst, h_dst, RK_FORMAT_RGB_888 );
     im_rect srect = { 0, 0, w_src, h_src };
     im_rect drect = { g.left, g.top, g.w, g.h };

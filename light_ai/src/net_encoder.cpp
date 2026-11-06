@@ -514,7 +514,11 @@ bool NetEncoder::prep_frame( int tensor_fd, MppBuffer mb )
         pollfd pf {};
         pf.fd = acq_fd_;
         pf.events = POLLIN;
-        if ( ::poll( &pf, 1, 200 ) <= 0 )
+        // The pipeline thread is also the camera thread. A long stall
+        // here stops DQBUF and the driver drops frames. 8 ms is enough
+        // for a healthy Mali fence; on timeout the boxes may lag one
+        // frame, which is cheaper than a 200 ms capture freeze.
+        if ( ::poll( &pf, 1, 8 ) <= 0 )
             std::cerr << "enc: draw fence wait failed, boxes may lag a frame\n";
         ::close( acq_fd_ );
         acq_fd_ = -1;

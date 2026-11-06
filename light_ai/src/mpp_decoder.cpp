@@ -376,7 +376,10 @@ int MppDecoder::retrieve_output()
 
         mpp_frame_set_width( out_frame_, w );
         mpp_frame_set_height( out_frame_, h );
-        mpp_frame_set_fmt( out_frame_, MPP_FMT_YUV422SP );
+        // Follow the SOF subsampling already parsed into out_fmt_.
+        // Hardcoding 422SP here disagrees with a 4:2:0 stream the moment
+        // MPP honors the frame format on info_change.
+        mpp_frame_set_fmt( out_frame_, out_fmt_ );
         MppBuffer b = nullptr;
         if ( mpp_buffer_get( out_group_, &b, bs ) != MPP_OK )
         {
