@@ -42,8 +42,9 @@ post-processing.
   members (pipeline.hpp), not an interface contract. Static polymorphism
   (templates) is the sanctioned replacement where one implementation
   serves several types: PodList<T, N> (include/pod_list.hpp) — one
-  fixed-capacity list, two instantiations (DetList in
-  yolo_postprocess.hpp, GpuBoxList in gpu_box_drawer.hpp), zero heap.
+  fixed-capacity list, three instantiations (DetList in
+  yolo_postprocess.hpp, GpuBoxList in gpu_box_drawer.hpp, TrajList in
+  tracker.hpp), zero heap.
 - const by default: member functions that do not mutate state are
   const; parameters are passed by const-ref unless the callee owns a
   copy. Out-parameters are plain references filled by the callee
@@ -51,7 +52,7 @@ post-processing.
   the frame path).
 - Branch tables over if-chains: a multi-way dispatch on a fixed set
   becomes a switch or a constexpr table, not a ladder. Reference:
-  det_color in pipeline.cpp (switch).
+  det_color in box_mapper.hpp (switch).
 - Preallocated buffer contract: a buffer that lives across frames
   (a member, not a local) is NEVER implicitly empty — the callee owns
   the reset and clears it at entry (DetList out.clear() in
