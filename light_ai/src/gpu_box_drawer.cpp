@@ -62,12 +62,11 @@ namespace
     // PodList<GpuBox, 128> hard cap (mirrors the header type). One VBO for
     // the whole session: 4 quads x 6 vertices per box, allocated once in
     // init(); draw() only uploads — zero reallocations.
-    constexpr int kMaxBoxes = 128;
     constexpr int kVertsPerBox = 4 * 6;
-    constexpr GLsizeiptr kVboBytes = kMaxBoxes * kVertsPerBox * (GLsizeiptr)sizeof( BatchVert );
+    constexpr GLsizeiptr kVboBytes = GpuBoxList::cap * kVertsPerBox * (GLsizeiptr)sizeof( BatchVert );
     // Layout/size pin for State::vstage (the draw staging buffer now
     // lives in the drawer state, not on the stack).
-    static_assert( kMaxBoxes * kVertsPerBox * sizeof( BatchVert ) == 36864,
+    static_assert( GpuBoxList::cap * kVertsPerBox * sizeof( BatchVert ) == 36864,
             "BatchVert size vs State::vstage drift" );
 
     // Compile/link diagnostics: libmali returns non-zero handles even for
@@ -426,8 +425,8 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
         return;
     if ( slot < 0 || slot >= State::kSlots || st_.slot[slot].fbo == 0 )
         return;
-    if ( n > kMaxBoxes )
-        n = kMaxBoxes;
+    if ( n > GpuBoxList::cap )
+        n = GpuBoxList::cap;
     make_current();
 
     // Batched quads in tensor coordinates. The viewport clips anything
@@ -446,7 +445,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
     auto push = [&]( float x0, float y0, float x1, float y1, const GpuBox &b ) {
         if ( x1 - x0 < 1.0f || y1 - y0 < 1.0f )
             return;
-        if ( cnt + 6 > kMaxBoxes * kVertsPerBox )
+        if ( cnt + 6 > GpuBoxList::cap * kVertsPerBox )
             return;
 
         const float q[6][2] = {
