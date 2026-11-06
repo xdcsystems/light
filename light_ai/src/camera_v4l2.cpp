@@ -44,6 +44,20 @@ namespace
         ::close( fd );
         return ok;
     }
+
+    // poll(2) with EINTR retries, in the spirit of xioctl() above:
+    // returns >0 (ready), 0 (timeout) or <0 (error, errno set).
+    int poll_ready( int fd, int timeout_ms )
+    {
+        pollfd pfd {};
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        int pr = ::poll( &pfd, 1, timeout_ms );
+        while ( pr < 0 && errno == EINTR )
+            pr = ::poll( &pfd, 1, timeout_ms );
+        return pr;
+    }
+
 }  // namespace
 
 CameraV4L2::CameraV4L2( int w, int h ) : width_( w ), height_( h )
@@ -343,19 +357,6 @@ void CameraV4L2::start() const
     xioctl( VIDIOC_STREAMON, &t );
 }
 
-// poll(2) with EINTR retries, in the spirit of xioctl() above:
-// returns >0 (ready), 0 (timeout) or <0 (error, errno set).
-static int poll_ready( int fd, int timeout_ms )
-{
-    pollfd pfd {};
-    pfd.fd = fd;
-    pfd.events = POLLIN;
-    int pr = ::poll( &pfd, 1, timeout_ms );
-    while ( pr < 0 && errno == EINTR )
-        pr = ::poll( &pfd, 1, timeout_ms );
-    return pr;
-}
-
 int CameraV4L2::dequeue( uint32_t* size, int* err )  // NOLINT(readability-make-member-function-const)
 {
     v4l2_buffer buf {};
@@ -431,7 +432,6 @@ void CameraV4L2::requeue( int index )  // NOLINT(readability-make-member-functio
         std::cerr << "camera: QBUF failed for idx=" << index << ": " << strerror( errno ) << '\n';
     }
 }
-
 
 int CameraV4L2::recover( const std::string& id, std::string& new_id, std::string* why )
 {
