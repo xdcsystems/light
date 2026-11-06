@@ -26,12 +26,12 @@ typedef struct AVStream AVStream;
 class NetPreview
 {
 public:
+    NetPreview( int w, int h, int stride, int fps, int port );
+    ~NetPreview();
 
     // True while a TCP viewer is attached. The pipeline gates GPU box
     // drawing on it: no viewer - no draw.
     bool viewer_connected() const { return connected_.load(); }
-    NetPreview( int w, int h, int stride, int fps, int port );
-    ~NetPreview();
 
     // Called once per frame from the pipeline loop (same thread every time).
     // rgb points into the NPU input tensor; the call may block while the
