@@ -89,8 +89,6 @@ class Pipeline
     // Timing accumulator: the throttled avg/60 + TOTAL reports.
     // Shared mutable state lives in the owning layer (project rule):
     // a Pipeline member, not an anonymous-namespace global.
-    // Header-layout rule: internal structs live in the implicit private
-    // area before any access specifier.
     struct Timings
     {
         using clk = std::chrono::steady_clock;
