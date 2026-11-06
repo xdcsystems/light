@@ -63,6 +63,16 @@ post-processing.
   undetected — 705636b). A heap scan cannot catch this class of bug;
   only a live visual run can.
 
+### Comment style
+- Comments are structured, not prose: a header line ending with `:`,
+  options/cases one per line, continuation lines indented under their item.
+- Max line length: 110 characters (comments included).
+- Do not duplicate rules stated in this README in code comments;
+  code comments reference ("see README") or explain local specifics only.
+- A comment describing a mode/value must be verified by an actual run
+  (example: pool=2 was documented while --pool rejected it, and the
+  clamp silently allowed it).
+  
 ## Layers
 - CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. G_FMT is verified
                against the requested mode; a driver-side silent mode

@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <chrono>
@@ -66,14 +65,13 @@ Pipeline::Pipeline( const Config& cfg )
   , cam_( cfg_.cam_w, cfg_.cam_h )
   , dec_( cfg_.cam_w, cfg_.cam_h )
 {
-    // M4: context pool, clamped to [1, 3]. 0/1 = ring of one (single
-    // engine, synchronous semantics); 2 = two engines pinned to cores
-    // 0/1; 3 = three engines on one model, pinned one per NPU core,
-    // inference moved to worker threads and overlapped with the rest.
+    // M4: the pool is a startup-time decision; npus_ never grows after
+    // this loop, so the slot pointers stay valid for the whole session.
+    // Only two modes exist: ring of one and the 3-engine pool. The CLI
+    // accepts 0|1|3; anything below 3 falls back to ring of one so a
+    // direct call can never create the untested 2-engine mode.
 
-    npool_ = std::clamp( cfg_.pool, 1, 3 );
-    if ( cfg_.pool != npool_ )
-        std::cout << "npu: requested pool " << cfg_.pool << " clamped to " << npool_ << '\n';
+    npool_ = cfg_.pool >= 3 ? 3 : 1;    
     npus_.reserve( npool_ );
 
     for ( int k = 0; k < npool_; ++k )

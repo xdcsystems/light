@@ -54,10 +54,12 @@ struct Config
     // 1/2/4 = core 0/1/2, 3 = cores 0+1, 7 = cores 0+1+2
     // (rknn_set_core_mask). Ignored when pool > 1 (the pool pins its own).
     int core = 0;
-    // M4: context pool. 0/1 = ring of one (single engine, synchronous
-    // semantics); 3 = three engines on one model, pinned one per NPU core,
-    // inference moved to worker threads and overlapped with the rest.
+    // M4: context pool (CLI accepts 0|1|3):
+    // 0/1/2 = ring of one (single engine, synchronous semantics);
+    // 3     = three engines on one model, pinned one per NPU core,
+    //         inference moved to worker threads and overlapped with the rest.
     int pool = 0;
+
     // Model input size is NOT a config option: it is read from the model
     // itself (input_attr) after setup_io. A --mw/--mh flag could only
     // desynchronize RGA from the real tensor geometry.
