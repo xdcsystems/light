@@ -8,6 +8,8 @@
 template <typename T, int N>
 struct PodList
 {
+    enum { cap = N };  // project rule: unscoped enum, not a static
+
     std::array<T, N> d {};
     int n = 0;
 

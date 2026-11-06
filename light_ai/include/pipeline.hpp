@@ -228,7 +228,6 @@ private:
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
     void frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_us,
             double cam_ms, double dec_ms );
-    void fill_gpu_boxes( float sx, float sy, float lb_left, float lb_top );  // det boxes + trails -> boxes_
     double draw_and_publish( Slot& sl, int ps );   // viewer path; returns enc_ms
     void pool_discard();                 // drop pending slots on camera recovery
 };
