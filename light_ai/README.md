@@ -527,6 +527,9 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
   INT8 build history).
 
 ## Scripts
+- scripts/install_rknn.sh — installs rknn-toolkit-lite2 (aarch64, Python 3.9):
+  downloads the wheel from GitHub Releases (tag rknn-toolkit-lite2-v2.5.0),
+  verifies SHA256 and pip-installs it. The wheel is not tracked by git.
 - scripts/set_governors.sh — pins CPU/NPU/DDR governors to
   performance (sudo). Run before any benchmark: the cores-012 infer
   figures are CPU-frequency dependent (see M2.5).
@@ -575,8 +578,9 @@ Models are NOT tracked by git (*.rknn is ignored): they are build
 artifacts of the Colab quantization pipeline (see Platform constraints
 and M2.4) and live on each machine, transferred out of band. After a
 fresh clone, place the .rknn files next to the executable — the
---model flag takes any path. The rkmpp wheel in misc/ stays tracked
-(0.6 MB, toolkit reproducibility).
+--model flag takes any path. The rknn-toolkit-lite2 wheel is NOT tracked:
+it lives in GitHub Releases (tag rknn-toolkit-lite2-v2.5.0), installed by
+scripts/install_rknn.sh (download + SHA256 verify + pip install).
 
 ## Run
     sudo ./build/light_ai \
