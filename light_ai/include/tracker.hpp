@@ -6,6 +6,26 @@
 #include "pod_list.hpp"
 #include "yolo_postprocess.hpp"
 
+// ---- Public vocabulary of the tracker -------------------------------
+// Data contract shared with consumers, at file scope (as TrackState
+// already was). The class below is behavior only; internal structs
+// name TrajPoint/TrackLife freely — file scope precedes the class.
+
+// Track lifecycle states (TrackState.state; consumers filter by it).
+enum TrackLife
+{
+    TRACK_FREE = 0,  // slot unused (internal)
+    TRACK_TENT = 1,  // tentative: seen < kConfirmHits times
+    TRACK_CONF = 2   // confirmed
+};
+
+// One trajectory point (POD, safe to expose).
+struct TrajPoint
+{
+    int64_t ts_us = 0;
+    float x = 0.0f, y = 0.0f;
+};
+
 // Person trajectory tracker: greedy IoU association over a per-track
 // constant-velocity Kalman filter (one 2-state filter per axis), ring
 // trajectory per track. No heap, no statics, no virtuals -- fixed
@@ -31,19 +51,20 @@
 
 struct TrackState
 {
-    int id;        // stable track id, monotonically growing
-    int state;     // Tracker::TRACK_TENT / TRACK_CONF
-    float cx, cy;  // filtered center (predicted position when unmatched)
-    float vx, vy;  // filtered velocity, px/s
-    float bw, bh;  // last matched box size (EMA)
-    int n_pts;     // trajectory points collected so far
+    int id;           // stable track id, monotonically growing
+    TrackLife state;  // TRACK_TENT / TRACK_CONF
+    float cx, cy;     // filtered center (predicted position when unmatched)
+    float vx, vy;     // filtered velocity, px/s
+    float bw, bh;     // last matched box size (EMA)
+    int n_pts;        // trajectory points collected so far
 };
 
 using TrajList = PodList<TrackState, 8>;
 
 class Tracker
 {
-public:
+    // Tuning/limits (P1): private x100 integer constants, one place to
+    // tune. Declared before the internal structs that reference them.
     enum
     {
         kMaxTracks = 8,
@@ -71,31 +92,15 @@ public:
                             // a gate failure (size gate, edge IoU jitter)
     };
 
-    enum TrackLife
+    // Constant-velocity Kalman, one axis: state (x, v), covariance 2x2
+    // flattened (P00, P01, P10, P11).
+    struct AxisKF
     {
-        TRACK_FREE = 0,
-        TRACK_TENT = 1,
-        TRACK_CONF = 2
+        float x = 0.0f, v = 0.0f;
+        std::array<float, 4> p = { 10000.0f, 0.0f, 0.0f, 10000.0f };
     };
 
-    void reset();
-    // Consumes the person detections (cls==0 only, others ignored),
-    // predicts, associates, updates the filters and the trajectories,
-    // ages unmatched tracks; fills out with all alive tracks.
-    void update( const DetList& dets, int64_t ts_us, TrajList& out );
-    // Trail sample (POD, safe to expose): one trajectory point.
-    struct TrajPoint
-    {
-        int64_t ts_us;
-        float x, y;
-    };
-
-    // M3.11: copies every `stride`-th point of track `id`'s ring into
-    // dst, oldest first, newest always included; at most dst_cap points.
-    // Unknown/free id -> returns 0.
-    int recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) const;
-
-private:
+    // Ring trajectory per track: oldest first, newest always included.
     struct Traj
     {
         std::array<TrajPoint, kTrajPoints> p {};
@@ -111,14 +116,7 @@ private:
         }
     };
 
-    // Constant-velocity Kalman, one axis: state (x, v), covariance 2x2
-    // flattened (P00, P01, P10, P11).
-    struct AxisKF
-    {
-        float x = 0.0f, v = 0.0f;
-        std::array<float, 4> p = { 10000.0f, 0.0f, 0.0f, 10000.0f };
-    };
-
+    // One track: two-axis KF + size EMA + lifecycle + ring.
     struct Track
     {
         AxisKF fx, fy;
@@ -126,18 +124,33 @@ private:
         int64_t ts_last_us = 0;
         int hits = 0;
         int miss = 0;
-        int life = TRACK_FREE;
+        TrackLife life = TRACK_FREE;
         int id = 0;
         Traj traj;
     };
 
+public:
+    // Re-init in place: the run loop calls it on restart.
+    void reset();
+
+    // Consumes the person detections (cls==0 only, others ignored),
+    // predicts, associates, updates the filters and the trajectories,
+    // ages unmatched tracks; fills out with all alive tracks.
+    void update( const DetList& dets, int64_t ts_us, TrajList& out );
+
+    // M3.11: copies every `stride`-th point of track `id`'s ring into
+    // dst, oldest first, newest always included; at most dst_cap points.
+    // Unknown/free id -> returns 0.
+    int recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) const;
+
+private:
     void kf_predict( AxisKF& k, float dt ) const;
     void kf_update( AxisKF& k, float z ) const;
     void predict( Track& t, float dt ) const;
     void measure( Track& t, float cx, float cy, float bw, float bh, int64_t ts_us );
     void spawn( float cx, float cy, float bw, float bh, int64_t ts_us );
 
-private: // data
+private:
     std::array<Track, kMaxTracks> tracks_ {};
     int next_id_ = 1;
 };

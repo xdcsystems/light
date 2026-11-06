@@ -76,11 +76,11 @@ if ( trajs.n > 0 )
 {
     // samp matches the dst_cap below; a smaller array with a
     // larger cap overflows the stack (segfault at pts>=61).
-    Tracker::TrajPoint samp[20];
+    TrajPoint samp[20];
     for ( int k = 0; k < trajs.n; ++k )
     {
         const TrackState& t = trajs.d[k];
-        if ( t.state != Tracker::TRACK_CONF )
+        if ( t.state != TRACK_CONF )
             continue;  // trail after confirmation only
         const int ns = tracker.recent_points( t.id, 4, samp, 20 );
         float prev_px = 0.0f;

@@ -25,7 +25,7 @@ public:
             for ( int k = 0; k < trajs.n && k < 8; ++k )
             {
                 const TrackState& t = trajs.d[k];
-                std::cout << "  id=" << t.id << ( t.state == Tracker::TRACK_CONF ? " conf" : " tent" ) << " c=("
+                std::cout << "  id=" << t.id << ( t.state == TRACK_CONF ? " conf" : " tent" ) << " c=("
                           << t.cx << ',' << t.cy << ") v=(" << t.vx << ',' << t.vy << ") pts=" << t.n_pts << '\n';
             }
         }
