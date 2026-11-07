@@ -934,3 +934,86 @@ boxes); no stale-track theft after long gaps (all new ids
 legitimate); no ghost duplicates this run. REMAINING: short-gap
 survival test must start standing NEXT to the pedestal, not
 approaching it.
+
+## Audit fixes, batch of 7 (2026-11-07..08): committed dc84c6c
+
+Audit outcome fixes, one commit: 8 files, +245/-56. What/why/verification:
+
+1. NetEncoder DRM pool -> RkmppDrmPool<N> RAII sub-object
+   (net_encoder.hpp/.cpp). The former stepwise buf_group_/bufs_ members
+   leaked the whole pool whenever the owning ctor threw after the pool
+   allocation (avcodec_open2 / av_frame_alloc paths). A fully
+   constructed sub-object is destroyed even when the owner's ctor
+   throws -- the leak path is structurally gone. Verified: probe codec
+   name ("h264_rkmpp_probe") -> loud "Fatal: net encoder: h264_rkmpp
+   not found", no MPP leak traces in the log; normal runs unchanged.
+   NOT run: valgrind (accepted gap).
+
+2. Pipeline ctor: source start after workers_ is exception-guarded
+   (pipeline.cpp). CameraV4L2::start() throws on STREAMON failure;
+   unwinding past started workers_ would destroy joinable threads
+   (std::terminate). Now: catch -> bounded recover() retries (5 x 1 s,
+   the full reconnect path) -> on exhaustion, no rethrow; run()'s
+   recovery ladder takes over (first dequeue fails EIO/ENODEV).
+   Verified with a forced-throw probe in start(): caught, recovered on
+   attempt 1 (recover() rebuilds the source completely -- frames
+   resumed; warm-up discard ran), clean Ctrl-C shutdown. The exhaustion
+   branch is covered by the same handle_source_failure() path that is
+   live-proven by replug tests; NOT force-tested separately (would
+   require a second probe in setup_device).
+
+3. Tracker association gate restored to kIoUGate (30) (tracker.cpp).
+   Association tested kSpawnDedupeGate (15); kIoUGate had no other
+   reader anywhere -- the header contract ("min IoU x100 to accept a
+   match") was silently false (comment/code desync). Spawn dedupe keeps
+   its laxer half-gate (15): its documented job is catching duplicates
+   that failed a stricter gate (size gate on partial boxes, edge IoU
+   jitter). Verified live: tracks stable, no id churn, dedupe
+   unchanged; at observed speeds (~11 px/frame) inter-frame IoU is
+   ~0.94, far above the 0.30 gate, so the only behavioral change is in
+   the IoU 0.15-0.30 dead zone (a ghost spawn becomes a dedupe drop).
+
+4. CPU draw parity (pipeline.cpp draw_boxes_cpu): fully off-screen
+   boxes skipped (the GPU viewport clips them), degenerate (< 1 px)
+   boxes skipped (the GPU discard; the CPU path used to paint them as
+   a line), pixel span floor()/ceil()-1 per the rasterizer rule (the
+   former truncation ran one pixel short on right/bottom edges),
+   fallback log corrected "RGA fallback" -> "CPU fallback". <cmath>
+   added. Verified by A/B reasoning against the GPU path semantics;
+   live A/B (--cpu-draw vs GPU) optional, not run this session.
+
+5. Trail fade alpha honored on BOTH draw paths. fill_gpu_boxes already
+   computed alpha (255..60 for trails, 255 for detections); the CPU
+   put() ignored it and the GPU drew with blending disabled into an
+   RGB888 FBO (alpha unreachable). Now: Porter-Duff over on the CPU
+   path (out = (src*a + dst*(255-a) + 127)/255; a >= 255 keeps the
+   opaque write -- detections render byte-identical); GL blending on
+   the GPU path (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA; the context
+   belongs to the drawer alone). Verified live: fade visible on both
+   paths (viewer attached). AUDIT CORRECTION: there is NO thickness
+   field in GpuBox -- the audit's "dead thickness field" claim was
+   wrong; outline width stays the 1-px constant on both branches
+   (documented decision, owner confirmed; no code change).
+
+6. --frames: values < 1 rejected loudly (main.cpp), exit 2 with an
+   "expected >= 1" hint, same policy as --cal. Former --frames 0 fell
+   through to an empty run() loop and exited 1 silently. Verified:
+   0 and -5 -> exit 2 with the hint; --help shows the range.
+
+7. --frames default = run until Ctrl-C (pipeline.hpp frames = 0;
+   pipeline.cpp loop condition; main.cpp help line). 0 = no frame
+   budget: run until the SIGINT/SIGTERM flag, then the normal
+   drain/summary path. Verified live: a run without --frames crossed
+   the former 300-frame default and ended only on Ctrl-C (516 frames,
+   clean drain, exit 0); --frames 300 keeps the bounded behavior.
+   Known edge: Ctrl-C with zero processed frames exits 1 (pre-existing
+   main() semantics, recorded knowingly).
+
+PATCH LESSON (session note, 2026-11-08): the 2026-11-03 rule "no
+hand-written counters; every delta comes from counting the patch
+strings" was violated three times this session -- post-check counts
+were hand-counted (ignored doc-comment mentions, ignored the patch's
+own replacement text) and aborted three times before the final
+mechanical form passed on the first try. The lesson stands; next
+patch scripts compute expectations from the replacement strings
+directly.
