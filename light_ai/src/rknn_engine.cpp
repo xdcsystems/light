@@ -132,12 +132,13 @@ int RknnEngine::set_core_mask( unsigned mask ) const
         return -1;
 
     // M4: the accepted values are the numeric flags of rknn_api.h:
-    // CORE_0=1, CORE_1=2, CORE_0_1=3, CORE_2=4, CORE_0_1_2=7 (see
-    // rknn_api.h lines 245-250). 1/2/4 are the per-core flags — the
-    // pool pins one engine per core with these; 3/7 are the pair/triple
-    // masks of the single-context path. So the switch is only a
-    // whitelist: anything else (incl. 0 = AUTO) keeps the runtime
-    // default, no call.
+    // CORE_0=1, CORE_1=2, CORE_0_1=3, CORE_2=4, CORE_0_1_2=7
+    // (see rknn_api.h lines 245-250).
+    //  - 1/2/4 are the per-core flags — the pool pins one engine per core with these;
+    //  - 3/7 are the pair/triple masks of the single-context path.
+    // So the switch is only a whitelist: 0 = AUTO keeps the runtime default (no call),
+    // any other non-whitelisted value is a caller bug: loud log, -1.
+
     switch ( mask )
     {
         case 1:  // RKNN_NPU_CORE_0
