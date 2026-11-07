@@ -1,6 +1,7 @@
 #include <cstring>
 #include <filesystem>
 #include <chrono>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
@@ -26,6 +27,12 @@ namespace
     // The caller pre-maps boxes to tensor coordinates — the same geometry as the GPU path;
     // colors come from the box itself. Used when the GPU drawer
     // is unavailable, or forced by --cpu-draw (A/B baseline).
+    // Geometry parity with the GPU path (2026-11-07): fully off-screen and
+    // degenerate (< 1 px) boxes are skipped, like the GPU viewport /
+    // discard, and the pixel span uses floor/ceil like the rasterizer.
+    // Porter-Duff alpha (2026-11-07): the per-box alpha blends over the
+    // existing tensor pixels; a == 255 stays an opaque write, so the
+    // detection outlines render byte-identical to the old code.
 
     void draw_boxes_cpu( uint8_t* rgb, int w, int h, int stride, const GpuBox* boxes, int n )
     {
@@ -35,15 +42,44 @@ namespace
         for ( int i = 0; i < n; ++i )
         {
             const GpuBox& b = boxes[i];
-            const int x0 = clamp( static_cast<int>( b.x0 ), w - 1 );
-            const int y0 = clamp( static_cast<int>( b.y0 ), h - 1 );
-            const int x1 = std::max( x0, clamp( static_cast<int>( b.x1 - 1.0f ), w - 1 ) );
-            const int y1 = std::max( y0, clamp( static_cast<int>( b.y1 - 1.0f ), h - 1 ) );
+            // Fully off-screen boxes are skipped: the clamp-only path drew
+            // a degenerate 1-px line right on the frame edge, while the
+            // GPU viewport clips the same input to nothing.
+            if ( b.x1 <= 0.0f || b.x0 >= static_cast<float>( w ) || b.y1 <= 0.0f
+                 || b.y0 >= static_cast<float>( h ) )
+                continue;
+            // Degenerate boxes (< 1 px in either axis) are skipped for
+            // parity with the GPU drawer's discard (x1 - x0 < 1.0f):
+            // the CPU path used to paint them as a line.
+            if ( b.x1 - b.x0 < 1.0f || b.y1 - b.y0 < 1.0f )
+                continue;
+            // Pixel-span rounding matched to the GPU rasterizer: pixel k is
+            // touched when its [k, k+1) span intersects the box span, so the
+            // left/top edge floor()s and the right/bottom edge ceil()s-1.
+            // The former truncation ran one pixel short on the right/bottom
+            // edges vs the GPU path (A/B asymmetry).
+            const int x0 = clamp( static_cast<int>( std::floor( b.x0 ) ), w - 1 );
+            const int y0 = clamp( static_cast<int>( std::floor( b.y0 ) ), h - 1 );
+            const int x1 = std::max( x0, clamp( static_cast<int>( std::ceil( b.x1 ) ) - 1, w - 1 ) );
+            const int y1 = std::max( y0, clamp( static_cast<int>( std::ceil( b.y1 ) ) - 1, h - 1 ) );
+            // Porter-Duff over with the per-box alpha (trail fade):
+            // out = (src*a + dst*(255-a) + 127) / 255. Reading the
+            // pixel is safe here: cache_drop ran before the draw and
+            // cache_clean runs after, so the CPU view is coherent.
+            // a >= 255 (detections) keeps the old opaque write.
             auto put = [&]( int x, int y ) {
                 uint8_t* px = rgb + static_cast<size_t>( y ) * stride + x * 3;
-                px[0] = b.r;
-                px[1] = b.g;
-                px[2] = b.b;
+                const unsigned a = b.a;
+                if ( a >= 255 )
+                {
+                    px[0] = b.r;
+                    px[1] = b.g;
+                    px[2] = b.b;
+                    return;
+                }
+                px[0] = static_cast<uint8_t>( ( b.r * a + px[0] * ( 255 - a ) + 127 ) / 255 );
+                px[1] = static_cast<uint8_t>( ( b.g * a + px[1] * ( 255 - a ) + 127 ) / 255 );
+                px[2] = static_cast<uint8_t>( ( b.b * a + px[2] * ( 255 - a ) + 127 ) / 255 );
             };
             for ( int x = x0; x <= x1; ++x )
             {
@@ -131,11 +167,71 @@ Pipeline::Pipeline( const Config& cfg )
 
     // No throwing steps below this line: once workers_ are started, the
     // dtor takes over shutdown (quit_ -> notify -> join) and the ctor
-    // must not leave the object half-initialized after them.
+    // must not leave the object half-initialized after them. The source
+    // start below used to violate this: it throws on a failed STREAMON,
+    // and unwinding past started workers_ would destroy the joinable
+    // threads (std::terminate). Guarded (2026-11-07): the exception is
+    // caught, the source retries the full reconnect path, and nothing
+    // propagates past this point.
     for ( int k = 0; k < npool_; ++k )
         workers_.emplace_back( [this, k] { worker_loop( k ); } );
 
-    with_src( []( auto& s ) { s.start(); } );  // no-op for the net source
+    bool src_started = false;
+    try
+    {
+        with_src( []( auto& s ) { s.start(); } );  // no-op for the net source
+        src_started = true;
+    }
+    catch ( const std::exception& e )
+    {
+        // CameraV4L2::start() throws via xioctl(VIDIOC_STREAMON); every
+        // throw in this codebase is std::runtime_error, so this catch
+        // is total in practice. Recovery follows below.
+        std::cerr << "pipeline: source start failed: " << e.what() << '\n';
+    }
+    catch ( ... )
+    {
+        std::cerr << "pipeline: source start failed: unknown exception\n";
+    }
+    if ( !src_started )
+    {
+        // Bounded retry of the full reconnect path: recover() begins with
+        // teardown() on both sources, then does the complete setup
+        // (camera: discovery + S_FMT + REQBUFS + STREAMON; net: connect +
+        // GET + headers). The catch-path teardown is recover()'s own.
+        constexpr int k_start_retries = 5;
+        for ( int a = 1; a <= k_start_retries; ++a )
+        {
+            std::this_thread::sleep_for( std::chrono::seconds( 1 ) );
+            std::string new_id;
+            std::string why;
+            if ( with_src( [&]( auto& s ) { return s.recover( cam_node_, new_id, &why ); } ) == 0 )
+            {
+                if ( new_id != cam_node_ )
+                {
+                    std::cout << "source: identity adopted: " << cam_node_ << " -> " << new_id << '\n';
+                    cam_node_ = new_id;
+                }
+                constexpr int k_warmup_frames = 3;
+                warmup_left_ = k_warmup_frames;  // same warm-up discard as the mid-run recovery
+                src_started = true;
+                std::cout << "pipeline: source started on recovery attempt " << a << '\n';
+                break;
+            }
+            std::cerr << "pipeline: source start recovery attempt " << a << '/' << k_start_retries
+                      << " failed: " << why << '\n';
+        }
+    }
+    if ( !src_started )
+    {
+        // Deliberately NOT rethrowing: workers_ are running, and the ctor
+        // must not unwind past them (joinable threads -> std::terminate).
+        // A source that never came up is the recovery case run() already
+        // owns: its first dequeue fails with EIO/ENODEV and
+        // handle_source_failure() keeps trying with the usual pacing,
+        // warm-up discard and pool_discard.
+        std::cerr << "pipeline: source never started - run() recovery ladder takes over\n";
+    }
 }
 
 // Source bring-up: source identity (cam_node_ vs the URL), the full
@@ -302,7 +398,7 @@ void Pipeline::init_gpu_drawer()
 
     if ( !drew_ok )
     {
-        std::cerr << "pipeline: gpu drawer unavailable, RGA fallback\n";
+        std::cerr << "pipeline: gpu drawer unavailable, CPU fallback\n";
         drawer_.reset();
     }
     else
@@ -333,7 +429,9 @@ int Pipeline::run()
     const auto t_start = clk::now();
 
     smoother_.set_log( cfg_.box_log );
-    for ( int i = 0; i < cfg_.frames && !stop_.load(); ++i )
+    // frames == 0 (the default): no frame budget -- run until stop
+    // (Ctrl-C); the signal path below drains and reports as usual.
+    for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.load(); ++i )
     {
         const auto t0 = clk::now();
 

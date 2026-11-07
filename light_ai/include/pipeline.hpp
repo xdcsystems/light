@@ -45,7 +45,11 @@ struct Config
     int cal_frames = 0;
     int cal_interval = 15;
 
-    int frames = 300;
+    // 0 (the default) = run until Ctrl-C: the SIGINT/SIGTERM handler
+    // sets the stop flag, run() drains and reports normally. An explicit
+    // --frames N (>= 1) bounds the run; values < 1 are rejected loudly
+    // in main.cpp (2026-11-08).
+    int frames = 0;
     // Detection thresholds, CLI-tunable via --conf / --iou.
     float conf_thr = 0.25f;
     float iou_thr = 0.45f;

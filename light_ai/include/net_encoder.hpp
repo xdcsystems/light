@@ -1,7 +1,10 @@
 #pragma once
+#include <array>
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -44,6 +47,89 @@ typedef struct AVIOContext AVIOContext;
 // cannot be built without the deleter -- forgetting it is a
 // compile error, not a leak.
 using PktPtr = std::unique_ptr<AVPacket, void ( * )( AVPacket* )>;
+
+// MPP DRM pool (P1-4) as one RAII sub-object (2026-11-07): the buffer
+// group plus its N NV12 dma-bufs, fixed capacity on std::array (no heap).
+// Rationale: the former stepwise members (buf_group_ + bufs_) leaked the
+// whole pool whenever the owning constructor threw after the pool
+// allocation (avcodec_open2 / av_frame_alloc paths). A fully constructed
+// sub-object is destroyed even when the owner's constructor throws, so
+// the leak path is structurally gone. Non-copyable: the group handle is
+// process-wide MPP state (same lesson as RknnEngine, P0-3). A template:
+// kBufCount is a NetEncoder class constant, invisible to a plain
+// file-scope struct.
+template <int N>
+struct RkmppDrmPool
+{
+    MppBufferGroup group = nullptr;
+    std::array<MppBuffer, N> buf {};
+
+    RkmppDrmPool() = default;
+    ~RkmppDrmPool()
+    {
+        release_all();
+    }
+    RkmppDrmPool( const RkmppDrmPool& ) = delete;
+    RkmppDrmPool& operator=( const RkmppDrmPool& ) = delete;
+
+    // Allocate all N buffers of `bytes` each and gray-fill them: the
+    // 16-aligned tail columns must not show stale frames at session
+    // start. Self-cleaning (P1-5 pattern): on any failure everything
+    // created so far is released and the pool is left empty, so the
+    // owner's throw is safe and a later retry starts clean.
+    // Non-throwing: reports through `why`, the owner throws loudly.
+    bool alloc( size_t bytes, const char* tag, const char* caller, std::string* why )
+    {
+        if ( group )
+        {
+            if ( why )
+                *why = "drm pool: already allocated";
+            return false;
+        }
+        const MPP_RET rg = mpp_buffer_group_get(
+                &group, MPP_BUFFER_TYPE_DRM, MPP_BUFFER_INTERNAL, tag, caller );
+        if ( rg != MPP_OK )
+        {
+            group = nullptr;
+            if ( why )
+                *why = "mpp_buffer_group_get failed";
+            return false;
+        }
+        for ( auto& b : buf )
+        {
+            if ( mpp_buffer_get( group, &b, bytes ) != MPP_OK )
+            {
+                release_all();
+                if ( why )
+                    *why = "mpp_buffer_get failed";
+                return false;
+            }
+            // Neutral gray fill: the 16-aligned tail columns of the
+            // stream keep their fill (never receive RGA data).
+            if ( void* p = mpp_buffer_get_ptr( b ) )
+                std::memset( p, 128, bytes );
+        }
+        return true;
+    }
+
+private:
+    void release_all()
+    {
+        for ( auto& b : buf )
+        {
+            if ( b )
+            {
+                mpp_buffer_put( b );
+                b = nullptr;
+            }
+        }
+        if ( group )
+        {
+            mpp_buffer_group_put( group );
+            group = nullptr;
+        }
+    }
+};
 
 // M3.5 phase B2: hardware-encoded preview (h264_rkmpp) in MPEG-TS.
 // Default transport is TCP pull: the board listens on net_port, the
@@ -130,13 +216,12 @@ private:
     AVCodecContext* enc_ = nullptr;  // h264_rkmpp
     AVFrame* frame_ = nullptr;  // NV12 over an MPP DRM buffer
     AVPacket* pkt_ = nullptr;
-    MppBufferGroup buf_group_ = nullptr;
     // P1-4: three buffers, not two. Two worked only at a steady frame
     // pace; with --net-fps 0 (VFR) frames arrive in clumps after a network
     // pause, and two buffers can run out exactly at the 3-deep rkmpp task
     // queue while an older encode still holds its plane.
     enum { kBufCount = 3 };  
-    MppBuffer bufs_[kBufCount] = { nullptr, nullptr, nullptr };  // ping-pong NV12 dma-bufs
+    RkmppDrmPool<kBufCount> pool_;  // P1-4: three ping-pong NV12 dma-bufs, one RAII sub-object
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
     // Batch C: encoder -> serve() packet queue. A separate mutex from

@@ -198,11 +198,17 @@ namespace
 
             { "--frames",
                     { true,
-                            "stop after N frames",
+                            "stop after N frames (>= 1; default: run until Ctrl-C)",
                             []( Config& c, const char* v ) {
                                 int n = 0;
-                                if ( !parse_int( v, &n ) )
-                                    return value_error( "--frames", v, nullptr );
+                                // 0 used to fall through to run() with an
+                                // empty loop and exit code 1, silently.
+                                // Loud rejection instead (2026-11-07),
+                                // same policy as --cal; the no-value
+                                // default (Config::frames) remains the
+                                // way to run until Ctrl-C.
+                                if ( !parse_int( v, &n ) || n < 1 )
+                                    return value_error( "--frames", v, ">= 1" );
                                 c.frames = n;
                                 return true;
                             } } },

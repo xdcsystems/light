@@ -194,26 +194,16 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     // older encode is never overwritten by RGA on the next frame; the
     // third buffer absorbs VFR bursts where two ran out exactly at the
     // 3-deep rkmpp task queue.
-    if ( mpp_buffer_group_get( &buf_group_, MPP_BUFFER_TYPE_DRM, MPP_BUFFER_INTERNAL, MODULE_TAG, __FUNCTION__ ) != MPP_OK )
-    {
-        throw std::runtime_error( "net encoder: mpp_buffer_group_get failed" );
-    }
+    // RAII sub-object (2026-11-07): the pool is one member now, so a
+    // throw below (avcodec_open2, av_frame_alloc) no longer leaks the
+    // DRM group and its three NV12 buffers: a fully constructed
+    // sub-object is destroyed even when the owner's ctor throws. Alloc
+    // failures throw from here (fail loud, RknnEngine pattern); the
+    // pool has already self-cleaned by then (P1-5).
     vstride_ = ( h_ + 15 ) & ~15;  // MPP encoders want a 16-aligned ver_stride
-    const size_t bytes = static_cast<size_t>( w_ ) * vstride_ * 3 / 2;
-    for ( auto& b : bufs_ )
-    {
-        if ( mpp_buffer_get( buf_group_, &b, bytes ) != MPP_OK )
-        {
-            mpp_buffer_group_put( buf_group_ );
-            buf_group_ = nullptr;
-            throw std::runtime_error( "net encoder: mpp_buffer_get failed" );
-        }
-        // Neutral gray fill: the stream width is 16-aligned up, the tail
-        // columns never receive RGA data — without the fill they would
-        // show stale frames at session start.
-        if ( void* p = mpp_buffer_get_ptr( b ) )
-            std::memset( p, 128, bytes );
-    }
+    std::string pool_why;
+    if ( !pool_.alloc( static_cast<size_t>( w_ ) * vstride_ * 3 / 2, MODULE_TAG, __FUNCTION__, &pool_why ) )
+        throw std::runtime_error( "net encoder: " + pool_why );
 
     const AVCodec* codec = avcodec_find_encoder_by_name( "h264_rkmpp" );
     if ( !codec )
@@ -402,19 +392,9 @@ NetEncoder::~NetEncoder()
         av_frame_free( reinterpret_cast<AVFrame**>( &frame_ ) );
     if ( pkt_ )
         av_packet_free( reinterpret_cast<AVPacket**>( &pkt_ ) );
-    for ( auto& b : bufs_ )
-    {
-        if ( b )
-        {
-            mpp_buffer_put( b );
-            b = nullptr;
-        }
-    }
-    if ( buf_group_ )
-    {
-        mpp_buffer_group_put( buf_group_ );
-        buf_group_ = nullptr;
-    }
+    // The DRM pool releases itself: pool_ is a member sub-object, its
+    // destructor runs right after this body and covers the
+    // constructor-throw path too (2026-11-07).
     avformat_network_deinit();
 }
 
@@ -480,9 +460,9 @@ void NetEncoder::publish( int tensor_fd, int acquire_fence_fd, int64_t ts_us )
 
     // Fence wait + RGA crop run OUTSIDE the lock: the critical section
     // below now covers only encode + mux. The pipeline thread is the
-    // sole user of cur_/bufs_/acq_fd_ here; serve() touches none of
+    // sole user of cur_/pool_.buf/acq_fd_ here; serve() touches none of
     // them, and the destructor joins this thread before freeing.
-    if ( !prep_frame( tensor_fd, bufs_[cur_] ) )
+    if ( !prep_frame( tensor_fd, pool_.buf[cur_] ) )
     {
         error_.store( true );
         {
@@ -554,7 +534,7 @@ bool NetEncoder::send_frame( AVStream* stp )
     auto* st = static_cast<AVStream*>( stp );
     auto* ctx = static_cast<AVCodecContext*>( enc_ );
 
-    MppBuffer mb = bufs_[cur_];  // rotated and RGA-filled by publish/prep_frame
+    MppBuffer mb = pool_.buf[cur_];  // rotated and RGA-filled by publish/prep_frame
 
     AVFrame* fr = static_cast<AVFrame*>( frame_ );
     // DRM_PRIME path: hand the wrapper our ping-pong dma-buf by fd. The
