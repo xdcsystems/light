@@ -24,7 +24,8 @@ public:
             for ( int k = 0; k < trajs.n && k < 8; ++k )
             {
                 const TrackState& t = trajs.d[k];
-                std::cout << "  id=" << t.id << ( t.state == TRACK_CONF ? " conf" : " tent" ) << " c=("
+                std::cout << "  id=" << t.id << ( t.state == TRACK_CONF ? " conf" : " tent" )
+                          << std::fixed << std::setprecision( 1 ) << " c=("
                           << t.cx << ',' << t.cy << ") v=(" << t.vx << ',' << t.vy << ") pts=" << t.n_pts << '\n';
             }
         }
@@ -36,7 +37,8 @@ public:
             for ( int k = 0; k < dets.n && k < 8; ++k )
             {
                 const Detection& d = dets.d[k];
-                std::cout << "  cls=" << kCocoNames[d.cls] << " conf=" << std::fixed << std::setprecision( 2 ) << d.conf << " box=("
+                const char* cls_name = ( d.cls >= 0 && d.cls < 80 ) ? kCocoNames[d.cls] : "?";
+                std::cout << "  cls=" << cls_name << " conf=" << std::fixed << std::setprecision( 2 ) << d.conf << " box=("
                           << d.x << ',' << d.y << ' ' << d.w << 'x' << d.h << ")\n";
             }
         }

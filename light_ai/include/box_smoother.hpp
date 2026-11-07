@@ -95,6 +95,10 @@ public:
             t.matched = true;
         }
 
+        for ( auto& t : tracks_ )
+            if ( t.alive && !t.matched && ++t.miss > kMaxMiss )
+                t.alive = false;
+
         for ( int i = 0; i < in.n; ++i )
         {
             const Detection& d = in.d[i];
@@ -126,9 +130,6 @@ public:
             }
             out.push( sd );
         }
-        for ( auto& t : tracks_ )
-            if ( t.alive && !t.matched && ++t.miss > kMaxMiss )
-                t.alive = false;
     }
 
     void log_frame( int frame, const DetList& raw, const DetList& smooth )

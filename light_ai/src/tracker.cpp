@@ -67,6 +67,8 @@ void Tracker::kf_update( AxisKF& k, float z ) const
 
 void Tracker::predict( Track& t, float dt ) const
 {
+    if ( t.miss >= 2 )
+        return;
     kf_predict( t.fx, dt );
     kf_predict( t.fy, dt );
 }
@@ -124,8 +126,8 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
         t.fx.v = 0.0f;
         t.fy.x = cy;
         t.fy.v = 0.0f;
-        t.fx.p = { static_cast<float>( kRMeas ), 0.0f, 0.0f, 10000.0f };
-        t.fy.p = { static_cast<float>( kRMeas ), 0.0f, 0.0f, 10000.0f };
+        t.fx.p = { static_cast<float>( kRMeas ), 0.0f, 0.0f, 900.0f };
+        t.fy.p = { static_cast<float>( kRMeas ), 0.0f, 0.0f, 900.0f };
         t.bw = bw;
         t.bh = bh;
         t.ts_last_us = ts_us;
@@ -194,7 +196,7 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
                 best = i;
             }
         }
-        if ( best >= 0 && best_iou * 100.0f >= static_cast<float>( kIoUGate ) )
+        if ( best >= 0 && best_iou * 100.0f >= static_cast<float>( kSpawnDedupeGate ) )
         {
             trk_taken[best] = 1;
             det_taken[k] = 1;

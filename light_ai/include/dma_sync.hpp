@@ -26,13 +26,13 @@ namespace dma
 // as the Transport guard in net_encoder.cpp).
 struct DmaSync
 {
-    DmaSync( int fd, bool write_access ) : fd_( fd )
+    DmaSync( int fd, bool write_access ) : fd_( fd ), write_( write_access )
     {
         if ( fd_ < 0 )
             return;
         dma_buf_sync s {};
-        s.flags = write_access ? ( DMA_BUF_SYNC_RW | DMA_BUF_SYNC_START )
-                               : ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_START );
+        s.flags = write_ ? ( DMA_BUF_SYNC_RW | DMA_BUF_SYNC_START )
+                         : ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_START );
         ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s );  // best effort
     }
     ~DmaSync()
@@ -40,13 +40,15 @@ struct DmaSync
         if ( fd_ < 0 )
             return;
         dma_buf_sync s {};
-        s.flags = DMA_BUF_SYNC_RW | DMA_BUF_SYNC_END;
+        s.flags = write_ ? ( DMA_BUF_SYNC_RW | DMA_BUF_SYNC_END )
+                         : ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_END );
         ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s );
     }
     DmaSync( const DmaSync& ) = delete;
     DmaSync& operator=( const DmaSync& ) = delete;
 
     int fd_;
+    bool write_;
 };
 static_assert( sizeof( dma_buf_sync ) == 8, "dma_buf_sync layout drift" );
 // NOLINTNEXTLINE(misc-redundant-expression): intentional drift guard - the macro is defined as this very expression
@@ -65,6 +67,8 @@ static_assert( DMA_BUF_SYNC_RW == ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_WRITE ),
 
 inline void cache_clean( const void* p, size_t len )
 {
+    if ( !p || len == 0 )
+        return;
 #if defined( __aarch64__ )
     uintptr_t addr = reinterpret_cast<uintptr_t>( p ) & ~uintptr_t( 63 );
     const uintptr_t end = reinterpret_cast<uintptr_t>( p ) + len;
@@ -74,8 +78,9 @@ inline void cache_clean( const void* p, size_t len )
 #else
     // No cache-maintenance instruction on this arch; the builtin is
     // a no-op there - the cross-check build compiles and stays honest.
-    __builtin___clear_cache( const_cast<char*>( static_cast<const char*>( p ) ),
-            const_cast<char*>( static_cast<const char*>( p ) ) + len );
+    
+    auto* b = static_cast<char*>( const_cast<void*>( p ) );
+    __builtin___clear_cache( b, b + len );
 #endif
 }
 
@@ -91,6 +96,8 @@ inline void cache_clean( const void* p, size_t len )
 // SCTLR_EL1.UCI=1, so it is permitted from userspace.
 inline void cache_drop( const void* p, size_t len )
 {
+    if ( !p || len == 0 )
+        return;
 #if defined( __aarch64__ )
     uintptr_t addr = reinterpret_cast<uintptr_t>( p ) & ~uintptr_t( 63 );
     const uintptr_t end = reinterpret_cast<uintptr_t>( p ) + len;

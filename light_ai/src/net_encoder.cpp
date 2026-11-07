@@ -307,6 +307,10 @@ NetEncoder::~NetEncoder()
     }
     if ( thread_.joinable() )
         thread_.join();
+    {
+        std::lock_guard<std::mutex> plk( pkt_mx_ );
+        pkts_.clear();
+    }
     // Defensive: close a fence fd if a future edit to publish() adds an
     // early return between the fd hand-off and prep_frame(). Today the
     // fd is always consumed, so this is a no-op.
@@ -790,7 +794,11 @@ void NetEncoder::Transport::close()
     if ( tcp_pull )
     {
         if ( pb )
+        {
+            av_freep( &pb->buffer );
             avio_context_free( &pb );
+            iobuf = nullptr;
+        }
         if ( iobuf )
         {
             av_free( iobuf );
@@ -950,7 +958,10 @@ void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
         ~FcGuard()
         {
             if ( p )
+            {
+                p->pb = nullptr;
                 avformat_free_context( p );
+            }
         }
         FcGuard( const FcGuard& ) = delete;
         FcGuard& operator=( const FcGuard& ) = delete;

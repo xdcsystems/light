@@ -70,18 +70,18 @@ inline void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tr
         // points and the GPU path clips silently, but draw_boxes_cpu
         // would draw an out-of-bounds box as a line squeezed onto the
         // edge -- keep both draw paths on the same geometry.
-        if ( b.x1 <= 0.0f || b.y1 <= 0.0f
-             || b.x0 >= static_cast<float>( model_w )
-             || b.y0 >= static_cast<float>( model_h ) )
+        if ( b.x1 <= lb_left || b.y1 <= lb_top
+             || b.x0 >= static_cast<float>( model_w ) - lb_left
+             || b.y0 >= static_cast<float>( model_h ) - lb_top )
             continue;
-        if ( b.x0 < 0.0f )
-            b.x0 = 0.0f;
-        if ( b.y0 < 0.0f )
-            b.y0 = 0.0f;
-        if ( b.x1 > static_cast<float>( model_w ) )
-            b.x1 = static_cast<float>( model_w );
-        if ( b.y1 > static_cast<float>( model_h ) )
-            b.y1 = static_cast<float>( model_h );
+        if ( b.x0 < lb_left )
+            b.x0 = lb_left;
+        if ( b.y0 < lb_top )
+            b.y0 = lb_top;
+        if ( b.x1 > static_cast<float>( model_w ) - lb_left )
+            b.x1 = static_cast<float>( model_w ) - lb_left;
+        if ( b.y1 > static_cast<float>( model_h ) - lb_top )
+            b.y1 = static_cast<float>( model_h ) - lb_top;
         if ( b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f )
             continue;
         det_color( d.cls, b.r, b.g, b.b );
@@ -108,9 +108,9 @@ inline void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tr
                     break;
                 const float px = samp[j].x * sx + lb_left;
                 const float py = samp[j].y * sy + lb_top;
-                if ( px < 0.0f || py < 0.0f
-                     || px >= static_cast<float>( model_w )
-                     || py >= static_cast<float>( model_h ) )
+                if ( px - 1.5f < lb_left || py - 1.5f < lb_top
+                     || px + 1.5f > static_cast<float>( model_w ) - lb_left
+                     || py + 1.5f > static_cast<float>( model_h ) - lb_top )
                     continue;
                 if ( have_prev )
                 {

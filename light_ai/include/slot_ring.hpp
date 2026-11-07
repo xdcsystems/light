@@ -44,6 +44,11 @@ struct PubFifo
     }
     int front() const
     {
+        if ( n <= 0 )
+        {
+            std::cerr << "pubfifo: empty (n=" << n << ", head=" << head << "), front invalid\n";
+            return 0;
+        }
         return slots[head];
     }
     void pop()

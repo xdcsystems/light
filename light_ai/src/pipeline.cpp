@@ -37,8 +37,8 @@ namespace
             const GpuBox& b = boxes[i];
             const int x0 = clamp( static_cast<int>( b.x0 ), w - 1 );
             const int y0 = clamp( static_cast<int>( b.y0 ), h - 1 );
-            const int x1 = clamp( static_cast<int>( b.x1 ), w - 1 );
-            const int y1 = clamp( static_cast<int>( b.y1 ), h - 1 );
+            const int x1 = std::max( x0, clamp( static_cast<int>( b.x1 - 1.0f ), w - 1 ) );
+            const int y1 = std::max( y0, clamp( static_cast<int>( b.y1 - 1.0f ), h - 1 ) );
             auto put = [&]( int x, int y ) {
                 uint8_t* px = rgb + static_cast<size_t>( y ) * stride + x * 3;
                 px[0] = b.r;
@@ -739,23 +739,19 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
     else
     {
         dma::DmaSync wr( sl.eng->input_fd(), true );
-        draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ), 
+        dma::cache_drop( sl.eng->input_data(), static_cast<size_t>( model_w_ ) * model_h_ * 3 );
+        draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ),
                         model_w_, model_h_, model_w_ * 3, boxes_.d.data(), boxes_.n );
-    
-        // Flush every CPU store to the coherence point before any DMA
-        // consumer (RGA encoder crop, NPU, next-frame RGA rewrite) can
-        // observe stale DRAM. See cache_clean() for why the ioctl alone
-        // is not enough on this platform.
-    
         dma::cache_clean( sl.eng->input_data(), static_cast<size_t>( model_w_ ) * model_h_ * 3 );
     }
-    
-    // READ bracket covers both tensor consumers below: the NUT preview
-    // (CPU read) and enc_->publish() (synchronous RGA crop to NV12).
-    
-    dma::DmaSync rd( sl.eng->input_fd(), false );
+
+    // READ bracket covers the NUT preview (CPU read) only;
+    // enc_->publish() uses RGA hardware DMA and must run outside CPU sync.
     if ( prev_live )
+    {
+        dma::DmaSync rd( sl.eng->input_fd(), false );
         preview_->publish( static_cast<const uint8_t*>( sl.eng->input_data() ) );
+    }
     if ( enc_live )
     {
         const auto t5 = clk::now();
