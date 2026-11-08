@@ -1,6 +1,6 @@
 // cli.cpp (2026-11-08): the parameter layer. The option registry
-// (names, ranges, error texts) lives in config/option_registry.{hpp,cpp};
-// the INI config-file layer lives in config/config_file.{hpp,cpp}
+// (names, ranges, error texts) lives in config/option_registry.{h,cpp};
+// the INI config-file layer lives in config/config_file.{h,cpp}
 // (externals/inih r62, BSD-3-Clause); this file owns the CliOptions
 // orchestration (pre-pass, argv loop, cross-field checks).
 // Precedence: defaults < config file < CLI.
@@ -10,7 +10,7 @@
 #include <string>
 
 #include "config/cli.hpp"
-#include "config/config_file.hpp"
+#include "config/config_file.h"
 
 // ---- CliOptions implementation ----
 

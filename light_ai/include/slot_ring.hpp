@@ -9,8 +9,8 @@
 #include <iostream>
 #include <mutex>
 
-#include "frame_trace.hpp"
-#include "rga_resizer.hpp"  // LbGeom: a Slot member by value --
+#include "frame_trace.h"
+#include "rga_resizer.h"  // LbGeom: a Slot member by value --
                             // the full type is required (was only
                             // supplied by pipeline.hpp order)
 #include "yolo_postprocess.hpp"

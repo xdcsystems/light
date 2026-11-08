@@ -14,7 +14,7 @@
 #include "camera_v4l2.hpp"
 #include "yolo_postprocess.hpp"
 #include "mpp_decoder.hpp"
-#include "rga_resizer.hpp"
+#include "rga_resizer.h"
 #include "rknn_engine.hpp"
 #include "cal_dumper.hpp"
 #include "net_preview.hpp"
@@ -24,7 +24,7 @@
 #include "tracker.hpp"
 #include "console_reporter.hpp"
 #include "slot_ring.hpp"
-#include "frame_trace.hpp"
+#include "frame_trace.h"
 #include "timings.hpp"  // Timings accumulator (moved out 2026-11-08)
 #include "net_mjpeg_source.hpp"
 

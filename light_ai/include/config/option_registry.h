@@ -1,4 +1,4 @@
-// option_registry.hpp (2026-11-08): the option registry. One table of
+// option_registry.h (2026-11-08): the option registry. One table of
 // names, ranges and error texts; both parameter sources (the argv loop
 // and the INI config-file handler) validate through it, so both reject
 // identically. Owned by CliOptions; the config-file layer receives the

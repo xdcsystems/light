@@ -10,9 +10,9 @@
 #include <string>
 
 #include "config/cli.hpp"
-#include "config/config_file.hpp"
+#include "config/config_file.h"
 #include "ini.h"
-#include "config/option_registry.hpp"
+#include "config/option_registry.h"
 
 namespace
 {

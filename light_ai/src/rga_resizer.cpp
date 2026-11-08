@@ -4,7 +4,7 @@
 #include <im2d.h>
 #include <rga.h>
 
-#include "rga_resizer.hpp"
+#include "rga_resizer.h"
 
 RgaResizer::RgaResizer()
 {

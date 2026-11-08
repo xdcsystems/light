@@ -27,7 +27,7 @@
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
 
-#include "rga_resizer.hpp"  // LbGeom: band geometry arrives as one object
+#include "rga_resizer.h"  // LbGeom: band geometry arrives as one object
 
 // Opaque ffmpeg types, forward-declared: the header compiles without
 // the libav* include paths, and the compiler now checks the handle

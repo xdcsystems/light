@@ -11,7 +11,7 @@
 #include <iomanip>
 #include <iostream>
 
-#include "frame_trace.hpp"
+#include "frame_trace.h"
 
 // Timing accumulator: the throttled avg/60 + TOTAL reports.
 // Shared mutable state lives in the owning layer (project rule):

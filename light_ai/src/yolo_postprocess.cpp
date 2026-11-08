@@ -4,7 +4,7 @@
 #include <iostream>
 
 #include "yolo_postprocess.hpp"
-#include "rga_resizer.hpp"
+#include "rga_resizer.h"
 #include "rknn_engine.hpp"
 
 namespace

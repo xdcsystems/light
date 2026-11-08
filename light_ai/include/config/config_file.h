@@ -1,4 +1,4 @@
-// config_file.hpp (2026-11-08): the INI config-file layer (externals/
+// config_file.h (2026-11-08): the INI config-file layer (externals/
 // inih r62, BSD-3-Clause). Loads a flat `key = value` file THROUGH the
 // option registry the CLI uses, so both sources validate identically
 // and print the same error texts. The load happens in the parse()
