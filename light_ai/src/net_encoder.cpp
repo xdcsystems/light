@@ -249,6 +249,7 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     // path); CBR is applied after avcodec_open2 below.
     if ( avcodec_open2( ctx, codec, nullptr ) < 0 )
     {
+        avcodec_free_context( &enc_ );
         throw std::runtime_error( "net encoder: avcodec_open2(h264_rkmpp) failed" );
     }
     // Force CBR through MPP: see the rate-control comment above. At this
@@ -276,6 +277,9 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     pkt_ = av_packet_alloc();
     if ( !frame_ || !pkt_ )
     {
+        av_packet_free( &pkt_ );
+        av_frame_free( &frame_ );
+        avcodec_free_context( &enc_ );
         throw std::runtime_error( "net encoder: av_frame/av_packet_alloc failed" );
     }
 
@@ -824,7 +828,7 @@ bool NetEncoder::open_transport( int lfd, const std::string& url, AVFormatContex
         pf.fd = lfd;
         pf.events = POLLIN;
 
-        while ( !quit_.load() && ::poll( &pf, 1, 200 ) == 0 )
+        while ( !quit_.load() && ::poll( &pf, 1, 200 ) <= 0 )
         {}
 
         if ( quit_.load() )
