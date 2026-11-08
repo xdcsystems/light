@@ -2,7 +2,7 @@
 #include <csignal>
 #include <iostream>
 
-#include "cli.hpp"      // CliOptions: argv + config-file reading/validation
+#include "config/cli.hpp"  // CliOptions: argv + config-file reading/validation
 #include "pipeline.hpp"
 
 // Graceful shutdown (P1-6): SIGINT/SIGTERM only set the stop flag;

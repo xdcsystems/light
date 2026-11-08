@@ -6,7 +6,7 @@
 #pragma once
 #include <string>
 
-#include "option_registry.hpp"
+#include "config/option_registry.hpp"
 
 // Config: the complete parameter set of one run. Model input dimensions
 // are read from the model itself, so --mw/--mh are intentionally absent
@@ -72,7 +72,7 @@ struct Config
 
 // CliOptions: the single place that reads and validates the command
 // line and the INI config file (externals/inih, BSD-3-Clause). One
-// registry of names, ranges and error texts (OptionRegistry, include/
+// registry of names, ranges and error texts (OptionRegistry, include/config/
 // option_registry.hpp); the config-file layer reuses the same
 // registry, so both sources validate identically. parse() is called
 // once from main(); afterwards config() hands over a frozen,

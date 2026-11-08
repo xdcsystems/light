@@ -13,7 +13,7 @@
 #include <chrono>   // Timings: steady_clock stamps
 #include <iomanip>  // Timings: report formatting
 
-#include "cli.hpp"  // Config (moved out of this header 2026-11-08)
+#include "config/cli.hpp"  // Config (moved out of this header 2026-11-08)
 #include "camera_v4l2.hpp"
 #include "yolo_postprocess.hpp"
 #include "mpp_decoder.hpp"

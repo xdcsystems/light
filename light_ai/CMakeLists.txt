@@ -83,9 +83,9 @@ add_executable(light_ai
     src/tracker.cpp
     src/gpu_box_drawer.cpp
     src/net_mjpeg_source.cpp
-    src/cli.cpp
-    src/option_registry.cpp
-    src/config_file.cpp
+    src/config/cli.cpp
+    src/config/option_registry.cpp
+    src/config/config_file.cpp
     externals/inih/ini.c
 )
 target_compile_definitions(light_ai PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)

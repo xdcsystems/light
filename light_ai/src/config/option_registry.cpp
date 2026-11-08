@@ -17,8 +17,8 @@
 #include <map>
 #include <string>
 
-#include "option_registry.hpp"
-#include "cli.hpp"
+#include "config/option_registry.hpp"
+#include "config/cli.hpp"
 
 namespace
 {

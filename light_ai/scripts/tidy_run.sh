@@ -23,7 +23,9 @@ for e in db:
 json.dump(db, open(dst, "w"))
 PYEOF
 rm -f /tmp/tidy/*.log /tmp/tidy/HANGS.txt
-FILES=$(wc -l src/*.cpp | sort -n | awk '$2!="total" {print $2}')
+# find covers src/config/ too: a flat glob would silently drop
+# the config/ TU from the gate (fix 13a, 2026-11-08).
+FILES=$(find src -name '*.cpp' | xargs wc -l | sort -n | awk '$2!="total" {print $2}')
 for f in $FILES; do
   name=$(basename "$f" .cpp)
   echo "tidy: $f (timeout ${TMO}s)"
