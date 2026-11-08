@@ -1,13 +1,13 @@
 // Per-frame timing record, extracted from pipeline.hpp (stage 5).
 // Single storage: dispatch fills cam/dec/rga, the worker fills
-// infer, publish fills enc; Pipeline::Timings::add consumes the
-// whole record. Plain POD, no dependencies.
+// infer, publish fills enc; Timings::add (timings.hpp) consumes
+// the whole record. Plain POD, no dependencies.
 
 #pragma once
 
 // Per-frame timing, single storage: dispatch fills cam/dec/rga,
-// the worker fills infer, publish fills enc; Timings::add consumes
-// the whole record.
+// the worker fills infer, publish fills enc; Timings::add
+// (timings.hpp) consumes the whole record.
 struct FrameTrace {
     double cam = 0.0;
     double dec = 0.0;

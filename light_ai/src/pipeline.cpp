@@ -5,6 +5,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <mutex>
 #include <cstddef>
 #include <cstdint>
 #include <sys/stat.h>  // stat(): startup node fallback
