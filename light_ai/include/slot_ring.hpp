@@ -10,8 +10,14 @@
 #include <mutex>
 
 #include "frame_trace.hpp"
-#include "rknn_engine.hpp"
+#include "rga_resizer.hpp"  // LbGeom: a Slot member by value --
+                            // the full type is required (was only
+                            // supplied by pipeline.hpp order)
 #include "yolo_postprocess.hpp"
+
+// RknnEngine appears in Slot only as a pointer (never
+// dereferenced in this header) -- forward-declared.
+class RknnEngine;
 
 // Publish FIFO: strictly single-threaded — dispatch, publish, drain
 // and pool_discard all run on the pipeline thread, so no locks by
