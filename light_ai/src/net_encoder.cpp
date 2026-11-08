@@ -684,6 +684,7 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
     while ( !quit_.load() && !error_.load() )  // same predicate as the wait below
     {
         PktPtr p{ nullptr, &free_av_packet };  // deleter is mandatory (GCC 10)
+        size_t q_rem = 0;
         {
             std::unique_lock<std::mutex> plk( pkt_mx_ );
             pkt_cv_.wait( plk, [this] {
@@ -699,6 +700,7 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
             wait_key_ = false;
             p = std::move( pkts_.front() );
             pkts_.pop_front();
+            q_rem = pkts_.size();
         }
         // Ownership moves with p; the packet is freed by PktPtr at
         // scope exit (av_interleaved_write_frame consumes the
@@ -708,7 +710,7 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
         const int r = mux_write( fc, std::move( p ) );
         const long mw_ms = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - mw_t0 ).count();
         if ( mw_ms > 20 )
-            std::cerr << "enc: mux_write stalled " << mw_ms << " ms (queue was " << pkts_.size() << ")\n";
+            std::cerr << "enc: mux_write stalled " << mw_ms << " ms (queue was " << q_rem << ")\n";
         if ( r < 0 )
         {
             if ( r == AVERROR( EPIPE ) )

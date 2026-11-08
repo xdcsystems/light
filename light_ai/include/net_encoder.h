@@ -94,6 +94,8 @@ public:
                 int bitrate_kbps );
 
     ~NetEncoder();
+    NetEncoder( const NetEncoder& ) = delete;
+    NetEncoder& operator=( const NetEncoder& ) = delete;
 
     // Called once per frame from the pipeline loop. tensor_fd is the
     // dma-buf of the NPU input tensor (RGB888, w x h); boxes are drawn.
