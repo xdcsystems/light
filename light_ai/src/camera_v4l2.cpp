@@ -22,6 +22,7 @@
 // they would burn reconnect attempts on setup failures, and a platform
 // capture node might even accept the format while never delivering a
 // frame (no sensor attached) — a false "successful" reconnect.
+
 namespace
 {
     bool usb_capture_node( const std::string& path )
@@ -33,9 +34,9 @@ namespace
         while ( ::ioctl( fd, VIDIOC_QUERYCAP, &cap ) < 0 && errno == EINTR )
         {}
         bool ok = false;
-        // CAP_STREAMING (P1-5): a node that only supports read()/write()
-        // I/O passes the CAPTURE check but dies at QUERYBUF with a
-        // confusing error - reject it here, where the diagnosis is clear.
+        // a node that only supports read()/write() I/O passes the CAPTURE check 
+        // but dies at QUERYBUF with a confusing error - reject it here,
+        // where the diagnosis is clear.
         if ( ( cap.capabilities & V4L2_CAP_VIDEO_CAPTURE ) &&
              ( cap.capabilities & V4L2_CAP_STREAMING ) )
         {
@@ -170,9 +171,9 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
     // which has kBufCount slots — clamp before touching them.
     if ( req.count > kBufCount )
         req.count = kBufCount;
-    // The driver may also return FEWER buffers than requested. With < 3
-    // the pipeline loses its ping-pong depth (latency and jitter grow) -
-    // say so instead of silently degrading (P1-5).
+    // The driver may also return FEWER buffers than requested.
+    // With < 3 the pipeline loses its ping-pong depth (latency and jitter grow)
+    // - say so instead of silently degrading.
     if ( req.count < 3 )
         std::cerr << "camera: REQBUFS returned only " << req.count
                   << " buffers - expect extra latency\n";
@@ -215,8 +216,8 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
 }
 
 // Release the fd and all mappings. Safe on a partially-open device and
-// on an already-dead one: STREAMOFF errors are ignored on purpose (the
-// fd may not exist anymore), unmapped slots are skipped via the
+// on an already-dead one: STREAMOFF errors are ignored on purpose
+// (the fd may not exist anymore), unmapped slots are skipped via the
 // start==nullptr guard.
 void CameraV4L2::teardown()
 {
@@ -227,7 +228,7 @@ void CameraV4L2::teardown()
         close( fd_ );
         fd_ = -1;
     }
-    // Do not stop at the first empty slot (P1-5): slot indices are dense
+    // Do not stop at the first empty slot: slot indices are dense
     // today, but a future "skip a slot" logic in setup would silently leak
     // every mapping after it. Skip empty slots instead of breaking out.
     for ( auto& b : bufs_ )
@@ -241,8 +242,8 @@ void CameraV4L2::teardown()
 }
 
 // Disconnect recovery: full teardown + the same setup path as startup,
-// plus STREAMON. The node is supplied by the owner (see
-// find_usb_capture_node) — the class never decides which node to open.
+// plus STREAMON. The node is supplied by the owner (see find_usb_capture_node)
+// — the class never decides which node to open.
 int CameraV4L2::reconnect( const std::string& dev, std::string* why )
 {
     teardown();
@@ -258,15 +259,15 @@ int CameraV4L2::reconnect( const std::string& dev, std::string* why )
         teardown();
         return -1;
     }
-    err_streak_ = 0;  // P1-7: fresh device session (stream running) — the corrupt streak starts over
+    err_streak_ = 0;  // fresh device session (stream running) — the corrupt streak starts over
     return 0;
 }
 
 // Node discovery. Preferred: the configured path, if it exists and its
 // full setup passes; otherwise the numeric /dev/video* candidates are
-// filtered by the USB capture check and the first one whose setup passes
-// wins. The trial leaves the camera closed on every outcome — the
-// caller re-opens the winning node via reconnect().
+// filtered by the USB capture check and the first one whose setup passes wins.
+// The trial leaves the camera closed on every outcome — the caller re-opens
+// the winning node via reconnect().
 int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::string& out )
 {
     struct stat st
@@ -369,9 +370,9 @@ int CameraV4L2::dequeue( uint32_t* size, int* err )  // NOLINT(readability-make-
         // Watchdog: the wait is bounded by poll(). A camera that silently
         // stops delivering frames (wedged UVC endpoint, firmware stall)
         // never produces an errno, so an unguarded blocking DQBUF hung
-        // the pipeline thread forever and recovery never ran. The
-        // timeout is reported as EIO, the recoverable class, so a
-        // stall goes through the same reconnect path as a disappearing
+        // the pipeline thread forever and recovery never ran.
+        // The timeout is reported as EIO, the recoverable class,
+        // so a stall goes through the same reconnect path as a disappearing
         // device. 2 s is far beyond any legitimate inter-frame gap
         // (worst measured: ~53 ms).
         const int pr = poll_ready( fd_, static_cast<int>( kDequeuePollMs ) );
@@ -399,9 +400,9 @@ int CameraV4L2::dequeue( uint32_t* size, int* err )  // NOLINT(readability-make-
         if ( buf.flags & V4L2_BUF_FLAG_ERROR )
         {
             requeue( static_cast<int>( buf.index ) );
-            // P1-7: member, not a local — the streak survives dequeue()
-            // calls (e.g. corrupt frames followed by a poll timeout), so
-            // the watchdog threshold reflects the real buffer history.
+            // the streak survives dequeue() calls 
+            // (e.g. corrupt frames followed by a poll timeout),
+            // so the watchdog threshold reflects the real buffer history.
             ++err_streak_;
             if ( err_streak_ < static_cast<int>( kBufCount ) )
                 continue;
@@ -412,7 +413,7 @@ int CameraV4L2::dequeue( uint32_t* size, int* err )  // NOLINT(readability-make-
         }
         have = true;
     }
-    err_streak_ = 0;  // P1-7: a clean buffer resets the streak
+    err_streak_ = 0;  // clean buffer resets the streak
     if ( err )
         *err = 0;
     if ( size )

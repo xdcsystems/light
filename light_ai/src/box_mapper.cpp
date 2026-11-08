@@ -1,8 +1,3 @@
-// box_mapper.cpp (2026-11-08): bodies sliced verbatim from
-// the former box_mapper header (13i). 13k: det_color/trail_color are
-// file-local (anonymous namespace, project rule); fill_gpu_boxes is
-// the module's only export -- declared in box_mapper.h.
-
 #include <cstdint>
 
 #include "box_mapper.h"

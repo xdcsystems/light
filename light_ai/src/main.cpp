@@ -5,7 +5,7 @@
 #include "config/cli.hpp"  // CliOptions: argv + config-file reading/validation
 #include "pipeline.hpp"
 
-// Graceful shutdown (P1-6): SIGINT/SIGTERM only set the stop flag;
+// Graceful shutdown: SIGINT/SIGTERM only set the stop flag;
 // Pipeline::run() picks it up on the next frame and exits through the
 // normal path (ring drain, TOTAL summary, encoder flush, camera
 // STREAMOFF/teardown). The handler dereferences an atomic store only

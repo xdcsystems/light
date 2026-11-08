@@ -19,12 +19,12 @@ void BoxSmoother::update( const DetList& in, DetList& out )
     for ( auto& t : tracks_ )
         t.matched = false;
 
-    // P1-3: GLOBAL greedy matching. The in-order scan let the first
-    // detection steal a track just over the threshold while a much
-    // better match arriving later got the leftovers. All pairs are
-    // collected, sorted by IoU (descending) and assigned best-first —
-    // the standard greedy bipartite matching. Semantics otherwise
-    // unchanged: warm-up pass-through, miss expiry, out order.
+    // The in-order scan let the first detection steal a track just over
+    // the threshold while a much better match arriving later got
+    // the leftovers. All pairs are collected, sorted by IoU (descending)
+    // and assigned best-first - the standard greedy bipartite matching.
+    // Semantics otherwise unchanged: warm-up pass-through, miss expiry, out order.
+    
     int np = 0;  // pairs_ is the preallocated member (data section)
     std::array<int, kMaxDet> det_trk {};
     det_trk.fill( -1 );

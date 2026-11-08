@@ -1,4 +1,4 @@
-/* M3.7: GPU box drawing (Mali G610) straight into the NPU input tensor.
+/* GPU box drawing (Mali G610) straight into the NPU input tensor.
  * Calibration facts from tools/egl_probe.cpp (RK3588, libmali -x11-gbm):
  *   - EGL platform: GBM (mali libgbm first, then the system libgbm).
  *   - dma-buf RGB888 import OK; 24bpp dumb pitch == w*3 (no alignment).
@@ -64,8 +64,9 @@ namespace
     // init(); draw() only uploads — zero reallocations.
     constexpr int kVertsPerBox = 4 * 6;
     constexpr GLsizeiptr kVboBytes = GpuBoxList::cap * kVertsPerBox * (GLsizeiptr)sizeof( BatchVert );
-    // Layout/size pin for State::vstage (the draw staging buffer now
-    // lives in the drawer state, not on the stack).
+   
+    // Layout/size pin for State::vstage
+    // (the draw staging buffer now lives in the drawer state, not on the stack).
     static_assert( GpuBoxList::cap * kVertsPerBox * sizeof( BatchVert ) == 36864,
             "BatchVert size vs State::vstage drift" );
 
@@ -131,7 +132,7 @@ bool GpuBoxDrawer::make_program()
         glDeleteShader( fs );
         return false;
     }
-    glDeleteShader( vs );  // прилинкованы — ссылки шейдеров больше не нужны
+    glDeleteShader( vs );  // linked — shaders references not need more
     glDeleteShader( fs );
 
     st_.apos = glGetAttribLocation( st_.prog, "a_pos" );
@@ -148,8 +149,8 @@ bool GpuBoxDrawer::make_program()
     return st_.prog != 0;
 }
 
-// Attribute setup for the batched vertex layout (12-byte stride). The
-// color field offset is fixed: 2 x sizeof(float) = 8 bytes.
+// Attribute setup for the batched vertex layout (12-byte stride).
+// The color field offset is fixed: 2 x sizeof(float) = 8 bytes.
 void GpuBoxDrawer::setup_attribs() const
 {
     glBindBuffer( GL_ARRAY_BUFFER, st_.vbo );
@@ -389,13 +390,13 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
         si = {};
         return false;
     }
-    // Geometry guard (P0-5): the first attach fixes the shared
-    // geometry (st_.w/h/stride feed the viewport, shader math and the
-    // sync path). A later slot with different w/h/stride would either
+    // Geometry guard: the first attach fixes the shared geometry
+    // (st_.w/h/stride feed the viewport, shader math and the sync path).
+    // A later slot with different w/h/stride would either
     // draw outside its FBO or corrupt the tensor via a stale stride.
-    // Fail loudly instead of silently writing into someone else's
-    // pixels. The partial attach is torn down like the FBO-incomplete
-    // path, so a retry starts clean.
+    // Fail loudly instead of silently writing into someone else's pixels.
+    // The partial attach is torn down like the FBO-incomplete path,
+    // so a retry starts clean.
     if ( st_.w == 0 )
     {
         st_.w = w;
@@ -486,7 +487,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
     glViewport( 0, 0, st_.w, st_.h );
     glUseProgram( st_.prog );
     glDisable( GL_DEPTH_TEST );
-    // Alpha blending (2026-11-07): the per-vertex alpha was uploaded
+    // Alpha blending: the per-vertex alpha was uploaded
     // but ignored (blend disabled, the RGB888 FBO stores no alpha).
     // Porter-Duff over: the trail fade from fill_gpu_boxes (255..60)
     // and the a = 255 detections render as computed. The context
@@ -494,8 +495,10 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
     // draws is safe; every draw sets the state before drawing.
     glEnable( GL_BLEND );
     glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
+
     if ( !st_.es3 )
         setup_attribs();  // ES3: attributes live in the VAO
+    
     glBindBuffer( GL_ARRAY_BUFFER, st_.vbo );
     glBufferSubData( GL_ARRAY_BUFFER, 0, (GLsizeiptr)cnt * sizeof( BatchVert ), v );
     glDrawArrays( GL_TRIANGLES, 0, cnt );

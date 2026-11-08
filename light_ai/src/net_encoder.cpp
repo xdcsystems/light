@@ -16,7 +16,7 @@
 #include <unistd.h>
 #include <im2d.h>
 #include <rga.h>
-#include <libdrm/drm_fourcc.h>  // DRM_FORMAT_* (were transitive via the header)
+#include <libdrm/drm_fourcc.h>  // DRM_FORMAT_*
 
 constexpr int kPktQDepth = 8;  // encoder -> serve packet queue depth (frames)
 
@@ -71,7 +71,7 @@ namespace
         av_packet_free( &p );
     }
 
-    // M3.5 pull: avio write callback поверх принятого TCP-сокета.
+    // avio write callback over the accepted TCP socket.
     int tcp_write_cb( void* opaque, const uint8_t* buf, int buf_size )
     {
         const int fd = *static_cast<int*>( opaque );
@@ -173,7 +173,7 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     // gray padding memset once at startup. The stream is the band at its
     // NATIVE size — no upscale. Band geometry arrives from the Pipeline
     // (single-owner LbGeom, the same numbers as the RGA crop and the
-    // postprocess scale — audit item 3). The clamps below stay as
+    // postprocess scale). The clamps below stay as
     // defensive guards only.
 
     band_h_ = band.h;
@@ -191,16 +191,14 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     std::cout << "enc: tensor band x=[" << band_left_ << ',' << band_left_ + band_w_ << ") y=[" << band_top_ << ',' << band_top_ + band_h_
               << ") of " << model_w_ << 'x' << model_h_ << " -> " << w_ << 'x' << h_ << '\n';
 
-    // Three NV12 dma-bufs from an MPP DRM pool (P1-4): a plane held by an
-    // older encode is never overwritten by RGA on the next frame; the
-    // third buffer absorbs VFR bursts where two ran out exactly at the
-    // 3-deep rkmpp task queue.
-    // RAII sub-object (2026-11-07): the pool is one member now, so a
-    // throw below (avcodec_open2, av_frame_alloc) no longer leaks the
-    // DRM group and its three NV12 buffers: a fully constructed
-    // sub-object is destroyed even when the owner's ctor throws. Alloc
-    // failures throw from here (fail loud, RknnEngine pattern); the
-    // pool has already self-cleaned by then (P1-5).
+    // Three NV12 dma-bufs: a plane held by an older encode is never
+    // overwritten by RGA on the next frame; the third buffer absorbs
+    // VFR bursts where two ran out exactly at the 3-deep rkmpp task
+    // queue.
+    // RAII sub-object: a throw below (avcodec_open2, av_frame_alloc)
+    // cannot leak the pool -- the sub-object destructs on unwinding.
+    // Alloc failures throw from here (fail loud, RknnEngine pattern);
+    // the pool has already self-cleaned by then.
     vstride_ = ( h_ + 15 ) & ~15;  // MPP encoders want a 16-aligned ver_stride
     std::string pool_why;
     if ( !pool_.alloc( static_cast<size_t>( w_ ) * vstride_ * 3 / 2, MODULE_TAG, __FUNCTION__, &pool_why ) )
@@ -227,7 +225,7 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     // hwdevice/hwframes pools entirely (encode_init returns early).
     ctx->pix_fmt = AV_PIX_FMT_DRM_PRIME;
     ctx->sw_pix_fmt = AV_PIX_FMT_NV12;
-    // M4: net-fps 0 = follow the source. The codec gets the native
+    // net-fps 0 = follow the source. The codec gets the native
     // MPEG-TS time base (1/90000) and stamps pts from the real dequeue
     // times (VFR): night ~25, day up to 30 — no fixed ceiling. The GOP
     // stays 25 so a late joiner still waits at most about one second.
@@ -239,14 +237,13 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     // VFR from dequeue times.
     ctx->framerate = vfr_ ? AVRational { 25, 1 } : AVRational { fps_, 1 };
     ctx->bit_rate = static_cast<int64_t>( bitrate_kbps_ ) * 1000;
-    // gop_size reaches MPP as rc:gop (rkmpp_set_enc_cfg,
-    // line ~452 of libavcodec/rkmppenc.c). Verified empirically:
-    // I-frames every 26 in a captured stream (GOP 25).
+    // gop_size reaches MPP as rc:gop (rkmpp_set_enc_cfg):
+    // a captured stream shows I-frames every 26 for GOP 25.
     ctx->gop_size = vfr_ ? 25 : fps_;  // 1 s: a late joiner waits at most one GOP
     ctx->max_b_frames = 0;  // no reorder: minimal latency
-    // Rate control: this ffmpeg-rockchip build has no rc_mode AVOption, so
-    // the old generic-option call here never took effect ("option not
-    // accepted") and the encoder silently ran with the MPP default (VBR).
+    // Rate control: this ffmpeg-rockchip build has no rc_mode AVOption
+    // -- a generic rc_mode option here is silently ignored, and the
+    // encoder runs with the MPP default (VBR).
     // The real knob is the wrapper's own MppEncCfg, reachable through its
     // private context (RKMPPPriv above, the same channel as the forced-IDR
     // path); CBR is applied after avcodec_open2 below.
@@ -313,7 +310,7 @@ NetEncoder::~NetEncoder()
     if ( enc_ )
     {
         // Drain the encoder: send EOF and collect EVERY pending packet
-        // until AVERROR_EOF (P2-a), so the rkmpp wrapper releases its
+        // until AVERROR_EOF, so the rkmpp wrapper releases its
         // queued MppFrames while its own MPP context is still alive.
         // Without the flush the wrapper tears down its pools first and
         // then runs mpp_frame_deinit on the leftovers — "non-positive
@@ -327,14 +324,14 @@ NetEncoder::~NetEncoder()
             AVPacket* pkt = static_cast<AVPacket*>( pkt_ );
             // The wrapper runs a NON_BLOCK output timeout (no LOW_DELAY
             // flag): EAGAIN during flush means "frames still in flight",
-            // not "done". Stopping at the first EAGAIN left up to 3
-            // frames + EOS queued inside MPP; mpp_destroy then tore its
-            // internal queues down over live packets (the shutdown
-            // prints "mpp_meta: put_meta negative ref_count" /
-            // "mpp_mem_pool ... caller mpp_packet_deinit",
-            // 2026-11-02, phase-dependent). Bounded: the encoder holds
-            // at most kBufCount frames and codes ~1-2 ms each, so the
-            // guards below can never loop forever.
+            // not "done". Stopping at the first EAGAIN leaves up to
+            // kBufCount frames + EOS queued inside MPP; mpp_destroy then
+            // tears its internal queues down over live packets
+            // ("mpp_meta: put_meta negative ref_count" /
+            // "mpp_mem_pool ... caller mpp_packet_deinit" at exit).
+            // Bounded: the encoder holds at most kBufCount frames and
+            // codes ~1-2 ms each, so the guards below can never loop
+            // forever.
             // EOF must reach the wrapper: on EAGAIN from send (input
             // queue full) pull one output packet out first, then retry
             // the EOF.
@@ -350,10 +347,8 @@ NetEncoder::~NetEncoder()
                 break;  // non-EAGAIN error: drain only as far as it goes
             }
             // Drain until EOF; EAGAIN here = async frames in flight.
-            // P2-b telemetry: pulled / eof / eagains make the drain outcome
-            // visible - the shutdown-print investigation needs to know
-            // whether EOF was reached at all (the P2-a fix alone did NOT
-            // silence the prints, Ctrl-C phase test 2026-11-03).
+            // Telemetry: pulled / eof / eagains make the drain outcome
+            // visible for the shutdown-print investigation.
             int pulled = 0;
             bool eof = false;
             int eagains = 0;
@@ -380,7 +375,6 @@ NetEncoder::~NetEncoder()
                 std::cerr << "enc: drain receive error, residual frames possible\n";
                 break;
             }
-            // P2-b: the drain verdict goes to stdout for the phase-test record.
             std::cout << "enc: drain: " << pulled << " packet(s), "
                       << ( eof ? "EOF reached" : "NO EOF (EAGAIN x" ) ;
             if ( !eof )
@@ -395,7 +389,7 @@ NetEncoder::~NetEncoder()
         av_packet_free( reinterpret_cast<AVPacket**>( &pkt_ ) );
     // The DRM pool releases itself: pool_ is a member sub-object, its
     // destructor runs right after this body and covers the
-    // constructor-throw path too (2026-11-07).
+    // constructor-throw path too.
     avformat_network_deinit();
 }
 
