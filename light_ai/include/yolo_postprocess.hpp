@@ -3,9 +3,11 @@
 #include <ostream>
 
 #include "pod_list.hpp"
-#include "rga_resizer.hpp"  // LbGeom: the letterbox band travels as one object
 
+// LbGeom (rga_resizer.hpp): the letterbox band travels as one object;
+// forward-declared -- the header declares only, the cpp maps the fields.
 class RknnEngine;
+struct LbGeom;
 
 struct Detection
 {
