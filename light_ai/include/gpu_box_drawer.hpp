@@ -8,11 +8,10 @@
 
 #include "pod_list.hpp"
 
-// M3.7: GPU-assisted box drawing straight into the NPU input tensor
+// GPU-assisted box drawing straight into the NPU input tensor
 // (Mali G610 via EGL/GBM, zero CPU pixels per frame).
-// Colors are in tensor RGB888 semantics (byte0 = R); the implementation
-// swaps R/B internally — the dma-buf reads as BGR to the GPU (calibrated
-// by tools/egl_probe.cpp).
+// Colors are in tensor RGB888 semantics (byte0 = R);
+// the implementation swaps R/B internally -- the dma-buf reads as BGR to the GPU.
 struct GpuBox
 {
     float x0, y0, x1, y1;  // tensor pixels, top-left origin
@@ -24,8 +23,8 @@ using GpuBoxList = PodList<GpuBox, 128>;
 class GpuBoxDrawer
 {
     // Extension entry points: never assumed to be linkable, always via
-    // eglGetProcAddress with a null check (the probe proved libmali does
-    // not export all of them as symbols). 
+    // eglGetProcAddress with a null check (libmali does not export all of them as symbols).
+
     typedef EGLImageKHR( EGLAPIENTRYP P_CreateImage )( EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint * );
     typedef EGLBoolean( EGLAPIENTRYP P_DestroyImage )( EGLDisplay, EGLImageKHR );
     typedef EGLSyncKHR( EGLAPIENTRYP P_CreateSync )( EGLDisplay, EGLenum, const EGLint * );
@@ -38,8 +37,7 @@ class GpuBoxDrawer
     typedef void( GL_APIENTRYP P_DeleteVertexArrays )( GLsizei, const GLuint * );
     typedef void( GL_APIENTRYP P_BindVertexArray )( GLuint );
 
-    // GL/EGL state by value: no heap, no pimpl. The old State* was the
-    // only raw owning pointer in the production code (audit 2026-10-27).
+    // GL/EGL state by value: no heap, no pimpl.
     struct State
     {
         EGLDisplay dpy = EGL_NO_DISPLAY;
@@ -50,16 +48,15 @@ class GpuBoxDrawer
         int w = 0, h = 0;
         uint32_t stride = 0;
 
-        // Architecture audit item 6: the draw() staging buffer is a
-        // preallocated member instead of a ~36 KB stack array. Size is
-        // fixed: 128 boxes (PodList cap) x 24 verts x 12 B = 36864;
+        // Preallocated draw() staging buffer, not a per-call stack array.
+        // Size is fixed: 128 boxes (PodList cap) x 24 verts x 12 B = 36864;
         // gpu_box_drawer.cpp pins the layout with a static_assert.
         alignas( 4 ) uint8_t vstage[36864] {};
 
-        // M4: per-slot import cache (context pool). Geometry (w/h/stride)
-        // is shared across slots, only the dma-buf fd differs. Slot 0
-        // serves the single-context path — the legacy attach_tensor()/
-        // draw() semantics stay untouched.
+        // Per-slot import cache. Geometry (w/h/stride) is shared across
+        // slots, only the dma-buf fd differs.
+        // Slot 0 serves attach_tensor()/draw() -- the single-context path;
+        // the pool uses attach_slot()/draw_slot().
         enum { kSlots = 3 };
         struct SlotImg
         {
@@ -93,36 +90,35 @@ public:
 
     // EGL/GBM display + surfaceless GLES3 context + shader + VBO.
     bool init();
-    // Imports the NPU tensor dma-buf as an EGLImage-backed FBO.
-    // M4: slot-keyed; attach_tensor()/draw() keep the single-context
-    // semantics (slot 0), the pool uses attach_slot()/draw_slot().
+    // Imports the NPU tensor dma-buf as an EGLImage-backed FBO,
+    // slot-keyed. attach_tensor()/draw() keep the single-context
+    // semantics (slot 0); the pool uses attach_slot()/draw_slot().
     bool attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride );
     bool attach_tensor( int tensor_dma_fd, int w, int h, uint32_t stride )
     {
         return attach_slot( 0, tensor_dma_fd, w, h, stride );
     }
     // Async GPU draw: 1-px outlines for all boxes in ONE draw call
-    // (batched VBO, per-vertex color), alpha-blended (Porter-Duff
-    // over; the trail fade in fill_gpu_boxes is the alpha source).
-    // Switching FBOs between slots is the only added cost vs the
-    // single-tensor path.
+    // (batched VBO, per-vertex color), alpha-blended
+    // (Porter-Duff over; the trail fade in fill_gpu_boxes is the alpha source).
+    // Switching FBOs between slots is the only added cost vs the single-tensor path.
     void draw_slot( int slot, const GpuBox *boxes, int n );
     void draw( const GpuBox *boxes, int n )
     {
         draw_slot( 0, boxes, n );
     }
     // Blocks until all GPU writes from draw() are visible to CPU/RGA.
-    // Native fence (EGL_ANDROID_native_fence_sync) when available,
-    // glFinish() otherwise. The fence wait is bounded (100 ms cap) with
-    // a glFinish() fallback — a wedged GPU must not hang the pipeline.
+    // Native fence (EGL_ANDROID_native_fence_sync) when available, glFinish() otherwise.
+    // The fence wait is bounded (100 ms cap) with a glFinish() fallback --
+    // a wedged GPU must not hang the pipeline.
     void sync_cpu();
     // Export a native fence fd covering the writes of the last draw().
-    // Ownership passes to the caller, which must close() it (or wait on
-    // it, e.g. poll() in the encoder before the RGA convert; then
-    // close() it). NOTE: this RGA driver ignores acquire fences, so
-    // fd handoff to improcess is NOT a valid use.
-    // Returns -1 when the native fence extension is unavailable — the
-    // caller must fall back to sync_cpu().
+    // Ownership passes to the caller, which must close() it
+    // (or wait on it, e.g. poll() in the encoder before the RGA convert; then close() it).
+    // NOTE: this RGA driver ignores acquire fences,
+    // so fd handoff to improcess is NOT a valid use.
+    // Returns -1 when the native fence extension is unavailable --
+    // the caller must fall back to sync_cpu().
     int export_fence();
     bool ok() const { return ready_; }
 

@@ -41,18 +41,18 @@ public:
 private:
     bool use_net_src() const { return !cfg_.net_src.empty(); }
 
-    // Static source selection (project rules: no virtuals/vtables): the
+    // Static source selection: the
     // active source is a pointer variant over the member objects;
-    // with_src() is the single dispatch point. M5: a third source type
-    // adds one alternative — call sites stay untouched.
+    // with_src() is the single dispatch point. 
+    // A third source type adds one alternative — call sites stay untouched.
     template <typename F>
     decltype(auto) with_src( F&& f )
     {
         return std::visit( [&f]( auto* s ) -> decltype(auto) { return f( *s ); }, src_ );
     }
 
-    // Source bring-up (identity + setup + variant selection), extracted
-    // from the ctor: with the net source branch the ctor crossed the
+    // Source bring-up (identity + setup + variant selection),
+    // extracted from the ctor: with the net source branch the ctor crossed the
     // readability-function-size limit (225 lines / threshold 200).
     void init_source();
     void init_net_sink( const rknn_tensor_attr& ia );
@@ -62,15 +62,16 @@ private:
 
     void worker_loop( int slot );
     int publish_oldest();                // returns 1 if the frame was valid
-    void dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, const LbGeom& lb,
-            double cam_ms, double dec_ms, double rga_ms );
-    // M6 batch-2: run()/publish_oldest() VariableThreshold splits.
-    int handle_source_failure( int cam_err );  // 0 = recovered, -1 = fatal
-    int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
-    void frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_us,
-            double cam_ms, double dec_ms );
     double draw_and_publish( Slot& sl, int ps );   // viewer path; returns enc_ms
     void pool_discard();                 // drop pending slots on source recovery
+    int handle_source_failure( int cam_err );  // 0 = recovered, -1 = fatal
+    int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
+
+    void dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, const LbGeom& lb,
+                   double cam_ms, double dec_ms, double rga_ms );
+
+    void frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_us,
+                         double cam_ms, double dec_ms );
 
 private:
     Config cfg_;
@@ -79,23 +80,24 @@ private:
 
     MppDecoder dec_;
     RgaResizer rga_;
-    // M4: context pool. npus_[0] IS the pool-1 engine;
+    // Context pool: npus_[0] IS the pool-1 engine;
     // --pool 3 loads the model three times, one engine per NPU core.
-    // The vector never reallocates after the ctor, so &npus_[k] stays
-    // valid for the whole session.
+    // The vector never reallocates after the ctor,
+    // so &npus_[k] stays valid for the whole session.
     std::vector<RknnEngine> npus_;
     int npool_ = 1;
     int aux_fd_ = -1;
     int model_w_ = 0;
     int model_h_ = 0;  // taken from the model, not from flags
-    // Audit item 3: single-source letterbox geometry. Computed once in
-    // the ctor via band_geom and fed to BOTH consumers —
+    
+    // Single-source letterbox geometry. Computed once in the ctor
+    // via band_geom and fed to BOTH consumers --
     // the encoder crop (NetEncoder ctor) and the postprocess scale
-    // (dispatch). RGA stays the pixel writer; its per-frame LbGeom is
-    // cross-checked against this one at dispatch (one-time warn).
+    // (dispatch). RGA stays the pixel writer; its per-frame LbGeom
+    // is cross-checked against this one at dispatch (one-time warn).
     LbGeom lb_ {};
     bool lb_warned_ = false;
-    CalDumper cal_dumper_;  // cal_saved_/last_cal_/cal_done_ moved here (stage 2)
+    CalDumper cal_dumper_;
     int reconnects_ = 0;   // source disconnects recovered this run
     int warmup_left_ = 0;  // publish-discards after a reconnect
     Timings t_;
@@ -107,19 +109,19 @@ private:
 
     std::variant<CameraV4L2*, NetMjpegSource*> src_ {};
 
-    BoxSmoother smoother_;  // M3.10 EMA box smoothing + jitter log
+    BoxSmoother smoother_;
     Tracker tracker_;
-    ConsoleReporter rep_;  // throttled reports + final summary (stage 3)
+    ConsoleReporter rep_;  // throttled reports + final summary
     TrajList trajs_;
 
     // Per-frame detection buffers: preallocated members, cleared each
-    // frame — zero heap traffic in the steady-state path.
+    // frame -- zero heap traffic in the steady-state path.
     DetList dets_;
     GpuBoxList boxes_;
 
     std::array<Slot, 3> slots_ {};
     std::vector<std::thread> workers_;   // one per pooled engine
     std::atomic<bool> quit_ { false };
-    std::atomic<bool> stop_ { false };  // P1-6: set by the signal handler
+    std::atomic<bool> stop_ { false };  // set by the signal handler
     PubFifo pub_;
 };

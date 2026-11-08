@@ -12,18 +12,19 @@
 namespace dma
 {
 
-// CPU access bracket for the NPU input tensor dma-buf (--cpu-draw fix).
-// draw_boxes_cpu writes through the rknn mmap with plain stores; 
-// on a cacheable mapping the dirty lines stay in the CPU cache while RGA
-// (encoder prep_frame crop) reads DRAM as a DMA master, so CPU-drawn
-// boxes/trails reach the h264 stream stale: vertical edges smear into
-// ~21-px horizontal dashes (64-byte line / 3 bytes per RGB888 pixel),
-// ghost trails of previous frames bleed through. The NUT preview is
-// always clean: the CPU reads back its own hot cache lines. The GPU
-// path is unaffected: Mali writes are DMA-side, ordered by the native
-// fence. DMA_BUF_IOCTL_SYNC START/END is the kernel contract for CPU
-// access to a dma-buf; RAII guard per the no-new rule (same pattern
-// as the Transport guard in net_encoder.cpp).
+// CPU access bracket for the NPU input tensor dma-buf.
+// draw_boxes_cpu writes through the rknn mmap with plain stores;
+// on a cacheable mapping the dirty lines stay in the CPU cache
+// while RGA (encoder prep_frame crop) reads DRAM as a DMA master,
+// so CPU-drawn boxes/trails reach the h264 stream stale:
+// vertical edges smear into ~21-px horizontal dashes
+// (64-byte cache line / 3 bytes per RGB888 pixel),
+// ghost trails of previous frames bleed through.
+// The NUT preview is always clean:
+// the CPU reads back its own hot cache lines.
+// The GPU path is unaffected: Mali writes are DMA-side, ordered by the native fence.
+// DMA_BUF_IOCTL_SYNC START/END is the kernel contract for CPU access to a dma-buf;
+// this RAII guard keeps the bracket unbreakable.
 struct DmaSync
 {
     DmaSync( int fd, bool write_access ) : fd_( fd ), write_( write_access )
@@ -56,14 +57,15 @@ static_assert( DMA_BUF_SYNC_RW == ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_WRITE ),
         "dma-buf sync flag semantics drift" );
 
 // Explicit cache maintenance for CPU writes into the NPU tensor.
-// DMA_BUF_IOCTL_SYNC alone proved insufficient here: the RKNPU DRM
-// driver's begin/end_cpu_access on this platform does not clean the
-// CPU cache for rknn_create_mem buffers, so the only reliable way to
-// make CPU stores visible to non-coherent DMA readers (RGA crop,
-// NPU, next-frame RGA rewrite) is to clean the lines ourselves.
-// AArch64 permits userspace DC CVAC (clean by VA to the point of coherency). 
+// DMA_BUF_IOCTL_SYNC alone proved insufficient here:
+// the RKNPU DRM driver's begin/end_cpu_access on this platform
+// does not clean the CPU cache for rknn_create_mem buffers,
+// so the only reliable way to make CPU stores visible to
+// non-coherent DMA readers (RGA crop, NPU, next-frame RGA rewrite)
+// is to clean the lines ourselves.
+// AArch64 permits userspace DC CVAC (clean by VA to the point of coherency).
 // 64 is the AArch64 cache-line size (CLIDR_EL1 = 64 on every RK3588 core);
-// no named constant per the project magic-number policy (see net_mjpeg_source.cpp).
+// no named constant: project magic-number policy.
 
 inline void cache_clean( const void* p, size_t len )
 {

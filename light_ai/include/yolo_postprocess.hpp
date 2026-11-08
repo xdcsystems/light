@@ -18,7 +18,7 @@ struct Detection
 
 // Writes the Detection fields in the CSV order used by the box
 // smoother log: cls,conf,x,y,w,h (comma-separated, no prefix and
-// no newline - the caller supplies the row prefix and terminator).
+// no newline -- the caller supplies the row prefix and terminator).
 inline std::ostream& operator<<( std::ostream& os, const Detection& d )
 {
     return os << d.cls << ',' << d.conf << ',' << d.x << ',' << d.y
@@ -28,11 +28,11 @@ inline std::ostream& operator<<( std::ostream& os, const Detection& d )
 // Decodes the three yolov5 heads (fp16 NCHW, post-sigmoid) of the engine,
 // applies conf threshold + NMS, filters bar detections and maps the rest
 // into scene coordinates. Letterbox: the visible band occupies rows
-// [lb.top, lb.top + lb.h) (landscape) or columns [lb.left, lb.left + lb.w)
-// (portrait) of the model input; the mapping to scene coordinates is
-// axial: scene = (det - band origin) * cam / band size.
+// [lb.top, lb.top + lb.h) (landscape) or columns
+// [lb.left, lb.left + lb.w) (portrait) of the model input;
+// the mapping to scene coordinates is axial:
+// scene = (det - band origin) * cam / band size.
 using DetList = PodList<Detection, 128>;
-
 void yolo_postprocess( const RknnEngine& npu,
                        float cam_w, float cam_h,
                        float model_w, float model_h,

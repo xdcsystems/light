@@ -11,18 +11,17 @@ typedef struct AVFormatContext AVFormatContext;
 typedef struct AVPacket AVPacket;
 typedef struct AVStream AVStream;
 
-// M3.5 phase A0: raw preview over TCP, zero pixel copies.
-//
-// The frame IS the NPU input tensor (RGB888, model_w x model_h, gray
-// letterbox bars). Its memory is wrapped into an ffmpeg AVBufferRef with a
-// no-op free callback: av_write_frame sends the tensor bytes directly, no
-// per-frame allocations, no pixel copies. NUT muxer wraps the raw frames so
-// ffplay/VLC open the URL with no extra options. One viewer at a time.
-//
-// The connection opens lazily in a background thread: until a viewer
-// connects, publish() is a no-op. A stalled viewer backpressures the
-// pipeline (write blocks up to the socket I/O timeout, then the connection
-// is dropped and the server waits for a new one).
+// Raw preview over TCP, zero pixel copies.
+// The frame IS the NPU input tensor (RGB888, model_w x model_h, gray letterbox bars).
+// Its memory is wrapped into an ffmpeg AVBufferRef with a no-op free callback:
+// av_write_frame sends the tensor bytes directly, no per-frame allocations, no pixel copies.
+// NUT muxer wraps the raw frames so ffplay/VLC open the URL
+// with no extra options. One viewer at a time.
+// The connection opens lazily in a background thread: until a viewer connects,
+// publish() is a no-op. A stalled viewer backpressures the pipeline
+// (write blocks up to the socket I/O timeout, then the connection is dropped and
+// the server waits for a new one).
+
 class NetPreview
 {
 public:
@@ -48,7 +47,6 @@ private:
     std::atomic<bool> connected_ { false };
     std::atomic<bool> error_ { false };
 
-    // ffmpeg handles are typed via the forward declarations above.
     std::mutex mx_;
     std::condition_variable cv_;
     AVFormatContext* fc_ = nullptr;  // ready for writes

@@ -1,10 +1,9 @@
-// Calibration dump: P6 PPM of the model input. The only diagnostic CPU
-// pixel read. --dump-cal writes a single /tmp/cal.ppm; --cal N saves up
-// to N frames (one every --cal-interval) into dataset/ (or --cal-dir).
-// Extracted from Pipeline (stage 2): the cal counters and the file sink
-// live here, Pipeline owns the tensor and passes raw bytes.
-// 13k: bodies moved to cal_dumper.cpp; the header keeps declarations
-// and member data only.
+// Calibration dump: 
+// PPM snapshots of the model input, the only diagnostic CPU pixel read in the pipeline.
+//   --dump-cal writes a single /tmp/cal.ppm;
+//   --cal N saves up to N frames (one every --cal-interval) into dataset/ (or --cal-dir).
+// The cal counters and the file sink live here;
+// Pipeline owns the tensor and passes raw bytes.
 
 #pragma once
 
@@ -12,14 +11,17 @@
 #include <cstdint>
 #include <string>
 
-// Disabled by default: dump_cal=false and cal_frames=0 make maybe() a
-// no-op, so an un-init()'d dumper is safe to call unconditionally.
+// No preconditions for the caller:
+// with dump_cal=false / cal_frames=0 (the defaults) init() never ran,
+// and maybe() is a plain no-op in that state.
+// Pipeline calls it unconditionally, once per frame.
+
 class CalDumper
 {
 public:
     // Called once by Pipeline after the model geometry is known.
     void init( bool dump_cal, int cal_frames, int cal_interval,
-            const std::string& cal_dir, int model_w, int model_h );
+               const std::string& cal_dir, int model_w, int model_h );
 
     // data/size are the NPU input tensor bytes.
     void maybe( int frame_idx, const uint8_t* data, size_t size );

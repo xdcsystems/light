@@ -6,14 +6,15 @@
 
 #include "yolo_postprocess.hpp"
 
-// M3.10: EMA smoothing of detection boxes (owner-approved design).
+// EMA smoothing of detection boxes.
 // Filtering lives in Pipeline; yolo_postprocess stays a pure function.
-// Global greedy IoU matching (P1-3: pairs sorted by IoU, assigned
-// best-first; class must match); tuning constants live in the class.
-// a missed detection keeps the track (and its filtered coords) for up
-// to 2 frames so a brief dropout does not reset the filter, more frees
-// the slot. No heap: a fixed std::array of 32 slots and fixed-capacity
-// DetList buffers (PodList — no allocations at all).
+// Global greedy IoU matching: pairs sorted by IoU, best-first;
+// class must match. Tuning constants live in the class.
+// A missed detection keeps the track (and its filtered coords) for up to 2 frames,
+// so a brief dropout does not reset the filter; more misses free the slot.
+// No heap: a fixed std::array of 32 slots, fixed-capacity DetList buffers
+// (PodList -- no allocations at all).
+
 class BoxSmoother
 {
     struct BoxTrack
@@ -50,13 +51,13 @@ public:
 private:
     float iou( const BoxTrack& t, const Detection& d ) const;
 
-    // Tuning (P1-3): the literals were inline; now named, one place to
-    // tune. kAlpha is the EMA weight of the TRACK (0.5 = plain average).
-    const float kMatchThr = 0.3f;  // plain member: enum cannot hold float
+    // Named constants, one place to tune;
+    // kAlpha is the EMA weight of the TRACK (0.5 = plain average).
+    const float kMatchThr = 0.3f;
     const float kAlpha = 0.5f;
 
-    // P1-3 matching buffer: preallocated member (architecture audit
-    // item 6: the ~48 KB array lived on update()'s stack per call).
+    // Preallocated member: the ~48 KB matching array used to live on
+    // update()'s stack, once per call.
     std::array<Pair, kMaxPairs> pairs_ {};
     std::array<BoxTrack, kTrackCount> tracks_ {};
     std::ofstream log_;

@@ -1,4 +1,5 @@
 #pragma once
+
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -10,12 +11,12 @@ public:
     explicit RknnEngine( const char* model_path );
     ~RknnEngine();
 
-    // Non-copyable/non-movable by design (P0-3): rknn_context and the
-    // io-mem pointers are runtime-owned handles; a copy would destroy
-    // them twice and invalidate the Pipeline pool slot pointers. The
-    // pool reserves vector capacity up front and never reallocates;
-    // these deletions turn any violation of that contract into a
-    // compile-time error instead of a silent NPU handle corruption.
+    // Non-copyable by design:
+    // rknn_context and the io-mem pointers are runtime-owned handles;
+    // a copy would destroy them twice and invalidate the Pipeline pool slot pointers.
+    // The pool reserves vector capacity up front and never reallocates;
+    // these deletions turn any violation of that contract into a compile-time error
+    // instead of a silent NPU handle corruption.
     RknnEngine( const RknnEngine& ) = delete;
     RknnEngine& operator=( const RknnEngine& ) = delete;
     // Move-only: vector<RknnEngine> requires MoveInsertable for reserve().
@@ -39,10 +40,9 @@ public:
     int setup_io();
     int run() const;
 
-    // M2.5: pin inference to NPU core(s) via rknn_set_core_mask.
+    // Pin inference to NPU core(s) via rknn_set_core_mask.
     // mask: 0 = AUTO (do not call), 1/2/4 = core 0/1/2 (the per-core
-    // flags of rknn_api.h, used by the M4 pool), 3 = cores 0+1,
-    // 7 = 0+1+2.
+    // flags of rknn_api.h, used by the pool), 3 = cores 0+1, 7 = 0+1+2.
     int set_core_mask( unsigned mask ) const;
 
     void* input_data() const { return in_mem_ ? in_mem_->virt_addr : nullptr; }
@@ -52,14 +52,14 @@ public:
     const rknn_tensor_attr& input_attr() const { return in_attr_; }
     const std::vector<rknn_tensor_attr>& output_attrs() const { return out_attrs_; }
     // Output i as raw model-type bytes (int8_t here is just a byte view;
-    // the real type is out_attrs_[i].type — yolov5s_relu yields fp16).
+    // the real type is out_attrs_[i].type -- the model yields fp16).
     const int8_t* output_data( size_t i ) const
     {
-        return ( i < out_mems_.size() && out_mems_[i] ) ? static_cast<const int8_t*>( out_mems_[i]->virt_addr ) 
+        return ( i < out_mems_.size() && out_mems_[i] ) ? static_cast<const int8_t*>( out_mems_[i]->virt_addr )
                                                         : nullptr;
     }
-    uint32_t output_size( size_t i ) const { 
-        return ( i < out_mems_.size() && out_mems_[i] ) ? out_mems_[i]->size : 0; 
+    uint32_t output_size( size_t i ) const {
+        return ( i < out_mems_.size() && out_mems_[i] ) ? out_mems_[i]->size : 0;
     }
 
 private:

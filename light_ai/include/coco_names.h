@@ -1,7 +1,8 @@
 #pragma once
 
 // COCO-80 in class-id order, for human-readable detection reports.
-inline constexpr const char* kCocoNames[80] = { "person",
+inline constexpr const char* kCocoNames[80] = { 
+        "person",
         "bicycle",
         "car",
         "motorcycle",
@@ -80,4 +81,5 @@ inline constexpr const char* kCocoNames[80] = { "person",
         "scissors",
         "teddy bear",
         "hair drier",
-        "toothbrush" };
+        "toothbrush"
+};

@@ -10,9 +10,9 @@
 class MppDecoder
 {
     // Bounded MPP polls: a wedged decoder must not hang the pipeline
-    // thread forever: camera recovery cannot help a thread that is
-    // stuck inside decode() rather than in DQBUF. Steady decode is
-    // ~2-3 ms; 1 s is a huge margin even for the worst case.
+    // thread forever -- camera recovery cannot help a thread that is
+    // stuck inside decode() rather than in DQBUF.
+    // Steady decode is ~2-3 ms; 1 s is a huge margin even for the worst case.
     enum : int
     {
         kTaskPollMs = 1000
@@ -29,9 +29,10 @@ public:
     int decode( const uint8_t* data, size_t size );
 
     // Phase boundaries of decode(): the input packet lifetime is owned
-    // by exactly one phase at a time - validation + packet creation,
-    // hand-off to the decoder, retrieval of the decoded frame. The
-    // negative return codes of decode() come from the failing phase.
+    // by exactly one phase at a time --
+    // validation + packet creation, hand-off to the decoder,
+    // retrieval of the decoded frame.
+    // The negative return codes of decode() come from the failing phase.
     int make_packet( const uint8_t* data, size_t size );
     int submit_input();
     int retrieve_output();
@@ -40,17 +41,17 @@ public:
     int aux_fd( size_t bytes );  // returns fd or -1; buffer lives until dtor
 
     // Actual decoder output layout, detected per-frame from the JPEG SOF
-    // marker (see make_packet): 420SP for 4:2:0 streams, 422SP for
-    // 4:2:2/4:4:4. The RGA read side must match (the green-bottom
-    // lesson); before the first frame the value is the legacy camera
-    // default (422SP).
+    // marker (see make_packet):
+    // 420SP for 4:2:0 streams, 422SP for 4:2:2/4:4:4.
+    // The RGA read side must match;
+    // before the first frame the value is the legacy camera default (422SP).
     MppFrameFormat out_fmt() const { return out_fmt_; }
 
 private:
     // Packet teardown mechanics. Deinit is legal only at points where
-    // the decoder provably holds no reference - each call site in
-    // decode() carries the reasoning in its comment. The null-check
-    // here lets every path use the same call.
+    // the decoder provably holds no reference --
+    // each call site in decode() carries the reasoning in its comment.
+    // The null-check here lets every path use the same call.
     void drop_packet()
     {
         if ( pkt_ )

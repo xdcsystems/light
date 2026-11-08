@@ -7,9 +7,9 @@
 #include "yolo_postprocess.hpp"
 
 // ---- Public vocabulary of the tracker -------------------------------
-// Data contract shared with consumers, at file scope (as TrackState
-// already was). The class below is behavior only; internal structs
-// name TrajPoint/TrackLife freely — file scope precedes the class.
+// Data contract shared with consumers, at file scope (as TrackState already was).
+// The class below is behavior only; internal structs
+// name TrajPoint/TrackLife freely -- file scope precedes the class.
 
 // Track lifecycle states (TrackState.state; consumers filter by it).
 enum TrackLife
@@ -27,12 +27,11 @@ struct TrajPoint
 };
 
 // Person trajectory tracker: greedy IoU association over a per-track
-// constant-velocity Kalman filter (one 2-state filter per axis), ring
-// trajectory per track. No heap, no statics, no virtuals -- fixed
-// capacity members only (project rules).
+// constant-velocity Kalman filter (one 2-state filter per axis),
+// ring trajectory per track.
 //
-// update() runs once per published frame in publish_oldest() (the
-// pipeline thread): it consumes the SMOOTHED detection list
+// update() runs once per published frame in publish_oldest()
+// (the pipeline thread): it consumes the SMOOTHED detection list
 // (BoxSmoother output, scene coordinates) and the frame timestamp.
 // VFR is handled honestly -- dt comes from the real timestamps,
 // clamped so a pause cannot explode the prediction.
@@ -42,8 +41,7 @@ struct TrajPoint
 // Partial detections (a person half-out of frame) carry a full-height
 // box squeezed to a fraction of the track size -- without the gate
 // such a box steals the IoU match and injects a false velocity spike
-// (live run 2026-11-03, id=4: v_y jumped to -182 px/s on a partial
-// box while the person stood still).
+// into a standing person's track.
 //
 // out is cleared at entry (preallocated buffer contract) and carries
 // ALL alive tracks; tentative tracks are marked TRACK_TENT, the
@@ -63,8 +61,7 @@ using TrajList = PodList<TrackState, 8>;
 
 class Tracker
 {
-    // Tuning/limits (P1): private x100 integer constants, one place to
-    // tune. Declared before the internal structs that reference them.
+    // Tuning/limits: private x100 integer constants, one place to tune.
     enum
     {
         kMaxTracks = 8,
@@ -84,7 +81,7 @@ class Tracker
         kMissVDrop = 90,    // per-miss velocity decay x100 (x0.90
                             // per miss tick): damps coasting so a
                             // missed streak cannot extrapolate the
-                            // track across the frame (id-churn fix)
+                            // track across the frame
         kSizeEma = 30,      // box-size EMA alpha x100 (tuning knob)
         kSpawnDedupeGate = kIoUGate / 2  // spawn-dedupe gate, min IoU x100:
                             // an unmatched detection overlapping an alive
@@ -138,7 +135,7 @@ public:
     // ages unmatched tracks; fills out with all alive tracks.
     void update( const DetList& dets, int64_t ts_us, TrajList& out );
 
-    // M3.11: copies every `stride`-th point of track `id`'s ring into
+    // Copies every `stride`-th point of track `id`'s ring into
     // dst, oldest first, newest always included; at most dst_cap points.
     // Unknown/free id -> returns 0.
     int recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) const;

@@ -3,16 +3,12 @@
 #include <cstdint>
 #include <string>
 
-// HTTP MJPEG pull source (IP Webcam / any multipart/x-mixed-replace
-// server). The static-polymorphic partner of CameraV4L2 (project
-// rules: no virtuals): identical method set — setup_device/teardown/
-// start/dequeue/requeue/buffer/buffer_size/width/height/recover —
-// selected at runtime by Pipeline::src_ (a std::variant of pointers:
-// dispatch is a branch, not a vtable). Media stays JPEG end to end:
-// the MPP decoder consumes these packets exactly like the USB
-// camera's MJPEG buffers — no transcode anywhere. The only cost vs
-// V4L2 is one memcpy per frame (socket -> slot); V4L2 hands the
-// dma-buf zero-copy, HTTP cannot.
+// HTTP MJPEG pull source (IP Webcam / any multipart/x-mixed-replace server).
+// Media stays JPEG end to end: the MPP decoder consumes these
+// packets exactly like the USB camera's MJPEG buffers -- no transcode anywhere.
+// The only cost vs V4L2 is one memcpy per frame (socket -> slot);
+// V4L2 hands the dma-buf zero-copy, HTTP cannot.
+
 class NetMjpegSource
 {
     enum
@@ -46,23 +42,25 @@ public:
     void teardown();
     // V4L2 STREAMON has no HTTP analog; kept for the source contract.
     void start() const {}
-    // Returns the buffer index holding one complete JPEG frame; size
-    // receives the frame length. On failure returns -1 with the errno
+
+    // Returns the buffer index holding one complete JPEG frame;
+    // size receives the frame length. On failure returns -1 with the errno
     // class in *err, same ladder as the camera: EIO = recoverable stall
-    // (watchdog, hangup, corrupt-frame streak, desync), ENODEV = closed
-    // by teardown. Corrupt frames (no SOI) are delivered anyway — the
-    // decoder's SOI guard is the defense in depth (the f0ff5bb
-    // lesson); the streak survives across calls (the P1-7 mirror),
-    // reset only by a clean frame or reconnect().
+    // (watchdog, hangup, corrupt-frame streak, desync),
+    // ENODEV = closed by teardown.
+    // Corrupt frames (no SOI) are delivered anyway --
+    // the decoder's SOI guard is the defense in depth;
+    // the streak survives across calls, reset only by a clean frame or reconnect().
+
     int dequeue( uint32_t* size, int* err );
     void requeue( int index );
     void* buffer( int index ) const { return bufs_[index].start; }
     size_t buffer_size( int index ) const { return bufs_[index].length; }
     int width() const { return width_; }
     int height() const { return height_; }
-    // One recovery-ladder step: re-open the URL. A URL never
-    // re-enumerates, so new_id returns unchanged (the camera path
-    // adopts re-enumerated nodes there).
+
+    // One recovery-ladder step: re-open the URL. A URL never re-enumerates,
+    // so new_id returns unchanged (the camera path adopts re-enumerated nodes there).
     int recover( const std::string& id, std::string& new_id, std::string* why );
 
 private:

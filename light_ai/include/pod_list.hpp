@@ -1,10 +1,10 @@
 #pragma once
 #include <array>
 
-// Fixed-capacity list on std::array: no heap by construction (project
-// no-heap rule). push() drops on overflow and returns false — the
-// pipeline caps detections by conf, so the cap is a safety net, not
-// a design limit. One template, two instantiations (DetList, GpuBoxList).
+// Fixed-capacity list on std::array: no heap by construction.
+// push() drops on overflow and returns false - the pipeline caps detections by conf,
+// so the cap is a safety net, not a design limit.
+// One template, two instantiations (DetList, GpuBoxList).
 template <typename T, int N>
 struct PodList
 {

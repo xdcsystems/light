@@ -1,16 +1,10 @@
-// MPP DRM pool (P1-4) as one RAII sub-object (2026-11-07): the buffer
-// group plus its N NV12 dma-bufs, fixed capacity on std::array (no heap).
-// Rationale: the former stepwise members (buf_group_ + bufs_) leaked the
-// whole pool whenever the owning constructor threw after the pool
-// allocation (avcodec_open2 / av_frame_alloc paths). A fully constructed
-// sub-object is destroyed even when the owner's constructor throws, so
-// the leak path is structurally gone. Non-copyable: the group handle is
-// process-wide MPP state (same lesson as RknnEngine, P0-3). A template:
-// kBufCount is a NetEncoder class constant, invisible to a plain
-// file-scope struct.
-// 13m (2026-11-08): extracted verbatim from net_encoder.hpp -- a
-// template stays header-only by construction (pod_list.hpp precedent);
-// net_encoder.h keeps declarations only.
+// MPP DRM pool as one RAII sub-object: the buffer group plus its N
+// NV12 dma-bufs, fixed capacity on std::array (no heap). A fully
+// constructed sub-object is destroyed even when the owner's
+// constructor throws, so a partial allocation cannot leak the pool.
+// Non-copyable: the group handle is process-wide MPP state.
+// A template: kBufCount is a NetEncoder class constant, invisible
+// to a plain file-scope struct.
 
 #pragma once
 
@@ -39,11 +33,11 @@ struct RkmppDrmPool
     RkmppDrmPool( const RkmppDrmPool& ) = delete;
     RkmppDrmPool& operator=( const RkmppDrmPool& ) = delete;
 
-    // Allocate all N buffers of `bytes` each and gray-fill them: the
-    // 16-aligned tail columns must not show stale frames at session
-    // start. Self-cleaning (P1-5 pattern): on any failure everything
-    // created so far is released and the pool is left empty, so the
-    // owner's throw is safe and a later retry starts clean.
+    // Allocate all N buffers of `bytes` each and gray-fill them:
+    // the 16-aligned tail columns must not show stale frames at session start.
+    // Self-cleaning on failure: everything created so far is
+    // released and the pool is left empty, so the owner's throw is
+    // safe and a later retry starts clean.
     // Non-throwing: reports through `why`, the owner throws loudly.
     bool alloc( size_t bytes, const char* tag, const char* caller, std::string* why )
     {

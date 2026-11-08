@@ -1,13 +1,10 @@
-// M3.5 phase B2: hardware-encoded preview (h264_rkmpp) in MPEG-TS.
-// Default transport is TCP pull: the board listens on net_port, the
-// viewer connects when it wants (ffplay tcp://<board-ip>:1234). The
-// legacy UDP push to net_host (--net-host) remains available: UDP has
-// no "connect", the viewer joins whenever it wants, and a lost packet
-// glitches briefly until the next IDR instead of stalling the whole
-// flow like TCP over Wi-Fi.
-// 13m (2026-11-08): RkmppDrmPool moved to rkmpp_drm_pool.hpp (template,
-// header-only by construction); viewer_active() body moved to
-// net_encoder.cpp; this header keeps declarations and member data.
+// Hardware-encoded preview (h264_rkmpp) in MPEG-TS.
+// Default transport is TCP pull: the board listens on net_port,
+// the viewer connects when it wants (ffplay tcp://<board-ip>:1234).
+// The legacy UDP push to net_host (--net-host) remains available:
+// UDP has no "connect", the viewer joins whenever it wants,
+// and a lost packet glitches briefly until the next IDR
+// instead of stalling the whole flow like TCP over Wi-Fi.
 
 #pragma once
 
@@ -21,14 +18,14 @@
 #include <thread>
 #include <vector>
 
-// DRM frame descriptor for the encoder zero-copy input: the ping-pong
-// dma-bufs are wrapped as AV_PIX_FMT_DRM_PRIME frames and imported by
-// the rkmpp wrapper by fd - no CPU pixel copies anywhere in the path.
+// DRM frame descriptor for the encoder zero-copy input: 
+// the ping-pong dma-bufs are wrapped as AV_PIX_FMT_DRM_PRIME frames and 
+// imported by the rkmpp wrapper by fd -- no CPU pixel copies anywhere in the path.
 #include <libavutil/hwcontext_drm.h>
 
 // The DRM_FORMAT_* constants (NV12, MOD_LINEAR) live in drm_fourcc.h:
-// this header uses only the descriptor TYPE (hwcontext_drm.h) -- the
-// constants are the cpp's business (13f, 2026-11-08).
+// this header uses only the descriptor TYPE (hwcontext_drm.h) --
+// the constants are the cpp's business.
 
 // Same include form as mpp_decoder.hpp: <rockchip/rk_mpi.h> resolves to
 // the self-built /usr/local/include/rockchip headers. The quoted form
@@ -40,8 +37,8 @@
 #include "rkmpp_drm_pool.hpp" // RkmppDrmPool<kBufCount>: RAII pool sub-object
 
 // Opaque ffmpeg types, forward-declared: the header compiles without
-// the libav* include paths, and the compiler now checks the handle
-// types at call sites instead of trusting comments.
+// the libav* include paths, and the compiler checks the handle types
+// at call sites instead of trusting comments.
 typedef struct AVFormatContext AVFormatContext;
 typedef struct AVCodecContext AVCodecContext;
 typedef struct AVFrame AVFrame;
@@ -63,7 +60,6 @@ class NetEncoder
     // One viewer session's transport (TCP pull or UDP push), RAII:
     // the destructor is the single teardown point, the early-return
     // paths of run_session() free everything by scope exit.
-
     struct Transport
     {
         AVIOContext* pb = nullptr;
@@ -79,8 +75,7 @@ class NetEncoder
     // first -- the Transport destructor owns the avio context and
     // closes it -- then the context is freed. Same declaration
     // position as Transport -> same destruction order: fc dies AFTER
-    // the Transport, as before. Out-of-line dtor: this header keeps
-    // declarations only (13i).
+    // the Transport, as before.
     struct FcGuard
     {
         AVFormatContext* p;
@@ -102,29 +97,27 @@ public:
 
     // Called once per frame from the pipeline loop. tensor_fd is the
     // dma-buf of the NPU input tensor (RGB888, w x h); boxes are drawn.
-    // M4: ts_us is the dequeue timestamp in microseconds from pipeline
-    // start — the pts source in follow-source mode (--net-fps 0, VFR);
+    // ts_us is the dequeue timestamp in microseconds from pipeline
+    // start -- the pts source in follow-source mode (--net-fps 0, VFR);
     // ignored in the fixed-fps mode.
     void publish( int tensor_fd, int acquire_fence_fd = -1, int64_t ts_us = -1 );
 
-    // Batch C: true while the stream path is live (viewer connected in
-    // PULL mode / UDP path open). The pipeline gates GPU box drawing
-    // on it: recognition runs continuously, output does not.
+    // True while the stream path is live (viewer connected in PULL
+    // mode / UDP path open). The pipeline gates GPU box drawing on it:
+    // recognition runs continuously, output does not.
     bool viewer_active() const;
 
 private:
     void serve();
     bool send_frame( AVStream* st );
-    // Batch C follow-up: the mux side split out of serve() for tidy
-    // (readability-function-size). drain_queue() owns the wait/pop
-    // loop, mux_write() writes one packet with the IDR-prepend logic;
-    // hdr_/hdr_logged_ stay members.
+    // The mux side split out of serve() for readability:
+    // drain_queue() owns the wait/pop loop, mux_write() writes one
+    // packet with the IDR-prepend logic; hdr_/hdr_logged_ stay members.
     void drain_queue( AVFormatContext* fc );
     void run_session( int lfd, bool tcp_pull, const std::string& url );
 
     // Transport setup (accept + socket options / avio_open) and the
-    // stream setup (new_stream + header + mpegts options). Both are
-    // verbatim moves out of run_session().
+    // stream setup (new_stream + header + mpegts options).
     bool open_transport( int lfd, const std::string& url, AVFormatContext* fc, Transport& t );
     bool setup_stream( AVFormatContext* fc, AVStream** st, bool tcp_pull );
 
@@ -143,23 +136,24 @@ private:
     std::condition_variable cv_;
     AVFormatContext* fc_ = nullptr;  // mpegts: TCP pull or UDP push
     AVStream* st_ = nullptr;
-    // 7c: set after a viewer accepts; the next encode becomes an IDR
+    // Set after a viewer accepts; the next encode becomes an IDR
     // (the rkmpp wrapper ignores frame->key_frame, so we go via MPP).
     std::atomic< bool > force_idr_ { false };
 
     AVCodecContext* enc_ = nullptr;  // h264_rkmpp
     AVFrame* frame_ = nullptr;  // NV12 over an MPP DRM buffer
     AVPacket* pkt_ = nullptr;
-    // P1-4: three buffers, not two. Two worked only at a steady frame
-    // pace; with --net-fps 0 (VFR) frames arrive in clumps after a network
-    // pause, and two buffers can run out exactly at the 3-deep rkmpp task
-    // queue while an older encode still holds its plane.
+    // Three buffers, not two. Two worked only at a steady frame pace;
+    // with --net-fps 0 (VFR) frames arrive in clumps after a network
+    // pause, and two buffers can run out exactly at the 3-deep rkmpp
+    // task queue while an older encode still holds its plane.
     enum { kBufCount = 3 };
-    RkmppDrmPool<kBufCount> pool_;  // P1-4: three ping-pong NV12 dma-bufs, one RAII sub-object
+    RkmppDrmPool<kBufCount> pool_;  // three ping-pong NV12 dma-bufs, one RAII sub-object
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
-    // Batch C: encoder -> serve() packet queue. A separate mutex from
-    // mx_: network-side wakeups never touch the encode critical section.
+
+    // Encoder -> serve() packet queue. A separate mutex from mx_:
+    // network-side wakeups never touch the encode critical section.
     std::mutex pkt_mx_;
     std::condition_variable pkt_cv_;
     std::deque<PktPtr> pkts_;
@@ -170,11 +164,11 @@ private:
                                // (called from publish, pipeline thread; serve() never touches it)
     int64_t frame_step_ = 1;   // pts increment in the muxer's time base
     uint64_t pts_ = 0;
-    // M4 follow-source (--net-fps 0): pts stamped from the real dequeue
-    // times. ts_us_ arrives with publish(); ts_base_ is the session start
-    // (pts restart from zero when a new viewer connects). frames_sent_
-    // gates the destructor drain in both modes (pts_ alone would be 0
-    // in VFR and skip the flush).
+    // Follow-source (--net-fps 0): pts stamped from the real dequeue
+    // times. ts_us_ arrives with publish(); ts_base_ is the session
+    // start (pts restart from zero when a new viewer connects).
+    // frames_sent_ gates the destructor drain in both modes
+    // (pts_ alone would be 0 in VFR and skip the flush).
     bool vfr_ = false;
     int64_t ts_us_ = -1;
     int64_t ts_base_ = -1;
@@ -184,11 +178,9 @@ private:
     int band_w_ = 0, band_h_ = 0;       // band size (portrait: vertical strip)
     int vstride_ = 0;  // NV12 ver stride (16-aligned h), set in the ctor
 
-    // h264 parameter-set prefix captured from the first key
-    // packet, prepended to every following IDR (late-joiner
-    // support). Plain members: function-local statics are
-    // forbidden outside tools/.
+    // h264 parameter-set prefix captured from the first key packet,
+    // prepended to every following IDR (late-joiner support).
+    // Plain members: function-local statics are forbidden outside tools/.
     std::vector< uint8_t > hdr_;
     bool hdr_logged_ = false;
 };
-
