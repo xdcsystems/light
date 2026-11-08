@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <im2d.h>
 #include <rga.h>
+#include <libdrm/drm_fourcc.h>  // DRM_FORMAT_* (were transitive via the header)
 
 constexpr int kPktQDepth = 8;  // encoder -> serve packet queue depth (frames)
 

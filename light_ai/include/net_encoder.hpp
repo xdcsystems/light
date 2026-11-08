@@ -17,9 +17,9 @@
 // the rkmpp wrapper by fd - no CPU pixel copies anywhere in the path.
 #include <libavutil/hwcontext_drm.h>
 
-// DRM_FORMAT_* constants (NV12, MOD_LINEAR) live in drm_fourcc.h;
-// hwcontext_drm.h declares the descriptor struct but does not pull it in.
-#include <libdrm/drm_fourcc.h>
+// The DRM_FORMAT_* constants (NV12, MOD_LINEAR) live in drm_fourcc.h:
+// this header uses only the descriptor TYPE (hwcontext_drm.h) -- the
+// constants are the cpp's business (13f, 2026-11-08).
 
 // Same include form as mpp_decoder.hpp: <rockchip/rk_mpi.h> resolves to
 // the self-built /usr/local/include/rockchip headers. The quoted form
