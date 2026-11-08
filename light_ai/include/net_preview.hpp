@@ -27,6 +27,8 @@ class NetPreview
 public:
     NetPreview( int w, int h, int stride, int fps, int port );
     ~NetPreview();
+    NetPreview( const NetPreview& ) = delete;
+    NetPreview& operator=( const NetPreview& ) = delete;
 
     // True while a TCP viewer is attached. The pipeline gates GPU box
     // drawing on it: no viewer - no draw.

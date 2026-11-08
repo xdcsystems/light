@@ -2,6 +2,7 @@
 #include <cstring>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 
 extern "C"
 {
@@ -32,7 +33,21 @@ NetPreview::NetPreview( int w, int h, int stride, int fps, int port )
 {
     avformat_network_init();
     pkt_ = av_packet_alloc();
-    thread_ = std::thread( &NetPreview::serve, this );
+    if ( !pkt_ )
+    {
+        avformat_network_deinit();
+        throw std::runtime_error( "net_preview: av_packet_alloc failed" );
+    }
+    try
+    {
+        thread_ = std::thread( &NetPreview::serve, this );
+    }
+    catch ( ... )
+    {
+        av_packet_free( &pkt_ );
+        avformat_network_deinit();
+        throw;
+    }
 }
 
 NetPreview::~NetPreview()
@@ -145,16 +160,17 @@ void NetPreview::serve()
         // must be expressed in the NEW time base, otherwise the viewer sees
         // the whole stream compressed into milliseconds and freezes.
         const AVRational tb = st->time_base;
-        frame_step_ = av_rescale_q( 1, AVRational { 1, fps_ }, tb );
-        if ( frame_step_ < 1 )
-            frame_step_ = 1;
-        std::cout << "net: stream time_base " << tb.num << '/' << tb.den << ", pts step " << frame_step_ << "\n";
+        int64_t step = av_rescale_q( 1, AVRational { 1, fps_ }, tb );
+        if ( step < 1 )
+            step = 1;
+        std::cout << "net: stream time_base " << tb.num << '/' << tb.den << ", pts step " << step << "\n";
         std::cout << "net: viewer connected, streaming " << w_ << 'x' << h_ << " rgb24 (nut) on port " << port_ << '\n';
 
         {
             std::lock_guard<std::mutex> lk( mx_ );
             fc_ = fc;
             stream_ = st;
+            frame_step_ = static_cast<uint64_t>( step );
             pts_ = 0;
         }
         connected_.store( true, std::memory_order_release );
