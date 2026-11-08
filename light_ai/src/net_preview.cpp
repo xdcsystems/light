@@ -22,7 +22,9 @@ namespace
     // ffmpeg AVIO interrupt callback (statics rule): file-local free
     // function; the opaque context carries the quit flag pointer, not
     // the object, so no private access is needed.
-    int preview_interrupt_cb( void* arg ) { return static_cast<std::atomic<bool>*>( arg )->load() ? 1 : 0; }
+    int preview_interrupt_cb( void* arg ) { 
+        return static_cast<std::atomic<bool>*>( arg )->load() ? 1 : 0; 
+    }
 }  // anonymous namespace
 
 NetPreview::NetPreview( int w, int h, int stride, int fps, int port )

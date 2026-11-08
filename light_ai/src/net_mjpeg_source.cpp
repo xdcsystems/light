@@ -86,8 +86,8 @@ namespace
 
 NetMjpegSource::NetMjpegSource( int width, int height ) : width_( width ), height_( height )
 {
-    // Init-time allocation (the rknn_engine out_mems_ precedent): one
-    // anonymous mmap for the whole pool — not heap, never touched again.
+    // Init-time allocation (the rknn_engine out_mems_ precedent):
+    // one anonymous mmap for the whole pool — not heap, never touched again.
     // The closest analog of the V4L2 driver-owned buffers this class
     // stands in for. A failed mmap is not fatal here: setup_device
     // reports it and the pipeline fails loud, as everywhere.

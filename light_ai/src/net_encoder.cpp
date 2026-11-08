@@ -804,6 +804,18 @@ void NetEncoder::Transport::close()
     }
 }
 
+// Out-of-line dtor of the class-local FcGuard: 
+// nulls pb first (the Transport destructor owns the avio context),
+// then frees the muxer context.
+NetEncoder::FcGuard::~FcGuard()
+{
+    if ( p )
+    {
+        p->pb = nullptr;
+        avformat_free_context( p );
+    }
+}
+
 // Transport setup, verbatim move out of run_session(): TCP pull
 // (poll the listener, accept, socket options, custom AVIO over the
 // fd) or UDP push (avio_open, no handshake). The sleep on the UDP
@@ -937,23 +949,11 @@ void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
     // periodic client-side buffering. Flush every packet instead.
     raw->max_delay = 0;
     raw->flush_packets = 1;
+    
     // Local guard instead of unique_ptr: the Transport pattern used
     // above; same declaration position -> same destruction order
     // (fc dies AFTER the Transport, as before).
-    struct FcGuard
-    {
-        AVFormatContext* p;
-        ~FcGuard()
-        {
-            if ( p )
-            {
-                p->pb = nullptr;
-                avformat_free_context( p );
-            }
-        }
-        FcGuard( const FcGuard& ) = delete;
-        FcGuard& operator=( const FcGuard& ) = delete;
-    } fc { raw };
+    FcGuard fc { raw };
 
     Transport t;
     t.tcp_pull = tcp_pull;

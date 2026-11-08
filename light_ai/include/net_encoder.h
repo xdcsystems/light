@@ -75,6 +75,20 @@ class NetEncoder
         void close();
     };
 
+    // RAII guard for the muxer context (run_session): p->pb is nulled
+    // first -- the Transport destructor owns the avio context and
+    // closes it -- then the context is freed. Same declaration
+    // position as Transport -> same destruction order: fc dies AFTER
+    // the Transport, as before. Out-of-line dtor: this header keeps
+    // declarations only (13i).
+    struct FcGuard
+    {
+        AVFormatContext* p;
+        ~FcGuard();
+        FcGuard( const FcGuard& ) = delete;
+        FcGuard& operator=( const FcGuard& ) = delete;
+    };
+
 public:
     NetEncoder( int model_w,
                 int model_h,
