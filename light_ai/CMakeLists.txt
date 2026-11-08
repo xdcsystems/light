@@ -87,6 +87,7 @@ add_executable(light_ai
     src/box_smoother.cpp
     src/timings.cpp
     src/console_reporter.cpp
+    src/cal_dumper.cpp
     src/config/cli.cpp
     src/config/option_registry.cpp
     src/config/config_file.cpp
