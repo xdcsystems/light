@@ -13,6 +13,7 @@
 #include <chrono>   // Timings: steady_clock stamps
 #include <iomanip>  // Timings: report formatting
 
+#include "cli.hpp"  // Config (moved out of this header 2026-11-08)
 #include "camera_v4l2.hpp"
 #include "yolo_postprocess.hpp"
 #include "mpp_decoder.hpp"
@@ -28,65 +29,6 @@
 #include "slot_ring.hpp"
 #include "frame_trace.hpp"
 #include "net_mjpeg_source.hpp"
-
-struct Config
-{
-    std::string device = "/dev/video20";
-    // M5 pre-work: network MJPEG pull source (http://host:port/path).
-    // Non-empty excludes --device: exactly one source per run.
-    std::string net_src;
-    std::string model = "./misc/yolov5s_relu_int8_mmse_v5.rknn";
-    int cam_w = 1280, cam_h = 960;
-    // Two-pass RGA kicks in only when the source exceeds 8x the model input
-    // per axis (checked in the Pipeline ctor); at 720p -> 640 it stays dormant.
-    bool dump_cal = false;  // dump one model-input frame to /tmp/cal.ppm
-    // Calibration dataset: --cal N saves up to N model-input frames into
-    // dataset/ (one every --cal-interval frames) for int8 quantization.
-    int cal_frames = 0;
-    int cal_interval = 15;
-
-    // 0 (the default) = run until Ctrl-C: the SIGINT/SIGTERM handler
-    // sets the stop flag, run() drains and reports normally. An explicit
-    // --frames N (>= 1) bounds the run; values < 1 are rejected loudly
-    // in main.cpp (2026-11-08).
-    int frames = 0;
-    // Detection thresholds, CLI-tunable via --conf / --iou.
-    float conf_thr = 0.25f;
-    float iou_thr = 0.45f;
-    // NPU core selection (M2.5): 0 = AUTO (runtime default, no call),
-    // 1/2/4 = core 0/1/2, 3 = cores 0+1, 7 = cores 0+1+2
-    // (rknn_set_core_mask). Ignored when pool > 1 (the pool pins its own).
-    int core = 0;
-    // M4: context pool (CLI accepts 0|1|3):
-    // 0/1   = ring of one (single engine, synchronous semantics);
-    //         (2 is rejected by the CLI; Pipeline maps <3 to 1)
-    // 3     = three engines on one model, pinned one per NPU core,
-    //         inference moved to worker threads and overlapped with the rest.
-    int pool = 0;
-
-    // Model input size is NOT a config option: it is read from the model
-    // itself (input_attr) after setup_io. A --mw/--mh flag could only
-    // desynchronize RGA from the real tensor geometry.
-
-    // M3.5 phase A0: raw preview server (RGB888 tensor -> NUT over TCP).
-    bool net = false;
-    int net_port = 1234;
-    // Pacing of the preview stream, FPS. 0 = follow the source: the
-    // encoder stamps pts from the dequeue times (VFR), night ~25, day
-    // up to 30 — no ctx rebuild, no fixed 25 ceiling.
-    int net_fps = 25;
-    // M3.5 phase B: h264_rkmpp + MPEG-TS instead of raw NUT. --net-h264.
-    bool net_h264 = false;
-    int net_bitrate = 12000;  // kbps, --net-bitrate
-
-    // M3.10: per-frame box CSV for the jitter A/B (raw vs smoothed).
-    std::string box_log;
-    // --cal-dir: overrides the --cal series directory (default: dataset/).
-    std::string cal_dir;
-    std::string net_host;  // UDP push destination (--net-host); empty = TCP pull on net_port
-    // M3.7: force the CPU box-drawing path (A/B vs the GPU drawer).
-    bool cpu_draw = false;
-};
 
 class Pipeline
 {

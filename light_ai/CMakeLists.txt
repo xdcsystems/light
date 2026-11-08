@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(light_ai CXX)
+project(light_ai C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -83,10 +83,14 @@ add_executable(light_ai
     src/tracker.cpp
     src/gpu_box_drawer.cpp
     src/net_mjpeg_source.cpp
+    src/cli.cpp
+    externals/inih/ini.c
 )
+target_compile_definitions(light_ai PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)
 
 target_include_directories(light_ai PRIVATE
     include
+    externals/inih
     /usr/include/rockchip
     ${RKNN_API_INCLUDE_DIR}
     ${AV_INCLUDE_DIRS}
