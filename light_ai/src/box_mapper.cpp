@@ -40,33 +40,31 @@ void trail_color( int id, uint8_t& r, uint8_t& g, uint8_t& b )
 }  // namespace
 
 void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& tracker,
-                            GpuBoxList& boxes, int model_w, int model_h,
-                            float sx, float sy, float lb_left, float lb_top )
+                     GpuBoxList& boxes, const LbGeom& lb, float sx, float sy )
 {
     for ( int k = 0; k < dets.n; ++k )
     {
         const Detection& d = dets.d[k];
         GpuBox b{};
-        b.x0 = d.x * sx + lb_left;
-        b.y0 = d.y * sy + lb_top;
-        b.x1 = ( d.x + d.w ) * sx + lb_left;
-        b.y1 = ( d.y + d.h ) * sy + lb_top;
+        b.x0 = d.x * sx + static_cast<float>( lb.left );
+        b.y0 = d.y * sy + static_cast<float>( lb.top );
+        b.x1 = ( d.x + d.w ) * sx + static_cast<float>( lb.left );
+        b.y1 = ( d.y + d.h ) * sy + static_cast<float>( lb.top );
         // Clamp to the tensor bounds: the trail loop bounds-checks its
         // points and the GPU path clips silently, but draw_boxes_cpu
         // would draw an out-of-bounds box as a line squeezed onto the
         // edge -- keep both draw paths on the same geometry.
-        if ( b.x1 <= lb_left || b.y1 <= lb_top
-             || b.x0 >= static_cast<float>( model_w ) - lb_left
-             || b.y0 >= static_cast<float>( model_h ) - lb_top )
+        if ( b.x1 <= static_cast<float>( lb.left ) || b.y1 <= static_cast<float>( lb.top )
+             || b.x0 >= static_cast<float>( lb.left + lb.w ) || b.y0 >= static_cast<float>( lb.top + lb.h ) )
             continue;
-        if ( b.x0 < lb_left )
-            b.x0 = lb_left;
-        if ( b.y0 < lb_top )
-            b.y0 = lb_top;
-        if ( b.x1 > static_cast<float>( model_w ) - lb_left )
-            b.x1 = static_cast<float>( model_w ) - lb_left;
-        if ( b.y1 > static_cast<float>( model_h ) - lb_top )
-            b.y1 = static_cast<float>( model_h ) - lb_top;
+        if ( b.x0 < static_cast<float>( lb.left ) )
+            b.x0 = static_cast<float>( lb.left );
+        if ( b.y0 < static_cast<float>( lb.top ) )
+            b.y0 = static_cast<float>( lb.top );
+        if ( b.x1 > static_cast<float>( lb.left + lb.w ) )
+            b.x1 = static_cast<float>( lb.left + lb.w );
+        if ( b.y1 > static_cast<float>( lb.top + lb.h ) )
+            b.y1 = static_cast<float>( lb.top + lb.h );
         if ( b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f )
             continue;
         det_color( d.cls, b.r, b.g, b.b );
@@ -91,11 +89,10 @@ void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& 
             {
                 if ( boxes.n >= GpuBoxList::cap )  // PodList<GpuBox,128> cap
                     break;
-                const float px = samp[j].x * sx + lb_left;
-                const float py = samp[j].y * sy + lb_top;
-                if ( px - 1.5f < lb_left || py - 1.5f < lb_top
-                     || px + 1.5f > static_cast<float>( model_w ) - lb_left
-                     || py + 1.5f > static_cast<float>( model_h ) - lb_top )
+                const float px = samp[j].x * sx + static_cast<float>( lb.left );
+                const float py = samp[j].y * sy + static_cast<float>( lb.top );
+                if ( px - 1.5f < static_cast<float>( lb.left ) || py - 1.5f < static_cast<float>( lb.top )
+                     || px + 1.5f > static_cast<float>( lb.left + lb.w ) || py + 1.5f > static_cast<float>( lb.top + lb.h ) )
                     continue;
                 if ( have_prev )
                 {

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "gpu_box_drawer.hpp"   // GpuBox, GpuBoxList
+#include "rga_resizer.h"        // LbGeom
 #include "tracker.hpp"          // TrajList, TrackState, Tracker
 #include "yolo_postprocess.hpp" // DetList, Detection
 
@@ -17,6 +18,5 @@
 // Detection boxes win the VBO budget (GpuBoxList::cap).
 
 void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& tracker,
-                            GpuBoxList& boxes, int model_w, int model_h,
-                            float sx, float sy, float lb_left, float lb_top );
+                     GpuBoxList& boxes, const LbGeom& lb, float sx, float sy );
 

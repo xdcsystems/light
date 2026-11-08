@@ -139,7 +139,11 @@ Pipeline::Pipeline( const Config& cfg )
     // Gray letterbox bars on every pooled tensor: RGA writes only the
     // visible band (drect), so the 128-fill done here survives every frame.
     for ( auto& e : npus_ )
+    {
+        dma::DmaSync wr( e.input_fd(), true );
         std::memset( e.input_data(), 128, e.input_size() );
+        dma::cache_clean( e.input_data(), e.input_size() );
+    }
 
     model_w_ = static_cast<int>( ia.dims[ia.n_dims - 2] );
     model_h_ = static_cast<int>( ia.dims[ia.n_dims - 3] );
@@ -638,7 +642,7 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
     const bool rga_ok =
             rga_.resize( fd_src, cfg_.cam_w, cfg_.cam_h, sl.eng->input_fd(), model_w_, model_h_, aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2, &lg,
                     dec_.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
-    cal_dumper_.maybe( frame_idx, static_cast<const uint8_t*>( sl.eng->input_data() ), sl.eng->input_size() );
+    cal_dumper_.maybe( frame_idx, sl.eng->input_fd(), static_cast<const uint8_t*>( sl.eng->input_data() ), sl.eng->input_size() );
     const auto t3b = clk::now();
     // Cross-check RGA geometry against the single-owner one (warn once).
     if ( !lb_warned_ && ( lg.left != lb_.left || lg.top != lb_.top || lg.w != lb_.w || lg.h != lb_.h ) )
@@ -819,10 +823,8 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
 
     const float sx = sl.lb.w / static_cast<float>( cfg_.cam_w );
     const float sy = sl.lb.h / static_cast<float>( cfg_.cam_h );
-    const float lb_left = sl.lb.left;
-    const float lb_top = sl.lb.top;
     boxes_.clear();
-    fill_gpu_boxes( dets_, trajs_, tracker_, boxes_, model_w_, model_h_, sx, sy, lb_left, lb_top );
+    fill_gpu_boxes( dets_, trajs_, tracker_, boxes_, sl.lb, sx, sy );
     int fence = -1;  // GPU draw fence, consumed by enc publish
     if ( drawer_ )
     {

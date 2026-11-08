@@ -24,7 +24,7 @@ public:
                const std::string& cal_dir, int model_w, int model_h );
 
     // data/size are the NPU input tensor bytes.
-    void maybe( int frame_idx, const uint8_t* data, size_t size );
+    void maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t size );
 
 private:
     bool dump_cal_ = false;

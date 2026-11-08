@@ -4,6 +4,7 @@
 #include <sstream>
 
 #include "cal_dumper.hpp"
+#include "dma_sync.hpp"
 
 void CalDumper::init( bool dump_cal, int cal_frames, int cal_interval,
         const std::string& cal_dir, int model_w, int model_h )
@@ -17,7 +18,7 @@ void CalDumper::init( bool dump_cal, int cal_frames, int cal_interval,
     inited_ = true;
 }
 
-void CalDumper::maybe( int frame_idx, const uint8_t* data, size_t size )
+void CalDumper::maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t size )
 {
     if ( !inited_ )
         return;
@@ -43,6 +44,7 @@ void CalDumper::maybe( int frame_idx, const uint8_t* data, size_t size )
     std::ofstream out( path, std::ios::binary );
     if ( out && size >= bytes )
     {
+        dma::DmaSync rd( tensor_fd, false );
         out << "P6\n" << model_w_ << ' ' << model_h_ << "\n255\n";
         out.write( reinterpret_cast<const char*>( data ), static_cast<std::streamsize>( bytes ) );
         if ( dump_cal_ )
