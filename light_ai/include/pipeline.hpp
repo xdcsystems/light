@@ -18,7 +18,7 @@
 #include "rknn_engine.hpp"
 #include "cal_dumper.hpp"
 #include "net_preview.hpp"
-#include "net_encoder.hpp"
+#include "net_encoder.h"
 #include "gpu_box_drawer.hpp"
 #include "box_smoother.h"
 #include "tracker.hpp"

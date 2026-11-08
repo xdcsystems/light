@@ -32,7 +32,7 @@ extern "C"
 #include <libavutil/dict.h>
 }
 
-#include "net_encoder.hpp"
+#include "net_encoder.h"
 
 // Mirror of RKMPPEncContext (ffmpeg-rockchip, libavcodec/rkmppenc.h):
 // the rkmpp wrapper keeps the raw MppCtx/MppApi handles in its private
@@ -439,6 +439,13 @@ void NetEncoder::serve()
     }
     if ( lfd >= 0 )
         ::close( lfd );
+}
+
+// Batch C: the pipeline gates GPU box drawing on this (one call site:
+// pipeline.cpp).
+bool NetEncoder::viewer_active() const
+{
+    return active_.load();
 }
 
 void NetEncoder::publish( int tensor_fd, int acquire_fence_fd, int64_t ts_us )

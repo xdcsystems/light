@@ -1,16 +1,25 @@
+// M3.5 phase B2: hardware-encoded preview (h264_rkmpp) in MPEG-TS.
+// Default transport is TCP pull: the board listens on net_port, the
+// viewer connects when it wants (ffplay tcp://<board-ip>:1234). The
+// legacy UDP push to net_host (--net-host) remains available: UDP has
+// no "connect", the viewer joins whenever it wants, and a lost packet
+// glitches briefly until the next IDR instead of stalling the whole
+// flow like TCP over Wi-Fi.
+// 13m (2026-11-08): RkmppDrmPool moved to rkmpp_drm_pool.hpp (template,
+// header-only by construction); viewer_active() body moved to
+// net_encoder.cpp; this header keeps declarations and member data.
+
 #pragma once
-#include <array>
+
 #include <atomic>
 #include <condition_variable>
-#include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <vector>
 #include <thread>
+#include <vector>
 
 // DRM frame descriptor for the encoder zero-copy input: the ping-pong
 // dma-bufs are wrapped as AV_PIX_FMT_DRM_PRIME frames and imported by
@@ -27,7 +36,8 @@
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
 
-#include "rga_resizer.h"  // LbGeom: band geometry arrives as one object
+#include "rga_resizer.h"      // LbGeom: band geometry arrives as one object
+#include "rkmpp_drm_pool.hpp" // RkmppDrmPool<kBufCount>: RAII pool sub-object
 
 // Opaque ffmpeg types, forward-declared: the header compiles without
 // the libav* include paths, and the compiler now checks the handle
@@ -48,102 +58,12 @@ typedef struct AVIOContext AVIOContext;
 // compile error, not a leak.
 using PktPtr = std::unique_ptr<AVPacket, void ( * )( AVPacket* )>;
 
-// MPP DRM pool (P1-4) as one RAII sub-object (2026-11-07): the buffer
-// group plus its N NV12 dma-bufs, fixed capacity on std::array (no heap).
-// Rationale: the former stepwise members (buf_group_ + bufs_) leaked the
-// whole pool whenever the owning constructor threw after the pool
-// allocation (avcodec_open2 / av_frame_alloc paths). A fully constructed
-// sub-object is destroyed even when the owner's constructor throws, so
-// the leak path is structurally gone. Non-copyable: the group handle is
-// process-wide MPP state (same lesson as RknnEngine, P0-3). A template:
-// kBufCount is a NetEncoder class constant, invisible to a plain
-// file-scope struct.
-template <int N>
-struct RkmppDrmPool
-{
-    MppBufferGroup group = nullptr;
-    std::array<MppBuffer, N> buf {};
-
-    RkmppDrmPool() = default;
-    ~RkmppDrmPool()
-    {
-        release_all();
-    }
-    RkmppDrmPool( const RkmppDrmPool& ) = delete;
-    RkmppDrmPool& operator=( const RkmppDrmPool& ) = delete;
-
-    // Allocate all N buffers of `bytes` each and gray-fill them: the
-    // 16-aligned tail columns must not show stale frames at session
-    // start. Self-cleaning (P1-5 pattern): on any failure everything
-    // created so far is released and the pool is left empty, so the
-    // owner's throw is safe and a later retry starts clean.
-    // Non-throwing: reports through `why`, the owner throws loudly.
-    bool alloc( size_t bytes, const char* tag, const char* caller, std::string* why )
-    {
-        if ( group )
-        {
-            if ( why )
-                *why = "drm pool: already allocated";
-            return false;
-        }
-        const MPP_RET rg = mpp_buffer_group_get(
-                &group, MPP_BUFFER_TYPE_DRM, MPP_BUFFER_INTERNAL, tag, caller );
-        if ( rg != MPP_OK )
-        {
-            group = nullptr;
-            if ( why )
-                *why = "mpp_buffer_group_get failed";
-            return false;
-        }
-        for ( auto& b : buf )
-        {
-            if ( mpp_buffer_get( group, &b, bytes ) != MPP_OK )
-            {
-                release_all();
-                if ( why )
-                    *why = "mpp_buffer_get failed";
-                return false;
-            }
-            // Neutral gray fill: the 16-aligned tail columns of the
-            // stream keep their fill (never receive RGA data).
-            if ( void* p = mpp_buffer_get_ptr( b ) )
-                std::memset( p, 128, bytes );
-        }
-        return true;
-    }
-
-private:
-    void release_all()
-    {
-        for ( auto& b : buf )
-        {
-            if ( b )
-            {
-                mpp_buffer_put( b );
-                b = nullptr;
-            }
-        }
-        if ( group )
-        {
-            mpp_buffer_group_put( group );
-            group = nullptr;
-        }
-    }
-};
-
-// M3.5 phase B2: hardware-encoded preview (h264_rkmpp) in MPEG-TS.
-// Default transport is TCP pull: the board listens on net_port, the
-// viewer connects when it wants (ffplay tcp://<board-ip>:1234). The
-// legacy UDP push to net_host (--net-host) remains available: UDP has
-// no "connect", the viewer joins whenever it wants, and a lost packet
-// glitches briefly until the next IDR instead of stalling the whole
-// flow like TCP over Wi-Fi.
 class NetEncoder
 {
     // One viewer session's transport (TCP pull or UDP push), RAII:
     // the destructor is the single teardown point, the early-return
     // paths of run_session() free everything by scope exit.
-    
+
     struct Transport
     {
         AVIOContext* pb = nullptr;
@@ -176,7 +96,7 @@ public:
     // Batch C: true while the stream path is live (viewer connected in
     // PULL mode / UDP path open). The pipeline gates GPU box drawing
     // on it: recognition runs continuously, output does not.
-    bool viewer_active() const { return active_.load(); }
+    bool viewer_active() const;
 
 private:
     void serve();
@@ -220,7 +140,7 @@ private:
     // pace; with --net-fps 0 (VFR) frames arrive in clumps after a network
     // pause, and two buffers can run out exactly at the 3-deep rkmpp task
     // queue while an older encode still holds its plane.
-    enum { kBufCount = 3 };  
+    enum { kBufCount = 3 };
     RkmppDrmPool<kBufCount> pool_;  // P1-4: three ping-pong NV12 dma-bufs, one RAII sub-object
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
@@ -257,3 +177,4 @@ private:
     std::vector< uint8_t > hdr_;
     bool hdr_logged_ = false;
 };
+
