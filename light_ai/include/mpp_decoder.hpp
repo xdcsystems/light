@@ -6,7 +6,6 @@
 #include <rockchip/mpp_buffer.h>
 #include <rockchip/mpp_frame.h>
 #include <rockchip/mpp_packet.h>
-#include <rockchip/mpp_meta.h>
 
 class MppDecoder
 {

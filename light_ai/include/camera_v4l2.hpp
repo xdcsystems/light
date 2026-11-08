@@ -2,7 +2,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <linux/videodev2.h>
 
 // The node is NOT part of the instance state: open/reconnect take it as
 // an argument, the class owns only the fd/buffer machinery. Identity

@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <map>
+#include <linux/videodev2.h>
 
 #include "camera_v4l2.hpp"
 

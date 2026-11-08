@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <sys/stat.h>  // stat(): startup node fallback
 #include <unistd.h>
+#include <linux/videodev2.h>
 
 #include "pipeline.hpp"
 #include "yolo_postprocess.hpp"
