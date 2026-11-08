@@ -97,7 +97,6 @@ MppDecoder::~MppDecoder()
 {
     if ( !ctx_ )
         return;
-    mpi_->reset( ctx_ );
 
     // Strip meta references from the tasks left in the ports. The decoder
     // recycles consumed input tasks back to the user side of the input port
@@ -105,25 +104,26 @@ MppDecoder::~MppDecoder()
     // the pointer dangles, and the decoder teardown (dec_release_task_in_port)
     // dereferences it and double-deinits it ("negative ref_count" /
     // "invalid mem pool ptr"). Dequeued tasks are held, not re-enqueued:
-    // mpp_destroy frees all tasks with its queues anyway.
-    for ( int i = 0; i < 32; i++ ) {
-        MppTask t = nullptr;
-        if ( mpi_->poll( ctx_, MPP_PORT_INPUT, MPP_POLL_NON_BLOCK ) != MPP_OK )
-            break;
-        if ( mpi_->dequeue( ctx_, MPP_PORT_INPUT, &t ) != MPP_OK || !t )
-            break;
-        mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, nullptr );
-        mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, nullptr );
-    }
-    for ( int i = 0; i < 32; i++ ) {
-        MppTask t = nullptr;
-        if ( mpi_->poll( ctx_, MPP_PORT_OUTPUT, MPP_POLL_NON_BLOCK ) != MPP_OK )
-            break;
-        if ( mpi_->dequeue( ctx_, MPP_PORT_OUTPUT, &t ) != MPP_OK || !t )
-            break;
-        mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, nullptr );
-        mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, nullptr );
-    }
+    // mpp_destroy frees all tasks with its queues anyway. Must run BEFORE
+    // reset() as well as after: reset() itself calls dec_release_task_in_port.
+    auto strip_ports = [this]() {
+        for ( MppPortType port : { MPP_PORT_INPUT, MPP_PORT_OUTPUT } )
+        {
+            for ( int i = 0; i < 32; ++i )
+            {
+                MppTask t = nullptr;
+                if ( mpi_->poll( ctx_, port, MPP_POLL_NON_BLOCK ) != MPP_OK )
+                    break;
+                if ( mpi_->dequeue( ctx_, port, &t ) != MPP_OK || !t )
+                    break;
+                mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, nullptr );
+                mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, nullptr );
+            }
+        }
+    };
+    strip_ports();
+    mpi_->reset( ctx_ );
+    strip_ports();
 
     // Critical order: release every MPP object that may hold references to
     // buffers BEFORE mpp_destroy(). MPP tears down its internal buffer pools
@@ -210,6 +210,7 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
     {
         const size_t lim = size < 2048 ? size : 2048;
         uint8_t v_max = 0;
+        uint8_t v_min = 0xFF;
         for ( size_t i = 2; i + 4 <= lim; )
         {
             if ( data[i] != 0xFF )
@@ -218,6 +219,11 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
                 continue;
             }
             const uint8_t m = data[i + 1];
+            if ( m == 0xFF )
+            {
+                ++i;
+                continue;
+            }
             if ( m == 0x01 || ( m >= 0xD0 && m <= 0xD9 ) )
             {
                 i += 2;
@@ -238,18 +244,21 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
                 for ( int c = 0; c < ncomp && i + 10 + static_cast<size_t>( c ) * 3 + 2 < lim; ++c )
                 {
                     const uint8_t hv = data[i + 11 + static_cast<size_t>( c ) * 3];
-                    if ( ( hv & 0x0F ) > v_max )
-                        v_max = hv & 0x0F;
+                    const uint8_t v = hv & 0x0F;
+                    if ( v > v_max )
+                        v_max = v;
+                    if ( v > 0 && v < v_min )
+                        v_min = v;
                 }
                 break;
             }
             i += 2 + len;
         }
-        const MppFrameFormat want = v_max >= 2 ? MPP_FMT_YUV420SP : MPP_FMT_YUV422SP;
+        const MppFrameFormat want = ( v_max >= 2 && v_min == 1 ) ? MPP_FMT_YUV420SP : MPP_FMT_YUV422SP;
         if ( v_max && want != out_fmt_ )
         {
             out_fmt_ = want;
-            std::cerr << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( v_max >= 2 ? "0" : "2" )
+            std::cerr << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( want == MPP_FMT_YUV420SP ? "0" : "2" )
                       << " -> out fmt " << ( out_fmt_ == MPP_FMT_YUV420SP ? "420SP" : "422SP" ) << '\n';
         }
     }
