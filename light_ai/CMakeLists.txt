@@ -84,6 +84,7 @@ add_executable(light_ai
     src/gpu_box_drawer.cpp
     src/net_mjpeg_source.cpp
     src/cli.cpp
+    src/option_registry.cpp
     externals/inih/ini.c
 )
 target_compile_definitions(light_ai PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)
