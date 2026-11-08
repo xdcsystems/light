@@ -11,8 +11,8 @@
 
 #include "frame_trace.h"
 #include "rga_resizer.h"  // LbGeom: a Slot member by value --
-                            // the full type is required (was only
-                            // supplied by pipeline.hpp order)
+                          // the full type is required (was only
+                          // supplied by pipeline.hpp order)
 #include "yolo_postprocess.hpp"
 
 // RknnEngine appears in Slot only as a pointer (never
@@ -20,8 +20,8 @@
 class RknnEngine;
 
 // Publish FIFO: strictly single-threaded — dispatch, publish, drain
-// and pool_discard all run on the pipeline thread, so no locks by
-// design. Depth 3 == the maximum NPU pool size.
+// and pool_discard all run on the pipeline thread, so no locks by design.
+// Depth 3 == the maximum NPU pool size.
 struct PubFifo
 {
     int slots[3] = {};
@@ -30,7 +30,8 @@ struct PubFifo
 
     void push( int s )
     {
-        // Defensive guard: the depth-3 invariant ("in pub_ live exactly
+        // Defensive guard: 
+        // the depth-3 invariant ("in pub_ live exactly
         // the slots with st != FREE; at most npool_ <= 3 of them") is
         // proven by the slot machine, but it lives in comments across
         // three functions. One refactor away from a silent corruption

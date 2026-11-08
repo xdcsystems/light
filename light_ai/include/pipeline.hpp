@@ -10,7 +10,7 @@
 #include <thread>
 #include <variant>
 
-#include "config/cli.hpp"  // Config (moved out of this header 2026-11-08)
+#include "config/cli.hpp"
 #include "camera_v4l2.hpp"
 #include "yolo_postprocess.hpp"
 #include "mpp_decoder.hpp"
@@ -20,12 +20,12 @@
 #include "net_preview.hpp"
 #include "net_encoder.hpp"
 #include "gpu_box_drawer.hpp"
-#include "box_smoother.hpp"
+#include "box_smoother.h"
 #include "tracker.hpp"
-#include "console_reporter.hpp"
+#include "console_reporter.h"
 #include "slot_ring.hpp"
 #include "frame_trace.h"
-#include "timings.hpp"  // Timings accumulator (moved out 2026-11-08)
+#include "timings.hpp"
 #include "net_mjpeg_source.hpp"
 
 class Pipeline

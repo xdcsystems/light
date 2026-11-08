@@ -1,0 +1,47 @@
+// console_reporter.cpp (2026-11-08): bodies sliced verbatim from
+// the former console_reporter header (13i); declarations live in
+// console_reporter.h.
+
+#include "console_reporter.h"
+
+#include <iomanip>
+#include <iostream>
+
+#include "coco_names.h"
+
+void ConsoleReporter::report( int frame, const DetList& dets, const TrajList& trajs ) const
+{
+    // Throttled trajectory report: every 15th frame.
+    if ( trajs.n > 0 && frame % 15 == 0 )
+    {
+        std::cout << "track " << frame << ": " << trajs.n << " track(s)\n";
+        for ( int k = 0; k < trajs.n && k < 8; ++k )
+        {
+            const TrackState& t = trajs.d[k];
+            std::cout << "  id=" << t.id << ( t.state == TRACK_CONF ? " conf" : " tent" )
+                      << std::fixed << std::setprecision( 1 ) << " c=("
+                      << t.cx << ',' << t.cy << ") v=(" << t.vx << ',' << t.vy << ") pts=" << t.n_pts << '\n';
+        }
+    }
+
+    // Throttled report: every 15th frame, up to 8 boxes per report.
+    if ( dets.n > 0 && frame % 15 == 0 )
+    {
+        std::cout << "frame " << frame << ": " << dets.n << " det(s)\n";
+        for ( int k = 0; k < dets.n && k < 8; ++k )
+        {
+            const Detection& d = dets.d[k];
+            const char* cls_name = ( d.cls >= 0 && d.cls < 80 ) ? kCocoNames[d.cls] : "?";
+            std::cout << "  cls=" << cls_name << " conf=" << std::fixed << std::setprecision( 2 ) << d.conf << " box=("
+                      << d.x << ',' << d.y << ' ' << d.w << 'x' << d.h << ")\n";
+        }
+    }
+}
+
+void ConsoleReporter::summary( int ok, double wall, int reconnects ) const
+{
+    if ( reconnects > 0 )
+        std::cout << "camera disconnects recovered: " << reconnects << '\n';
+    std::cout << "Processed " << ok << " frames in " << std::fixed << std::setprecision( 3 ) << wall << " s -> "
+              << ( wall > 0 ? ok / wall : 0.0 ) << " FPS\n";
+}

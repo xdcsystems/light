@@ -83,6 +83,10 @@ add_executable(light_ai
     src/tracker.cpp
     src/gpu_box_drawer.cpp
     src/net_mjpeg_source.cpp
+    src/box_mapper.cpp
+    src/box_smoother.cpp
+    src/timings.cpp
+    src/console_reporter.cpp
     src/config/cli.cpp
     src/config/option_registry.cpp
     src/config/config_file.cpp

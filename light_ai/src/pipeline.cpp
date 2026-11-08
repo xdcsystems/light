@@ -15,7 +15,7 @@
 #include "pipeline.hpp"
 #include "yolo_postprocess.hpp"
 #include "dma_sync.hpp"
-#include "box_mapper.hpp"
+#include "box_mapper.h"
 
 namespace
 {
