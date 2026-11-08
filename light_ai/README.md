@@ -52,7 +52,7 @@ post-processing.
   the frame path).
 - Branch tables over if-chains: a multi-way dispatch on a fixed set
   becomes a switch or a constexpr table, not a ladder. Reference:
-  det_color in box_mapper.hpp (switch).
+  det_color in box_mapper.cpp (switch).
 - Preallocated buffer contract: a buffer that lives across frames
   (a member, not a local) is NEVER implicitly empty — the callee owns
   the reset and clears it at entry (DetList out.clear() in

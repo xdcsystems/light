@@ -5,19 +5,10 @@
 // declarations here keep both draw paths in sync.
 
 #pragma once
-#include <cstdint>
 
 #include "gpu_box_drawer.hpp"   // GpuBox, GpuBoxList
 #include "tracker.hpp"          // TrajList, TrackState, Tracker
 #include "yolo_postprocess.hpp" // DetList, Detection
-
-// Colors shared by the GPU and CPU drawing paths (owner's pick).
-void det_color( int cls, uint8_t& r, uint8_t& g, uint8_t& b );
-
-// M3.11: track-trail palette by id % 8 (track-keyed, visually distinct
-// from the class-keyed det_color palette).
-
-void trail_color( int id, uint8_t& r, uint8_t& g, uint8_t& b );
 
 // Detection boxes and trajectory trails -> boxes (tensor coords).
 // M3.11: trail points are sampled ring points as 3x3 px GpuBoxes in

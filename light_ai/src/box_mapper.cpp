@@ -1,7 +1,13 @@
 // box_mapper.cpp (2026-11-08): bodies sliced verbatim from
-// the former box_mapper header (13i); declarations live in box_mapper.h.
+// the former box_mapper header (13i). 13k: det_color/trail_color are
+// file-local (anonymous namespace, project rule); fill_gpu_boxes is
+// the module's only export -- declared in box_mapper.h.
+
+#include <cstdint>
 
 #include "box_mapper.h"
+
+namespace {
 
 void det_color( int cls, uint8_t& r, uint8_t& g, uint8_t& b )
 {
@@ -35,6 +41,8 @@ void trail_color( int id, uint8_t& r, uint8_t& g, uint8_t& b )
     g = pal[i][1];
     b = pal[i][2];
 }
+
+}  // namespace
 
 void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& tracker,
                             GpuBoxList& boxes, int model_w, int model_h,
