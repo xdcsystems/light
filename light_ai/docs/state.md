@@ -1017,3 +1017,64 @@ own replacement text) and aborted three times before the final
 mechanical form passed on the first try. The lesson stands; next
 patch scripts compute expectations from the replacement strings
 directly.
+
+## Parameter layer decomposition (2026-11-08): OptionRegistry + ConfigFileLoader
+
+Commits: 5e1ab67 (M3.6.1: option registry), 85cff49 (M3.6.2: INI
+config-file layer). The parameter layer extracted from main.cpp
+(2026-11-08, M3.6) is re-decomposed into single-responsibility
+modules:
+
+- include/option_registry.hpp + src/option_registry.cpp --
+  OptionRegistry: one table of names, ranges and error texts; the
+  argv loop and the INI handler both validate through it. Held as a
+  member of CliOptions; the handler receives it via CfgFileCtx, not
+  through a file-scope global.
+- The one 258-line table literal in the ctor tripped
+  readability-function-size (threshold 200): rows are split into
+  four group builders (flags/source/run/preview) and the ctor merges
+  them (std::map::merge relinks nodes, no copies; --help keeps the
+  sorted listing). NOLINT rejected: a suppressed oversized function
+  stays oversized and hides itself.
+- include/config_file.hpp + src/config_file.cpp -- ConfigFileLoader,
+  load(path, cfg) const; the handler, key normalization (leading
+  dashes, '_' -> '-') and flag truthiness (true/yes/on/1) are local
+  helpers of the new TU. cli.cpp keeps no anonymous namespace:
+  orchestration only (pre-pass, argv loop, cross-field checks).
+- Semantics unchanged: flat key = value; sections and a nested
+  --config are loud errors; handler convention 0 = error / nonzero =
+  success; ini_parse rc (-1 open, -2 OOM, else first-error line)
+  reported verbatim; precedence defaults < config file < CLI.
+- Verification: final full gate PASS (15 files, 0 findings,
+  hangs/errors: none). Disposable fix scripts removed; *.bak joined
+  .gitignore.
+
+12a failure history (patch-scripting, 2026-11-08):
+- 12a run 1 WROTE a corrupted cli.cpp: the table-block splice took
+  byte indices BEFORE the replacement loop; replacements shrink the
+  text, so stale indices spliced mid-line. The read-backs passed on
+  the mangled file -- they checked only the ABSENCE of the moved
+  symbols, which live inside the deleted block. The build caught it
+  (the only guard of that class); restored from .bak, nothing
+  committed. Fix: indices computed after the replacements +
+  integrity checks on the KEPT region (validate() intact, all 3
+  loud rejections counted).
+- 12a runs 2-3 (fix scripts aborting on CORRECT input): uniqueness
+  anchors counted bare names that legitimately recur -- "--net-src"
+  also sits inside its own value_error call, the builder names also
+  sit at the ctor call site. Fix: anchor on the entity's site
+  (table-row opening form, builder definition line), count on the
+  site. Same class as the PATCH LESSON above; two more instances.
+
+11g lesson (same day, pre-12a): both handler-convention bugs were
+written from memory while the truth sat in externals/inih/ini.h; the
+full gate caught them only on a functional run. Open the vendored
+header BEFORE writing its handler.
+
+SESSION LESSON (2026-11-08, extends PATCH LESSON above): "absence of
+the deleted" is not "integrity of the kept". A post-check must verify
+the SURVIVING region by its own anchors (definitions, semantic-unit
+counts), not only that the removed text is gone. A name the code
+legitimately repeats (definition + call site, an option name inside
+its own error text) must never serve as a uniqueness anchor -- anchor
+on the site, count on the site.
