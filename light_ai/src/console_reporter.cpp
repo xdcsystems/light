@@ -1,12 +1,7 @@
-// console_reporter.cpp (2026-11-08): bodies sliced verbatim from
-// the former console_reporter header (13i); declarations live in
-// console_reporter.h.
-
-#include "console_reporter.h"
-
 #include <iomanip>
 #include <iostream>
 
+#include "console_reporter.h"
 #include "coco_names.h"
 
 void ConsoleReporter::report( int frame, const DetList& dets, const TrajList& trajs ) const

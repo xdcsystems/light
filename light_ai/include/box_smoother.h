@@ -31,11 +31,20 @@ class BoxSmoother
         int trk;
     };
 
+    enum
+    {
+        kMaxMiss = 2,
+        kTrackCount = 32,
+    // Detections beyond kMaxDet are never matched to existing tracks
+    // (they pass through / spawn fresh tracks, as before) 
+    // — kMaxDet equals the DetList capacity (128) as a safety net.
+        kMaxDet = DetList::cap,
+        kMaxPairs = kTrackCount * kMaxDet,
+    };
+
 public:
     void set_log( const std::string& path );
-
     void update( const DetList& in, DetList& out );
-
     void log_frame( int frame, const DetList& raw, const DetList& smooth );
 
 private:
@@ -45,18 +54,7 @@ private:
     // tune. kAlpha is the EMA weight of the TRACK (0.5 = plain average).
     const float kMatchThr = 0.3f;  // plain member: enum cannot hold float
     const float kAlpha = 0.5f;
-    
-    enum
-    {
-        kMaxMiss = 2,
-        kTrackCount = 32,
-    // Detections beyond kMaxDet are never matched to existing tracks
-    // (they pass through / spawn fresh tracks, as before) — kMaxDet is
-    // equals the DetList capacity (128) as a safety net.
-        kMaxDet = DetList::cap,
-        kMaxPairs = kTrackCount * kMaxDet,
-    };
-    
+
     // P1-3 matching buffer: preallocated member (architecture audit
     // item 6: the ~48 KB array lived on update()'s stack per call).
     std::array<Pair, kMaxPairs> pairs_ {};

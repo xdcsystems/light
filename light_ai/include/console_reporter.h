@@ -12,7 +12,6 @@ class ConsoleReporter
 {
 public:
     void report( int frame, const DetList& dets, const TrajList& trajs ) const;
-
     void summary( int ok, double wall, int reconnects ) const;
 };
 

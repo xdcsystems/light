@@ -37,10 +37,6 @@ struct SignalGuard
 
 int main( int argc, char** argv )
 {
-    // Parameter reading/validation moved to CliOptions (cli.cpp,
-    // 2026-11-08): the option table, the INI config-file layer, the
-    // cross-field checks and --help all live there; main() stays the
-    // composition root (parse -> Pipeline -> run -> exit code).
     CliOptions cli;
     switch ( cli.parse( argc, argv ) )
     {
