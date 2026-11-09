@@ -208,10 +208,9 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
     // otherwise 422SP. Scan is bounded (first 2 KiB) and any parsing
     // doubt keeps the previous value.
     {
-        const size_t lim = size < 2048 ? size : 2048;
         uint8_t v_max = 0;
         uint8_t v_min = 0xFF;
-        for ( size_t i = 2; i + 4 <= lim; )
+        for ( size_t i = 2; i + 4 <= size; )
         {
             if ( data[i] != 0xFF )
             {
@@ -224,24 +223,24 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
                 ++i;
                 continue;
             }
-            if ( m == 0x01 || ( m >= 0xD0 && m <= 0xD9 ) )
+            if ( m == 0xD9 || m == 0xDA )
+                break;
+            if ( m == 0x01 || ( m >= 0xD0 && m <= 0xD8 ) )
             {
                 i += 2;
                 continue;
             }
             const uint16_t len = ( static_cast<uint16_t>( data[i + 2] ) << 8 ) | data[i + 3];
-            if ( len < 2 )
+            if ( len < 2 || i + 2 + len > size )
                 break;
             if ( m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC )
             {
                 // SOFn: precision(1) height(2) width(2) ncomp(1),
                 // then per component: id(1), h/v packed(1), tq(1).
                 // SOFn table starts at i+10: id(1), packed h/v at i+11 + 3*c, tq(1);
-                // V is the LOW nibble. The old offsets read the width high byte as
-                // ncomp and the Nf byte as hv, so every colour JPEG produced
-                // v_max = 3 -> 420SP, even for true 4:2:2.
-                const uint8_t ncomp = i + 10 <= lim ? data[i + 9] : 0;
-                for ( int c = 0; c < ncomp && i + 10 + static_cast<size_t>( c ) * 3 + 2 < lim; ++c )
+                // V is the LOW nibble.
+                const uint8_t ncomp = i + 10 <= size ? data[i + 9] : 0;
+                for ( int c = 0; c < ncomp && i + 10 + static_cast<size_t>( c ) * 3 + 2 < size; ++c )
                 {
                     const uint8_t hv = data[i + 11 + static_cast<size_t>( c ) * 3];
                     const uint8_t v = hv & 0x0F;

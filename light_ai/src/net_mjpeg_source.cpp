@@ -82,6 +82,59 @@ namespace
         }
         return kNpos;
     }
+
+    // Verifies that a JPEG buffer starts with SOI (FFD8), skips header
+    // segments (including APP1 EXIF thumbnails that carry their own
+    // embedded FFD8..FFD9) by their 2-byte length up to SOS (FFDA), and
+    // ends with an EOI (FFD9) marker after the entropy scan. Trims any
+    // trailing HTTP CRLF/whitespace in *inout_size.
+    bool jpeg_frame_complete( const uint8_t* data, uint32_t* inout_size )
+    {
+        uint32_t sz = *inout_size;
+        while ( sz > 2 && ( data[sz - 1] == '\r' || data[sz - 1] == '\n' || data[sz - 1] == ' ' ) )
+            --sz;
+        *inout_size = sz;
+        if ( sz < 4 || data[0] != 0xFF || data[1] != 0xD8 )
+            return false;
+
+        size_t i = 2;
+        bool seen_sos = false;
+        while ( i + 2 <= sz )
+        {
+            if ( data[i] != 0xFF )
+            {
+                ++i;
+                continue;
+            }
+            const uint8_t m = data[i + 1];
+            if ( m == 0xFF )
+            {
+                ++i;
+                continue;
+            }
+            if ( m == 0xD9 )
+                return false;  // EOI before SOS -> truncated header
+            if ( m == 0x01 || ( m >= 0xD0 && m <= 0xD8 ) )
+            {
+                i += 2;
+                continue;
+            }
+            if ( i + 4 > sz )
+                return false;
+            const uint16_t len = ( static_cast<uint16_t>( data[i + 2] ) << 8 ) | data[i + 3];
+            if ( len < 2 || i + 2 + len > sz )
+                return false;
+            i += 2 + len;
+            if ( m == 0xDA )
+            {
+                seen_sos = true;
+                break;
+            }
+        }
+        if ( !seen_sos || i + 2 > sz )
+            return false;
+        return data[sz - 2] == 0xFF && data[sz - 1] == 0xD9;
+    }
 }  // namespace
 
 NetMjpegSource::NetMjpegSource( int width, int height ) : width_( width ), height_( height )
@@ -410,27 +463,35 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
     if ( need < 0 )
     {
         // No Content-Length: copy the body to the slot while scanning
-        // for the closing boundary — a frame exceeds the socket window,
-        // so the window drains into the slot as it fills.
+        // for the closing boundary — keep the last (bpat_len_ - 1) bytes
+        // in sock_ on each refill so a boundary split across two recv()
+        // calls is never cut in half, and leave bpat_ unconsumed for the
+        // next frame's read_boundary().
+        const size_t pat_len = static_cast<size_t>( bpat_len_ );
+        const size_t keep = pat_len > 1 ? pat_len - 1 : 0;
         size_t got = 0;
         while ( true )
         {
-            const size_t f = net_find( bpat_, static_cast<size_t>( bpat_len_ ) );
+            const size_t f = net_find( bpat_, pat_len );
             if ( f != kNpos )
             {
                 if ( got + f > static_cast<size_t>( kFrameMax ) )
                     return -2;
                 std::memcpy( dst + got, sock_ + sock_pos_, f );
-                sock_pos_ += f + static_cast<size_t>( bpat_len_ );
+                sock_pos_ += f;
                 *size = static_cast<uint32_t>( got + f );
                 return 0;
             }
             const size_t avail = sock_end_ - sock_pos_;
-            if ( got + avail > static_cast<size_t>( kFrameMax ) )
-                return -2;
-            std::memcpy( dst + got, sock_ + sock_pos_, avail );
-            sock_pos_ += avail;
-            got += avail;
+            if ( avail > keep )
+            {
+                const size_t flush = avail - keep;
+                if ( got + flush > static_cast<size_t>( kFrameMax ) )
+                    return -2;
+                std::memcpy( dst + got, sock_ + sock_pos_, flush );
+                sock_pos_ += flush;
+                got += flush;
+            }
             if ( net_fill( kPollMs ) <= 0 )
                 return -1;
         }
@@ -525,8 +586,8 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err )
     }
     bufs_[slot].in_flight = true;
     const uint8_t* p = static_cast<const uint8_t*>( bufs_[slot].start );
-    if ( n < 2 || p[0] != 0xFF || p[1] != 0xD8 )
-        ++err_streak_;  // corrupt payload delivered anyway (BUF_FLAG_ERROR mirror)
+    if ( !jpeg_frame_complete( p, &n ) )
+        ++err_streak_;  // corrupt/truncated payload delivered anyway (BUF_FLAG_ERROR mirror)
     else
         err_streak_ = 0;
     if ( size )
