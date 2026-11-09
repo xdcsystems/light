@@ -24,9 +24,6 @@
 template <int N>
 struct RkmppDrmPool
 {
-    MppBufferGroup group = nullptr;
-    std::array<MppBuffer, N> buf {};
-
     RkmppDrmPool() = default;
     ~RkmppDrmPool()
     {
@@ -96,5 +93,9 @@ private:
             group = nullptr;
         }
     }
+
+public:
+    MppBufferGroup group = nullptr;
+    std::array<MppBuffer, N> buf {};
 };
 

@@ -10,9 +10,6 @@ struct PodList
 {
     enum { cap = N };
 
-    std::array<T, N> d {};
-    int n = 0;
-
     void clear() { n = 0; }
     bool push( const T& v )
     {
@@ -21,4 +18,8 @@ struct PodList
         d[n++] = v;
         return true;
     }
+
+public:
+    std::array<T, N> d {};
+    int n = 0;
 };

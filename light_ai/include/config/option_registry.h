@@ -4,9 +4,8 @@
 // Owned by CliOptions; the config-file layer receives the registry by reference.
 
 #pragma once
-#include <map>
+#include <array>
 #include <ostream>
-#include <string>
 
 struct Config;
 
@@ -20,11 +19,22 @@ public:
         bool ( *apply )( Config& cfg, const char* val );
     };
 
+    struct Entry
+    {
+        const char* name;
+        Option opt;
+    };
+
+    enum
+    {
+        kOptionCount = 23
+    };
+
     OptionRegistry();
 
     const Option* find( const char* name ) const;
     void print_usage( std::ostream& os ) const;
 
 private:
-    std::map<std::string, Option> table_;
+    std::array<Entry, kOptionCount> table_ {};
 };
