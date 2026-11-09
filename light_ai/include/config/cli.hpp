@@ -3,8 +3,10 @@
 
 #include "config/option_registry.h"
 
-// Config: the complete parameter set of one run. Model input dimensions
-// are read from the model itself, so --mw/--mh are intentionally absent.
+// Config: the complete parameter set of one run. Source dimensions (camera
+// G_FMT or network JPEG SOF) and model input dimensions (model input_attr)
+// are read from the source and model themselves, so --w/--h and --mw/--mh
+// are intentionally absent.
 struct Config
 {
     std::string device = "/dev/video20";
@@ -12,7 +14,6 @@ struct Config
     // Non-empty excludes --device: exactly one source per run.
     std::string net_src;
     std::string model = "./misc/yolov5s_relu_int8_mmse_v5.rknn";
-    int cam_w = 1280, cam_h = 960;
     // Two-pass RGA kicks in only when the source exceeds 8x the model input
     // per axis (checked in the Pipeline ctor); at 720p -> 640 it stays dormant.
     bool dump_cal = false;  // dump one model-input frame to /tmp/cal.ppm

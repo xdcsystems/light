@@ -100,8 +100,6 @@ namespace
 
 Pipeline::Pipeline( const Config& cfg )
   : cfg_( cfg )
-  , cam_( cfg_.cam_w, cfg_.cam_h )
-  , dec_( cfg_.cam_w, cfg_.cam_h )
 {
     // M4: the pool is a startup-time decision; npus_ never grows after
     // this loop, so the slot pointers stay valid for the whole session.
@@ -115,9 +113,11 @@ Pipeline::Pipeline( const Config& cfg )
     for ( int k = 0; k < npool_; ++k )
         npus_.emplace_back( cfg_.model.c_str() );
 
-    // Source bring-up (identity, setup, variant selection): the net
-    // branch made the ctor cross the readability-function-size limit.
+    // Source bring-up (identity, setup, variant selection): establishes
+    // src_w_ and src_h_ from the device (G_FMT) or stream (JPEG SOFn).
     init_source();
+    if ( dec_.init( src_w_, src_h_ ) != 0 )
+        throw std::runtime_error( "mpp decoder init failed" );
 
     for ( auto& e : npus_ )
     {
@@ -151,7 +151,7 @@ Pipeline::Pipeline( const Config& cfg )
 
     // Letterbox geometry computed once via band_geom:
     // the same numbers the RGA crop writes.
-    lb_ = band_geom( cfg_.cam_w, cfg_.cam_h, model_w_, model_h_ );
+    lb_ = band_geom( src_w_, src_h_, model_w_, model_h_ );
 
     init_net_sink( ia );
     init_gpu_drawer();
@@ -256,7 +256,7 @@ void Pipeline::init_source()
         // run() works unchanged; a failed connect here is fatal, same
         // as a failed camera setup.
 
-        net_src_.emplace( cfg_.cam_w, cfg_.cam_h );
+        net_src_.emplace();
 
         // The URL is this source's identity: the recovery ladder
         // passes cam_node_ to recover(), so it must hold the URL,
@@ -308,6 +308,10 @@ void Pipeline::init_source()
         src_ = &*net_src_;
     else
         src_ = &cam_;
+
+    src_w_ = with_src( []( const auto& s ) { return s.width(); } );
+    src_h_ = with_src( []( const auto& s ) { return s.height(); } );
+    std::cout << "source: geometry " << src_w_ << 'x' << src_h_ << '\n';
 }
 
 // M2.5/M4: core pinning.
@@ -418,14 +422,14 @@ void Pipeline::init_gpu_drawer()
 // 1920x1080 still needs the 960x540 intermediate.
 void Pipeline::init_aux()
 {
-    if ( cfg_.cam_w > 8 * model_w_ || cfg_.cam_h > 8 * model_h_ )
+    if ( src_w_ > 8 * model_w_ || src_h_ > 8 * model_h_ )
     {
-        aux_fd_ = dec_.aux_fd( static_cast<size_t>( cfg_.cam_w / 2 ) * ( cfg_.cam_h / 2 ) * 2 );
+        aux_fd_ = dec_.aux_fd( static_cast<size_t>( src_w_ / 2 ) * ( src_h_ / 2 ) * 2 );
         if ( aux_fd_ < 0 )
             throw std::runtime_error( "pipeline: aux buffer alloc failed" );
         return;
     }
-    std::cout << "aux not needed: " << cfg_.cam_w << 'x' << cfg_.cam_h
+    std::cout << "aux not needed: " << src_w_ << 'x' << src_h_
               << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
 }
 
@@ -640,7 +644,7 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
             static_cast<size_t>( model_w_ ) * model_h_ * 3 );
     LbGeom lg {};
     const bool rga_ok =
-            rga_.resize( fd_src, cfg_.cam_w, cfg_.cam_h, sl.eng->input_fd(), model_w_, model_h_, aux_fd_, cfg_.cam_w / 2, cfg_.cam_h / 2, &lg,
+            rga_.resize( fd_src, src_w_, src_h_, sl.eng->input_fd(), model_w_, model_h_, aux_fd_, src_w_ / 2, src_h_ / 2, &lg,
                     dec_.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
     cal_dumper_.maybe( frame_idx, sl.eng->input_fd(), static_cast<const uint8_t*>( sl.eng->input_data() ), sl.eng->input_size() );
     const auto t3b = clk::now();
@@ -698,7 +702,7 @@ void Pipeline::worker_loop( int slot )
             if ( okr )
             {
                 const auto tp0 = clk::now();
-                yolo_postprocess( *sl.eng, static_cast<float>( cfg_.cam_w ), static_cast<float>( cfg_.cam_h ),
+                yolo_postprocess( *sl.eng, static_cast<float>( src_w_ ), static_cast<float>( src_h_ ),
                         static_cast<float>( model_w_ ), static_cast<float>( model_h_ ), sl.lb,
                         sl.dets, cfg_.conf_thr, cfg_.iou_thr );
                 sl.tr.post = ms( tp0, clk::now() );
@@ -821,8 +825,8 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
     // Boxes mapped to tensor coordinates ONCE for both drawing paths.
     // Inverse of the postprocess mapping: det = scene * (lb / cam) + origin.
 
-    const float sx = sl.lb.w / static_cast<float>( cfg_.cam_w );
-    const float sy = sl.lb.h / static_cast<float>( cfg_.cam_h );
+    const float sx = sl.lb.w / static_cast<float>( src_w_ );
+    const float sy = sl.lb.h / static_cast<float>( src_h_ );
     boxes_.clear();
     fill_gpu_boxes( dets_, trajs_, tracker_, boxes_, sl.lb, sx, sy );
     int fence = -1;  // GPU draw fence, consumed by enc publish

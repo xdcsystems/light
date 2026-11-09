@@ -17,11 +17,13 @@ class CameraV4L2
     enum : unsigned
     {
         kBufCount = 4,
-        kDequeuePollMs = 2000  // dequeue watchdog: no frame within this window = recoverable stall (EIO)
+        kDequeuePollMs = 2000,  // dequeue watchdog: no frame within this window = recoverable stall (EIO)
+        kDefaultWidth = 1280,
+        kDefaultHeight = 960
     };
 
 public:
-    CameraV4L2( int width, int height );
+    CameraV4L2() = default;
     ~CameraV4L2();
 
     // Full open+verify path for a node:

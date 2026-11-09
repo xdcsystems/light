@@ -7,8 +7,15 @@
 #include "mpp_decoder.hpp"
 
 
-MppDecoder::MppDecoder( int w, int h ) : w_( w ), h_( h )
+MppDecoder::MppDecoder( int w, int h )
 {
+    init( w, h );
+}
+
+int MppDecoder::init( int w, int h )
+{
+    w_ = w;
+    h_ = h;
     // MPP logs its version banner, rc/prep config and teardown meta dumps
     // at info/error level by default. Silence it for production runs;
     // raise back to MPP_LOG_DEBUG temporarily when debugging MPP internals.
@@ -90,7 +97,9 @@ MppDecoder::MppDecoder( int w, int h ) : w_( w ), h_( h )
             ctx_ = nullptr;
             mpi_ = nullptr;
         }
+        return -1;
     }
+    return 0;
 }
 
 MppDecoder::~MppDecoder()

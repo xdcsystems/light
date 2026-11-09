@@ -27,7 +27,7 @@ public:
 
     enum
     {
-        kOptionCount = 23
+        kOptionCount = 21
     };
 
     OptionRegistry();

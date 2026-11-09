@@ -63,9 +63,6 @@ namespace
 
 }  // namespace
 
-CameraV4L2::CameraV4L2( int w, int h ) : width_( w ), height_( h )
-{}
-
 // Full open+setup path for the node given by the owner: open + S_FMT +
 // G_FMT verification + REQBUFS/mmap/QBUF. Nothing is trusted blindly: a
 // substituted camera mode is caught here exactly like at startup.
@@ -91,10 +88,12 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
         return -1;
     }
 
+    const unsigned req_w = width_ > 0 ? static_cast<unsigned>( width_ ) : kDefaultWidth;
+    const unsigned req_h = height_ > 0 ? static_cast<unsigned>( height_ ) : kDefaultHeight;
     v4l2_format fmt {};
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = width_;
-    fmt.fmt.pix.height = height_;
+    fmt.fmt.pix.width = req_w;
+    fmt.fmt.pix.height = req_h;
     fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG;
     fmt.fmt.pix.field = V4L2_FIELD_ANY;
     if ( xioctl_r( VIDIOC_S_FMT, &fmt ) < 0 )
@@ -106,9 +105,10 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
         return -1;
     }
 
-    // The driver may silently substitute a closest supported mode.
-    // Verify what we actually got and fail loudly on a mismatch,
-    // otherwise the whole pipeline (RGA, MPP) would run with wrong dims.
+    // Read back the actual mode negotiated by the driver (VIDIOC_G_FMT).
+    // At startup (width_ == 0) we adopt the device's negotiated MJPEG
+    // dimensions; on a mid-run reconnect (width_ > 0) the dimensions are
+    // already locked into the decoder/encoder and must match.
     v4l2_format gfmt {};
     gfmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if ( xioctl_r( VIDIOC_G_FMT, &gfmt ) < 0 )
@@ -119,12 +119,13 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
         teardown();
         return -1;
     }
-    if ( gfmt.fmt.pix.pixelformat != V4L2_PIX_FMT_MJPEG || 
-         gfmt.fmt.pix.width != static_cast<unsigned>( width_ ) ||
-         gfmt.fmt.pix.height != static_cast<unsigned>( height_ ) )
+    const int got_w = static_cast<int>( gfmt.fmt.pix.width );
+    const int got_h = static_cast<int>( gfmt.fmt.pix.height );
+    if ( gfmt.fmt.pix.pixelformat != V4L2_PIX_FMT_MJPEG || got_w < 16 || got_h < 16
+         || ( width_ > 0 && ( got_w != width_ || got_h != height_ ) ) )
     {
-        std::cerr << "camera: mode mismatch: requested " << width_ << 'x' << height_ << " MJPEG, got " << gfmt.fmt.pix.width << 'x'
-                  << gfmt.fmt.pix.height << " fourcc=" << std::hex << gfmt.fmt.pix.pixelformat << std::dec << '\n';
+        std::cerr << "camera: mode mismatch: requested " << req_w << 'x' << req_h << " MJPEG, got " << got_w << 'x'
+                  << got_h << " fourcc=" << std::hex << gfmt.fmt.pix.pixelformat << std::dec << '\n';
         if ( why )
             *why = "camera mode mismatch";
         teardown();
@@ -213,6 +214,8 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
             return -1;
         }
     }
+    width_ = got_w;
+    height_ = got_h;
     return 0;
 }
 

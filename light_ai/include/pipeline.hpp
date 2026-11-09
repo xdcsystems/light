@@ -87,6 +87,8 @@ private:
     std::vector<RknnEngine> npus_;
     int npool_ = 1;
     int aux_fd_ = -1;
+    int src_w_ = 0;
+    int src_h_ = 0;    // taken from the source (camera G_FMT or JPEG SOFn)
     int model_w_ = 0;
     int model_h_ = 0;  // taken from the model, not from flags
     

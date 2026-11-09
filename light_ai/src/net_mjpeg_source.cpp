@@ -85,10 +85,10 @@ namespace
 
     // Verifies that a JPEG buffer starts with SOI (FFD8), skips header
     // segments (including APP1 EXIF thumbnails that carry their own
-    // embedded FFD8..FFD9) by their 2-byte length up to SOS (FFDA), and
-    // ends with an EOI (FFD9) marker after the entropy scan. Trims any
-    // trailing HTTP CRLF/whitespace in *inout_size.
-    bool jpeg_frame_complete( const uint8_t* data, uint32_t* inout_size )
+    // embedded FFD8..FFD9) by their 2-byte length up to SOS (FFDA),
+    // extracts frame dimensions from SOFn, and ends with an EOI (FFD9)
+    // marker after the entropy scan. Trims any trailing HTTP CRLF/whitespace.
+    bool jpeg_frame_complete( const uint8_t* data, uint32_t* inout_size, int* out_w, int* out_h )
     {
         uint32_t sz = *inout_size;
         while ( sz > 2 && ( data[sz - 1] == '\r' || data[sz - 1] == '\n' || data[sz - 1] == ' ' ) )
@@ -98,6 +98,7 @@ namespace
             return false;
 
         size_t i = 2;
+        bool seen_sof = false;
         bool seen_sos = false;
         while ( i + 2 <= sz )
         {
@@ -124,6 +125,20 @@ namespace
             const uint16_t len = ( static_cast<uint16_t>( data[i + 2] ) << 8 ) | data[i + 3];
             if ( len < 2 || i + 2 + len > sz )
                 return false;
+            if ( m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC )
+            {
+                if ( len < 8 || i + 9 > sz )
+                    return false;
+                const int fh = ( static_cast<int>( data[i + 5] ) << 8 ) | data[i + 6];
+                const int fw = ( static_cast<int>( data[i + 7] ) << 8 ) | data[i + 8];
+                if ( fw < 16 || fh < 16 )
+                    return false;
+                if ( out_w )
+                    *out_w = fw;
+                if ( out_h )
+                    *out_h = fh;
+                seen_sof = true;
+            }
             i += 2 + len;
             if ( m == 0xDA )
             {
@@ -131,13 +146,13 @@ namespace
                 break;
             }
         }
-        if ( !seen_sos || i + 2 > sz )
+        if ( !seen_sof || !seen_sos || i + 2 > sz )
             return false;
         return data[sz - 2] == 0xFF && data[sz - 1] == 0xD9;
     }
 }  // namespace
 
-NetMjpegSource::NetMjpegSource( int width, int height ) : width_( width ), height_( height )
+NetMjpegSource::NetMjpegSource()
 {
     // Init-time allocation (the rknn_engine out_mems_ precedent):
     // one anonymous mmap for the whole pool — not heap, never touched again.
@@ -192,7 +207,37 @@ int NetMjpegSource::setup_device( const std::string& url, std::string* why )
         teardown();
         return -1;
     }
-    std::cout << "net-src: connected " << url << ", boundary " << boundary_ << "\n";
+    // Prime the first JPEG frame into slot 0 to read its SOFn geometry
+    // before MppDecoder / NetEncoder / RgaResizer are initialized.
+    uint32_t n = 0;
+    if ( read_part( 0, &n ) != 0 )
+    {
+        if ( why )
+            *why = "failed to read initial JPEG frame";
+        teardown();
+        return -1;
+    }
+    int fw = 0;
+    int fh = 0;
+    const auto* p = static_cast<const uint8_t*>( bufs_[0].start );
+    if ( !jpeg_frame_complete( p, &n, &fw, &fh ) )
+    {
+        if ( why )
+            *why = "initial JPEG frame is incomplete or missing SOFn";
+        teardown();
+        return -1;
+    }
+    if ( width_ > 0 && height_ > 0 && ( fw != width_ || fh != height_ ) )
+    {
+        if ( why )
+            *why = "stream resolution changed on reconnect";
+        teardown();
+        return -1;
+    }
+    width_ = fw;
+    height_ = fh;
+    primed_len_ = n;
+    std::cout << "net-src: connected " << url << " (" << width_ << 'x' << height_ << "), boundary " << boundary_ << "\n";
     err_streak_ = 0;
     return 0;
 }
@@ -205,6 +250,9 @@ void NetMjpegSource::teardown()
         fd_ = -1;
     }
     sock_pos_ = sock_end_ = 0;
+    primed_len_ = 0;
+    for ( auto& b : bufs_ )
+        b.in_flight = false;
 }
 
 int NetMjpegSource::recover( const std::string& id, std::string& new_id, std::string* why )
@@ -548,6 +596,15 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err )
             *err = EIO;  // recoverable stall -> the reconnect ladder
         return -1;
     }
+    if ( primed_len_ > 0 )
+    {
+        bufs_[0].in_flight = true;
+        if ( size )
+            *size = primed_len_;
+        primed_len_ = 0;
+        err_streak_ = 0;
+        return 0;
+    }
     int slot = -1;
     for ( int k = 0; k < kBufCount; ++k )
     {
@@ -586,8 +643,10 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err )
     }
     bufs_[slot].in_flight = true;
     const uint8_t* p = static_cast<const uint8_t*>( bufs_[slot].start );
-    if ( !jpeg_frame_complete( p, &n ) )
-        ++err_streak_;  // corrupt/truncated payload delivered anyway (BUF_FLAG_ERROR mirror)
+    int fw = 0;
+    int fh = 0;
+    if ( !jpeg_frame_complete( p, &n, &fw, &fh ) || fw != width_ || fh != height_ )
+        ++err_streak_;  // corrupt/truncated or mismatched-dim payload
     else
         err_streak_ = 0;
     if ( size )

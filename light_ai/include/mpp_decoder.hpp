@@ -19,12 +19,13 @@ class MppDecoder
     };
 
 public:
-    // w/h come from Config (validated against the camera G_FMT) instead of
-    // being hard-coded: the pre-allocated output buffer must match the
-    // actual stream size, otherwise a resolution change either triggers
-    // info_change churn or overruns the buffer.
+    // w/h come from the active source (camera G_FMT or network JPEG SOF):
+    // the pre-allocated output buffer matches the actual stream size.
+    MppDecoder() = default;
     MppDecoder( int w, int h );
     ~MppDecoder();
+
+    int init( int w, int h );
 
     int decode( const uint8_t* data, size_t size );
 

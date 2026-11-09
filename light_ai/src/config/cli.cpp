@@ -34,13 +34,6 @@ int CliOptions::validate() const
         return 2;
     }
 
-    // A network source replaces the USB camera entirely; the frame
-    // geometry, however, still comes from --w/--h: the RGA letterbox
-    // mapping and the encoder band are computed from them BEFORE the
-    // first frame arrives, and a mismatch with the phone's actual
-    // stream would silently stretch the image (the "substituted
-    // source is worse than a loud one" principle, M3.8). The user
-    // must state the phone's resolution explicitly.
     // Mutual exclusion, loud version: --net-src clears c.device when it
     // comes AFTER --device on the command line; the reverse order leaves
     // both non-empty and one of them is silently ignored (the winner
@@ -52,13 +45,6 @@ int CliOptions::validate() const
                      "  --net-src: " << cfg_.net_src << "\n"
                      "  Pass exactly one of them; --net-src replaces the USB camera entirely.\n";
         return 2;
-    }
-    if ( !cfg_.net_src.empty() )
-    {
-        std::cerr << "net-src: " << cfg_.net_src << "\n"
-                     "  NOTE: --w/--h must match the phone's stream resolution\n"
-                     "  (IP Webcam: the same values set in the app), e.g.:\n"
-                     "    light_ai --net-src http://<phone-ip>:8080/video --w 1280 --h 720\n";
     }
 
     // --cal-dir only makes sense with the --cal series; --dump-cal always

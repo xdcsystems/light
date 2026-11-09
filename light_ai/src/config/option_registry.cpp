@@ -142,15 +142,6 @@ namespace
         c.pool = n;
         return true;
     }
-
-    bool apply_dim( const char* opt, const char* v, int& dst )
-    {
-        if ( !set_int( opt, v, 16, 8192, "16..8192", dst ) )
-            return false;
-        if ( dst % 16 != 0 )
-            std::cerr << "warning: " << opt << " " << dst << " is not a multiple of 16: some UVC cameras reject it\n";
-        return true;
-    }
 }  // namespace
 
 OptionRegistry::OptionRegistry()
@@ -170,7 +161,6 @@ OptionRegistry::OptionRegistry()
         { "--dump-cal",     { false, "collect calibration dataset", &apply_flag<&Config::dump_cal> } },
         { "--frames",       { true, "stop after N frames (>= 1; default: run until Ctrl-C)",
                                     +[]( Config& c, const char* v ) { return set_int( "--frames", v, 1, INT_MAX, ">= 1", c.frames ); } } },
-        { "--h",            { true, "camera height", +[]( Config& c, const char* v ) { return apply_dim( "--h", v, c.cam_h ); } } },
         { "--iou",          { true, "NMS IoU threshold 0.0..1.0",
                                     +[]( Config& c, const char* v ) { return set_float_01( "--iou", v, c.iou_thr ); } } },
         { "--model",        { true, "RKNN model path", &apply_str<&Config::model> } },
@@ -185,7 +175,6 @@ OptionRegistry::OptionRegistry()
                                     +[]( Config& c, const char* v ) { return set_int( "--net-port", v, 1, 65535, "1..65535", c.net_port ); } } },
         { "--net-src",      { true, "network MJPEG pull source (http://host:port/path); replaces --device", &apply_net_src } },
         { "--pool",         { true, "NPU context pool: 1 = single context (baseline), 3 = one engine per core", &apply_pool } },
-        { "--w",            { true, "camera width", +[]( Config& c, const char* v ) { return apply_dim( "--w", v, c.cam_w ); } } },
     } }
 {
 }
