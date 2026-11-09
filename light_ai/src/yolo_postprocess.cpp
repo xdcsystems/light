@@ -9,37 +9,12 @@
 
 namespace
 {
-    // fp16 (IEEE 754 half) -> float, bit-exact, no arch extensions needed.
+    // fp16 (IEEE 754 half) -> float via ARM64 hardware __fp16 (single fcvt).
     inline float fp16_to_float( uint16_t h )
     {
-        const uint32_t sign = ( h >> 15 ) & 1u;
-        const uint32_t exp = ( h >> 10 ) & 31u;
-        const uint32_t man = h & 0x3FFu;
-
-        // fp32 assembly from half fields: the low 13 mantissa bits are
-        // always zero, so the shift is lossless.
-        const auto bits = []( uint32_t s, uint32_t e, uint32_t m ) {
-            return ( s << 31 ) | ( e << 23 ) | ( m << 13 );
-        };
-        const auto to_float = []( uint32_t b ) {
-            float f = 0.0f;
-            std::memcpy( &f, &b, 4 );
-            return f;
-        };
-
-        if ( exp == 0 && man == 0 )
-            return to_float( bits( sign, 0, 0 ) );  // +-0
-        if ( exp == 31 )
-            return to_float( bits( sign, 0xFF, man ) );  // +-inf / NaN
-        if ( exp != 0 )
-            return to_float( bits( sign, exp - 15 + 127, man ) );  // normal
-
-        // Subnormal without the shift loop: 2^-14 * man/1024 equals
-        // 2^-14*(1 + man/1024) - 2^-14, and that subtraction is exact in
-        // fp32 (no underflow below 2^-14), so the result is bit-identical
-        // to the loop normalization.
-        return std::copysign( to_float( bits( 0, 127 - 15 + 1, man ) ) - 0x1.0p-14f,
-                sign ? -1.0f : 1.0f );
+        __fp16 f16 = 0;
+        std::memcpy( &f16, &h, sizeof( f16 ) );
+        return static_cast<float>( f16 );
     }
 
     // yolov5 default anchors, already in model-input pixels per stride.
