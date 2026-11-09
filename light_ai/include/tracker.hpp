@@ -26,7 +26,7 @@ struct TrajPoint
     float x = 0.0f, y = 0.0f;
 };
 
-// Person trajectory tracker: greedy IoU association over a per-track
+// Person trajectory tracker: global greedy IoU association over a per-track
 // constant-velocity Kalman filter (one 2-state filter per axis),
 // ring trajectory per track.
 //
@@ -100,10 +100,6 @@ class Tracker
     // Ring trajectory per track: oldest first, newest always included.
     struct Traj
     {
-        std::array<TrajPoint, kTrajPoints> p {};
-        int head = 0;
-        int n = 0;
-
         void push( int64_t ts, float x, float y )
         {
             p[head] = { ts, x, y };
@@ -111,6 +107,11 @@ class Tracker
             if ( n < kTrajPoints )
                 ++n;
         }
+
+    public:
+        std::array<TrajPoint, kTrajPoints> p {};
+        int head = 0;
+        int n = 0;
     };
 
     // One track: two-axis KF + size EMA + lifecycle + ring.

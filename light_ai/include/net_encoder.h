@@ -74,6 +74,12 @@ class NetEncoder
         FcGuard& operator=( const FcGuard& ) = delete;
     };
 
+    enum
+    {
+        kBufCount = 3,
+        kPktQDepth = 8
+    };
+
 public:
     NetEncoder( int model_w,
                 int model_h,
@@ -143,11 +149,6 @@ private:
     // with --net-fps 0 (VFR) frames arrive in clumps after a network
     // pause, and two buffers can run out exactly at the 3-deep rkmpp
     // task queue while an older encode still holds its plane.
-    enum
-    {
-        kBufCount = 3,
-        kPktQDepth = 8
-    };
     RkmppDrmPool<kBufCount> pool_;  // three ping-pong NV12 dma-bufs, one RAII sub-object
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)

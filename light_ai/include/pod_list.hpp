@@ -4,7 +4,7 @@
 // Fixed-capacity list on std::array: no heap by construction.
 // push() drops on overflow and returns false - the pipeline caps detections by conf,
 // so the cap is a safety net, not a design limit.
-// One template, two instantiations (DetList, GpuBoxList).
+// One template, three instantiations (DetList, GpuBoxList, TrajList).
 template <typename T, int N>
 struct PodList
 {
