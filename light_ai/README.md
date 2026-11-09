@@ -74,9 +74,11 @@ post-processing.
   clamp silently allowed it).
   
 ## Layers
-- CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. G_FMT is verified
-               against the requested mode; a driver-side silent mode
-               substitution is a hard error. The node is NOT instance
+- CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. At startup S_FMT
+               requests the preferred 1280x960 MJPEG mode and adopts the
+               dimensions reported by G_FMT; on a mid-run reconnect G_FMT
+               is verified against the locked session dimensions so a
+               replug never changes resolution mid-stream. The node is NOT instance
                state: setup_device(dev)/reconnect(dev) take the path as
                an argument, teardown() is public (no dynamic allocation
                anywhere in the recovery path). Disconnect recovery:
@@ -107,14 +109,18 @@ post-processing.
 - NetMjpegSource : HTTP multipart/x-mixed-replace MJPEG pull source
                (--net-src http://host:port/path, mutually exclusive
                with --device). Non-blocking TCP connect + SO_RCVTIMEO
-               (5 s), SOI..EOI framing into a 1 MiB staging buffer,
-               reconnect() on stream drop through the same recovery
-               loop as CameraV4L2.
+               (5 s), structural JPEG framing into a 4x2 MiB mmap pool
+               (skips header/EXIF segments by length up to SOS, extracts
+               frame dimensions from SOFn, verifies trailing EOI); primes
+               frame 0 in setup_device() so stream geometry is known at
+               startup without --w/--h. Reconnects through the same
+               recovery loop as CameraV4L2.
 - MppDecoder : MJPEG -> YUV422SP decode into an external dma-buf pool
                (adaptive, 2026-11-06: a 4:2:0 source decodes to
                YUV420SP instead — the format is picked from the JPEG
-               sampling factors; the x2 pool covers either),
-               returns the frame fd. Sized from Config, not hard-coded.
+               SOFn Y/Cb/Cr sampling factors; the x2 pool covers either),
+               returns the frame fd. Sized from the active source
+               (V4L2 G_FMT or JPEG SOFn), not from CLI flags.
                Recovery (2026-11-02, P0-1): the packet is drained
                per call on every path (error and success) — MPP no
                longer holds a reference across the decode gap; on
@@ -145,8 +151,10 @@ post-processing.
                would corrupt rknn contexts on reallocation; the move
                ctor transfers ctx/tensor mems and leaves a hollow
                shell (ctx_=0), keeping vector::reserve legal.
-- Pipeline   : model input geometry is read from the model file itself
-               (input_attr), not from CLI flags. Aux allocation happens after
+- Pipeline   : both source geometry (V4L2 G_FMT or JPEG SOFn) and model
+               input geometry (model input_attr) are read from the source
+               and model themselves, not from CLI flags (--w/--h and
+               --mw/--mh are abolished). Aux allocation happens after
                model geometry is known (constructor-order bug fixed; a
                one-line "aux not needed" log confirms the single-pass path).
                Concurrency & shutdown (2026-11-02): publish_oldest()
@@ -176,9 +184,15 @@ post-processing.
                throttled detection/track console + CSV reporter, and
                per-stage FrameTrace accumulator.
 - CliOptions / OptionRegistry / ConfigFileLoader (config/): fixed
-               23-entry std::array option registry shared by the CLI
-               parser and the inih-backed INI loader (--config,
-               applied before CLI overrides).
+               21-entry std::array option registry with table-driven
+               setter callbacks (OptionRegistry::apply), shared by the
+               CLI parser and the inih-backed INI loader (--config,
+               applied before CLI overrides) — zero if/else ladders,
+               zero heap.
+- TcpPullServer : RAII single-viewer TCP pull transport (listener socket,
+               poll-based accept, TCP_NODELAY / SO_SNDBUF / SO_SNDTIMEO,
+               and custom 32 KiB AVIOContext) shared by NetEncoder and
+               NetPreview.
 
 - GpuBoxDrawer (M3.7): box drawing on Mali G610 (EGL/GBM) straight
                into the NPU input tensor. The tensor dma-buf is imported
@@ -646,8 +660,10 @@ non-ENOENT open errors (EBUSY/EACCES) stay fatal. Options:
 --config <path> loads an INI config file (flat key = value; applied
 before CLI flags so CLI always overrides).
 --device, --net-src http://host:port/path (HTTP MJPEG pull source,
-replaces --device), --model, --frames (>= 1; default: run until
-Ctrl-C), --w, --h, --dump-cal, --conf, --iou,
+replaces --device; resolution is auto-detected from JPEG SOFn,
+including portrait streams such as 720x1280 -> 368x640 band),
+--model, --frames (>= 1; default: run until Ctrl-C), --dump-cal,
+--conf, --iou,
 --core 0|1|3|7 (NPU core pinning: 0=AUTO default, 1=core0, 3=0+1,
 7=0+1+2; measured: infer 25.1->21.2 ms on 012, FPS unchanged —
 source-bound, M2.5),

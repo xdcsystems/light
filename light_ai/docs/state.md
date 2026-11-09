@@ -1207,3 +1207,49 @@ Complete codebase & documentation audit across four criteria
   remains anywhere in the tree); include order (<...> before "...")
   and header layout (methods before data in separate visibility
   blocks) aligned across all headers and TUs. Tidy: PASS (0 findings).
+
+
+## Post-audit refactor & auto-geometry pass (2026-11-09)
+
+Six follow-up items closed on `fix/audit-p0` after the P0/P1/P2 audit:
+
+1. Hardware FP16 decode (`src/yolo_postprocess.cpp`): replaced the
+   25-line software bit-manipulation `fp16_to_fp32(uint16_t)` with a
+   direct `std::memcpy` into ARMv8.2-A `__fp16` (`fcvt s0, h0` on
+   Cortex-A76, branchless).
+2. Unified table-driven option dispatch (`include/config/option_registry.h`,
+   `src/config/option_registry.cpp`, `src/config/cli.cpp`,
+   `src/config/config_file.cpp`): added `ApplyFn` callback to
+   `OptionRegistry::Entry` and `OptionRegistry::apply()`. Removed the
+   two duplicated ~100-line `if / else if` ladders from `cli.cpp` and
+   `config_file.cpp` (project rule: branch tables over if-chains).
+3. Zero per-frame heap allocations in `NetEncoder::prep_frame()`
+   (`include/rkmpp_drm_pool.hpp`, `src/net_encoder.cpp`): `RkmppDrmPool`
+   preallocates persistent `AVBufferRef*` wrappers at pool init and
+   `prep_frame()` rebinds `frame_->buf[0]` without calling
+   `av_buffer_create()` on every encoded frame.
+4. Extracted `TcpPullServer` (`include/tcp_pull_server.hpp`,
+   `src/tcp_pull_server.cpp`): consolidated the duplicated TCP pull
+   listener (`socket`, `SO_REUSEADDR`, `bind`, `listen`, `poll`,
+   `accept4`, `TCP_NODELAY`, `SO_SNDBUF`, `SO_SNDTIMEO`) and custom
+   32 KiB `AVIOContext` lifecycle out of `NetEncoder` and `NetPreview`;
+   `include/av_common.hpp` restored to its pure FFmpeg error helper role.
+5. Structural JPEG marker validation (`src/net_mjpeg_source.cpp`,
+   `src/mpp_decoder.cpp`): `jpeg_frame_complete()` walks JPEG segments
+   by their 2-byte big-endian length up to `SOS (0xFFDA)` (skipping
+   `APP1` EXIF thumbnails that carry embedded `FFD8..FFD9` pairs) and
+   verifies the trailing `EOI (0xFFD9)`. `MppDecoder::make_packet()`
+   scans up to `SOS` across the full packet buffer and checks all three
+   `SOF0`/`SOF2` components (`Y=2x2`, `Cb=1x1`, `Cr=1x1`).
+6. Abolished `--w` and `--h` (`cam_w` / `cam_h`); automatic source
+   geometry: `CameraV4L2` adopts negotiated `VIDIOC_G_FMT` dimensions at
+   startup (locking them across mid-run reconnects), while
+   `NetMjpegSource::setup_device()` primes frame 0 and extracts stream
+   dimensions from its `SOFn` header before `MppDecoder`, `RgaResizer`
+   and `NetEncoder` initialize (`kOptionCount` 23 -> 21).
+   Live verification (phone IP Webcam stream, `--net-src
+   http://192.168.1.2:8080/video --net --net-h264 --net-fps 0 --pool 3`,
+   portrait `720x1280` 4:2:0): auto-detected `720x1280` on connect,
+   `420SP` decode path selected, letterbox band `x=[140,500) y=[0,640)`
+   -> `368x640` h264 stream, ~30.5-31.6 FPS wall, detections and
+   Kalman tracks verified live in `mpv`.
