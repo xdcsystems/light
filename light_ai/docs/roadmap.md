@@ -510,18 +510,7 @@ refer to README.md sections (../README.md).
   shutdown was CLOSED 2026-11-09 (`reset_and_strip` in `MppDecoder`,
   see `state.md`, `Shutdown observations`); only the `static`-`constexpr`
   rule clarification remains (owner: deferred).
-- [ ] M6: toolchain hygiene (recorded 2026-10-27 by owner, restored
-      from session notes 2026-10-28): (a) clang-format — one enforced
-      style across the tree; the recurring whitespace-only artifacts
-      (empty lines sneaking into headers, see the pipeline.hpp restore
-      of 2026-10-28) are the symptom this closes; (b) gtest unit
-      tests — GoogleTest against the pure-CPU logic that today is
-      verified only by live runs: yolo postprocess decode (grid/anchor
-      math, NMS, letterbox mapping T) and BoxSmoother (EMA, IoU
-      matching, miss decay). Hardware stages (MPP/RGA/RKNN/encoder)
-      stay out of unit scope — live-run territory. Open sub-questions:
-      the exact .clang-format profile (reference files: gpu_box_drawer
-      style per Rules) and the first covered module.
+
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
       even a hypothetical 10-15 ms model@640x640 would fit the frame budget
@@ -579,3 +568,16 @@ refer to README.md sections (../README.md).
       recalibration per camera (lighting-independent); model INT8
       recalibration only if the lighting regime differs materially
       (v1->v2 precedent), conf band re-checked from logs on day one.
+
+- [ ] M6: toolchain hygiene (recorded 2026-10-27 by owner, restored
+      from session notes 2026-10-28): (a) clang-format — one enforced
+      style across the tree; the recurring whitespace-only artifacts
+      (empty lines sneaking into headers, see the pipeline.hpp restore
+      of 2026-10-28) are the symptom this closes; (b) gtest unit
+      tests — GoogleTest against the pure-CPU logic that today is
+      verified only by live runs: yolo postprocess decode (grid/anchor
+      math, NMS, letterbox mapping T) and BoxSmoother (EMA, IoU
+      matching, miss decay). Hardware stages (MPP/RGA/RKNN/encoder)
+      stay out of unit scope — live-run territory. Open sub-questions:
+      the exact .clang-format profile (reference files: gpu_box_drawer
+      style per Rules) and the first covered module.
