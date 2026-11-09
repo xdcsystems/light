@@ -84,6 +84,67 @@ void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t
     t.traj.push( ts_us, cx, cy );
 }
 
+void Tracker::associate( const DetList& dets, int64_t ts_us,
+                         std::array<unsigned char, 128>& det_taken,
+                         std::array<unsigned char, kMaxTracks>& trk_taken )
+{
+    struct MatchPair
+    {
+        int det;
+        int trk;
+        float iou;
+    };
+    std::array<MatchPair, 128 * kMaxTracks> pairs {};
+    int npairs = 0;
+    for ( int k = 0; k < dets.n; ++k )
+    {
+        const Detection& d = dets.d[k];
+        if ( d.cls != 0 )
+            continue;
+        for ( int i = 0; i < kMaxTracks; ++i )
+        {
+            const Track& t = tracks_[i];
+            if ( t.life == TRACK_FREE || t.bw <= 0.0f || t.bh <= 0.0f )
+                continue;
+            const float rw = d.w / t.bw * 100.0f;
+            const float rh = d.h / t.bh * 100.0f;
+            if ( rw < static_cast<float>( kSizeMin ) || rw > static_cast<float>( kSizeMax ) ||
+                 rh < static_cast<float>( kSizeMin ) || rh > static_cast<float>( kSizeMax ) )
+                continue;
+            const float v = box_iou( d.x, d.y, d.w, d.h, t.fx.x - t.bw * 0.5f, t.fy.x - t.bh * 0.5f, t.bw, t.bh );
+            if ( v * 100.0f >= static_cast<float>( kIoUGate ) )
+                pairs[npairs++] = { k, i, v };
+        }
+    }
+    for ( int a = 1; a < npairs; ++a )
+    {
+        const MatchPair cur = pairs[a];
+        int b = a - 1;
+        while ( b >= 0 && pairs[b].iou < cur.iou )
+        {
+            pairs[b + 1] = pairs[b];
+            --b;
+        }
+        pairs[b + 1] = cur;
+    }
+    for ( int p = 0; p < npairs; ++p )
+    {
+        const int k = pairs[p].det;
+        const int i = pairs[p].trk;
+        if ( det_taken[k] || trk_taken[i] )
+            continue;
+        det_taken[k] = 1;
+        trk_taken[i] = 1;
+        const Detection& d = dets.d[k];
+        Track& t = tracks_[i];
+        measure( t, d.x + d.w * 0.5f, d.y + d.h * 0.5f, d.w, d.h, ts_us );
+        ++t.hits;
+        t.miss = 0;
+        if ( t.life == TRACK_TENT && t.hits >= kConfirmHits )
+            t.life = TRACK_CONF;
+    }
+}
+
 void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
 {
     // Dedupe: an unmatched detection overlapping an alive track beyond
@@ -163,68 +224,9 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
         t.ts_last_us = ts_us;
     }
 
-    // Global greedy association: collect all valid (det, track) pairs above
-    // kIoUGate and size-consistency bounds, sort by descending IoU, then
-    // assign greedily so an earlier detection cannot steal a track from a
-    // better-overlapping detection later in dets.
-    struct MatchPair
-    {
-        int det;
-        int trk;
-        float iou;
-    };
-    std::array<MatchPair, 128 * kMaxTracks> pairs {};
-    int npairs = 0;
-    for ( int k = 0; k < dets.n; ++k )
-    {
-        const Detection& d = dets.d[k];
-        if ( d.cls != 0 )
-            continue;
-        for ( int i = 0; i < kMaxTracks; ++i )
-        {
-            const Track& t = tracks_[i];
-            if ( t.life == TRACK_FREE || t.bw <= 0.0f || t.bh <= 0.0f )
-                continue;
-            const float rw = d.w / t.bw * 100.0f;
-            const float rh = d.h / t.bh * 100.0f;
-            if ( rw < static_cast<float>( kSizeMin ) || rw > static_cast<float>( kSizeMax ) ||
-                 rh < static_cast<float>( kSizeMin ) || rh > static_cast<float>( kSizeMax ) )
-                continue;
-            const float v = box_iou( d.x, d.y, d.w, d.h, t.fx.x - t.bw * 0.5f, t.fy.x - t.bh * 0.5f, t.bw, t.bh );
-            if ( v * 100.0f >= static_cast<float>( kIoUGate ) )
-                pairs[npairs++] = { k, i, v };
-        }
-    }
-    for ( int a = 1; a < npairs; ++a )
-    {
-        const MatchPair cur = pairs[a];
-        int b = a - 1;
-        while ( b >= 0 && pairs[b].iou < cur.iou )
-        {
-            pairs[b + 1] = pairs[b];
-            --b;
-        }
-        pairs[b + 1] = cur;
-    }
-
     std::array<unsigned char, 128> det_taken {};  // DetList capacity
     std::array<unsigned char, kMaxTracks> trk_taken {};
-    for ( int p = 0; p < npairs; ++p )
-    {
-        const int k = pairs[p].det;
-        const int i = pairs[p].trk;
-        if ( det_taken[k] || trk_taken[i] )
-            continue;
-        det_taken[k] = 1;
-        trk_taken[i] = 1;
-        const Detection& d = dets.d[k];
-        Track& t = tracks_[i];
-        measure( t, d.x + d.w * 0.5f, d.y + d.h * 0.5f, d.w, d.h, ts_us );
-        ++t.hits;
-        t.miss = 0;
-        if ( t.life == TRACK_TENT && t.hits >= kConfirmHits )
-            t.life = TRACK_CONF;
-    }
+    associate( dets, ts_us, det_taken, trk_taken );
 
     // Unmatched person detections spawn tentative tracks (slot space
     // permitting).

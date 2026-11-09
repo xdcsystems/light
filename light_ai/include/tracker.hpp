@@ -145,6 +145,9 @@ private:
     void kf_update( AxisKF& k, float z ) const;
     void predict( Track& t, float dt ) const;
     void measure( Track& t, float cx, float cy, float bw, float bh, int64_t ts_us );
+    void associate( const DetList& dets, int64_t ts_us,
+                    std::array<unsigned char, 128>& det_taken,
+                    std::array<unsigned char, kMaxTracks>& trk_taken );
     void spawn( float cx, float cy, float bw, float bh, int64_t ts_us );
 
 private:
