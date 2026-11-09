@@ -6,13 +6,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
-#include <arpa/inet.h>
-#include <cerrno>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <poll.h>
-#include <sys/socket.h>
-#include <sys/time.h>
 #include <unistd.h>
 #include <im2d.h>
 #include <rga.h>
@@ -380,11 +374,10 @@ void NetEncoder::serve()
     const std::string url = tcp_pull ? std::string() 
                                      : ( "udp://" + host_ + ':' + std::to_string( port_ ) + "?pkt_size=1316" );
 
-    int lfd = -1;
+    TcpPullServer tcp( port_, 2 * 1024 * 1024, 15 );
     if ( tcp_pull )
     {
-        lfd = open_tcp_listener( port_ );
-        if ( lfd < 0 )
+        if ( !tcp.listen() )
         {
             std::cerr << "enc: tcp listener bind failed on port " << port_ << '\n';
             error_.store( true );
@@ -401,7 +394,7 @@ void NetEncoder::serve()
         // Session body extracted (tidy: readability-function-size).
         // continue;/break; became return;: each failure path now falls
         // through to serve()'s trailing print + UDP backoff, same as before.
-        run_session( lfd, tcp_pull, url );
+        run_session( tcp, tcp_pull, url );
         if ( !quit_.load() )
         {
             std::cout << ( tcp_pull ? "enc: viewer gone, waiting for the next one" 
@@ -411,8 +404,6 @@ void NetEncoder::serve()
                 std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
         }
     }
-    if ( lfd >= 0 )
-        ::close( lfd );
 }
 
 // Batch C: the pipeline gates GPU box drawing on this (one call site:
@@ -762,26 +753,12 @@ void NetEncoder::Transport::close()
 {
     if ( tcp_pull )
     {
-        if ( pb )
-        {
-            av_freep( &pb->buffer );
-            avio_context_free( &pb );
-            iobuf = nullptr;
-        }
-        if ( iobuf )
-        {
-            av_free( iobuf );
-            iobuf = nullptr;
-        }
-        if ( cfd >= 0 )
-        {
-            ::close( cfd );
-            cfd = -1;
-        }
+        if ( tcp )
+            tcp->close_client();
     }
-    else if ( pb )
+    else if ( udp_pb )
     {
-        avio_closep( &pb );
+        avio_closep( &udp_pb );
     }
 }
 
@@ -801,37 +778,29 @@ NetEncoder::FcGuard::~FcGuard()
 // (poll the listener, accept, socket options, custom AVIO over the
 // fd) or UDP push (avio_open, no handshake). The sleep on the UDP
 // failure path stays here, exactly where it was in run_session().
-bool NetEncoder::open_transport( int lfd, const std::string& url, AVFormatContext* fc, Transport& t )
+bool NetEncoder::open_transport( const std::string& url, AVFormatContext* fc, Transport& t )
 {
     if ( t.tcp_pull )
     {
-        t.cfd = accept_tcp_client( lfd, quit_, 2 * 1024 * 1024, 15 );
-        if ( t.cfd < 0 )
+        if ( !t.tcp || !t.tcp->accept_client( quit_ ) )
             return false;
 
         std::cout << "enc: viewer connected (tcp)\n";
         force_idr_.store( true );  // next encoded frame must be an IDR
 
-        t.iobuf = static_cast<uint8_t*>( av_malloc( 32768 ) );
-        t.pb = t.iobuf ? avio_alloc_context( t.iobuf, 32768, 1, &t.cfd, nullptr, tcp_avio_write_cb, nullptr ) : nullptr;
-        if ( !t.pb )
-            return false;
-        fc->pb = t.pb;
-        fc->flags |= AVFMT_FLAG_CUSTOM_IO;
-
-        return true;
+        return t.tcp->attach_avio( fc );
     }
 
     // UDP: без рукопожатия и слушателя — сокет открывается один
     // раз, пакеты пушатся вне зависимости от зрителя.
-    const int ret = avio_open( &t.pb, url.c_str(), AVIO_FLAG_WRITE );
+    const int ret = avio_open( &t.udp_pb, url.c_str(), AVIO_FLAG_WRITE );
     if ( ret < 0 )
     {
         std::cerr << "enc: udp open failed: " << av_err_str( ret ) << '\n';
         std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
         return false;
     }
-    fc->pb = t.pb;
+    fc->pb = t.udp_pb;
     return true;
 }
 
@@ -897,7 +866,7 @@ bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, bool tcp_
 // is RAII (FcGuard + Transport destructor): every early
 // return below releases exactly what the former close_transport();
 // avformat_free_context() paths released, in the same order.
-void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
+void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::string& url )
 {
     AVFormatContext* raw = nullptr;
     if ( avformat_alloc_output_context2( &raw, nullptr, "mpegts", tcp_pull ? nullptr : url.c_str() ) < 0 || !raw )
@@ -919,8 +888,9 @@ void NetEncoder::run_session( int lfd, bool tcp_pull, const std::string& url )
     FcGuard fc { raw };
 
     Transport t;
+    t.tcp = &tcp;
     t.tcp_pull = tcp_pull;
-    if ( !open_transport( lfd, url, fc.p, t ) )
+    if ( !open_transport( url, fc.p, t ) )
         return;
 
     AVStream* st = nullptr;

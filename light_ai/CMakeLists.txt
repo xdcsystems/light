@@ -78,6 +78,7 @@ add_executable(light_ai
     src/rknn_engine.cpp
     src/yolo_postprocess.cpp
     src/pipeline.cpp
+    src/tcp_pull_server.cpp
     src/net_preview.cpp
     src/net_encoder.cpp
     src/tracker.cpp

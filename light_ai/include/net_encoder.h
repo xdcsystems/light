@@ -33,8 +33,9 @@
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
 
-#include "rga_resizer.h"      // LbGeom: band geometry arrives as one object
-#include "rkmpp_drm_pool.hpp" // RkmppDrmPool<kBufCount>: RAII pool sub-object
+#include "rga_resizer.h"       // LbGeom: band geometry arrives as one object
+#include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<kBufCount>: RAII pool sub-object
+#include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
 
 // Opaque ffmpeg types, forward-declared: the header compiles without
 // the libav* include paths, and the compiler checks the handle types
@@ -62,9 +63,8 @@ class NetEncoder
     // paths of run_session() free everything by scope exit.
     struct Transport
     {
-        AVIOContext* pb = nullptr;
-        uint8_t* iobuf = nullptr;
-        int cfd = -1;
+        TcpPullServer* tcp = nullptr;
+        AVIOContext* udp_pb = nullptr;
         bool tcp_pull = false;
 
         ~Transport();
@@ -116,11 +116,11 @@ private:
     // drain_queue() owns the wait/pop loop, mux_write() writes one
     // packet with the IDR-prepend logic; hdr_/hdr_logged_ stay members.
     void drain_queue( AVFormatContext* fc );
-    void run_session( int lfd, bool tcp_pull, const std::string& url );
+    void run_session( TcpPullServer& tcp, bool tcp_pull, const std::string& url );
 
     // Transport setup (accept + socket options / avio_open) and the
     // stream setup (new_stream + header + mpegts options).
-    bool open_transport( int lfd, const std::string& url, AVFormatContext* fc, Transport& t );
+    bool open_transport( const std::string& url, AVFormatContext* fc, Transport& t );
     bool setup_stream( AVFormatContext* fc, AVStream** st, bool tcp_pull );
 
     bool init_frames();

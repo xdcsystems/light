@@ -14,38 +14,27 @@ extern "C"
 
 #include "av_common.hpp"
 #include "net_preview.hpp"
+#include "tcp_pull_server.hpp"
 
 namespace
 {
-    struct TcpNutSession
+    struct NutSessionGuard
     {
-        int cfd = -1;
-        uint8_t* iobuf = nullptr;
-        AVIOContext* pb = nullptr;
+        TcpPullServer& tcp;
         AVFormatContext* fc = nullptr;
 
-        ~TcpNutSession()
+        ~NutSessionGuard()
         {
             if ( fc )
             {
                 fc->pb = nullptr;
                 avformat_free_context( fc );
             }
-            if ( pb )
-            {
-                av_freep( &pb->buffer );
-                avio_context_free( &pb );
-            }
-            else if ( iobuf )
-            {
-                av_free( iobuf );
-            }
-            if ( cfd >= 0 )
-                ::close( cfd );
+            tcp.close_client();
         }
-        TcpNutSession() = default;
-        TcpNutSession( const TcpNutSession& ) = delete;
-        TcpNutSession& operator=( const TcpNutSession& ) = delete;
+        explicit NutSessionGuard( TcpPullServer& s ) : tcp( s ) {}
+        NutSessionGuard( const NutSessionGuard& ) = delete;
+        NutSessionGuard& operator=( const NutSessionGuard& ) = delete;
     };
 }  // namespace
 
@@ -87,8 +76,8 @@ NetPreview::~NetPreview()
 
 void NetPreview::serve()
 {
-    const int lfd = open_tcp_listener( port_ );
-    if ( lfd < 0 )
+    TcpPullServer tcp( port_, 2 * 1024 * 1024, 5 );
+    if ( !tcp.listen() )
     {
         std::cerr << "net: tcp listener bind failed on port " << port_ << '\n';
         error_.store( true );
@@ -101,23 +90,17 @@ void NetPreview::serve()
     {
         error_.store( false );
 
-        TcpNutSession s;
-        s.cfd = accept_tcp_client( lfd, quit_, 2 * 1024 * 1024, 5 );
-        if ( s.cfd < 0 )
+        if ( !tcp.accept_client( quit_ ) )
             continue;
 
+        NutSessionGuard s( tcp );
         if ( avformat_alloc_output_context2( &s.fc, nullptr, "nut", nullptr ) < 0 || !s.fc )
         {
             std::cerr << "net: avformat_alloc_output_context2 failed\n";
             continue;
         }
-        s.iobuf = static_cast<uint8_t*>( av_malloc( 32768 ) );
-        s.pb = s.iobuf ? avio_alloc_context( s.iobuf, 32768, 1, &s.cfd, nullptr, tcp_avio_write_cb, nullptr )
-                       : nullptr;
-        if ( !s.pb )
+        if ( !tcp.attach_avio( s.fc ) )
             continue;
-        s.fc->pb = s.pb;
-        s.fc->flags |= AVFMT_FLAG_CUSTOM_IO;
 
         AVStream* st = avformat_new_stream( s.fc, nullptr );
         if ( !st )
@@ -179,7 +162,6 @@ void NetPreview::serve()
         if ( !quit_.load() )
             std::cout << "net: viewer gone, waiting for a new one\n";
     }
-    ::close( lfd );
 }
 
 void NetPreview::publish( const uint8_t* rgb )
