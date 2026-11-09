@@ -59,8 +59,6 @@ static_assert( offsetof( RKMPPPriv, mcfg ) == 40, "rkmpp priv layout drift" );
 
 namespace
 {
-    void noop_free( void*, uint8_t* ) {}
-
     // Deleter for PktPtr (net_encoder.hpp): av_packet_free unrefs
     // the packet and frees the struct. Its address is the per-instance
     // deleter value; PktPtr cannot be built without it (the one-arg
@@ -68,43 +66,6 @@ namespace
     void free_av_packet( AVPacket* p )
     {
         av_packet_free( &p );
-    }
-
-    // avio write callback over the accepted TCP socket.
-    int tcp_write_cb( void* opaque, const uint8_t* buf, int buf_size )
-    {
-        const int fd = *static_cast<int*>( opaque );
-        const ssize_t n = ::send( fd, buf, static_cast<size_t>( buf_size ), MSG_NOSIGNAL );
-        if ( n > 0 )
-            return static_cast<int>( n );
-        // Map the send failure: a peer-gone disconnect (EPIPE /
-        // ECONNRESET) and a stuck viewer (SO_SNDTIMEO hit ->
-        // EAGAIN/EWOULDBLOCK) are normal session events, not I/O
-        // faults; drain_queue() reports them as such.
-        if ( errno == EPIPE || errno == ECONNRESET )
-            return AVERROR( EPIPE );
-        if ( errno == EAGAIN || errno == EWOULDBLOCK )
-            return AVERROR( ETIMEDOUT );
-        return AVERROR( EIO );
-    }
-
-    int open_listener( int port )
-    {
-        const int fd = ::socket( AF_INET, SOCK_STREAM, 0 );
-        if ( fd < 0 )
-            return -1;
-        int one = 1;
-        ::setsockopt( fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof( one ) );
-        sockaddr_in addr {};
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl( INADDR_ANY );
-        addr.sin_port = htons( static_cast<uint16_t>( port ) );
-        if ( ::bind( fd, reinterpret_cast<sockaddr*>( &addr ), sizeof( addr ) ) < 0 || ::listen( fd, 1 ) < 0 )
-        {
-            ::close( fd );
-            return -1;
-        }
-        return fd;
     }
 
     bool is_idr( const AVPacket* q )
@@ -422,7 +383,7 @@ void NetEncoder::serve()
     int lfd = -1;
     if ( tcp_pull )
     {
-        lfd = open_listener( port_ );
+        lfd = open_tcp_listener( port_ );
         if ( lfd < 0 )
         {
             std::cerr << "enc: tcp listener bind failed on port " << port_ << '\n';
@@ -579,7 +540,7 @@ bool NetEncoder::init_frames()
         fr->height = h_;
         fr->data[0] = reinterpret_cast<uint8_t*>( &desc );
         fr->buf[0] = av_buffer_create(
-            reinterpret_cast<uint8_t*>( &desc ), sizeof( desc ), noop_free, nullptr, 0 );
+            reinterpret_cast<uint8_t*>( &desc ), sizeof( desc ), av_noop_free, nullptr, 0 );
         if ( !fr->buf[0] )
             return false;
     }
@@ -844,33 +805,15 @@ bool NetEncoder::open_transport( int lfd, const std::string& url, AVFormatContex
 {
     if ( t.tcp_pull )
     {
-        // Ждём зрителя; poll не даёт циклу крутиться вхолостую и не
-        // блокирует выход по quit_.
-        pollfd pf {};
-        pf.fd = lfd;
-        pf.events = POLLIN;
-
-        while ( !quit_.load() && ::poll( &pf, 1, 200 ) <= 0 )
-        {}
-
-        if ( quit_.load() )
-            return false;
-
-        t.cfd = ::accept4( lfd, nullptr, nullptr, SOCK_CLOEXEC );
+        t.cfd = accept_tcp_client( lfd, quit_, 2 * 1024 * 1024, 15 );
         if ( t.cfd < 0 )
             return false;
 
-        int one = 1;
-        ::setsockopt( t.cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );
-        const int sndbuf = 2 * 1024 * 1024;  // ~10 s of jitter buffering at 1500 kbps
-        ::setsockopt( t.cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof( sndbuf ) );
-        const timeval tv { 15, 0 };  // dead viewer eventually releases the socket; live jitter is absorbed by sndbuf
-        ::setsockopt( t.cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
         std::cout << "enc: viewer connected (tcp)\n";
         force_idr_.store( true );  // next encoded frame must be an IDR
 
         t.iobuf = static_cast<uint8_t*>( av_malloc( 32768 ) );
-        t.pb = t.iobuf ? avio_alloc_context( t.iobuf, 32768, 1, &t.cfd, nullptr, tcp_write_cb, nullptr ) : nullptr;
+        t.pb = t.iobuf ? avio_alloc_context( t.iobuf, 32768, 1, &t.cfd, nullptr, tcp_avio_write_cb, nullptr ) : nullptr;
         if ( !t.pb )
             return false;
         fc->pb = t.pb;

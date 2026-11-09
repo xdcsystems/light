@@ -1,32 +1,53 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
-#include <sstream>
 #include <stdexcept>
 
 extern "C"
 {
-#include <libavformat/avformat.h>
 #include <libavcodec/codec_par.h>
+#include <libavformat/avformat.h>
 #include <libavutil/error.h>
+#include <libavutil/mem.h>
 #include <libavutil/pixfmt.h>
 }
 
-#include "net_preview.hpp"
 #include "av_common.hpp"
+#include "net_preview.hpp"
 
 namespace
 {
-    // The packet references the NPU tensor memory; unref must never free it.
-    void noop_free( void*, uint8_t* ) {}
+    struct TcpNutSession
+    {
+        int cfd = -1;
+        uint8_t* iobuf = nullptr;
+        AVIOContext* pb = nullptr;
+        AVFormatContext* fc = nullptr;
 
-    // ffmpeg AVIO interrupt callback (statics rule): file-local free
-    // function; the opaque context carries the quit flag pointer, not
-    // the object, so no private access is needed.
-    int preview_interrupt_cb( void* arg ) { 
-        return static_cast<std::atomic<bool>*>( arg )->load() ? 1 : 0; 
-    }
-}  // anonymous namespace
+        ~TcpNutSession()
+        {
+            if ( fc )
+            {
+                fc->pb = nullptr;
+                avformat_free_context( fc );
+            }
+            if ( pb )
+            {
+                av_freep( &pb->buffer );
+                avio_context_free( &pb );
+            }
+            else if ( iobuf )
+            {
+                av_free( iobuf );
+            }
+            if ( cfd >= 0 )
+                ::close( cfd );
+        }
+        TcpNutSession() = default;
+        TcpNutSession( const TcpNutSession& ) = delete;
+        TcpNutSession& operator=( const TcpNutSession& ) = delete;
+    };
+}  // namespace
 
 NetPreview::NetPreview( int w, int h, int stride, int fps, int port )
   : w_( w ), h_( h ), stride_( stride ), fps_( fps > 0 ? fps : 25 ), port_( port )
@@ -60,72 +81,53 @@ NetPreview::~NetPreview()
     if ( thread_.joinable() )
         thread_.join();
     if ( pkt_ )
-    {
-        AVPacket* pkt = static_cast<AVPacket*>( pkt_ );
-        av_packet_free( &pkt );
-        pkt_ = nullptr;
-    }
+        av_packet_free( &pkt_ );
     avformat_network_deinit();
 }
 
 void NetPreview::serve()
 {
-    std::ostringstream os;
-    os << "tcp://0.0.0.0:" << port_;
-    const std::string url = os.str();
+    const int lfd = open_tcp_listener( port_ );
+    if ( lfd < 0 )
+    {
+        std::cerr << "net: tcp listener bind failed on port " << port_ << '\n';
+        error_.store( true );
+        return;
+    }
+    std::cout << "net: listening on tcp port " << port_
+              << " (viewer: ffplay tcp://<board-ip>:" << port_ << ")\n";
 
     while ( !quit_.load() )
     {
         error_.store( false );
 
-        AVFormatContext* fc = nullptr;
-        if ( avformat_alloc_output_context2( &fc, nullptr, "nut", url.c_str() ) < 0 || !fc )
+        TcpNutSession s;
+        s.cfd = accept_tcp_client( lfd, quit_, 2 * 1024 * 1024, 5 );
+        if ( s.cfd < 0 )
+            continue;
+
+        if ( avformat_alloc_output_context2( &s.fc, nullptr, "nut", nullptr ) < 0 || !s.fc )
         {
             std::cerr << "net: avformat_alloc_output_context2 failed\n";
-            std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
             continue;
         }
-
-        AVDictionary* opts = nullptr;
-        av_dict_set( &opts, "listen", "1", 0 );
-        // Match the documented contract: a stalled viewer must not stall
-        // the pipeline. 5 s in microseconds; also bounds the blocking
-        // accept — a failed open just retries in 500 ms.
-        av_dict_set( &opts, "rw_timeout", "5000000", 0 );
-        AVIOInterruptCB cb = { &preview_interrupt_cb, &quit_ };
-        AVIOContext* pb = nullptr;
-        // Blocks here until a viewer connects (or the interrupt fires on quit).
-        const int ret = avio_open2( &pb, url.c_str(), AVIO_FLAG_WRITE, &cb, &opts );
-        av_dict_free( &opts );
-        if ( ret < 0 )
-        {
-            std::cerr << "net: waiting for viewer: " << av_err_str( ret ) << '\n';
-            avformat_free_context( fc );
-            if ( quit_.load() )
-                break;
-            std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
+        s.iobuf = static_cast<uint8_t*>( av_malloc( 32768 ) );
+        s.pb = s.iobuf ? avio_alloc_context( s.iobuf, 32768, 1, &s.cfd, nullptr, tcp_avio_write_cb, nullptr )
+                       : nullptr;
+        if ( !s.pb )
             continue;
-        }
-        fc->pb = pb;
+        s.fc->pb = s.pb;
+        s.fc->flags |= AVFMT_FLAG_CUSTOM_IO;
 
-        AVStream* st = avformat_new_stream( fc, nullptr );
+        AVStream* st = avformat_new_stream( s.fc, nullptr );
         if ( !st )
-        {
-            avio_closep( &pb );
-            avformat_free_context( fc );
             continue;
-        }
-        // Newer libavformat branches do not allocate codecpar inside
-        // avformat_new_stream: it must be allocated explicitly. It stays
-        // owned by the stream (avformat_free_context frees it).
         if ( !st->codecpar )
         {
             st->codecpar = avcodec_parameters_alloc();
             if ( !st->codecpar )
             {
                 std::cerr << "net: avcodec_parameters_alloc failed\n";
-                avio_closep( &pb );
-                avformat_free_context( fc );
                 continue;
             }
         }
@@ -136,29 +138,15 @@ void NetPreview::serve()
         st->codecpar->height = h_;
         st->time_base = AVRational { 1, fps_ };
         st->avg_frame_rate = AVRational { fps_, 1 };
-        // NUT requires an explicit fourcc for rawvideo: "RGB[24]" is the
-        // canonical NUT tag for raw rgb24 (0x18424752). Without it the
-        // muxer rejects write_header with "No codec tag defined".
         st->codecpar->codec_tag = MKTAG( 'R', 'G', 'B', 24 );
 
-        // Diagnostic: the tag must show 0x18424752 (RGB[24]). If it shows
-        // 0 here, we are running a stale binary or the tag got wiped.
         std::cout << "net: write_header attempt, codec_tag=0x" << std::hex << st->codecpar->codec_tag << std::dec << "\n";
-        int ret2 = avformat_write_header( fc, nullptr );
+        const int ret2 = avformat_write_header( s.fc, nullptr );
         if ( ret2 < 0 )
         {
             std::cerr << "net: write_header failed: " << av_err_str( ret2 ) << '\n';
-            avio_closep( &pb );
-            avformat_free_context( fc );
-            if ( quit_.load() )
-                break;
-            std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
             continue;
         }
-        // avformat_write_header may rewrite st->time_base (the NUT muxer
-        // picks its own, e.g. 1/25 -> 1/51200). All pts written afterwards
-        // must be expressed in the NEW time base, otherwise the viewer sees
-        // the whole stream compressed into milliseconds and freezes.
         const AVRational tb = st->time_base;
         int64_t step = av_rescale_q( 1, AVRational { 1, fps_ }, tb );
         if ( step < 1 )
@@ -168,14 +156,13 @@ void NetPreview::serve()
 
         {
             std::lock_guard<std::mutex> lk( mx_ );
-            fc_ = fc;
+            fc_ = s.fc;
             stream_ = st;
             frame_step_ = static_cast<uint64_t>( step );
             pts_ = 0;
         }
         connected_.store( true, std::memory_order_release );
 
-        // Idle until the publisher signals error or the pipeline quits.
         {
             std::unique_lock<std::mutex> lk( mx_ );
             cv_.wait( lk, [this] {
@@ -188,47 +175,42 @@ void NetPreview::serve()
             fc_ = nullptr;
             stream_ = nullptr;
         }
-        av_write_trailer( fc );  // best effort; on a dead link it just fails
-        avio_closep( &pb );
-        avformat_free_context( fc );
+        av_write_trailer( s.fc );
         if ( !quit_.load() )
             std::cout << "net: viewer gone, waiting for a new one\n";
     }
+    ::close( lfd );
 }
 
 void NetPreview::publish( const uint8_t* rgb )
 {
     if ( !connected_.load( std::memory_order_acquire ) )
         return;
-    std::lock_guard<std::mutex> lk( mx_ );  // held for the write: protects fc_
+    std::lock_guard<std::mutex> lk( mx_ );
     if ( !fc_ || quit_.load() )
         return;
-    auto* fc = static_cast<AVFormatContext*>( fc_ );
-    auto* st = static_cast<AVStream*>( stream_ );
-    auto* p = static_cast<AVPacket*>( pkt_ );
 
-    // Zero-copy: data points into the NPU input tensor (dma-buf).
-    AVBufferRef* ref = av_buffer_create( const_cast<uint8_t*>( rgb ), stride_ * h_, noop_free, nullptr, 0 ); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+    AVBufferRef* ref = av_buffer_create( const_cast<uint8_t*>( rgb ), stride_ * h_, av_noop_free, nullptr, 0 ); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     if ( !ref )
         return;
-    p->buf = ref;  // packet takes over the reference
-    p->data = ref->data;
-    p->size = stride_ * h_;
-    p->stream_index = st->index;
-    p->pts = p->dts = static_cast<int64_t>( pts_ * frame_step_ );
-    p->duration = frame_step_;  // one frame, in the muxer's time base
-    p->flags |= AV_PKT_FLAG_KEY;
+    pkt_->buf = ref;
+    pkt_->data = ref->data;
+    pkt_->size = stride_ * h_;
+    pkt_->stream_index = stream_->index;
+    pkt_->pts = pkt_->dts = static_cast<int64_t>( pts_ * frame_step_ );
+    pkt_->duration = frame_step_;
+    pkt_->flags |= AV_PKT_FLAG_KEY;
     ++pts_;
 
-    const int ret = av_write_frame( fc, p );
-    av_packet_unref( p );  // drops the buffer ref (no-op free), tensor intact
+    const int ret = av_write_frame( fc_, pkt_ );
+    av_packet_unref( pkt_ );
     if ( ret < 0 )
     {
         std::cerr << "net: write failed: " << av_err_str( ret ) << '\n';
         error_.store( true );
         connected_.store( false, std::memory_order_release );
-        cv_.notify_all();  // serve() closes and waits for a new viewer
+        cv_.notify_all();
         return;
     }
-    avio_flush( fc->pb );  // push the frame out immediately (low latency)
+    avio_flush( fc_->pb );
 }
