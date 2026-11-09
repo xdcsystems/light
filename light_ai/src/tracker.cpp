@@ -196,13 +196,15 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
                 best = i;
             }
         }
-        // Association gate (2026-11-07): kIoUGate (30), as documented in
-        // the header contract. The code used to test kSpawnDedupeGate
-        // (15) here -- kIoUGate had no other reader, so association ran
-        // at half the documented threshold (comment/code desync). The
-        // spawn dedupe keeps its laxer half-gate: its job is to catch
+
+        // Association gate: kIoUGate (30), as documented in the header contract.
+        // The code used to test kSpawnDedupeGate (15) here -- kIoUGate had no
+        // other reader, so association ran at half the documented threshold
+        // (comment/code desync).
+        // The spawn dedupe keeps its laxer half-gate: its job is to catch
         // duplicates that failed a stricter gate (size gate on partial
         // boxes, edge IoU jitter), not to redefine the match threshold.
+        
         if ( best >= 0 && best_iou * 100.0f >= static_cast<float>( kIoUGate ) )
         {
             trk_taken[best] = 1;

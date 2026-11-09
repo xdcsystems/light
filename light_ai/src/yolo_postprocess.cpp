@@ -202,18 +202,17 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
     }
 
     // Fresh frame: out is a preallocated pipeline member (DetList), it
-    // is never reconstructed between calls — clear it at entry. Without
-    // this, detections from previous frames accumulate until the 128
-    // cap saturates and the visible box set freezes (regression from
-    // 7c99906, caught live on 2026-10-27).
+    // is never reconstructed between calls — clear it at entry.
+    // Without this, detections from previous frames accumulate until the 128
+    // cap saturates and the visible box set freezes
     out.clear();
 
     std::array<Box, kMaxCand> cand{};
     int nc = 0;
 
     // Axial mapping: scene = (det - band origin) * cam / band size.
-    // Landscape: the band fills the tensor width (lb_left = 0, lb_w =
-    // model_w) — identical to the legacy uniform-by-width mapping.
+    // Landscape: the band fills the tensor width (lb_left = 0, lb_w = model_w)
+    // - identical to the legacy uniform-by-width mapping.
     // Portrait: the band fills the tensor height; the axes scale
     // separately (both are cam/lb for a uniform fit).
     const float sx = cam_w / lb_w;

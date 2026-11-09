@@ -22,21 +22,14 @@ public:
     // w/h come from the active source (camera G_FMT or network JPEG SOF):
     // the pre-allocated output buffer matches the actual stream size.
     MppDecoder() = default;
-    MppDecoder( int w, int h );
     ~MppDecoder();
+    MppDecoder( const MppDecoder& ) = delete;
+    MppDecoder& operator=( const MppDecoder& ) = delete;
 
     int init( int w, int h );
 
     int decode( const uint8_t* data, size_t size );
 
-    // Phase boundaries of decode(): the input packet lifetime is owned
-    // by exactly one phase at a time --
-    // validation + packet creation, hand-off to the decoder,
-    // retrieval of the decoded frame.
-    // The negative return codes of decode() come from the failing phase.
-    int make_packet( const uint8_t* data, size_t size );
-    int submit_input();
-    int retrieve_output();
     // Extra dma-buf from the same DRM pool: intermediate buffer for
     // multi-pass RGA when the scale ratio exceeds the RGA3 limit (1/8).
     int aux_fd( size_t bytes );  // returns fd or -1; buffer lives until dtor
@@ -49,6 +42,16 @@ public:
     MppFrameFormat out_fmt() const { return out_fmt_; }
 
 private:
+    // Phase boundaries of decode(): the input packet lifetime is owned
+    // by exactly one phase at a time --
+    // validation + packet creation, hand-off to the decoder,
+    // retrieval of the decoded frame.
+    // The negative return codes of decode() come from the failing phase.
+    int make_packet( const uint8_t* data, size_t size );
+    int submit_input();
+    int retrieve_output();
+    void reset_and_strip();
+
     // Packet teardown mechanics. Deinit is legal only at points where
     // the decoder provably holds no reference --
     // each call site in decode() carries the reasoning in its comment.

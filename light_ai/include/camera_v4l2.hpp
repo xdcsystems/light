@@ -25,6 +25,8 @@ class CameraV4L2
 public:
     CameraV4L2() = default;
     ~CameraV4L2();
+    CameraV4L2( const CameraV4L2& ) = delete;
+    CameraV4L2& operator=( const CameraV4L2& ) = delete;
 
     // Full open+verify path for a node:
     // open, S_FMT, G_FMT verification, REQBUFS, mmap, QBUF.

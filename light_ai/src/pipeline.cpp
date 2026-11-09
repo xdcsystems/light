@@ -25,16 +25,15 @@ namespace
         return std::chrono::duration<double, std::milli>( b - a ).count(); 
     }
 
-    // M3.7 CPU baseline: 1-px outlines straight into the NPU tensor (RGB888).
+    // CPU baseline: 1-px outlines straight into the NPU tensor (RGB888).
     // The caller pre-maps boxes to tensor coordinates — the same geometry as the GPU path;
     // colors come from the box itself. Used when the GPU drawer
     // is unavailable, or forced by --cpu-draw (A/B baseline).
-    // Geometry parity with the GPU path (2026-11-07): fully off-screen and
+    // Geometry parity with the GPU path: fully off-screen and
     // degenerate (< 1 px) boxes are skipped, like the GPU viewport /
     // discard, and the pixel span uses floor/ceil like the rasterizer.
-    // Porter-Duff alpha (2026-11-07): the per-box alpha blends over the
-    // existing tensor pixels; a == 255 stays an opaque write, so the
-    // detection outlines render byte-identical to the old code.
+    // Porter-Duff alpha: the per-box alpha blends over the
+    // existing tensor pixels; a == 255 stays an opaque write.
 
     void draw_boxes_cpu( uint8_t* rgb, int w, int h, int stride, const GpuBox* boxes, int n )
     {
@@ -165,7 +164,7 @@ Pipeline::Pipeline( const Config& cfg )
             throw std::runtime_error( "pipeline: cannot create dataset/: " + ec.message() );
     }
 
-    // M4: bind slots to engines, then start the worker threads — the unified
+    // bind slots to engines, then start the worker threads — the unified
     // path routes every frame through the slot ring; with pool 1 the single
     // worker is woken by dispatch and publish waits on it.
     for ( int k = 0; k < npool_; ++k )
@@ -173,12 +172,12 @@ Pipeline::Pipeline( const Config& cfg )
 
     // No throwing steps below this line: once workers_ are started, the
     // dtor takes over shutdown (quit_ -> notify -> join) and the ctor
-    // must not leave the object half-initialized after them. The source
-    // start below used to violate this: it throws on a failed STREAMON,
+    // must not leave the object half-initialized after them.
+    // The source start below used to violate this: it throws on a failed STREAMON,
     // and unwinding past started workers_ would destroy the joinable
-    // threads (std::terminate). Guarded (2026-11-07): the exception is
-    // caught, the source retries the full reconnect path, and nothing
-    // propagates past this point.
+    // threads (std::terminate).
+    // Guarded: the exception is caught, the source retries the full reconnect
+    // path, and nothing propagates past this point.
     for ( int k = 0; k < npool_; ++k )
         workers_.emplace_back( [this, k] { worker_loop( k ); } );
 

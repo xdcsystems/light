@@ -591,10 +591,9 @@ void GpuBoxDrawer::done()
         eglTerminate( st_.dpy );
         st_.dpy = EGL_NO_DISPLAY;
     }
-    // GBM device outlives EGL on its fd: destroy it first, then close
-    // the fd, then drop the dlopen handle. All three were leaked by the
-    // old code on every done() (audit 2026-10-27). Unconditional: init
-    // may fail after dlopen/dlopen+open, and those handles must go too.
+    // GBM device outlives EGL on its fd: destroy it first, then close the fd,
+    // then drop the dlopen handle. All three were leaked by the old code on every done()
+    // Unconditional: init may fail after dlopen/dlopen+open, and those handles must go too.
     if ( st_.dl_gbm )
     {
         typedef void ( *P_gbm_destroy_device )( void * );
