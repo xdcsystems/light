@@ -141,7 +141,7 @@ refer to README.md sections (../README.md).
       (plan fixed 2026-10-30). Quality-first framing: lighter models
       (yolov5n, 512x512) REJECTED by owner decision — see the 960p
       section; one model = one NPU core (Platform constraints), so
-      FPS work is frozen at ~20 FPS source-bound. Steps:
+      FPS work is frozen at ~ 20 FPS source-bound. Steps:
       (a) DONE 2026-10-30: fresh dump from the 960p pipeline
       (--cal 100 --cal-interval 15, ~ 120 MB on /tmp, now
       dataset_day3) -> re-quant via the model-zoo convert.py with
