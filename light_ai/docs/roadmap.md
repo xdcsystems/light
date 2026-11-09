@@ -143,7 +143,7 @@ refer to README.md sections (../README.md).
       section; one model = one NPU core (Platform constraints), so
       FPS work is frozen at ~20 FPS source-bound. Steps:
       (a) DONE 2026-10-30: fresh dump from the 960p pipeline
-      (--cal 100 --cal-interval 15, ~120 MB on /tmp, now
+      (--cal 100 --cal-interval 15, ~ 120 MB on /tmp, now
       dataset_day3) -> re-quant via the model-zoo convert.py with
       mmse -> yolov5s_relu_int8_v4.rknn (48 min Colab — see INT8
       build history);
