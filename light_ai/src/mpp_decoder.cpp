@@ -6,6 +6,8 @@
 
 #include "mpp_decoder.hpp"
 
+#include "jpeg_probe.hpp"
+
 
 int MppDecoder::init( int w, int h )
 {
@@ -187,70 +189,25 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
         return -1;
     }
 
-    // Chroma-layout detection from the JPEG SOF marker. The MPP MJPEG
-    // decoder follows the stream's subsampling (4:2:0 -> 420SP, 4:2:2 ->
-    // 422SP) and ignores the fmt pre-set on the user frame (the
-    // green-bottom A/B). The RGA read side must match the actual layout,
-    // so parse SOFn here: max vertical sampling factor 2 -> 420SP,
-    // otherwise 422SP. Scan is bounded (first 2 KiB) and any parsing
-    // doubt keeps the previous value.
+    // Chroma-layout detection from the JPEG SOF marker, now via the shared
+    // structural probe (jpeg_probe.hpp). The MPP MJPEG decoder follows the
+    // stream subsampling (4:2:0 -> 420SP, 4:2:2 -> 422SP) and ignores the
+    // fmt pre-set on the user frame (the green-bottom A/B); the RGA read
+    // side must match. The probe walks markers up to SOS — a stricter check
+    // than the old 2 KiB scan; any parsing doubt keeps the previous value.
     {
-        uint8_t v_max = 0;
-        uint8_t v_min = 0xFF;
-        const size_t scan_lim = size < 2048 ? size : 2048;
-        for ( size_t i = 2; i + 4 <= scan_lim; )
+        JpegSofInfo info {};
+        if ( probe_jpeg_sof( data, size, info ) )
         {
-            if ( data[i] != 0xFF )
+            const MppFrameFormat want = info.yuv420 ? MPP_FMT_YUV420SP : MPP_FMT_YUV422SP;
+            if ( want != out_fmt_ )
             {
-                ++i;
-                continue;
+                out_fmt_ = want;
+                std::cerr << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( want == MPP_FMT_YUV420SP ? "0" : "2" )
+                          << " -> out fmt " << ( out_fmt_ == MPP_FMT_YUV420SP ? "420SP" : "422SP" ) << '\n';
             }
-            const uint8_t m = data[i + 1];
-            if ( m == 0xFF )
-            {
-                ++i;
-                continue;
-            }
-            if ( m == 0xD9 || m == 0xDA )
-                break;
-            if ( m == 0x01 || ( m >= 0xD0 && m <= 0xD8 ) )
-            {
-                i += 2;
-                continue;
-            }
-            const uint16_t len = ( static_cast<uint16_t>( data[i + 2] ) << 8 ) | data[i + 3];
-            const size_t seg_end = i + 2 + len;
-            if ( len < 2 || seg_end > size )
-                break;
-            if ( m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC )
-            {
-                // SOFn: precision(1) height(2) width(2) ncomp(1),
-                // then per component: id(1), h/v packed(1), tq(1).
-                // SOFn table starts at i+10: id(1), packed h/v at i+11 + 3*c, tq(1);
-                // V is the LOW nibble.
-                const uint8_t ncomp = i + 10 <= seg_end ? data[i + 9] : 0;
-                for ( int c = 0; c < ncomp && i + 10 + static_cast<size_t>( c ) * 3 + 2 < seg_end; ++c )
-                {
-                    const uint8_t hv = data[i + 11 + static_cast<size_t>( c ) * 3];
-                    const uint8_t v = hv & 0x0F;
-                    if ( v > v_max )
-                        v_max = v;
-                    if ( v > 0 && v < v_min )
-                        v_min = v;
-                }
-                break;
-            }
-            i = seg_end;
-        }
-        const MppFrameFormat want = ( v_max >= 2 && v_min == 1 ) ? MPP_FMT_YUV420SP : MPP_FMT_YUV422SP;
-        if ( v_max && want != out_fmt_ )
-        {
-            out_fmt_ = want;
-            std::cerr << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( want == MPP_FMT_YUV420SP ? "0" : "2" )
-                      << " -> out fmt " << ( out_fmt_ == MPP_FMT_YUV420SP ? "420SP" : "422SP" ) << '\n';
         }
     }
-
     // Defensive deinit: on every normal return path below the packet is
     // already deinit'ed - its lifetime is tied to the output dequeue (see
     // the notes at each return). This block only catches paths where the

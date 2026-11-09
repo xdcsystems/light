@@ -16,51 +16,54 @@ class RknnEngine;
 // Depth 3 == the maximum NPU pool size.
 struct PubFifo
 {
+    // The defensive guards are the point of the design: the depth-3
+    // invariant ("in the fifo live exactly the slots with st != FREE;
+    // at most kMaxSlots of them") lives in comments across three
+    // functions -- one refactor away from a silent corruption
+    // (push would overwrite slots_[head_] and inflate n_ past front/pop
+    // coherence), so violations get a loud log, never silent damage.
+
     void push( int s )
     {
-        // Defensive guard: 
-        // the depth-3 invariant ("in pub_ live exactly the slots with st != FREE;
-        // at most npool_ <= 3 of them") lives in comments across three functions 
-        // -- one refactor away from a silent corruption
-        // (push would overwrite slots[head] and inflate n past front/pop coherence),
-        // so the violation gets a loud log.
-
-        if ( n >= 3 )
+        if ( n_ >= kMaxSlots )
         {
-            std::cerr << "pubfifo: overflow (n=" << n << ", head=" << head << "), "
+            std::cerr << "pubfifo: overflow (n=" << n_ << ", head=" << head_ << "), "
                       << "incoming slot " << s << " dropped\n";
             return;
         }
-        slots[( head + n ) % 3] = s;
-        ++n;
+        slots_[( head_ + n_ ) % kMaxSlots] = s;
+        ++n_;
     }
     int front() const
     {
-        if ( n <= 0 )
+        if ( n_ <= 0 )
         {
-            std::cerr << "pubfifo: empty (n=" << n << ", head=" << head << "), front invalid\n";
+            std::cerr << "pubfifo: empty (n=" << n_ << ", head=" << head_ << "), front invalid\n";
             return 0;
         }
-        return slots[head];
+        return slots_[head_];
     }
     void pop()
     {
-        // Underflow guard: a stray pop() must never drive n negative --
-        // slots[(head + n) % 3] with n < 0 is a negative index (UB).
+        // Underflow guard: a stray pop() must never drive n_ negative --
+        // slots_[(head_ + n_) % kMaxSlots] with n_ < 0 is a negative index (UB).
         // Mirrors the overflow guard in push(): loud log, no corruption.
-        if ( n <= 0 )
+        if ( n_ <= 0 )
         {
-            std::cerr << "pubfifo: underflow (n=" << n << ", head=" << head << "), pop refused\n";
+            std::cerr << "pubfifo: underflow (n=" << n_ << ", head=" << head_ << "), pop refused\n";
             return;
         }
-        head = ( head + 1 ) % 3;
-        --n;
+        head_ = ( head_ + 1 ) % kMaxSlots;
+        --n_;
     }
+    bool empty() const { return n_ == 0; }
+    int size() const { return n_; }
 
-public:
-    int slots[3] = {};
-    int head = 0;
-    int n = 0;
+private:
+    enum { kMaxSlots = 3 };
+    int slots_[kMaxSlots] {};
+    int head_ = 0;
+    int n_ = 0;
 };
 
 // Unlike PubFifo above, Slot is NOT single-threaded: the mutex/cv pair

@@ -5,8 +5,8 @@
 #include <atomic>
 #include <cstdint>
 
-typedef struct AVFormatContext AVFormatContext;
-typedef struct AVIOContext AVIOContext;
+struct AVFormatContext;
+struct AVIOContext;
 
 class TcpPullServer
 {

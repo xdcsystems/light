@@ -489,7 +489,7 @@ int Pipeline::run()
         // legacy synchronous semantics. pool 3 keeps publish-before-reuse.
         const double cam_ms = ms( t0, t1 );
         const double dec_ms = ms( t1, t2 );
-        if ( pub_.n == npool_ )
+        if ( pub_.size() == npool_ )
             ok += publish_oldest();
         const int slot = acquire_slot( ok );
         if ( slot < 0 )
@@ -504,7 +504,7 @@ int Pipeline::run()
         std::cout << "stop: signal received, draining and flushing...\n";
 
     // M4: drain the ring — publish whatever the workers already finished.
-    while ( pub_.n > 0 )
+    while ( !pub_.empty() )
         ok += publish_oldest();
 
     const double wall = std::chrono::duration<double>( clk::now() - t_start ).count();
@@ -602,7 +602,7 @@ int Pipeline::acquire_slot( int& ok )
             std::cerr << "pipeline: all " << npool_ << " slots in flight, waiting for a worker to release one\n";
             starved_warned = true;
         }
-        if ( pub_.n > 0 )
+        if ( !pub_.empty() )
             ok += publish_oldest();
         else
             std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
@@ -852,7 +852,7 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
 
 void Pipeline::pool_discard()
 {
-    while ( pub_.n > 0 )
+    while ( !pub_.empty() )
     {
         Slot& sl = slots_[pub_.front()];
         std::unique_lock<std::mutex> lk( sl.mx );

@@ -6,6 +6,7 @@
 #include "yolo_postprocess.hpp"
 #include "rga_resizer.h"
 #include "rknn_engine.hpp"
+#include "box_math.hpp"
 
 namespace
 {
@@ -60,17 +61,9 @@ namespace
 
     inline float iou( const Box& a, const Box& b )
     {
-        const float ix1 = std::max( a.x1, b.x1 );
-        const float iy1 = std::max( a.y1, b.y1 );
-        const float ix2 = std::min( a.x2, b.x2 );
-        const float iy2 = std::min( a.y2, b.y2 );
-        const float iw = std::max( 0.0f, ix2 - ix1 );
-        const float ih = std::max( 0.0f, iy2 - iy1 );
-        const float inter = iw * ih;
-        const float area_a = ( a.x2 - a.x1 ) * ( a.y2 - a.y1 );
-        const float area_b = ( b.x2 - b.x1 ) * ( b.y2 - b.y1 );
-        // +1e-6f: both degenerate zero-area boxes must not crash the NMS.
-        return inter / ( area_a + area_b - inter + 1e-6f );
+        // Corner-based NMS candidates: the shared corner IoU (box_math.hpp),
+        // the +1e-6f degenerate-union guard moved there.
+        return box_iou_corners( a.x1, a.y1, a.x2, a.y2, b.x1, b.y1, b.x2, b.y2 );
     }
 
     // Candidate buffer on the stack: fixed capacity, no heap. The early

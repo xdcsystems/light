@@ -2,26 +2,7 @@
 #include <cmath>
 
 #include "tracker.hpp"
-
-namespace {
-
-// Axis-aligned IoU of two boxes (x, y = top-left corner, w/h sizes).
-float box_iou( float ax, float ay, float aw, float ah, float bx, float by, float bw, float bh )
-{
-    const float x0 = ax > bx ? ax : bx;
-    const float y0 = ay > by ? ay : by;
-    const float x1 = ( ax + aw ) < ( bx + bw ) ? ( ax + aw ) : ( bx + bw );
-    const float y1 = ( ay + ah ) < ( by + bh ) ? ( ay + ah ) : ( by + bh );
-    const float iw = x1 - x0;
-    const float ih = y1 - y0;
-    if ( iw <= 0.0f || ih <= 0.0f )
-        return 0.0f;
-    const float inter = iw * ih;
-    const float uni = aw * ah + bw * bh - inter;
-    return uni > 0.0f ? inter / uni : 0.0f;
-}
-
-}  // namespace
+#include "box_math.hpp"
 
 void Tracker::reset()
 {

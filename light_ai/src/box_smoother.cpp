@@ -2,6 +2,7 @@
 #include <iostream>   // set_log failure note
 
 #include "box_smoother.h"
+#include "box_math.hpp"
 
 void BoxSmoother::set_log( const std::string& path )
 {
@@ -120,18 +121,7 @@ void BoxSmoother::log_frame( int frame, const DetList& raw, const DetList& smoot
 
 float BoxSmoother::iou( const BoxTrack& t, const Detection& d ) const
 {
-    const float x0 = t.x > d.x ? t.x : d.x;
-    const float y0 = t.y > d.y ? t.y : d.y;
-    const float x1 = ( t.x + t.w ) < ( d.x + d.w ) ? ( t.x + t.w ) : ( d.x + d.w );
-    const float y1 = ( t.y + t.h ) < ( d.y + d.h ) ? ( t.y + t.h ) : ( d.y + d.h );
-
-    const float iw = x1 - x0;
-    const float ih = y1 - y0;
-
-    if ( iw <= 0.f || ih <= 0.f )
-        return 0.f;
-
-    const float inter = iw * ih;
-    const float uni = t.w * t.h + d.w * d.h - inter;
-    return uni > 0.f ? inter / uni : 0.f;
+    // Delegates to the shared xywh IoU: BoxTrack and Detection are both
+    // top-left + size boxes (box_math.hpp). No semantic change.
+    return box_iou( t.x, t.y, t.w, t.h, d.x, d.y, d.w, d.h );
 }

@@ -48,7 +48,7 @@ struct DmaSync
     DmaSync( const DmaSync& ) = delete;
     DmaSync& operator=( const DmaSync& ) = delete;
 
-public:
+private:
     int fd_;
     bool write_;
 };

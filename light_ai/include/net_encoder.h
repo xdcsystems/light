@@ -39,12 +39,12 @@
 // Opaque ffmpeg types, forward-declared: the header compiles without
 // the libav* include paths, and the compiler checks the handle types
 // at call sites instead of trusting comments.
-typedef struct AVFormatContext AVFormatContext;
-typedef struct AVCodecContext AVCodecContext;
-typedef struct AVFrame AVFrame;
-typedef struct AVPacket AVPacket;
-typedef struct AVStream AVStream;
-typedef struct AVIOContext AVIOContext;
+struct AVFormatContext;
+struct AVCodecContext;
+struct AVFrame;
+struct AVPacket;
+struct AVStream;
+struct AVIOContext;
 
 class NetEncoder
 {

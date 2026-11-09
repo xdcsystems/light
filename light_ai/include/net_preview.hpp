@@ -7,9 +7,9 @@
 
 // Opaque ffmpeg types, forward-declared: the header compiles without
 // the libav* include paths; the real includes stay in the .cpp.
-typedef struct AVFormatContext AVFormatContext;
-typedef struct AVPacket AVPacket;
-typedef struct AVStream AVStream;
+struct AVFormatContext;
+struct AVPacket;
+struct AVStream;
 
 // Raw preview over TCP, zero pixel copies.
 // The frame IS the NPU input tensor (RGB888, model_w x model_h, gray letterbox bars).

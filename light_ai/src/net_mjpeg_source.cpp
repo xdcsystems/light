@@ -14,6 +14,8 @@
 
 #include "net_mjpeg_source.hpp"
 
+#include "jpeg_probe.hpp"
+
 namespace
 {
     constexpr size_t kNpos = static_cast<size_t>( -1 );
@@ -83,11 +85,11 @@ namespace
         return kNpos;
     }
 
-    // Verifies that a JPEG buffer starts with SOI (FFD8), skips header
-    // segments (including APP1 EXIF thumbnails that carry their own
-    // embedded FFD8..FFD9) by their 2-byte length up to SOS (FFDA),
-    // extracts frame dimensions from SOFn, and ends with an EOI (FFD9)
-    // marker after the entropy scan. Trims any trailing HTTP CRLF/whitespace.
+    // Structural validation via probe_jpeg_sof (jpeg_probe.hpp):
+    // SOI -> markers -> SOF (dims/sampling) -> SOS, plus a trailing EOI.
+    // The contract is unchanged: *inout_size is trimmed of trailing
+    // HTTP CRLF/space IN PLACE (both call sites rely on the trimmed
+    // length), and any structural doubt returns false (the corrupt streak).
     bool jpeg_frame_complete( const uint8_t* data, uint32_t* inout_size, int* out_w, int* out_h )
     {
         uint32_t sz = *inout_size;
@@ -96,58 +98,13 @@ namespace
         *inout_size = sz;
         if ( sz < 4 || data[0] != 0xFF || data[1] != 0xD8 )
             return false;
-
-        size_t i = 2;
-        bool seen_sof = false;
-        bool seen_sos = false;
-        while ( i + 2 <= sz )
-        {
-            if ( data[i] != 0xFF )
-            {
-                ++i;
-                continue;
-            }
-            const uint8_t m = data[i + 1];
-            if ( m == 0xFF )
-            {
-                ++i;
-                continue;
-            }
-            if ( m == 0xD9 )
-                return false;  // EOI before SOS -> truncated header
-            if ( m == 0x01 || ( m >= 0xD0 && m <= 0xD8 ) )
-            {
-                i += 2;
-                continue;
-            }
-            if ( i + 4 > sz )
-                return false;
-            const uint16_t len = ( static_cast<uint16_t>( data[i + 2] ) << 8 ) | data[i + 3];
-            if ( len < 2 || i + 2 + len > sz )
-                return false;
-            if ( m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC )
-            {
-                if ( len < 8 || i + 9 > sz )
-                    return false;
-                const int fh = ( static_cast<int>( data[i + 5] ) << 8 ) | data[i + 6];
-                const int fw = ( static_cast<int>( data[i + 7] ) << 8 ) | data[i + 8];
-                if ( fw < 16 || fh < 16 || fw > 8192 || fh > 8192 )
-                    return false;
-                if ( out_w )
-                    *out_w = fw;
-                if ( out_h )
-                    *out_h = fh;
-                seen_sof = true;
-            }
-            i += 2 + len;
-            if ( m == 0xDA )
-            {
-                seen_sos = true;
-                break;
-            }
-        }
-        if ( !seen_sof || !seen_sos || i + 2 > sz )
+        JpegSofInfo info {};
+        if ( !probe_jpeg_sof( data, sz, info ) )
             return false;
+        if ( out_w )
+            *out_w = info.w;
+        if ( out_h )
+            *out_h = info.h;
         return data[sz - 2] == 0xFF && data[sz - 1] == 0xD9;
     }
 }  // namespace
