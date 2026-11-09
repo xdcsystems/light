@@ -21,7 +21,7 @@ refer to README.md sections (../README.md).
 
 - [x] M2.1: yolov5s_relu.rknn (640x640) on board — letterbox re-derived
       from the model (lb_top=140, lb_h=360, bars verified 128), RknnEngine
-      N-output support, pipeline runs NPU-bound at ~16.8 FPS (720p evening).
+      N-output support, pipeline runs NPU-bound at ~ 16.8 FPS (720p evening).
 
 - [x] M2: yolo post-processing — decode 3 heads (255 = 3 anchors x 85, NCHW,
       fp16, post-sigmoid), obj*cls threshold (0.25), NMS (IoU 0.45),
@@ -31,8 +31,8 @@ refer to README.md sections (../README.md).
       two chairs (cls 56) with partial-overlap duplicate box, potted plant
       (cls 58) boxed correctly — COCO class ids match the scene, so the
       decode is verified semantically, not just geometrically. Duplicate
-      boxes survive NMS at conf ~0.3 (IoU below threshold) — tunable via
-      conf_thr/iou_thr if it matters. FPS ceiling is now infer (~47 ms):
+      boxes survive NMS at conf ~ 0.3 (IoU below threshold) — tunable via
+      conf_thr/iou_thr if it matters. FPS ceiling is now infer (~ 47 ms):
       post-processing is invisible in the timing sum.
 
 - [x] M2-alt: tested yolov8n (fp16, same recipe) — infer 65 ms vs 47 ms
@@ -73,7 +73,7 @@ refer to README.md sections (../README.md).
       +0.002..+0.010 (no systematic bias; v2: -0.045), vase visible
       in 17/20 steady blocks by v3 (r3; fp16: 16/20 in the same run;
       v2: 0/20). infer 24.8 vs 28.9 ms
-      at 25-FPS pacing (~15% int8 gain), FPS identical (source-
+      at 25-FPS pacing (~ 15% int8 gain), FPS identical (source-
       bound) — headroom saved for M4. Working conf for v3: 0.25
       (vase 0.29-0.37 / bowl 0.33-0.45 in r3 whenever detected; both
       objects drop out entirely in 3/20 blocks — f60/f75/f135 — and
@@ -100,10 +100,10 @@ refer to README.md sections (../README.md).
 - [x] M2.5: multi-core NPU infer (--core, rknn_set_core_mask) — measured.
       Daytime A/B, 300 frames each, steady state (first 60-frame warmup
       block excluded): AUTO 25.1 ms infer, core0 25.1 ms (AUTO == core0 —
-      the runtime already picked a single core), cores 012 21.2 ms (~15%
-      faster, consistent across all five blocks). FPS unchanged (~30.2
+      the runtime already picked a single core), cores 012 21.2 ms (~ 15%
+      faster, consistent across all five blocks). FPS unchanged (~ 30.2
       steady in all runs): the pipeline is source-bound at the camera's
-      ~30 FPS cadence, sum stays 33.1 ms everywhere — the saved ~4 ms is
+      ~ 30 FPS cadence, sum stays 33.1 ms everywhere — the saved ~ 4 ms is
       headroom that pays off only when the source exceeds 30 FPS (M4).
       Recommended run flag: --core 7; default stays AUTO so the
       historical baseline remains reproducible. mpp_buffer init assert
@@ -118,7 +118,7 @@ refer to README.md sections (../README.md).
       With CPU governors on performance, cores 012 reproduce 21.2 ms
       (steady 20.5-21.6) and AUTO stays 25.1 — both match the morning
       numbers exactly. After an idle period on the default governor,
-      cores 012 degrade to ~25.1-26.0 (no gain at all), while AUTO is
+      cores 012 degrade to ~ 25.1-26.0 (no gain at all), while AUTO is
       unaffected in both states: the multi-core split is coordinated by
       the CPU, so CPU performance is a prerequisite for the M2.5
       numbers. NPU/DDR governors = performance are confirmed harmless
@@ -130,8 +130,8 @@ refer to README.md sections (../README.md).
       pipeline, daytime, steady, mask A/B 600 frames each: --core 1
       32.5 ms / --core 3 32.6 / --core 7 30.0 (<=2.5 ms gain; the
       earlier 25.1->21.2 delta does not reproduce on v3/mmse at this
-      pacing). Debugfs, --core 1: only Core0 busy ~30%, Core1/2 at
-      zero — single-core execution; --core 7 reads ~11-13% per core
+      pacing). Debugfs, --core 1: only Core0 busy ~ 30%, Core1/2 at
+      zero — single-core execution; --core 7 reads ~ 11-13% per core
       (same total work through rotation/counter smoothing, not layer
       parallelism) — the earlier 20/19/16% reading is re-interpreted
       the same way. The 21.2 ms figure quoted in
@@ -163,12 +163,12 @@ refer to README.md sections (../README.md).
       evening: the NIGHT half
       is done live (600 frames each, one static scene with the
       restored vase) — v5 == fp16, no ALARM; the soft mmse
-      small-object signature confirmed (bowl ~-0.07, presence
+      small-object signature confirmed (bowl ~ -0.07, presence
       100%); record in docs/state.md. CLOSED 2026-11-04: the DAY
       half is done live (600 frames each, one static day session,
       conf 0.25, --core 7; scene re-arranged since the night run --
-      the blue vase moved to x~325 and is labeled "bowl" there,
-      bottle at x~384) -- v5 == fp16 on the main object set (deltas
+      the blue vase moved to x ~ 325 and is labeled "bowl" there,
+      bottle at x ~ 384) -- v5 == fp16 on the main object set (deltas
       -0.02..-0.03, 100% presence); the only material gap is bottle
       (mean -0.13, presence 80% vs 98%), entirely inside the
       threshold band. Full record: docs/state.md, "fp16-reference
@@ -183,14 +183,14 @@ refer to README.md sections (../README.md).
       declare an NV12 input, zero-copy YUV does not exist in this SDK.
       Confirmed against the full toolkit changelog (v0.6..2.5.0, no NV12
       entry) and the official demos (all do YUV->RGB via RGA/CPU). Even
-      hypothetically the win is ~1 ms of rga (0.8 -> ~0.4) on a 39.8 ms
+      hypothetically the win is ~ 1 ms of rga (0.8 -> ~ 0.4) on a 39.8 ms
       frame (<2%): not worth a model rebuild + requantization. The real
       FPS lever is the model input size — see M3-alt2.
 
 - [x] M3-alt2: yolov5s_relu_int8 @ 512x512 — closed by decision, not
       measured: smaller input means smaller grids (mid head 40x40 ->
       32x32), and losing small/distant objects at night is unacceptable
-      for this task. The ~5 ms projected infer saving does not buy back
+      for this task. The ~ 5 ms projected infer saving does not buy back
       the recall risk. 640x640 stays; model-side resize levers are
       exhausted — remaining FPS levers are on the platform side.
 
@@ -206,11 +206,11 @@ refer to README.md sections (../README.md).
         a stalled viewer is dropped via `SO_SNDTIMEO` (2 s initially; retuned to 15 s on 2026-11-06), a viewer
         drop reopens the listener without touching the pipeline.
         Live log confirmed: listener up before the viewer, "viewer
-        connected" at connect time, pipeline steady (~26 FPS,
-        sum ~38 ms).
+        connected" at connect time, pipeline steady (~ 26 FPS,
+        sum ~ 38 ms).
       - Raw NUT (tensor path, --net): TCP server, 640x640 letterboxed
         rgb24; verified end-to-end in VLC. Demoted to diagnostic duty
-        2026-10-26: ~246 Mbps (640x640 rgb24 @ 25 fps) vs ~12 Mbps
+        2026-10-26: ~ 246 Mbps (640x640 rgb24 @ 25 fps) vs ~ 12 Mbps
         h264 (default CBR; 2500 kbps is plenty) — fine for
         pixel-accurate debugging, but saturates a LAN link.
       - UDP push (--net-host <pc-ip>) stays the legacy opt-in (the
@@ -263,7 +263,7 @@ refer to README.md sections (../README.md).
         no detail, only bitrate and RGA work). Boxes ride into the
         stream for free. Muxer patch for late joiners: mpegts_flags
         +pat_pmt_at_frames, pat_period 0.1, sdt_period 0.25.
-        Measured: 600-frame run, steady ~48 ms sum (~20.8 FPS
+        Measured: 600-frame run, steady ~ 48 ms sum (~ 20.8 FPS
         evening), the encode does not stall the pipeline.
       - Viewer-side lesson (UDP push, Windows): ffplay udp://@:1234
         binds :: (IPv6) and receives nothing — bind
@@ -291,7 +291,7 @@ refer to README.md sections (../README.md).
         — zero CPU pixel copies, the per-frame system-memory copy
         path is retired. Verified live (1200 frames, viewer
         attached): MPP accepts the descriptor geometry ("stride
-        [640:368]"), enc flat 1.0-1.4 ms (the 1.8 -> ~15 ms drift
+        [640:368]"), enc flat 1.0-1.4 ms (the 1.8 -> ~ 15 ms drift
         is gone), colors clean on the stream. The earlier "missing
         hw_context" review hypothesis was disproven by reading
         rkmppenc.c — see Platform constraints, rkmpp encoder input.
@@ -321,8 +321,8 @@ refer to README.md sections (../README.md).
       live frames). Colors/geometry identical to the CPU fallback
       (scale = model_w/cam_w, lb_top, person red 255/64/64, chair
       green 64/255/64, others yellow). A/B, 240 frames each, viewer
-      connected, steady blocks: CPU 38.0 ms (~26.3 FPS) vs GPU
-      38.3-38.6 ms (~26.0) — timing parity; GPU wins on outline
+      connected, steady blocks: CPU 38.0 ms (~ 26.3 FPS) vs GPU
+      38.3-38.6 ms (~ 26.0) — timing parity; GPU wins on outline
       quality and zero CPU writes into the tensor. mpp_buffer init
       assert seen in every run incl. this milestone — confirmed
       benign. Update 2026-10-27: root-caused and closed — see
@@ -332,7 +332,7 @@ refer to README.md sections (../README.md).
       the failure: ENODEV/EIO are recoverable, any other errno is a hard
       error ending the run with exit code 1 (run() -> -1, main() maps it).
       Recovery: up to 20 attempts x 1 s (the original 10x1 s window was
-      too short — observed USB re-enumeration on this board took ~13 s);
+      too short — observed USB re-enumeration on this board took ~ 13 s);
       each attempt re-runs the full open+verify path (S_FMT, G_FMT
       check, REQBUFS, mmap, QBUF, STREAMON). Node discovery is outside
       the camera class (the mutable-node design was rejected and
@@ -354,7 +354,7 @@ refer to README.md sections (../README.md).
       decode (pipeline), a 3-frame warm-up discard follows reconnect
       (pipeline, c870455), and the decoder rejects any packet without
       SOI as defense in depth (f0ff5bb). Verified live (video20 ->
-      video21, recovery on attempt 9, ~2 s): clean stream after
+      video21, recovery on attempt 9, ~ 2 s): clean stream after
       reconnect, no phantom boxes, recognition unchanged; the SOI
       guard did not trigger (the driver resumed with full frames).
       Startup fallback added (2026-10-25, 1f851e6): a configured node
@@ -368,9 +368,9 @@ refer to README.md sections (../README.md).
       than a loud one.
 
 - [x] M3.9: preview latency — closed 2026-10-25, player-side. Symptom:
-      the UDP/MPEG-TS H.264 preview on the PC lagged reality by ~5 s
-      while the pipeline itself runs ~48 ms end to end (cam ~17-28 +
-      infer ~29) — the delay is transport/player-side, not the
+      the UDP/MPEG-TS H.264 preview on the PC lagged reality by ~ 5 s
+      while the pipeline itself runs ~ 48 ms end to end (cam ~ 17-28 +
+      infer ~ 29) — the delay is transport/player-side, not the
       pipeline. Cause: ffplay defaults (analyzeduration 5000000 us = 5 s
       of probing plus input buffering; the player starts 5 s behind and
       keeps a buffer). Fix: the reference viewer invocation is now
@@ -391,10 +391,10 @@ refer to README.md sections (../README.md).
 
 - [x] M3.10: detection smoothing — closed 2026-10-26. BoxSmoother
       (include/box_smoother.h): EMA on box coords (alpha=0.5,
-      effective window ~2-3 frames), greedy IoU>0.3 + class match,
+      effective window ~ 2-3 frames), greedy IoU>0.3 + class match,
       miss<=2 decay, fixed 32-slot array, zero heap. Per-frame CSV
-      via --box-log: raw jitter ~4 px per object -> ~2.5 px smoothed
-      (~1.5-1.7x); timing unchanged (26.2 FPS steady). Earlier ~17 px
+      via --box-log: raw jitter ~ 4 px per object -> ~ 2.5 px smoothed
+      (~ 1.5-1.7x); timing unchanged (26.2 FPS steady). Earlier ~ 17 px
       estimate superseded: it counted low-conf flicker
       (bottle<->vase flips, n=46 vs n=300).
 
@@ -402,7 +402,7 @@ refer to README.md sections (../README.md).
       the subsystem had no roadmap record; it pre-dates M3.11):
       global greedy IoU association (pairs sorted descending by IoU) over a per-track constant-velocity
       Kalman filter (one 2-state filter per axis), ring trajectory
-      per track (300 pts, ~12 s at 25 fps), no heap/statics
+      per track (300 pts, ~ 12 s at 25 fps), no heap/statics
       (fixed-capacity members, project rules). Consumes the SMOOTHED
       detection list in publish_oldest(); VFR handled honestly -- dt
       from the real timestamps, clamped (kDtMaxMs=500).
@@ -427,12 +427,12 @@ refer to README.md sections (../README.md).
       by id % 8 (trail_color, visually disjoint from det_color;
       white -> dark red {200,0,0} after the live review -- white
       vanished on white walls). Tuning commit 8a89e0a: stride 8->4,
-      cap 16->20 (~3.2 s window at 25 fps), spatial dedup (a point
+      cap 16->20 (~ 3.2 s window at 25 fps), spatial dedup (a point
       is skipped if within 4 px of the previous point of the SAME
       track; dedup state is per-track, tracks never suppress each
       other), alpha fade step 16->10. Verified live (3000-frame run,
       h264 pull): trail geometry correct on stream screenshots, post
-      0.7-1.1 ms / sum ~86.5 ms / 25.0 FPS unchanged -- GPU cost in
+      0.7-1.1 ms / sum ~ 86.5 ms / 25.0 FPS unchanged -- GPU cost in
       noise. Commits: 91f751e (trail), 8a89e0a (tuning). Patch
       lesson (repeated): patch5 v1 anchored on the DESIGN sketch,
       not the inserted text -- aborted safely by the anchor check;
@@ -458,9 +458,9 @@ refer to README.md sections (../README.md).
         rknn_engine out_attrs_/out_mems_ (init-time); zero heap traffic
         in the steady-state per-frame path.
       - Live verification (3000 frames, h264 pull, steady): det count
-        2-6 per frame, person tracked in and out, sum ~48 ms ~20.8 FPS —
+        2-6 per frame, person tracked in and out, sum ~ 48 ms ~ 20.8 FPS —
         parity with the M3.7-era baseline. Box jitter visibly reduced —
-        a side effect: the 32-slot tracker no longer churns on ~30
+        a side effect: the 32-slot tracker no longer churns on ~ 30
         duplicate copies of one object per frame (the old accumulating
         DetList fed them to BoxSmoother every frame).
       - Spawn dedupe (2026-11-04): an unmatched detection overlapping
@@ -474,7 +474,7 @@ refer to README.md sections (../README.md).
 - [x] P0/P1 hardening pass (2026-11-02, CLOSED): a reliability review
       of the whole tree before the M5 refactor; every patch is an
       anchor-verified, all-or-nothing script; every change verified
-      by build + live h264 runs (steady sum 95.2-95.8 ms / ~20.0 FPS
+      by build + live h264 runs (steady sum 95.2-95.8 ms / ~ 20.0 FPS
       unchanged across the series).
       Commits: 706f9e2 (P0-1), 5ccf687 (P0-3+3b), 2511123 (P0-5),
       89bd163 (P0-2/P1-1/P1-6), c129841 (P0-4/P1-6), eb86679 (P1-2),
@@ -539,17 +539,17 @@ refer to README.md sections (../README.md).
 
 - [ ] M5: multi-camera (proposal, owner decision 2026-10-26): 3x USB
       cameras from different room angles. Platform budget fits: 3x MJPEG
-      ~3 MB/s on the shared USB2 half, MPP decode trivial. RGA needs core
+      ~ 3 MB/s on the shared USB2 half, MPP decode trivial. RGA needs core
       spreading — everything is pinned to RGA3 core0 today (imconfig);
       three single-pass 720p->640x640 jobs want RGA3 c0/c1 + RGA2E or the
-      scheduler. NPU fits: ~3x current load is ~50% per core; pure infer
+      scheduler. NPU fits: ~ 3x current load is ~ 50% per core; pure infer
       is 15.4 ms/frame regardless of stream count — scheduling strategy
       (round-robin frames vs 3 RKNN contexts) is an open question.
       Update 2026-10-30: the one-model-one-core finding (Platform
       constraints) settles the scheduling question in favor of 3
       RKNN contexts with masks 1/2/4 — a single context never uses
-      more than one core; single-context infer reads ~30 ms, so the
-      3-context ceiling is ~90 FPS inference-side, camera pacing
+      more than one core; single-context infer reads ~ 30 ms, so the
+      3-context ceiling is ~ 90 FPS inference-side, camera pacing
       permitting.
       Update 2026-11-01: the 3-context worker pool is built and
       verified detection-correct by tools/oracle_check.py against
@@ -558,7 +558,7 @@ refer to README.md sections (../README.md).
       IoU >= 0.94 on matched frames; residuals only at the 0.25
       threshold edge (cls 60) — see docs/state.md, Pool oracle
       verification. Effective pool throughput: 45.9 ms per 3
-      in-flight frames ~= 15.3 ms/frame, at the bench_npu 3-core
+      in-flight frames ~ = 15.3 ms/frame, at the bench_npu 3-core
       ceiling (figure registry in docs/state.md). Remaining for
       M5 proper: the multi-camera refactor (per-cam cam+dec+rga
       chains) below — the single-camera pool pacing at the real
