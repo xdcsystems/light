@@ -6,11 +6,57 @@
 // Precedence: defaults < config file < CLI.
 
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "config/cli.hpp"
 #include "config/config_file.h"
+
+namespace
+{
+    bool ensure_writable_dir( const std::string& dir )
+    {
+        std::error_code ec;
+        std::filesystem::create_directories( dir, ec );
+        if ( ec )
+        {
+            std::cerr << "invalid value for --cal-dir: '" << dir << "' (" << ec.message() << ")\n";
+            return false;
+        }
+        const std::string probe = dir + "/.light_ai_write_test";
+        bool ok = false;
+        {
+            std::ofstream f( probe );
+            ok = f.good();
+        }
+        std::filesystem::remove( probe, ec );
+        if ( !ok )
+        {
+            std::cerr << "invalid value for --cal-dir: '" << dir << "' (not writable)\n";
+            return false;
+        }
+        return true;
+    }
+
+    void finalize_sources( std::vector<SourceEndpoint>& ini_srcs, Config& cfg )
+    {
+        if ( cfg.sources.empty() )
+            cfg.sources = std::move( ini_srcs );
+        if ( cfg.sources.empty() )
+            cfg.sources.push_back( { SourceKind::V4L2, "/dev/video20" } );
+
+        cfg.device.clear();
+        cfg.net_src.clear();
+        if ( cfg.sources.front().kind == SourceKind::NetMjpeg )
+            cfg.net_src = cfg.sources.front().uri;
+        else
+            cfg.device = cfg.sources.front().uri;
+    }
+}  // namespace
 
 // ---- CliOptions implementation ----
 
@@ -34,19 +80,6 @@ int CliOptions::validate() const
         return 2;
     }
 
-    // Mutual exclusion, loud version: --net-src clears c.device when it
-    // comes AFTER --device on the command line; the reverse order leaves
-    // both non-empty and one of them is silently ignored (the winner
-    // depends on argv order). Refuse instead of guessing.
-    if ( !cfg_.net_src.empty() && !cfg_.device.empty() )
-    {
-        std::cerr << "--device and --net-src are mutually exclusive; both are set:\n"
-                     "  --device: " << cfg_.device << "\n"
-                     "  --net-src: " << cfg_.net_src << "\n"
-                     "  Pass exactly one of them; --net-src replaces the USB camera entirely.\n";
-        return 2;
-    }
-
     // --cal-dir only makes sense with the --cal series; --dump-cal always
     // writes /tmp/cal.ppm and is unaffected. Post-parse for the same
     // reason as --net-h264: order of argv is arbitrary.
@@ -59,6 +92,8 @@ int CliOptions::validate() const
                      "    light_ai --cal 5 --cal-interval 60 --cal-dir /tmp/calrun\n";
         return 2;
     }
+    if ( !cfg_.cal_dir.empty() && !ensure_writable_dir( cfg_.cal_dir ) )
+        return 2;
 
     return 0;
 }
@@ -96,6 +131,8 @@ CliOptions::ParseStatus CliOptions::parse( int argc, char** argv )
         if ( !loader.load( config_path.c_str(), cfg_ ) )
             return ParseStatus::Error;
     }
+    std::vector<SourceEndpoint> ini_srcs = std::move( cfg_.sources );
+    cfg_.sources.clear();
 
     for ( int i = 1; i < argc; ++i )
     {
@@ -120,5 +157,6 @@ CliOptions::ParseStatus CliOptions::parse( int argc, char** argv )
             return ParseStatus::Error;
     }
 
+    finalize_sources( ini_srcs, cfg_ );
     return validate() == 0 ? ParseStatus::Run : ParseStatus::Error;
 }

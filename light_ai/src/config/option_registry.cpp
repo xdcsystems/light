@@ -8,8 +8,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -87,26 +85,19 @@ namespace
 
     bool apply_cal_dir( Config& c, const char* v )
     {
-        std::error_code ec;
-        std::filesystem::create_directories( v, ec );
-        if ( ec )
-        {
-            std::cerr << "invalid value for --cal-dir: '" << v << "' (" << ec.message() << ")\n";
-            return false;
-        }
-        const std::string probe = std::string( v ) + "/.light_ai_write_test";
-        bool ok = false;
-        {
-            std::ofstream f( probe );
-            ok = f.good();
-        }
-        std::filesystem::remove( probe, ec );
-        if ( !ok )
-        {
-            std::cerr << "invalid value for --cal-dir: '" << v << "' (not writable)\n";
-            return false;
-        }
+        if ( !v || !*v )
+            return value_error( "--cal-dir", v ? v : "", "non-empty path" );
         c.cal_dir = v;
+        return true;
+    }
+
+    bool apply_device( Config& c, const char* v )
+    {
+        if ( !v || !*v )
+            return value_error( "--device", v ? v : "", "/dev/videoN" );
+        c.sources.push_back( { SourceKind::V4L2, v } );
+        if ( c.device.empty() )
+            c.device = v;
         return true;
     }
 
@@ -127,10 +118,11 @@ namespace
 
     bool apply_net_src( Config& c, const char* v )
     {
-        if ( std::strncmp( v, "http://", 7 ) != 0 )
-            return value_error( "--net-src", v, "http://host:port/path" );
-        c.net_src = v;
-        c.device.clear();
+        if ( !v || std::strncmp( v, "http://", 7 ) != 0 )
+            return value_error( "--net-src", v ? v : "", "http://host:port/path" );
+        c.sources.push_back( { SourceKind::NetMjpeg, v } );
+        if ( c.net_src.empty() )
+            c.net_src = v;
         return true;
     }
 
@@ -157,8 +149,8 @@ OptionRegistry::OptionRegistry()
         { "--config",       { true, "INI config file (key = value); applied BEFORE the CLI options", &apply_config } },
         { "--core",         { true, "NPU cores: 0 auto, 1/2/4 = core 0/1/2, 3 (0+1), 7 (0+1+2); ignored with --pool > 1", &apply_core } },
         { "--cpu-draw",     { false, "draw boxes on CPU (A/B vs GPU drawer)", &apply_flag<&Config::cpu_draw> } },
-        { "--device",       { true, "camera device path", &apply_str<&Config::device> } },
-        { "--dump-cal",     { false, "collect calibration dataset", &apply_flag<&Config::dump_cal> } },
+        { "--device",       { true, "camera device path (repeatable; default /dev/video20)", &apply_device } },
+        { "--dump-cal",     { false, "dump one model-input frame to /tmp/cal.ppm", &apply_flag<&Config::dump_cal> } },
         { "--frames",       { true, "stop after N frames (>= 1; default: run until Ctrl-C)",
                                     +[]( Config& c, const char* v ) { return set_int( "--frames", v, 1, INT_MAX, ">= 1", c.frames ); } } },
         { "--iou",          { true, "NMS IoU threshold 0.0..1.0",
@@ -173,8 +165,8 @@ OptionRegistry::OptionRegistry()
         { "--net-host",     { true, "optional UDP destination (h264 push); unset = TCP pull", &apply_str<&Config::net_host> } },
         { "--net-port",     { true, "preview port 1..65535",
                                     +[]( Config& c, const char* v ) { return set_int( "--net-port", v, 1, 65535, "1..65535", c.net_port ); } } },
-        { "--net-src",      { true, "network MJPEG pull source (http://host:port/path); replaces --device", &apply_net_src } },
-        { "--pool",         { true, "NPU context pool: 1 = single context (baseline), 3 = one engine per core", &apply_pool } },
+        { "--net-src",      { true, "network MJPEG pull source (http://host:port/path; repeatable)", &apply_net_src } },
+        { "--pool",         { true, "NPU context pool: 0|1 = single context (baseline), 3 = one engine per core", &apply_pool } },
     } }
 {
 }
