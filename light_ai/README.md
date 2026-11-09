@@ -66,7 +66,7 @@ post-processing.
 ### Comment style
 - Comments are structured, not prose: a header line ending with `:`,
   options/cases one per line, continuation lines indented under their item.
-- Max line length: 110 characters (comments included).
+- Max line length: 140 characters (enforced by `.clang-format` `ColumnLimit: 140`).
 - Do not duplicate rules stated in this README in code comments;
   code comments reference ("see README") or explain local specifics only.
 - A comment describing a mode/value must be verified by an actual run
@@ -90,8 +90,7 @@ post-processing.
                in camera_v4l2.cpp): the configured path is preferred,
                otherwise numeric /dev/video* candidates are USB-filtered
                (rkcif/rkisp platform nodes rejected before any S_FMT)
-               and trial-opened; the pipeline tracks the current node in
-               cam_node_ and adopts a re-enumerated one transparently.
+               and trial-opened; the pipeline tracks each source node in `SourceSlot::node` (`srcs_`) and adopts a re-enumerated one transparently.
                A permanent unplug exhausts the 20x1 s window and ends
                the run with exit code 1.
                Robustness (2026-11-02, P1-5/P1-7): every setup_device
@@ -172,7 +171,7 @@ post-processing.
 - Tracker (M3.10-b / M3.11): 8-slot constant-velocity Kalman tracker
                (2-state filter per axis, velocity clamp 500 px/s,
                0.90x per-miss velocity decay, size-consistency gate,
-               spawn-dedupe gate) with a 300-point trajectory ring
+               spawn-dedupe gate, global greedy IoU association) with a 300-point trajectory ring
                per track; recent_points() feeds the trail renderer.
 - BoxMapper  : fill_gpu_boxes() maps smoothed detections and confirmed
                trajectory trails into the 128-box GpuBoxList VBO
@@ -231,8 +230,7 @@ post-processing.
                — no upscale, zero CPU pixels (the frames leave for the
                encoder as zero-copy DRM_PRIME descriptors, 2026-10-28,
                see the enc notes below). The stream size is the
-               band's native size (640x360 for the default 1280x720
-               camera; 640x480 at the 1280x960 working mode since
+               band's native size (640x480 for the default 1280x960 camera, 640x360 for 1280x720; 640x480 at the 1280x960 working mode since
                2026-10-30). One viewer at a time; no encode until the
                first viewer connects; a stalled viewer is dropped via
                SO_SNDTIMEO (15 s). Late joiners via repeated
@@ -342,8 +340,7 @@ rate control a nominal fps (25) while pts stay per-dequeue
   1280x960 -> 640x640: s = 1/2,  lb_h = 480, lb_top = 80.
   Detection mapping T (band-based, axial): x_scene = (x_det - lb_left) *
   cam_w / lb_w, y_scene = (y_det - lb_top) * cam_h / lb_h, where
-  (lb_left, lb_top, lb_w, lb_h) is the letterbox band geometry — one
-  LbGeom computed once in the Pipeline ctor and shared by the RGA crop,
+  (lb_left, lb_top, lb_w, lb_h) is the letterbox band geometry — a per-frame `LbGeom` returned by `RgaResizer::resize_fd`, carried in `Slot::lb` and shared by the RGA crop,
   the encoder crop and this scale. Detections on the bars (outside the
   band) are filtered. (The pre-M3.11 note "x_det * cam_w / model_w"
   described only the landscape band, where lb_left = 0 and
@@ -482,7 +479,7 @@ rate control a nominal fps (25) while pts stay per-dequeue
   destination and the descriptor (MPP log: stride [640:368]).
 - h264_rkmpp rc_mode: the live encoder does NOT accept rc_mode (log line:
   "enc: rc_mode option not accepted"); the stream runs CBR at
-  --net-bitrate (default 12000 kbps). Fine for the preview; revisit when
+  `--net-bitrate` (default 1500 kbps). Fine for the preview; revisit when
   bitrate control is actually needed.
 - mpp_buffer_group_get requires a caller string: mpp_assert(caller)
   in mpp_buffer_group_init (mpp/base/mpp_buffer_impl.c:809,
@@ -702,8 +699,7 @@ MPEG-TS): the stream is the letterbox band at its native size
 in. Transport: TCP pull by default — the board listens on
 --net-port (default 1234), the viewer connects by the board's LAN
 IP; --net-host <pc-ip> switches to the legacy UDP push to that
-destination. Bitrate via --net-bitrate (default 12000 kbps; 2500
-is plenty for 640x360).
+destination. Bitrate via `--net-bitrate` (default 1500 kbps; 2500 is plenty for 640x480).
 Viewer (pull, product path): ffplay -fflags nobuffer
 tcp://<board-ip>:1234
 Viewer (UDP push, legacy, low-latency, M3.9): ffplay -fflags
@@ -789,7 +785,7 @@ Established facts:
     decoder (the d3d11va decode failure does not prevent the d3d11
     render context). Press `i` for Frame Timings / Dropped Frames.
 11. Stream health in timed mode (NEW, after the board-side socket/muxer
-    fixes — TCP_NODELAY, 256 KiB SO_SNDBUF, max_delay=0, flush_packets,
+    fixes — TCP_NODELAY, 2 MiB `SO_SNDBUF` (256 KiB initially, raised 2026-11-06), max_delay=0, flush_packets,
     +pat_pmt_at_frames+resend_headers — and --net-bitrate 3000, verified
     by the MPP log "set rc cbr bps [3000000:...]"): ZERO "(Buffering)"
     per session; the status-line cache settles (0.0-1.0 s) and stops

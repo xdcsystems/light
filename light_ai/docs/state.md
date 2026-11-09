@@ -474,9 +474,10 @@ Open notes:
 - pool-mode rga timing: the cal-dump file I/O is counted inside
   rga_ms (ms(t3,t3b)), unlike the single path — irrelevant without
   --cal, keep in mind for pool rga A/Bs.
-- known accepted races (no live path reaches them today): the
-  destructor drains the ring only via run()'s tail; and ts_base_
-  reset in serve() vs send_frame() read (int64 write, benign).
+- known accepted notes (updated 2026-11-09): `~Pipeline()` joins all
+  workers after `run()` drains `pub_`, and `ts_base_` reset in
+  `run_session()` + `packet_pts()` in `send_frame()` are both
+  serialized under `NetEncoder::mx_`.
 
 ## Pure-infer figure registry (reconcile, M2.6 (c))
 
@@ -574,9 +575,9 @@ Three commits over origin/master: 50ff7d4 (FrameTrace), 4b50a36
   to interleave MID-log between stdout chunks (PID check: our own
   process). Direct terminal output preserves order (deinit strictly at
   the end). When order matters: run direct, or split stderr to a file.
-- clang-tidy 11929 (src/mpp_decoder.cpp, started 11-02) hung >14 h
-  with ~zero CPU; killed 11-03. Re-lint pending on the updated
-  pipeline/mpp sources.
+- `clang-tidy` 11929 (`src/mpp_decoder.cpp`, started 11-02) hung >14 h
+  with ~zero CPU; killed 11-03. Resolved 2026-11-09: all 21 `.cpp`
+  translation units pass `scripts/tidy_run.sh` with 0 findings and 0 hangs.
 - CORRECTED (11-03, same day): the "SPSC queue refactor" naming in
   the first draft of this note was wrong. The publish FIFO
   (pub_slots_/pub_head_/pub_n_) has no producer/consumer thread split:
@@ -678,11 +679,9 @@ SUPERSEDED (2026-11-04, owner decision): the 2026-11-03
   yolo_postprocess() is REVERSED -- both ARE to be refactored
   under the 200-line limit. Part of the refactor is already
   done in-tree WITHOUT a state record (the record was lost with
-  the tidy_run.sh removal -- see below). Backlog (M6): audit the
-  current function sizes, finish the remaining splits, record
-  each split here; the "risks correctness" concern stands as a
-  constraint -- every split goes through build + live run
-  verification, not as a mechanical whitespace-style move.
+  the tidy_run.sh removal -- see below). Backlog (M6 — COMPLETED 2026-11-09): function splits completed across
+  all translation units (including `Tracker::associate`), and `scripts/build.sh`
+  enforces `scripts/tidy_run.sh` on every build (`0 findings` across all 21 `.cpp` files).
 
 TIDY INFRASTRUCTURE (2026-11-03):
 - build-tidy compiles without the board's -mtune=...cortex-a55
@@ -743,9 +742,10 @@ READABILITY PASS (post-tidy, 2026-11-03 evening):
   across the 3000-frame run -- a returning person fails the IoU
   match and gets a new id). The trail is unaffected
   (out-of-tensor points are clipped at the border check). Backlog:
-  check whether Traj::push runs during coasting (grep 'traj\.|.
-  push' in tracker.cpp); if yes -- push on measure only; consider
-  a velocity clamp / earlier give-up after N misses.
+  VERIFIED & CLOSED 2026-11-09: `Traj::push` runs ONLY on `measure()` and
+  `spawn()` (never during `predict()` / coasting); velocity is clamped
+  (`kVClampPxs = 500`), decays per miss (`kMissVDrop = 90`), and `predict()`
+  stops coasting position once `t.miss >= 2`.
 - Trail verification (M3.11): timing unchanged (post 0.7-1.1 ms,
   sum ~86.5 ms, 25.0 FPS); slow walkers produce a near-continuous
   dashed line with stride 4 + 4 px dedup; the dark-red palette
