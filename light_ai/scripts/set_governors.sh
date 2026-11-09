@@ -1,8 +1,8 @@
 #!/bin/bash
-# set_governors.sh — «стандартный запуск» light_ai: performance на всех
-# частотных доменах. Без CPU performance выигрыш cores-012 исчезает
-# (21.2 -> 25.6 ms), NPU/DDR performance безвредны и добавляют запас.
-# Запуск: sudo bash scripts/set_governors.sh
+# set_governors.sh — standard light_ai launch setup: set performance on all
+# frequency domains. Without CPU performance the cores-012 gain disappears
+# (21.2 -> 25.6 ms); NPU/DDR performance is harmless and adds headroom.
+# Usage: sudo bash scripts/set_governors.sh
 set -e
 
 for p in /sys/devices/system/cpu/cpufreq/policy*; do
@@ -18,4 +18,3 @@ for p in /sys/devices/system/cpu/cpufreq/policy*; do
 done
 echo "npu: $(cat /sys/class/devfreq/fdab0000.npu/governor) @ $(cat /sys/class/devfreq/fdab0000.npu/cur_freq)"
 echo "dmc: $(cat /sys/class/devfreq/dmc/governor) @ $(cat /sys/class/devfreq/dmc/cur_freq)"
-

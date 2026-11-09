@@ -13,10 +13,10 @@ CheckOptions:
   - { key: readability-function-size.ParameterThreshold, value: '20' }   # Flag functions that exceed a specified number of parameters.
   - { key: readability-function-size.NestingThreshold,   value: '10' }   # Flag compound statements which create next nesting level after NestingThreshold.
   - { key: readability-function-size.VariableThreshold,  value: '20' }   # Flag functions exceeding this number of variables declared in the body.
-  - { key: readability-identifier-length.MinimumVariableNameLength, value: '1' } # минимальная длина имени переменной
-  - { key: readability-identifier-length.MinimumParameterNameLength, value: '1' } # минимальная длина имени переменной
-  - { key: readability-identifier-length.MinimumLoopCounterNameLength, value: '1' } # минимальная длина имени переменной
-  - { key: readability-identifier-length.MinimumExceptionNameLength, value: '1' } # минимальная длина имени переменной
+  - { key: readability-identifier-length.MinimumVariableNameLength, value: '1' } # minimum variable name length
+  - { key: readability-identifier-length.MinimumParameterNameLength, value: '1' } # minimum parameter name length
+  - { key: readability-identifier-length.MinimumLoopCounterNameLength, value: '1' } # minimum loop counter name length
+  - { key: readability-identifier-length.MinimumExceptionNameLength, value: '1' } # minimum exception variable name length
   - { key: readability-identifier-naming.FunctionCase,   value: lower_case }
   - { key: readability-identifier-naming.MethodCase,     value: lower_case }
   - { key: readability-identifier-naming.VariableCase,   value: lower_case }
@@ -27,90 +27,31 @@ CheckOptions:
   - { key: readability-identifier-naming.StaticConstantPrefix, value: s_ }
   - { key: readability-identifier-naming.GlobalConstantPrefix, value: k }
   - { key: readability-identifier-naming.GlobalVariablePrefix, value: g_ }
-  - { key: readability-function-cognitive-complexity.IgnoreMacros, value: true } # оценка сложности метода, не учитывать макросы
+  - { key: readability-function-cognitive-complexity.IgnoreMacros, value: true } # ignore macros when computing cognitive complexity
 
 
 ###############################
 
-## примечания:
-# abseil-* - правила использования библиотеки abseil со всякими полезностями. У нас не используется.
-# altera-* - правила для разработки под OpenCL
-# fuchsia-* - правила для сурово зарезанной embedded-разработки, где выключена куча возможностей C++. для нас неактуально.
-# llvmlibc-* - правила для библиотек llvm
-# llvm-qualified-auto - алиас для readability-qualified-auto
-# clang-analyzer-optin.performance.Padding - выключено 2026-11-04:
-# члены классов сгруппированы по смысловым блокам (NetEncoder и др.),
-# перестановка ради выравнивания не делается (решение владельца).
+## Notes on disabled checks:
 
-# bugprone-forward-declaration-namespace - проверка на одинаковые имена классов в разных namespace
-
-# cert-dcl50-cpp - запрет на методы с C-variadic параметрами: void get(...); но нам такие нужны.
-# cert-oop11-cpp - алиас для performance-move-constructor-init
-# cert-oop54-cpp - алиас для bugprone-unhandled-self-assignment
-
-# cppcoreguidelines-pro-type-vararg - алиас для hicpp-vararg, поэтому оставлен только он
-# cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay - преобразования массива в указатель. не хочется терять возможность const char[] -> const char*
-# cppcoreguidelines-c-copy-assignment-signature - алиас для misc-unconventional-assign-operator
-
-# google-readability-casting - алиас cppcoreguidelines-pro-type-cstyle-cast
-# google-readability-namespace-comments - комментарии на закрывающей скобке неймспейса. Не используем, ибо за этим следит clang-format
-# google-readability-braces-around-statements - алиас для readability-braces-around-statements
-
-# readability-convert-member-functions-to-static - замена константных методов, которым не нужен this на static. Очень сомнительная микрооптимизация...
-# readability-avoid-const-params-in-decls - запрет на использование const-параметров в декларации методов
-
-# hicpp-vararg - запрет на вызов C-методов с varargs. не могу согласиться, оно нам нужно для SFINAE
-# hicpp-use-noexcept, modernize-use-noexcept - замена throw на noexcept
-# hicpp-use-equals-default - алиас для modernize-use-equals-default
-# hicpp-deprecated-headers - алиас для modernize-deprecated-headers
-# hicpp-use-auto - алиас для modernize-use-auto
-# hicpp-move-const-arg - алиас для performance-move-const-arg
-# hicpp-braces-around-statements - алиас для readability-braces-around-statements
-# hicpp-noexcept-move - алиас для performance-noexcept-move-constructor
-# hicpp-invalid-access-moved - алиас для bugprone-use-after-move
-
-# misc-no-recursion - рекурсия не является неприемлемой
-# modernize-use-trailing-return-type - замена int function(); на auto function() -> int. "This transformation is purely stylistic"
-
-## обработчики ошибок, которые надо бы включить обратно
-# google-runtime-int = замена long на int32
-# cppcoreguidelines-special-member-functions,hicpp-special-member-functions - требование явно указывать, что делать с удалёнными конструкторами и операторами=
-# modernize-use-using - требование испольовать using вместо typedef
-# bugprone-easily-swappable-parameters - два параметра с одинаковым типом, которые легко можно перепутать: void f(int a, int b);
-# readability-container-data-pointer - замена &str[0] на str.data(), проблема в том, что data() у нас пока что константный
-# concurrency-mt-unsafe - использование не thread-safe функций
-
-## сомнительные выключенные ошибки, может быть стоит их игнорировать, а может и нет
-# misc-non-private-member-variables-in-classes,cppcoreguidelines-non-private-member-variables-in-classes - запрет на не-приватные члены в классах
-# bugprone-macro-parentheses - требование заключать результат макроса в скобки, местами невозможно, когда из него собираем имя класса, например
-# google-default-arguments - запрет на параметры по умолчанию в виртуальных методах
-# cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays - запрет использования C-массивов
-# hicpp-signed-bitwise - разрешены битовые операции только с unsigned-типами
-# cppcoreguidelines-pro-bounds-pointer-arithmetic - запрещена арифметика с указателями
-# readability-implicit-bool-conversion - запрет сравнения не-булева значения, как булево. например, указателей: if (ptr) {
-# hicpp-named-parameter - запрет безымянных параметров в методах, конфликтует со студийной проверкой "неиспользуемый параметр"
-
-## C++20: Нет у нас такого в библиотеке пока...
-# readability-use-anyofallof
-
-
-#############################
-
-# Полезный шорткат для MSVC:
-#
-# Tools -> External Tools...
-# Кнопка <Add>
-# Заполнить поля:
-#   Title: Tidy-check
-#   Command: $(ProjectDir)/tidy-check.bat
-#   Arguments: "$(ItemPath)"
-# Поставить галочку "Use Output window"
-#
-# Нажать <OK>. В меню Tools появится команда Tidy-check, выбрав которую можно проверить только текущий cpp-файл.
-# Это полезно при исправлениях, когда проверка всего проекта выполняется очень долго, а правки вносились только в один файл.
-#
-# Кроме того, можно добавить удобный шорткат - запомнить номер позиции добавленного пункта (или поднять его на самый верх кнопкой <Move Up>)
-# Tools -> Options -> Keyboard -> Tools.ExternalCommand<номер позиции>, назначить шорткат. Теперь по его нажатию будет проверяться текущий cpp
-#
-# Кроме tidy-check.bat ещё полезно добавить tidy-check-project.bat по аналогичному сценарию, чтобы проверять весь проект целиком.
-# В поле "Arguments" при этом указывать ничего не нужно
+# abseil-* - Abseil library rules; not used in this project.
+# altera-* - OpenCL FPGA rules; not applicable.
+# fuchsia-* - Fuchsia embedded rules disallowing many standard C++ features; not applicable.
+# llvmlibc-* - LLVM libc internal rules.
+# llvm-qualified-auto - alias for readability-qualified-auto.
+# clang-analyzer-optin.performance.Padding - disabled 2026-11-04: class members are grouped by
+#                                            semantic blocks (NetEncoder, etc.);
+# bugprone-forward-declaration-namespace - checks for identically named types across namespaces.
+# cert-dcl50-cpp - bans C-style variadic functions, which are occasionally needed for SFINAE.
+# cert-oop11-cpp - alias for performance-move-constructor-init.
+# cert-oop54-cpp - alias for bugprone-unhandled-self-assignment.
+# cppcoreguidelines-pro-type-vararg - alias for hicpp-vararg.
+# cppcoreguidelines-pro-bounds-array-to-pointer-decay, hicpp-no-array-decay - allow const char[] -> const char* decay.
+# cppcoreguidelines-c-copy-assignment-signature - alias for misc-unconventional-assign-operator.
+# google-readability-casting - alias for cppcoreguidelines-pro-type-cstyle-cast.
+# google-readability-namespace-comments - handled by clang-format.
+# google-readability-braces-around-statements - alias for readability-braces-around-statements.
+# readability-convert-member-functions-to-static - project rules forbid static member functions.
+# readability-avoid-const-params-in-decls - bans const on value parameters in declarations.
+# hicpp-use-noexcept, modernize-use-noexcept - noexcept enforcement disabled.
+# modernize-use-trailing-return-type - purely stylistic trailing return types disabled.

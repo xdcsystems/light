@@ -357,7 +357,7 @@ NetEncoder::~NetEncoder()
 
 void NetEncoder::serve()
 {
-    // Пустой host_ = pull-режим: слушаем TCP, зритель подключается сам.
+    // Empty host_ = pull mode: listen on TCP, the viewer connects on its own.
     const bool tcp_pull = host_.empty();
     const std::string url = tcp_pull ? std::string() 
                                      : ( "udp://" + host_ + ':' + std::to_string( port_ ) + "?pkt_size=1316" );
@@ -810,8 +810,8 @@ bool NetEncoder::open_transport( const std::string& url, AVFormatContext* fc, Tr
         return t.tcp->attach_avio( fc );
     }
 
-    // UDP: без рукопожатия и слушателя — сокет открывается один
-    // раз, пакеты пушатся вне зависимости от зрителя.
+    // UDP: no handshake and no listener — the socket is opened once,
+    // packets are pushed regardless of whether a viewer is listening.
     const int ret = avio_open( &t.udp_pb, url.c_str(), AVIO_FLAG_WRITE );
     if ( ret < 0 )
     {
@@ -845,8 +845,8 @@ bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, bool tcp_
     st->time_base = vfr_ ? AVRational { 1, 90000 } : AVRational { 1, fps_ };
     st->avg_frame_rate = vfr_ ? AVRational { 0, 1 } : AVRational { fps_, 1 };
 
-    // Live-stream patch: повторять PAT/PMT/SDT в эфире, чтобы приёмник
-    // мог подключиться в любой момент, а не только на старте потока.
+    // Live-stream patch: repeat PAT/PMT/SDT in the stream so a receiver
+    // can join at any point, not only at stream startup.
     AVDictionary* mux_opts = nullptr;
     av_dict_set( &mux_opts, "mpegts_flags", "+pat_pmt_at_frames+resend_headers", 0 );
     av_dict_set( &mux_opts, "pat_period", "0.1", 0 );
