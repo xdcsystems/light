@@ -556,6 +556,14 @@ refer to README.md sections (../README.md).
       M5 proper: the multi-camera refactor (per-cam cam+dec+rga
       chains) below — the single-camera pool pacing at the real
       camera cadence is implicitly proven by the same live runs.
+      Update 2026-11-09 (config groundwork): Config::sources
+      (std::vector<SourceEndpoint>, SourceKind::V4L2 / NetMjpeg)
+      accumulates any combination of repeatable --device and
+      --net-src entries from INI or CLI (e.g. 1x USB + 2x HTTP
+      MJPEG); the single-source mutual-exclusion gate in
+      CliOptions::validate() is removed, while legacy cfg.device /
+      cfg.net_src track sources.front() until the multi-chain
+      Pipeline loop lands.
       Pipeline refactor: an array of cam+dec+rga chains, each with its
       own dma-buf/tensor pool, plus a round-robin dispatcher; per-cam
       BoxSmoother. Fusion is NOT volumetric on this NPU (BEV/3D

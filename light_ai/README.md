@@ -107,8 +107,8 @@ post-processing.
                dequeue() calls and is reset only by a clean frame or
                by reconnect() after a successful STREAMON.
 - NetMjpegSource : HTTP multipart/x-mixed-replace MJPEG pull source
-               (--net-src http://host:port/path, mutually exclusive
-               with --device). Non-blocking TCP connect + SO_RCVTIMEO
+               (--net-src http://host:port/path; repeatable alongside
+               --device in Config::sources for M5 multi-camera). Non-blocking TCP connect + SO_RCVTIMEO
                (5 s), structural JPEG framing into a 4x1 MiB mmap pool
                (skips header/EXIF segments by length up to SOS, extracts
                frame dimensions from SOFn, verifies trailing EOI); primes
@@ -187,8 +187,12 @@ post-processing.
                21-entry std::array option registry with table-driven
                setter callbacks (OptionRegistry::apply), shared by the
                CLI parser and the inih-backed INI loader (--config,
-               applied before CLI overrides) — zero if/else ladders,
-               zero heap.
+               applied before CLI overrides) — zero if/else ladders.
+               Repeatable --device and --net-src accumulate into
+               Config::sources (std::vector<SourceEndpoint>) for M5
+               hybrid USB + HTTP MJPEG setups; CLI source flags override
+               INI sources, and /dev/video20 is defaulted only when no
+               sources are specified.
 - TcpPullServer : RAII single-viewer TCP pull transport (listener socket,
                poll-based accept, TCP_NODELAY / SO_SNDBUF / SO_SNDTIMEO,
                and custom 32 KiB AVIOContext) shared by NetEncoder and
@@ -659,8 +663,9 @@ non-ENOENT open errors (EBUSY/EACCES) stay fatal. Options:
 --help/-h prints the option list (generated from the parser table).
 --config <path> loads an INI config file (flat key = value; applied
 before CLI flags so CLI always overrides).
---device, --net-src http://host:port/path (HTTP MJPEG pull source,
-replaces --device; resolution is auto-detected from JPEG SOFn,
+--device, --net-src http://host:port/path (HTTP MJPEG pull source;
+both flags are repeatable and accumulate into Config::sources for M5
+multi-camera; resolution is auto-detected from JPEG SOFn,
 including portrait streams such as 720x1280 -> 368x640 band),
 --model, --frames (>= 1; default: run until Ctrl-C), --dump-cal,
 --conf, --iou,
