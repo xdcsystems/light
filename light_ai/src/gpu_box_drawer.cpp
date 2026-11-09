@@ -82,8 +82,7 @@ namespace
         char log[512];
         GLsizei n = 0;
         glGetShaderInfoLog( sh, sizeof( log ), &n, log );
-        log[n] = 0;
-        std::cerr << "gpu_draw: " << what << " shader compile failed:\n" << log << '\n';
+        std::cerr << "gpu_draw: " << what << " shader compile failed:\n" << std::string_view( log, n ) << '\n';
         return false;
     }
 

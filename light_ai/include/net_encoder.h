@@ -53,12 +53,13 @@ class NetEncoder
     // paths of run_session() free everything by scope exit.
     struct Transport
     {
+        ~Transport();
+        void close();
+
+    public:
         TcpPullServer* tcp = nullptr;
         AVIOContext* udp_pb = nullptr;
         bool tcp_pull = false;
-
-        ~Transport();
-        void close();
     };
 
     // RAII guard for the muxer context (run_session): p->pb is nulled
@@ -68,10 +69,12 @@ class NetEncoder
     // the Transport, as before.
     struct FcGuard
     {
-        AVFormatContext* p;
         ~FcGuard();
         FcGuard( const FcGuard& ) = delete;
         FcGuard& operator=( const FcGuard& ) = delete;
+
+    public:
+        AVFormatContext* p;
     };
 
     enum

@@ -156,7 +156,7 @@ Pipeline::Pipeline( const Config& cfg )
     init_gpu_drawer();
     init_aux();
 
-    if ( cfg_.cal_frames > 0 )
+    if ( cfg_.cal_frames > 0 && cfg_.cal_dir.empty() )
     {
         std::error_code ec;
         std::filesystem::create_directories( "dataset", ec );
@@ -286,6 +286,11 @@ void Pipeline::init_source()
 
     src_w_ = srcs_[0].w;
     src_h_ = srcs_[0].h;
+    for ( int s = 1; s < nsrc_; ++s )
+    {
+        if ( srcs_[s].w != src_w_ || srcs_[s].h != src_h_ )
+            throw std::runtime_error( "pipeline: all sources must share the same resolution until per-source decoders land" );
+    }
 }
 
 // M2.5/M4: core pinning.

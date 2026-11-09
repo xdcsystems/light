@@ -5,7 +5,7 @@
 
 // The node is NOT part of the instance state: open/reconnect take it as
 // an argument, the class owns only the fd/buffer machinery. Identity
-// ("which node am I on") lives with the owner — Pipeline::cam_node_.
+// ("which node am I on") lives with the owner — Pipeline::SourceSlot::node.
 class CameraV4L2
 {
     struct Buffer

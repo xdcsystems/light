@@ -374,7 +374,7 @@ refer to README.md sections (../README.md).
       (head-of-line blocking); see the Viewer section.
 
 - [x] M3.10: detection smoothing — closed 2026-10-26. BoxSmoother
-      (include/box_smoother.hpp): EMA on box coords (alpha=0.5,
+      (include/box_smoother.h): EMA on box coords (alpha=0.5,
       effective window ~2-3 frames), greedy IoU>0.3 + class match,
       miss<=2 decay, fixed 32-slot array, zero heap. Per-frame CSV
       via --box-log: raw jitter ~4 px per object -> ~2.5 px smoothed

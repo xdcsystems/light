@@ -340,7 +340,7 @@ rate control a nominal fps (25) while pts stay per-dequeue
   1280x960 -> 640x640: s = 1/2,  lb_h = 480, lb_top = 80.
   Detection mapping T (band-based, axial): x_scene = (x_det - lb_left) *
   cam_w / lb_w, y_scene = (y_det - lb_top) * cam_h / lb_h, where
-  (lb_left, lb_top, lb_w, lb_h) is the letterbox band geometry — a per-frame `LbGeom` returned by `RgaResizer::resize_fd`, carried in `Slot::lb` and shared by the RGA crop,
+  (lb_left, lb_top, lb_w, lb_h) is the letterbox band geometry — a per-frame `LbGeom` returned by `RgaResizer::resize`, carried in `Slot::lb` and shared by the RGA crop,
   the encoder crop and this scale. Detections on the bars (outside the
   band) are filtered. (The pre-M3.11 note "x_det * cam_w / model_w"
   described only the landscape band, where lb_left = 0 and
@@ -479,7 +479,7 @@ rate control a nominal fps (25) while pts stay per-dequeue
   destination and the descriptor (MPP log: stride [640:368]).
 - h264_rkmpp rc_mode: the live encoder does NOT accept rc_mode (log line:
   "enc: rc_mode option not accepted"); the stream runs CBR at
-  `--net-bitrate` (default 1500 kbps). Fine for the preview; revisit when
+  `--net-bitrate` (default 12000 kbps). Fine for the preview; revisit when
   bitrate control is actually needed.
 - mpp_buffer_group_get requires a caller string: mpp_assert(caller)
   in mpp_buffer_group_init (mpp/base/mpp_buffer_impl.c:809,
@@ -695,11 +695,11 @@ silent zero).
 rgb24, tcp port 1234); --net-fps N paces the stream (default 25).
 --net-h264 switches the preview to the h264 path (h264_rkmpp,
 MPEG-TS): the stream is the letterbox band at its native size
-(640x360 for the default 1280x720 camera), with YOLO boxes drawn
+(640x480 for the default 1280x960 camera), with YOLO boxes drawn
 in. Transport: TCP pull by default — the board listens on
 --net-port (default 1234), the viewer connects by the board's LAN
 IP; --net-host <pc-ip> switches to the legacy UDP push to that
-destination. Bitrate via `--net-bitrate` (default 1500 kbps; 2500 is plenty for 640x480).
+destination. Bitrate via `--net-bitrate` (default 12000 kbps; 1500-2500 is plenty for 640x480).
 Viewer (pull, product path): ffplay -fflags nobuffer
 tcp://<board-ip>:1234
 Viewer (UDP push, legacy, low-latency, M3.9): ffplay -fflags
