@@ -1,5 +1,3 @@
-#include "net_mjpeg_source.hpp"
-
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -13,6 +11,8 @@
 #include <poll.h>
 #include <sys/mman.h>
 #include <unistd.h>
+
+#include "net_mjpeg_source.hpp"
 
 namespace
 {

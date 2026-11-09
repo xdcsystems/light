@@ -1,10 +1,10 @@
 // timings.cpp (2026-11-08): bodies sliced verbatim from
 // the former timings header (13i); set_pool stays inline in the header.
 
-#include "timings.hpp"
-
 #include <iomanip>
 #include <iostream>
+
+#include "timings.hpp"
 
 void Timings::add( const FrameTrace& tr )
 {

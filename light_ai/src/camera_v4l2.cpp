@@ -11,7 +11,8 @@
 #include <cstdlib>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <map>
+#include <algorithm>
+#include <array>
 #include <linux/videodev2.h>
 
 #include "camera_v4l2.hpp"
@@ -285,7 +286,8 @@ int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::s
         cam.teardown();
     }
     std::cerr << "camera: node " << preferred << " not present, scanning /dev/video*\n";
-    std::map<int, std::string> cands;
+    std::array<int, 64> cands {};
+    int nc = 0;
     DIR* d = opendir( "/dev" );
     if ( d )
     {
@@ -302,18 +304,20 @@ int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::s
                 continue;
             const std::string p = "/dev/" + n;
             struct stat cst {};
-            if ( stat( p.c_str(), &cst ) == 0 && usb_capture_node( p ) )
-                cands[static_cast<int>( std::strtol( n.c_str() + 5, nullptr, 10 ) )] = p;
+            if ( stat( p.c_str(), &cst ) == 0 && usb_capture_node( p ) && nc < static_cast<int>( cands.size() ) )
+                cands[nc++] = static_cast<int>( std::strtol( n.c_str() + 5, nullptr, 10 ) );
         }
         closedir( d );
     }
-    for ( const auto& kv : cands )
+    std::sort( cands.begin(), cands.begin() + nc );
+    for ( int k = 0; k < nc; ++k )
     {
-        std::cerr << "camera: trying " << kv.second << '\n';
-        if ( cam.setup_device( kv.second, &why ) == 0 )
+        const std::string node = "/dev/video" + std::to_string( cands[k] );
+        std::cerr << "camera: trying " << node << '\n';
+        if ( cam.setup_device( node, &why ) == 0 )
         {
             cam.teardown();
-            out = kv.second;
+            out = node;
             return 0;
         }
         cam.teardown();

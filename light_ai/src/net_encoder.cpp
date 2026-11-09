@@ -33,6 +33,7 @@ extern "C"
 }
 
 #include "net_encoder.h"
+#include "av_common.hpp"
 
 // Mirror of RKMPPEncContext (ffmpeg-rockchip, libavcodec/rkmppenc.h):
 // the rkmpp wrapper keeps the raw MppCtx/MppApi handles in its private
@@ -55,8 +56,6 @@ static_assert( offsetof( RKMPPPriv, mctx ) == 16, "rkmpp priv layout drift" );
 static_assert( offsetof( RKMPPPriv, hwdevice ) == 24, "rkmpp priv layout drift" );
 static_assert( offsetof( RKMPPPriv, hwframe ) == 32, "rkmpp priv layout drift" );
 static_assert( offsetof( RKMPPPriv, mcfg ) == 40, "rkmpp priv layout drift" );
-
-#include "av_common.hpp"
 
 namespace
 {
@@ -202,16 +201,21 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     vstride_ = ( h_ + 15 ) & ~15;  // MPP encoders want a 16-aligned ver_stride
     std::string pool_why;
     if ( !pool_.alloc( static_cast<size_t>( w_ ) * vstride_ * 3 / 2, MODULE_TAG, __FUNCTION__, &pool_why ) )
+    {
+        avformat_network_deinit();
         throw std::runtime_error( "net encoder: " + pool_why );
+    }
 
     const AVCodec* codec = avcodec_find_encoder_by_name( "h264_rkmpp" );
     if ( !codec )
     {
+        avformat_network_deinit();
         throw std::runtime_error( "net encoder: h264_rkmpp not found in this ffmpeg" );
     }
     auto* ctx = avcodec_alloc_context3( codec );
     if ( !ctx )
     {
+        avformat_network_deinit();
         throw std::runtime_error( "net encoder: avcodec_alloc_context3 failed" );
     }
     enc_ = ctx;
@@ -250,6 +254,7 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     if ( avcodec_open2( ctx, codec, nullptr ) < 0 )
     {
         avcodec_free_context( &enc_ );
+        avformat_network_deinit();
         throw std::runtime_error( "net encoder: avcodec_open2(h264_rkmpp) failed" );
     }
     // Force CBR through MPP: see the rate-control comment above. At this
@@ -280,10 +285,22 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
         av_packet_free( &pkt_ );
         av_frame_free( &frame_ );
         avcodec_free_context( &enc_ );
+        avformat_network_deinit();
         throw std::runtime_error( "net encoder: av_frame/av_packet_alloc failed" );
     }
 
-    thread_ = std::thread( &NetEncoder::serve, this );
+    try
+    {
+        thread_ = std::thread( &NetEncoder::serve, this );
+    }
+    catch ( ... )
+    {
+        av_packet_free( &pkt_ );
+        av_frame_free( &frame_ );
+        avcodec_free_context( &enc_ );
+        avformat_network_deinit();
+        throw;
+    }
 }
 
 NetEncoder::~NetEncoder()
