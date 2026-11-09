@@ -5,18 +5,24 @@ under README.md. Pointers like [Platform constraints], [Run], [Viewer]
 refer to README.md sections (../README.md).
 
 ## Roadmap
+
 - [x] M1: baseline run with mobilenet_v1, honest FPS measurement.
+
 - [x] M1.5: per-stage timing (cam / decode / resize / infer) — bottleneck
       identified as the camera source.
+
 - [x] M1.6: hardening — model dims from the model file, G_FMT verification,
       strict CLI parsing, error-path cleanup in the decoder, exact output
       buffer sizing. FPS unchanged (camera-bound, as expected).
+
 - [x] M2-prep: 1080p pipeline end-to-end — MPP 1088-row alignment, RGA3
       two-pass resize (aux dma-buf from the decoder pool), RGA3 pin,
       5000-frame soak; camera ceiling mapped (exposure-dependent fps).
+
 - [x] M2.1: yolov5s_relu.rknn (640x640) on board — letterbox re-derived
       from the model (lb_top=140, lb_h=360, bars verified 128), RknnEngine
       N-output support, pipeline runs NPU-bound at ~16.8 FPS (720p evening).
+
 - [x] M2: yolo post-processing — decode 3 heads (255 = 3 anchors x 85, NCHW,
       fp16, post-sigmoid), obj*cls threshold (0.25), NMS (IoU 0.45),
       coordinate mapping via T; letterbox-geometry consistency check.
@@ -28,15 +34,18 @@ refer to README.md sections (../README.md).
       boxes survive NMS at conf ~0.3 (IoU below threshold) — tunable via
       conf_thr/iou_thr if it matters. FPS ceiling is now infer (~47 ms):
       post-processing is invisible in the timing sum.
+
 - [x] M2-alt: tested yolov8n (fp16, same recipe) — infer 65 ms vs 47 ms
       yolov5s: the DFL head + flat (1,84,8400) output defeat the FLOPs
       advantage on the NPU (needed disable_rules=['seperate_conv_rs_split'],
       op fuse incomplete). Conclusion: lighter model is not the FPS lever;
       yolov5s stays. Next candidate lever: int8 quantization (needs a
       calibration dataset of night frames — dumper already exists).
+
 - [x] M2.3: readable report (COCO-80 class names), CLI --conf/--iou with
       validation; cleanup: class-aware NMS, symmetric box clamping, letterbox
       geometry now read from RgaResizer (single source of truth).
+
 - [ ] M2.4-b: model-optimization backlog (reconstructed 2026-10-28;
       the original deferred-step list lived only in the 2026-10-26
       session chat and the Colab notebooks — git carries no other
@@ -51,44 +60,7 @@ refer to README.md sections (../README.md).
       model since 2026-11-01 (v4-vs-v5 A/B record in
       docs/state.md, INT8 build history); (c) further
       deferred steps: transcribe from the Colab notebooks.
-- [x] M2.6: v4 recalibration under the 1280x960 pipeline + mmse A/B — CLOSED 2026-11-01 (last sub-item (c) done; see state.md registry)
-      (plan fixed 2026-10-30). Quality-first framing: lighter models
-      (yolov5n, 512x512) REJECTED by owner decision — see the 960p
-      section; one model = one NPU core (Platform constraints), so
-      FPS work is frozen at ~20 FPS source-bound. Steps:
-      (a) DONE 2026-10-30: fresh dump from the 960p pipeline
-      (--cal 100 --cal-interval 15, ~120 MB on /tmp, now
-      dataset_day3) -> re-quant via the model-zoo convert.py with
-      mmse -> yolov5s_relu_int8_v4.rknn (48 min Colab — see INT8
-      build history);
-      (b) DONE 2026-10-30: three-way A/B (v3/v4/int8_mmse) on the
-      day, dusk and night dumps within one session — see docs/state.md (INT8 build history);
-      (c) DONE 2026-11-01: bench_npu 15.67 ms @7 reproduces 15.4 @012 within 2% — outlier explained, not an artifact; parallel-contexts gain 1.40x confirmed vs 22.06 @1 (same session, quiet); integration remains M5;
-      (d) DONE 2026-10-30 (INT8-vs-INT8): night A/B on dataset_mix,
-      gamma 2.0, conf 0.18 — v4 == v3 except one isolated lost
-      detection (n2_cal_0040; details in docs/state.md (INT8 build history).
-      Remaining from (b)+(d): the owner's working-model call —
-      MADE: int8_mmse 2026-10-30, superseded by int8_mmse_v5
-      2026-11-01 (v4-vs-v5 night/day A/B, docs/state.md). Still
-      open: a formal fp16-reference check for the current working
-      model (v5) — CLOSED 2026-11-04, both halves done (night
-      2026-11-01, day 2026-11-04; see below). The four-way day A/B
-      of 2026-11-01 covered v3/mmse/v4 only. Progress 2026-11-01
-      evening: the NIGHT half
-      is done live (600 frames each, one static scene with the
-      restored vase) — v5 == fp16, no ALARM; the soft mmse
-      small-object signature confirmed (bowl ~-0.07, presence
-      100%); record in docs/state.md. CLOSED 2026-11-04: the DAY
-      half is done live (600 frames each, one static day session,
-      conf 0.25, --core 7; scene re-arranged since the night run --
-      the blue vase moved to x~325 and is labeled "bowl" there,
-      bottle at x~384) -- v5 == fp16 on the main object set (deltas
-      -0.02..-0.03, 100% presence); the only material gap is bottle
-      (mean -0.13, presence 80% vs 98%), entirely inside the
-      threshold band. Full record: docs/state.md, "fp16-reference
-      check, v5, DAY half". Registry candidate: under steady CFR the
-      [timing] sum is a pacing constant; load is visible in infer
-      and the mirrored cam only.
+
 - [x] M2.4: int8 quantization — CLOSED 2026-10-26 on v3 (day-4
       daytime recalibration). v3 recipe: calibrated on 60 fresh day-4
       daytime frames, quant config mean=0/std=255 -> canonical input scale
@@ -124,6 +96,7 @@ refer to README.md sections (../README.md).
       bottle down to -0.24): the recalibration did not fix v2's
       night bias. v2 superseded by v3 for night scenes, file kept
       for reference. Fallback (path A) never needed for v3.
+
 - [x] M2.5: multi-core NPU infer (--core, rknn_set_core_mask) — measured.
       Daytime A/B, 300 frames each, steady state (first 60-frame warmup
       block excluded): AUTO 25.1 ms infer, core0 25.1 ms (AUTO == core0 —
@@ -163,6 +136,46 @@ refer to README.md sections (../README.md).
       parallelism) — the earlier 20/19/16% reading is re-interpreted
       the same way. The 21.2 ms figure quoted in
       scripts/set_governors.sh belongs to the older setup.
+
+- [x] M2.6: v4 recalibration under the 1280x960 pipeline + mmse A/B — CLOSED 2026-11-01 (last sub-item (c) done; see state.md registry)
+      (plan fixed 2026-10-30). Quality-first framing: lighter models
+      (yolov5n, 512x512) REJECTED by owner decision — see the 960p
+      section; one model = one NPU core (Platform constraints), so
+      FPS work is frozen at ~20 FPS source-bound. Steps:
+      (a) DONE 2026-10-30: fresh dump from the 960p pipeline
+      (--cal 100 --cal-interval 15, ~120 MB on /tmp, now
+      dataset_day3) -> re-quant via the model-zoo convert.py with
+      mmse -> yolov5s_relu_int8_v4.rknn (48 min Colab — see INT8
+      build history);
+      (b) DONE 2026-10-30: three-way A/B (v3/v4/int8_mmse) on the
+      day, dusk and night dumps within one session — see docs/state.md (INT8 build history);
+      (c) DONE 2026-11-01: bench_npu 15.67 ms @7 reproduces 15.4 @012 within 2% — outlier explained, not an artifact; parallel-contexts gain 1.40x confirmed vs 22.06 @1 (same session, quiet); integration remains M5;
+      (d) DONE 2026-10-30 (INT8-vs-INT8): night A/B on dataset_mix,
+      gamma 2.0, conf 0.18 — v4 == v3 except one isolated lost
+      detection (n2_cal_0040; details in docs/state.md (INT8 build history).
+      Remaining from (b)+(d): the owner's working-model call —
+      MADE: int8_mmse 2026-10-30, superseded by int8_mmse_v5
+      2026-11-01 (v4-vs-v5 night/day A/B, docs/state.md). Still
+      open: a formal fp16-reference check for the current working
+      model (v5) — CLOSED 2026-11-04, both halves done (night
+      2026-11-01, day 2026-11-04; see below). The four-way day A/B
+      of 2026-11-01 covered v3/mmse/v4 only. Progress 2026-11-01
+      evening: the NIGHT half
+      is done live (600 frames each, one static scene with the
+      restored vase) — v5 == fp16, no ALARM; the soft mmse
+      small-object signature confirmed (bowl ~-0.07, presence
+      100%); record in docs/state.md. CLOSED 2026-11-04: the DAY
+      half is done live (600 frames each, one static day session,
+      conf 0.25, --core 7; scene re-arranged since the night run --
+      the blue vase moved to x~325 and is labeled "bowl" there,
+      bottle at x~384) -- v5 == fp16 on the main object set (deltas
+      -0.02..-0.03, 100% presence); the only material gap is bottle
+      (mean -0.13, presence 80% vs 98%), entirely inside the
+      threshold band. Full record: docs/state.md, "fp16-reference
+      check, v5, DAY half". Registry candidate: under steady CFR the
+      [timing] sum is a pacing constant; load is visible in infer
+      and the mirrored cam only.
+
 - [x] M3-alt: NV12-family model input — probed and closed negative. The
       RKNPU2 API on board (rknn_type.h / rknn_api.h) has no YUV tensor
       types: rknn_tensor_type is numeric only (FLOAT/INT/BFLOAT),
@@ -173,12 +186,14 @@ refer to README.md sections (../README.md).
       hypothetically the win is ~1 ms of rga (0.8 -> ~0.4) on a 39.8 ms
       frame (<2%): not worth a model rebuild + requantization. The real
       FPS lever is the model input size — see M3-alt2.
+
 - [x] M3-alt2: yolov5s_relu_int8 @ 512x512 — closed by decision, not
       measured: smaller input means smaller grids (mid head 40x40 ->
       32x32), and losing small/distant objects at night is unacceptable
       for this task. The ~5 ms projected infer saving does not buy back
       the recall risk. 640x640 stays; model-side resize levers are
       exhausted — remaining FPS levers are on the platform side.
+
 - [ ] M3.5: netsend — network preview subsystem (design agreed
       2026-10-24). STATUS 2026-10-26 (day session, v2 model —
       superseded by v3 later the same day, see M2.4): phase A
@@ -280,6 +295,7 @@ refer to README.md sections (../README.md).
         is gone), colors clean on the stream. The earlier "missing
         hw_context" review hypothesis was disproven by reading
         rkmppenc.c — see Platform constraints, rkmpp encoder input.
+
 - [x] M3.6 (closed negative): box drawing via RGA — planned, probed
       live with yolov5 detections, retired. The open check (a) turned
       out fatal: RGA fill is not routable on this board (see Platform
@@ -381,6 +397,7 @@ refer to README.md sections (../README.md).
       (~1.5-1.7x); timing unchanged (26.2 FPS steady). Earlier ~17 px
       estimate superseded: it counted low-conf flicker
       (bottle<->vase flips, n=46 vs n=300).
+
 - [x] M3.10-b: Kalman trajectory tracker (reconstructed 2026-11-04 --
       the subsystem had no roadmap record; it pre-dates M3.11):
       global greedy IoU association (pairs sorted descending by IoU) over a per-track constant-velocity
@@ -396,6 +413,7 @@ refer to README.md sections (../README.md).
       confirm after kConfirmHits=3 consecutive matches; a confirmed
       track dies after kMaxMiss=15. Throttled report: every 15th
       frame, up to 8 tracks (id/state/c/v/n_pts).
+
 - [x] M3.11: trajectory trail -- CLOSED 2026-11-04. Ring points
       rendered as 3x3 px GpuBoxes in the SAME batch as the detection
       boxes (no new primitive, no VBO layout change): Tracker gained
@@ -452,6 +470,7 @@ refer to README.md sections (../README.md).
         logged suppressions were genuine duplicates of an active
         track; a new object entering over a coasting track is not
         yet stress-tested against this gate.
+
 - [x] P0/P1 hardening pass (2026-11-02, CLOSED): a reliability review
       of the whole tree before the M5 refactor; every patch is an
       anchor-verified, all-or-nothing script; every change verified
