@@ -278,12 +278,11 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     if ( vfr_ )
         std::cout << "enc: VFR follow-source mode: time_base 1/90000, pts from dequeue times\n";
 
-    frame_ = av_frame_alloc();
     pkt_ = av_packet_alloc();
-    if ( !frame_ || !pkt_ )
+    if ( !pkt_ || !init_frames() )
     {
+        free_frames();
         av_packet_free( &pkt_ );
-        av_frame_free( &frame_ );
         avcodec_free_context( &enc_ );
         avformat_network_deinit();
         throw std::runtime_error( "net encoder: av_frame/av_packet_alloc failed" );
@@ -295,8 +294,8 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     }
     catch ( ... )
     {
+        free_frames();
         av_packet_free( &pkt_ );
-        av_frame_free( &frame_ );
         avcodec_free_context( &enc_ );
         avformat_network_deinit();
         throw;
@@ -404,10 +403,9 @@ NetEncoder::~NetEncoder()
         }
         avcodec_free_context( reinterpret_cast<AVCodecContext**>( &enc_ ) );
     }
-    if ( frame_ )
-        av_frame_free( reinterpret_cast<AVFrame**>( &frame_ ) );
+    free_frames();
     if ( pkt_ )
-        av_packet_free( reinterpret_cast<AVPacket**>( &pkt_ ) );
+        av_packet_free( &pkt_ );
     // The DRM pool releases itself: pool_ is a member sub-object, its
     // destructor runs right after this body and covers the
     // constructor-throw path too.
@@ -552,50 +550,56 @@ bool NetEncoder::prep_frame( int tensor_fd, MppBuffer mb )
     return true;
 }
 
-bool NetEncoder::send_frame( AVStream* stp )
+bool NetEncoder::init_frames()
 {
-    auto* st = static_cast<AVStream*>( stp );
-    auto* ctx = static_cast<AVCodecContext*>( enc_ );
+    for ( int i = 0; i < kBufCount; ++i )
+    {
+        MppBuffer mb = pool_.buf[i];
+        AVDRMFrameDescriptor& desc = desc_[i];
+        desc.nb_objects = 1;
+        desc.objects[0].fd = mpp_buffer_get_fd( mb );
+        desc.objects[0].size = mpp_buffer_get_size( mb );
+        desc.objects[0].format_modifier = DRM_FORMAT_MOD_LINEAR;
+        desc.nb_layers = 1;
+        desc.layers[0].format = DRM_FORMAT_NV12;
+        desc.layers[0].nb_planes = 2;
+        desc.layers[0].planes[0].object_index = 0;
+        desc.layers[0].planes[0].offset = 0;
+        desc.layers[0].planes[0].pitch = w_;
+        desc.layers[0].planes[1].object_index = 0;
+        desc.layers[0].planes[1].offset = w_ * vstride_;
+        desc.layers[0].planes[1].pitch = w_;
 
-    MppBuffer mb = pool_.buf[cur_];  // rotated and RGA-filled by publish/prep_frame
+        AVFrame* fr = av_frame_alloc();
+        if ( !fr )
+            return false;
+        frames_[i] = fr;
+        fr->format = AV_PIX_FMT_DRM_PRIME;
+        fr->width = w_;
+        fr->height = h_;
+        fr->data[0] = reinterpret_cast<uint8_t*>( &desc );
+        fr->buf[0] = av_buffer_create(
+            reinterpret_cast<uint8_t*>( &desc ), sizeof( desc ), noop_free, nullptr, 0 );
+        if ( !fr->buf[0] )
+            return false;
+    }
+    return true;
+}
 
-    AVFrame* fr = static_cast<AVFrame*>( frame_ );
-    // DRM_PRIME path: hand the wrapper our ping-pong dma-buf by fd. The
-    // descriptor is a per-buffer member reused every send - the wrapper
-    // clones the frame at submit time and never re-reads the descriptor
-    // afterwards (the first frame only, cfg_init gate), so reuse while an
-    // older clone is still queued is safe: the clone holds the no-op
-    // AVBufferRef for refcounting only. The wrapper imports the fd into
-    // its own MPP group and releases it with the packet INPUT_FRAME meta.
-    AVDRMFrameDescriptor& desc = desc_[cur_];
-    desc.nb_objects = 1;
-    desc.objects[0].fd = mpp_buffer_get_fd( mb );
-    desc.objects[0].size = mpp_buffer_get_size( mb );
-    desc.objects[0].format_modifier = DRM_FORMAT_MOD_LINEAR;
-    desc.nb_layers = 1;
-    desc.layers[0].format = DRM_FORMAT_NV12;
-    desc.layers[0].nb_planes = 2;
-    desc.layers[0].planes[0].object_index = 0;
-    desc.layers[0].planes[0].offset = 0;
-    desc.layers[0].planes[0].pitch = w_;
-    desc.layers[0].planes[1].object_index = 0;
-    desc.layers[0].planes[1].offset = w_ * vstride_;
-    desc.layers[0].planes[1].pitch = w_;
-    fr->format = AV_PIX_FMT_DRM_PRIME;
-    fr->width = w_;
-    fr->height = h_;
-    // M4: CFR — sequential pts in the codec time base; VFR — real dequeue
-    // times (µs -> 1/90000 ticks), per-session base, fallback to a 25 fps
-    // grid if the pipeline did not provide a timestamp.
+void NetEncoder::free_frames()
+{
+    for ( auto*& fr : frames_ )
+    {
+        if ( fr )
+            av_frame_free( &fr );
+    }
+}
+
+bool NetEncoder::send_frame( AVStream* st )
+{
+    AVFrame* fr = frames_[cur_];
     const int64_t fpts = packet_pts();
     fr->pts = fpts;
-    fr->data[0] = reinterpret_cast<uint8_t*>( &desc );
-    fr->buf[0] = av_buffer_create( reinterpret_cast<uint8_t*>( &desc ), sizeof( desc ), noop_free, nullptr, 0 );
-    if ( !fr->buf[0] )
-    {
-        std::cerr << "enc: av_buffer_create failed\n";
-        return false;
-    }
 
     // 7c forced-IDR: a fresh viewer session forces the next encoded frame
     // to be an IDR, so a late join starts within a frame or two instead
@@ -613,8 +617,7 @@ bool NetEncoder::send_frame( AVStream* stp )
         }
     }
 
-    int ret = avcodec_send_frame( ctx, fr );
-    av_frame_unref( fr );  // drop the buffer ref; the tensor/MPP memory stays
+    int ret = avcodec_send_frame( enc_, fr );
     if ( ret < 0 )
     {
         std::cerr << "enc: send_frame: " << av_err_str( ret ) << '\n';
@@ -622,7 +625,7 @@ bool NetEncoder::send_frame( AVStream* stp )
     }
 
     AVPacket* pkt = static_cast<AVPacket*>( pkt_ );
-    ret = avcodec_receive_packet( ctx, pkt );
+    ret = avcodec_receive_packet( enc_, pkt );
     while ( ret >= 0 )  // drains the burst; EAGAIN/EOF end it
     {
         pkt->stream_index = st->index;
@@ -654,7 +657,7 @@ bool NetEncoder::send_frame( AVStream* stp )
             pkt_cv_.notify_one();
         }
         av_packet_unref( pkt );
-        ret = avcodec_receive_packet( ctx, pkt );
+        ret = avcodec_receive_packet( enc_, pkt );
     }
     if ( ret != AVERROR( EAGAIN ) && ret != AVERROR_EOF )
     {

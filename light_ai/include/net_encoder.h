@@ -123,6 +123,8 @@ private:
     bool open_transport( int lfd, const std::string& url, AVFormatContext* fc, Transport& t );
     bool setup_stream( AVFormatContext* fc, AVStream** st, bool tcp_pull );
 
+    bool init_frames();
+    void free_frames();
     int64_t packet_pts();  // pts of the next frame; may set ts_base_
     int mux_write( AVFormatContext* fc, PktPtr pkt );
     bool prep_frame( int tensor_fd, MppBuffer mb );
@@ -143,7 +145,6 @@ private:
     std::atomic< bool > force_idr_ { false };
 
     AVCodecContext* enc_ = nullptr;  // h264_rkmpp
-    AVFrame* frame_ = nullptr;  // NV12 over an MPP DRM buffer
     AVPacket* pkt_ = nullptr;
     // Three buffers, not two. Two worked only at a steady frame pace;
     // with --net-fps 0 (VFR) frames arrive in clumps after a network
@@ -153,6 +154,7 @@ private:
     RkmppDrmPool<kBufCount> pool_;  // three ping-pong NV12 dma-bufs, one RAII sub-object
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
+    std::array<AVFrame*, kBufCount> frames_ {};  // pre-bound DRM_PRIME frames (one per pool slot)
 
     // Encoder -> serve() packet queue. A separate mutex from mx_:
     // network-side wakeups never touch the encode critical section.

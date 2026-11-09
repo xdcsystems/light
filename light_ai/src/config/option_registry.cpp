@@ -1,5 +1,5 @@
-// option_registry.cpp (2026-11-08): the option table, extracted from
-// cli.cpp. One registry of names, ranges and error texts; both the
+// The option table, extracted from cli.cpp.
+// One registry of names, ranges and error texts; both the
 // argv loop (CliOptions::parse) and the INI config-file handler
 // validate through it, so both sources reject identically.
 

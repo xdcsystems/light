@@ -1,4 +1,4 @@
-// cli.cpp (2026-11-08): the parameter layer. The option registry
+// The parameter layer. The option registry
 // (names, ranges, error texts) lives in config/option_registry.{h,cpp};
 // the INI config-file layer lives in config/config_file.{h,cpp}
 // (externals/inih r62, BSD-3-Clause); this file owns the CliOptions
@@ -15,7 +15,6 @@
 // ---- CliOptions implementation ----
 
 // Cross-field checks: post-parse, because argv order is arbitrary.
-// Every block moved verbatim from main.cpp (2026-11-08).
 int CliOptions::validate() const
 {
     // --net-h264 is a variant of the preview subsystem, not an independent

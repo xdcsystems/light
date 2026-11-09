@@ -1,4 +1,4 @@
-// config_file.cpp (2026-11-08): the INI config-file layer. inih parses
+// The INI config-file layer. inih parses
 // a flat `key = value` file THROUGH the option registry the CLI uses
 // -- one registry, one validation path, identical error text in both
 // sources. Flat namespace only: a section header is a loud error (the
@@ -17,8 +17,7 @@
 namespace
 {
     // HANDLER CONVENTION: 0 = error, nonzero = success (per ini.h:
-    // "nonzero on success, zero on error") -- the returns below follow
-    // it; the 2026-11-08 bug had them inverted.
+    // "nonzero on success, zero on error") -- the returns below follow it; 
     struct CfgFileCtx
     {
         Config* cfg;
