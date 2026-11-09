@@ -35,7 +35,7 @@ post-processing.
   in the layer's .cpp. Compile-time class constants use an
   unscoped enum (camera_v4l2.hpp kBufCount); references:
   camera_v4l2.cpp / gpu_box_drawer.cpp / net_preview.cpp
-  (anon-namespace helpers), box_smoother.hpp (plain member).
+  (anon-namespace helpers), box_smoother.h (plain member).
   tools/ is exempt (disposable probes).
 - No virtual functions, no inheritance hierarchies: zero vtables, zero
   dynamic polymorphism. Layer boundaries are the composition of concrete
@@ -109,7 +109,7 @@ post-processing.
 - NetMjpegSource : HTTP multipart/x-mixed-replace MJPEG pull source
                (--net-src http://host:port/path, mutually exclusive
                with --device). Non-blocking TCP connect + SO_RCVTIMEO
-               (5 s), structural JPEG framing into a 4x2 MiB mmap pool
+               (5 s), structural JPEG framing into a 4x1 MiB mmap pool
                (skips header/EXIF segments by length up to SOS, extracts
                frame dimensions from SOFn, verifies trailing EOI); primes
                frame 0 in setup_device() so stream geometry is known at
@@ -169,7 +169,7 @@ post-processing.
                (alpha = 0.5) box stabilizer; decays unmatched tracks
                after 2 misses; optional raw-vs-smoothed CSV via
                --box-log.
-- Tracker (M3.10-b / M3.11): 64-slot constant-velocity Kalman tracker
+- Tracker (M3.10-b / M3.11): 8-slot constant-velocity Kalman tracker
                (2-state filter per axis, velocity clamp 500 px/s,
                0.90x per-miss velocity decay, size-consistency gate,
                spawn-dedupe gate) with a 300-point trajectory ring
@@ -557,7 +557,7 @@ the first frame; colors verified clean on the stream (no chroma
 misalignment).
 Update 2026-11-03..09 (Batch B/C + P0 audit): prep_frame (fence poll
 + RGA band crop) runs before mx_; send_frame moves encoded packets
-into a 3-deep preallocated AVPacket queue (av_packet_move_ref, zero
+into an 8-deep preallocated AVPacket ring buffer (av_packet_move_ref, zero
 per-frame heap allocs) and serve() drains them into the muxer on the
 worker thread — the pipeline thread never touches the network. With
 no viewer attached, publish_oldest() skips both draw and encode.
@@ -621,7 +621,7 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
     ./scripts/build.sh
 
 Target CPU flags (CMakeLists.txt TARGET_CPU_FLAGS, 2026-11-02):
--mcpu=cortex-a76 -mtune=cortex-a76.cortex-a55. The dot form is legal
+-mcpu=cortex-a76+dotprod+crypto -mtune=cortex-a76.cortex-a55. The dot form is legal
 only in -mtune (GCC 10.2 rejects -mcpu=cortex-a76+cortex-a55: "+"
 there means a feature modifier). Measured effect on the camera-bound
 pipeline: none (sum 95.5 ms, ~20.0 FPS before and after — the

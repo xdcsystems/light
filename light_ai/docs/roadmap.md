@@ -473,7 +473,8 @@ refer to README.md sections (../README.md).
       - P0-3(+3b) RknnEngine: non-copyable, safe move ctor (hollow
         shell, ctx_=0) — vector::reserve stays legal.
       - P0-4 main: --w/--h validated (16..8192, non-16-multiple
-        warning; 1080p stays a documented mode).
+        warning; later abolished in 3c708ec — geometry derived from
+        V4L2 G_FMT or JPEG SOFn).
       - P0-5 GpuBoxDrawer: attach_slot() geometry mismatch guard —
         the first attach fixes the shared geometry, any later
         mismatch fails loudly with partial attach cleanup.

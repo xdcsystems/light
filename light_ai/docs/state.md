@@ -503,7 +503,7 @@ are the pure figures; prod steady-state [timing] figures are NOT pure
 | GPU practically idle | debugfs mali0 dvfs_utilization | — | prod | 11-02 | VERIFIED live: busy/idle ticks never fire (batch draw per frame is below the DVFS tick granularity), cur_freq stays 1 GHz in performance; boxes render (visual confirmation) — counter-blind, not draw-dead |
 | -mcpu=cortex-a76 -mtune=cortex-a76.cortex-a55 | CMakeLists TARGET_CPU_FLAGS A/B | int8_mmse_v5, 960p | prod, h264 pull, viewer attached | 11-02 | NO EFFECT vs -mcpu=cortex-a76: sum 95.2-95.8 ms / ~20.0 FPS both — camera-bound, inference lives on the NPU. Kept as documentation of intent. The dot form is legal only in -mtune (GCC 10.2 rejects -mcpu=cortex-a76+cortex-a55: "+" there means a feature modifier) |
 
-## Shutdown observations (2026-11-02): MPP prints on the graceful exit
+## Shutdown observations (2026-11-02): MPP prints on the graceful exit — CLOSED (b8b0bab, 7c0d6d9, 6fa82ac; verified 2026-11-09)
 
 Two post-P1-6 live runs, both Ctrl-C with a viewer attached:
 - Run A (3000 frames, post-P1-5 binary): clean exit — the last MPP
@@ -520,10 +520,12 @@ M3.5-era ref_count warning (that was the mpp_buffer path, closed by
 the EOS fixes) — this one is the mpp_packet/meta path. No crash, no
 other symptoms; the "Processed N frames" line and the exit are clean
 in both runs.
-Backlog: P2 candidate "shutdown-path double packet_deinit" — needs
-src/mpp_decoder.cpp + src/net_encoder.cpp teardown review. Not
-reproducible on demand (phase-dependent; try Ctrl-C at different
-points of the run and record which phase produces the prints).
+Status (CLOSED 2026-11-09): fixed in b8b0bab (NetEncoder EOF drain),
+7c0d6d9, and 6fa82ac (MppDecoder::~MppDecoder strips KEY_INPUT_PACKET
+and KEY_OUTPUT_FRAME task metas on both ports before and after
+mpi_->reset). Verified 2026-11-09: 20x back-to-back teardown loop and
+600-frame --pool 3 --net --net-h264 multi-connect/disconnect run exit
+cleanly with zero mpp_meta / mpp_mem_pool warnings.
 
 ## Pipeline unification (2026-11-03): unified slot-ring path (M4 follow-up)
 
@@ -726,18 +728,15 @@ READABILITY PASS (post-tidy, 2026-11-03 evening):
   setup was innocent; the push succeeded once the incident cleared.
   Protocol: with an unchanged key and a sudden publickey refusal,
   check githubstatus.com FIRST.
-- Bus error on exit (OPEN, deferred by owner decision): one
-  3000-frame run (h264 pull; viewer connected ~f60, gone ~f1020)
-  printed "Bus error" AFTER "Processed 3000 frames" -- teardown
-  phase, past the main loop. NOT reproduced by: a 300-frame run
-  with no viewer (exit 0, clean mpp_task_queue_deinit) and a
-  1200-frame run with viewer attach+detach (clean drain, EOF
-  reached, exit clean). dmesg: no Mali/dma-buf faults. Hypothesis:
-  phase-dependent teardown race (encoder/mux vs main teardown),
-  same family as the shutdown-observations P2 item. Backlog:
-  reproduce under gdb (or with a core file, ulimit -c unlimited)
-  on a 3000-frame run with a viewer detach; record `echo exit: $?`
-  per run.
+- Bus error on exit (CLOSED 2026-11-09): one
+  3000-frame run on 2026-11-04 (h264 pull; viewer connected ~f60,
+  gone ~f1020) printed "Bus error" AFTER "Processed 3000 frames" --
+  teardown phase, past the main loop. Closed by 6fa82ac (MppDecoder
+  port task meta strip before/after reset) and 3912b2b (NetEncoder
+  preallocated 8-slot AVPacket ring buffer drained before
+  avcodec_free_context). Re-verified 2026-11-09 on a 600-frame
+  --pool 3 --net --net-h264 run with 3 viewer connect/disconnect
+  cycles and a 20x teardown stress loop: exit 0, clean drain.
 - Tracker phantom velocities (OPEN, cosmetic): during miss streaks
   Kalman coasting lets cx/cy/vx/vy run far off-frame (observed
   v=-926.76 px/s, c=(-6.9, 479.3); id churn 1->3->5->7->9->...->21
@@ -1186,7 +1185,7 @@ Complete codebase & documentation audit across four criteria
 (consistency, hidden bugs/UB, architecture/size, C++/OOP rules):
 
 - Teardown & lifetime safety (P0): NetEncoder drains/unrefs the
-  preallocated 3-slot AVPacket ring BEFORE avcodec_free_context
+  preallocated 8-slot AVPacket ring (3912b2b) BEFORE avcodec_free_context
   (closing the rkmpp packet/meta teardown race and exit Bus error);
   NetEncoder ctor guards avformat_network_deinit() and worker thread
   launch on all throw paths; NetPreview locks mx_ across open/close,
