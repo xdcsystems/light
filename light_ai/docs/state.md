@@ -1179,3 +1179,31 @@ Open:
   -- next live run.
 - The gl2ext.h candidate and the box_mapper/box_smoother body
   extraction stay in the backlog.
+
+## 2026-11-09 -- Full P0/P1/P2 audit pass (fix/audit-p0)
+
+Complete codebase & documentation audit across four criteria
+(consistency, hidden bugs/UB, architecture/size, C++/OOP rules):
+
+- Teardown & lifetime safety (P0): NetEncoder drains/unrefs the
+  preallocated 3-slot AVPacket ring BEFORE avcodec_free_context
+  (closing the rkmpp packet/meta teardown race and exit Bus error);
+  NetEncoder ctor guards avformat_network_deinit() and worker thread
+  launch on all throw paths; NetPreview locks mx_ across open/close,
+  sets rw_timeout on the client socket and drops the double close.
+- Format & DMA cache coherency (P0): MppDecoder propagates the
+  detected chroma format (YUV420SP vs YUV422SP) into RgaResizer;
+  ARM64 cache maintenance (dc cvac / dc civac) + DmaSync brackets
+  cover CPU tensor/pool gray-128 init, draw_boxes_cpu, CalDumper
+  and NetPreview reads.
+- Exact LbGeom band clamping (P1): fill_gpu_boxes takes const LbGeom&
+  and clamps both detections and trajectory trails to [left, left+w]
+  x [top, top+h] instead of assuming symmetric (model_w - lb_left)
+  margins.
+- Zero-heap tables & rule alignment (P2): find_usb_capture_node
+  replaces std::map with a stack std::array<int, 64> (zero heap in
+  recovery); OptionRegistry replaces std::map and the 4 group-builder
+  functions with a sorted 23-entry std::array<Entry, 23> (no <map>
+  remains anywhere in the tree); include order (<...> before "...")
+  and header layout (methods before data in separate visibility
+  blocks) aligned across all headers and TUs. Tidy: PASS (0 findings).

@@ -104,6 +104,12 @@ post-processing.
                (BUF_FLAG_ERROR) is a class member: it survives
                dequeue() calls and is reset only by a clean frame or
                by reconnect() after a successful STREAMON.
+- NetMjpegSource : HTTP multipart/x-mixed-replace MJPEG pull source
+               (--net-src http://host:port/path, mutually exclusive
+               with --device). Non-blocking TCP connect + SO_RCVTIMEO
+               (5 s), SOI..EOI framing into a 1 MiB staging buffer,
+               reconnect() on stream drop through the same recovery
+               loop as CameraV4L2.
 - MppDecoder : MJPEG -> YUV422SP decode into an external dma-buf pool
                (adaptive, 2026-11-06: a 4:2:0 source decodes to
                YUV420SP instead — the format is picked from the JPEG
@@ -151,6 +157,28 @@ post-processing.
                stop flag: run() exits through the normal path (ring
                drain, TOTAL summary, encoder flush, camera
                teardown) instead of being killed outright.
+- BoxSmoother (M3.10): 32-slot class-aware greedy IoU (> 0.30) + EMA
+               (alpha = 0.5) box stabilizer; decays unmatched tracks
+               after 2 misses; optional raw-vs-smoothed CSV via
+               --box-log.
+- Tracker (M3.10-b / M3.11): 64-slot constant-velocity Kalman tracker
+               (2-state filter per axis, velocity clamp 500 px/s,
+               0.90x per-miss velocity decay, size-consistency gate,
+               spawn-dedupe gate) with a 300-point trajectory ring
+               per track; recent_points() feeds the trail renderer.
+- BoxMapper  : fill_gpu_boxes() maps smoothed detections and confirmed
+               trajectory trails into the 128-box GpuBoxList VBO
+               budget, clamped to the exact LbGeom band [left,
+               left+w] x [top, top+h].
+- CalDumper / ConsoleReporter / Timings : calibration PPM dumper
+               (--dump-cal single frame, --cal N --cal-interval K
+               series under --cal-dir, DMA-synced CPU read),
+               throttled detection/track console + CSV reporter, and
+               per-stage FrameTrace accumulator.
+- CliOptions / OptionRegistry / ConfigFileLoader (config/): fixed
+               23-entry std::array option registry shared by the CLI
+               parser and the inih-backed INI loader (--config,
+               applied before CLI overrides).
 
 - GpuBoxDrawer (M3.7): box drawing on Mali G610 (EGL/GBM) straight
                into the NPU input tensor. The tensor dma-buf is imported
@@ -376,8 +404,9 @@ rate control a nominal fps (25) while pts stay per-dequeue
   raw uint8 + img[None] with NO data_format kwarg (tools/save_board_csv.py),
   or float input + data_format='nhwc'. inputs_pass_through, when used,
   also needs the 4-dim shape.
-- Default resolution is 1280x720: same model input geometry as 1080p
-  (identical s, band and T), but single-pass RGA and cheaper MJPEG decode.
+- Default resolution is 1280x960 (since 2026-10-30; 1280x720 earlier):
+  full-frame 2 Mp, single-pass RGA into the 640x640 tensor (640x480
+  letterbox band, lb_top = 80).
 
 - RGA fill/rectangle is KNOWN-BROKEN on this board — do not use it for
   drawing. The kernel refuses fill jobs outright: RGA3 cores cannot fill
@@ -512,6 +541,12 @@ the live log: "set prep cfg w:h [640:360] stride [640:368]"
 (16-aligned ver stride) replaces the startup default [640:384] on
 the first frame; colors verified clean on the stream (no chroma
 misalignment).
+Update 2026-11-03..09 (Batch B/C + P0 audit): prep_frame (fence poll
++ RGA band crop) runs before mx_; send_frame moves encoded packets
+into a 3-deep preallocated AVPacket queue (av_packet_move_ref, zero
+per-frame heap allocs) and serve() drains them into the muxer on the
+worker thread — the pipeline thread never touches the network. With
+no viewer attached, publish_oldest() skips both draw and encode.
 
 ## Measured performance (1280x960 MJPEG, yolov5s_relu_int8 @ 640x640, daytime, steady, viewer attached)
 
@@ -608,7 +643,11 @@ configured node (ENOENT) is not fatal: the pipeline falls back to
 find_usb_capture_node() and adopts the winner (startup fallback, M3.8);
 non-ENOENT open errors (EBUSY/EACCES) stay fatal. Options:
 --help/-h prints the option list (generated from the parser table).
---device, --model, --frames, --w, --h, --dump-cal, --conf, --iou,
+--config <path> loads an INI config file (flat key = value; applied
+before CLI flags so CLI always overrides).
+--device, --net-src http://host:port/path (HTTP MJPEG pull source,
+replaces --device), --model, --frames (>= 1; default: run until
+Ctrl-C), --w, --h, --dump-cal, --conf, --iou,
 --core 0|1|3|7 (NPU core pinning: 0=AUTO default, 1=core0, 3=0+1,
 7=0+1+2; measured: infer 25.1->21.2 ms on 012, FPS unchanged —
 source-bound, M2.5),
