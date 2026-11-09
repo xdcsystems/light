@@ -22,6 +22,8 @@ void Timings::report( const char* tag )
 {
     if ( n == 0 )
         return;
+    const std::ios_base::fmtflags old_flags = std::cout.flags();
+    const std::streamsize old_prec = std::cout.precision();
     const double sum = ( cam + dec + rga + infer + post + enc ) / n;
     if ( pool > 1 )
     {
@@ -36,6 +38,8 @@ void Timings::report( const char* tag )
                   << " rga=" << rga / n << " infer=" << infer / n << " post=" << post / n << " enc=" << enc / n << " | sum=" << sum << " ms -> ~"
                   << ( sum > 0 ? 1000.0 / sum : 0.0 ) << " FPS\n";
     }
+    std::cout.flags( old_flags );
+    std::cout.precision( old_prec );
     cam = dec = rga = infer = post = enc = 0;
     n = 0;
 }

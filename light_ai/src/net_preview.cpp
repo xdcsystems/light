@@ -103,17 +103,8 @@ void NetPreview::serve()
             continue;
 
         AVStream* st = avformat_new_stream( s.fc, nullptr );
-        if ( !st )
+        if ( !st || !st->codecpar )
             continue;
-        if ( !st->codecpar )
-        {
-            st->codecpar = avcodec_parameters_alloc();
-            if ( !st->codecpar )
-            {
-                std::cerr << "net: avcodec_parameters_alloc failed\n";
-                continue;
-            }
-        }
         st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
         st->codecpar->codec_id = AV_CODEC_ID_RAWVIDEO;
         st->codecpar->format = AV_PIX_FMT_RGB24;
@@ -172,11 +163,10 @@ void NetPreview::publish( const uint8_t* rgb )
     if ( !fc_ || quit_.load() )
         return;
 
-    AVBufferRef* ref = av_buffer_create( const_cast<uint8_t*>( rgb ), stride_ * h_, av_noop_free, nullptr, 0 ); // NOLINT(cppcoreguidelines-pro-type-const-cast)
-    if ( !ref )
-        return;
-    pkt_->buf = ref;
-    pkt_->data = ref->data;
+    // Zero per-frame heap allocation: av_write_frame synchronously muxes
+    // pkt_->data into the NUT AVIO stream without taking buffer ownership.
+    pkt_->buf = nullptr;
+    pkt_->data = const_cast<uint8_t*>( rgb );  // NOLINT(cppcoreguidelines-pro-type-const-cast)
     pkt_->size = stride_ * h_;
     pkt_->stream_index = stream_->index;
     pkt_->pts = pkt_->dts = static_cast<int64_t>( pts_ * frame_step_ );
@@ -185,7 +175,8 @@ void NetPreview::publish( const uint8_t* rgb )
     ++pts_;
 
     const int ret = av_write_frame( fc_, pkt_ );
-    av_packet_unref( pkt_ );
+    pkt_->data = nullptr;
+    pkt_->size = 0;
     if ( ret < 0 )
     {
         std::cerr << "net: write failed: " << av_err_str( ret ) << '\n';

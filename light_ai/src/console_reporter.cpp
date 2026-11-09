@@ -4,8 +4,23 @@
 #include "console_reporter.h"
 #include "coco_names.h"
 
+namespace
+{
+    struct CoutFmtGuard
+    {
+        std::ios_base::fmtflags flags = std::cout.flags();
+        std::streamsize prec = std::cout.precision();
+        ~CoutFmtGuard()
+        {
+            std::cout.flags( flags );
+            std::cout.precision( prec );
+        }
+    };
+}  // namespace
+
 void ConsoleReporter::report( int frame, const DetList& dets, const TrajList& trajs ) const
 {
+    const CoutFmtGuard fmt_guard {};
     // Throttled trajectory report: every 15th frame.
     if ( trajs.n > 0 && frame % 15 == 0 )
     {
@@ -35,6 +50,7 @@ void ConsoleReporter::report( int frame, const DetList& dets, const TrajList& tr
 
 void ConsoleReporter::summary( int ok, double wall, int reconnects ) const
 {
+    const CoutFmtGuard fmt_guard {};
     if ( reconnects > 0 )
         std::cout << "camera disconnects recovered: " << reconnects << '\n';
     std::cout << "Processed " << ok << " frames in " << std::fixed << std::setprecision( 3 ) << wall << " s -> "

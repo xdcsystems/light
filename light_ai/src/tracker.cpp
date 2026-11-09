@@ -106,7 +106,7 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
         if ( iou * 100.0f >= static_cast<float>( kSpawnDedupeGate ) )
         {
             std::cerr << "Dedupe: spawn suppressed by track (id=" << t.id
-                      << ", iou=" << iou * 100.0f << "%)" << std::endl;
+                      << ", iou=" << iou * 100.0f << "%)\n";
             return;
         }
 
@@ -163,59 +163,67 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
         t.ts_last_us = ts_us;
     }
 
-    // Greedy association: each person detection takes the best unmatched
-    // alive track (gate kIoUGate); a track is used at most once per frame.
-    std::array<unsigned char, 128> det_taken {};  // DetList capacity
-    std::array<unsigned char, kMaxTracks> trk_taken {};
+    // Global greedy association: collect all valid (det, track) pairs above
+    // kIoUGate and size-consistency bounds, sort by descending IoU, then
+    // assign greedily so an earlier detection cannot steal a track from a
+    // better-overlapping detection later in dets.
+    struct MatchPair
+    {
+        int det;
+        int trk;
+        float iou;
+    };
+    std::array<MatchPair, 128 * kMaxTracks> pairs {};
+    int npairs = 0;
     for ( int k = 0; k < dets.n; ++k )
     {
         const Detection& d = dets.d[k];
         if ( d.cls != 0 )
             continue;
-        int best = -1;
-        float best_iou = 0.0f;
         for ( int i = 0; i < kMaxTracks; ++i )
         {
             const Track& t = tracks_[i];
-            if ( t.life == TRACK_FREE || trk_taken[i] )
-                continue;
-            const float v = box_iou( d.x, d.y, d.w, d.h, t.fx.x - t.bw * 0.5f, t.fy.x - t.bh * 0.5f, t.bw, t.bh );
-            // Size-consistency gate: a partial box (person half out
-            // of frame) carries a squeezed w/h -- it must not steal
-            // the match from the full-size detection.
-            if ( t.bw <= 0.0f || t.bh <= 0.0f )
+            if ( t.life == TRACK_FREE || t.bw <= 0.0f || t.bh <= 0.0f )
                 continue;
             const float rw = d.w / t.bw * 100.0f;
             const float rh = d.h / t.bh * 100.0f;
             if ( rw < static_cast<float>( kSizeMin ) || rw > static_cast<float>( kSizeMax ) ||
                  rh < static_cast<float>( kSizeMin ) || rh > static_cast<float>( kSizeMax ) )
                 continue;
-            if ( v > best_iou )
-            {
-                best_iou = v;
-                best = i;
-            }
+            const float v = box_iou( d.x, d.y, d.w, d.h, t.fx.x - t.bw * 0.5f, t.fy.x - t.bh * 0.5f, t.bw, t.bh );
+            if ( v * 100.0f >= static_cast<float>( kIoUGate ) )
+                pairs[npairs++] = { k, i, v };
         }
-
-        // Association gate: kIoUGate (30), as documented in the header contract.
-        // The code used to test kSpawnDedupeGate (15) here -- kIoUGate had no
-        // other reader, so association ran at half the documented threshold
-        // (comment/code desync).
-        // The spawn dedupe keeps its laxer half-gate: its job is to catch
-        // duplicates that failed a stricter gate (size gate on partial
-        // boxes, edge IoU jitter), not to redefine the match threshold.
-        
-        if ( best >= 0 && best_iou * 100.0f >= static_cast<float>( kIoUGate ) )
+    }
+    for ( int a = 1; a < npairs; ++a )
+    {
+        const MatchPair cur = pairs[a];
+        int b = a - 1;
+        while ( b >= 0 && pairs[b].iou < cur.iou )
         {
-            trk_taken[best] = 1;
-            det_taken[k] = 1;
-            Track& t = tracks_[best];
-            measure( t, d.x + d.w * 0.5f, d.y + d.h * 0.5f, d.w, d.h, ts_us );
-            ++t.hits;
-            t.miss = 0;
-            if ( t.life == TRACK_TENT && t.hits >= kConfirmHits )
-                t.life = TRACK_CONF;
+            pairs[b + 1] = pairs[b];
+            --b;
         }
+        pairs[b + 1] = cur;
+    }
+
+    std::array<unsigned char, 128> det_taken {};  // DetList capacity
+    std::array<unsigned char, kMaxTracks> trk_taken {};
+    for ( int p = 0; p < npairs; ++p )
+    {
+        const int k = pairs[p].det;
+        const int i = pairs[p].trk;
+        if ( det_taken[k] || trk_taken[i] )
+            continue;
+        det_taken[k] = 1;
+        trk_taken[i] = 1;
+        const Detection& d = dets.d[k];
+        Track& t = tracks_[i];
+        measure( t, d.x + d.w * 0.5f, d.y + d.h * 0.5f, d.w, d.h, ts_us );
+        ++t.hits;
+        t.miss = 0;
+        if ( t.life == TRACK_TENT && t.hits >= kConfirmHits )
+            t.life = TRACK_CONF;
     }
 
     // Unmatched person detections spawn tentative tracks (slot space
