@@ -3,7 +3,6 @@
 #include <cstring>
 #include <cstddef>  // offsetof
 #include <iostream>
-#include <memory>
 #include <sstream>
 #include <string>
 #include <poll.h>
@@ -11,8 +10,6 @@
 #include <im2d.h>
 #include <rga.h>
 #include <libdrm/drm_fourcc.h>  // DRM_FORMAT_*
-
-constexpr int kPktQDepth = 8;  // encoder -> serve packet queue depth (frames)
 
 extern "C"
 {
@@ -53,15 +50,6 @@ static_assert( offsetof( RKMPPPriv, mcfg ) == 40, "rkmpp priv layout drift" );
 
 namespace
 {
-    // Deleter for PktPtr (net_encoder.hpp): av_packet_free unrefs
-    // the packet and frees the struct. Its address is the per-instance
-    // deleter value; PktPtr cannot be built without it (the one-arg
-    // unique_ptr ctor is deleted for pointer deleters).
-    void free_av_packet( AVPacket* p )
-    {
-        av_packet_free( &p );
-    }
-
     bool is_idr( const AVPacket* q )
     {
         for ( size_t i = 0; i + 4 <= (size_t)q->size; ++i )
@@ -272,7 +260,7 @@ NetEncoder::~NetEncoder()
         thread_.join();
     {
         std::lock_guard<std::mutex> plk( pkt_mx_ );
-        pkts_.clear();
+        clear_pkt_queue();
     }
     // Defensive: close a fence fd if a future edit to publish() adds an
     // early return between the fd hand-off and prep_frame(). Today the
@@ -535,6 +523,16 @@ bool NetEncoder::init_frames()
         if ( !fr->buf[0] )
             return false;
     }
+    mux_pkt_ = av_packet_alloc();
+    dup_pkt_ = av_packet_alloc();
+    if ( !mux_pkt_ || !dup_pkt_ )
+        return false;
+    for ( auto*& qp : pkts_ )
+    {
+        qp = av_packet_alloc();
+        if ( !qp )
+            return false;
+    }
     return true;
 }
 
@@ -545,6 +543,25 @@ void NetEncoder::free_frames()
         if ( fr )
             av_frame_free( &fr );
     }
+    for ( auto*& qp : pkts_ )
+    {
+        if ( qp )
+            av_packet_free( &qp );
+    }
+    if ( mux_pkt_ )
+        av_packet_free( &mux_pkt_ );
+    if ( dup_pkt_ )
+        av_packet_free( &dup_pkt_ );
+}
+
+void NetEncoder::clear_pkt_queue()
+{
+    for ( size_t i = 0; i < pkt_count_; ++i )
+    {
+        av_packet_unref( pkts_[( pkt_head_ + i ) % kPktQDepth] );
+    }
+    pkt_head_ = 0;
+    pkt_count_ = 0;
 }
 
 bool NetEncoder::send_frame( AVStream* st )
@@ -583,32 +600,31 @@ bool NetEncoder::send_frame( AVStream* st )
         pkt->stream_index = st->index;
         pkt->pts = pkt->dts = fpts * frame_step_;
         // Batch C: the pipeline thread no longer touches the network.
-        // Clone the packet (deep copy) and hand it to serve()'s drain
-        // loop; the original is unreffed immediately. Mux-side header
-        // capture/prepend moved to serve() with the rest of the mux.
-        AVPacket* copy = av_packet_clone( pkt );
-        if ( copy )
+        // Move the packet reference into the preallocated ring queue
+        // (av_packet_move_ref, zero per-frame heap allocs) and hand it
+        // to serve()'s drain loop.
         {
             std::lock_guard<std::mutex> plk( pkt_mx_ );
-            if ( pkts_.size() >= kPktQDepth )
+            if ( pkt_count_ >= kPktQDepth )
             {
                 // Overflow = serve() stalled (slow viewer / Wi-Fi burst).
                 // Dropping one packet tears the reference chain: every later
                 // P-frame decodes into corruption until the next IDR. Flush
                 // the whole queue, re-arm the IDR gate and force an IDR on
                 // the next frame: the gap is one frame, not a full GOP.
-                const size_t ndrop = pkts_.size();
-                pkts_.clear();  // PktPtr destructors free every packet
+                const size_t ndrop = pkt_count_;
+                clear_pkt_queue();
                 force_idr_.store( true );
                 wait_key_ = true;
                 ++pkt_drops_;
-                // diagnostic: every flush logged
-                    std::cerr << "enc: packet queue overflow: flushed " << ndrop << " pkts (drop " << pkt_drops_ << "), IDR next frame\n";
+                std::cerr << "enc: packet queue overflow: flushed " << ndrop << " pkts (drop " << pkt_drops_ << "), IDR next frame\n";
             }
-            pkts_.emplace_back( copy, &free_av_packet );
+            const size_t tail = ( pkt_head_ + pkt_count_ ) % kPktQDepth;
+            av_packet_unref( pkts_[tail] );
+            av_packet_move_ref( pkts_[tail], pkt );
+            ++pkt_count_;
             pkt_cv_.notify_one();
         }
-        av_packet_unref( pkt );
         ret = avcodec_receive_packet( enc_, pkt );
     }
     if ( ret != AVERROR( EAGAIN ) && ret != AVERROR_EOF )
@@ -655,31 +671,34 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
     }
     while ( !quit_.load() && !error_.load() )  // same predicate as the wait below
     {
-        PktPtr p{ nullptr, &free_av_packet };  // deleter is mandatory (GCC 10)
         size_t q_rem = 0;
         {
             std::unique_lock<std::mutex> plk( pkt_mx_ );
             pkt_cv_.wait( plk, [this] {
-                return quit_.load() || error_.load() || !pkts_.empty();
+                return quit_.load() || error_.load() || pkt_count_ > 0;
             } );
             if ( quit_.load() || error_.load() )
                 return;
-            if ( wait_key_ && !is_idr( pkts_.front().get() ) )
+            AVPacket* front = pkts_[pkt_head_];
+            if ( wait_key_ && !is_idr( front ) )
             {
-                pkts_.pop_front();
+                av_packet_unref( front );
+                pkt_head_ = ( pkt_head_ + 1 ) % kPktQDepth;
+                --pkt_count_;
                 continue;
             }
             wait_key_ = false;
-            p = std::move( pkts_.front() );
-            pkts_.pop_front();
-            q_rem = pkts_.size();
+            av_packet_unref( mux_pkt_ );
+            av_packet_move_ref( mux_pkt_, front );
+            pkt_head_ = ( pkt_head_ + 1 ) % kPktQDepth;
+            --pkt_count_;
+            q_rem = pkt_count_;
         }
-        // Ownership moves with p; the packet is freed by PktPtr at
-        // scope exit (av_interleaved_write_frame consumes the
-        // reference and blanks the packet first -- same lifetime
-        // as the old manual av_packet_free).
+        // Ownership of the packet buffer moved into mux_pkt_ via
+        // av_packet_move_ref; mux_write consumes and unrefs it without
+        // freeing the preallocated AVPacket struct.
         const auto mw_t0 = std::chrono::steady_clock::now();
-        const int r = mux_write( fc, std::move( p ) );
+        const int r = mux_write( fc, mux_pkt_ );
         const long mw_ms = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - mw_t0 ).count();
         if ( mw_ms > 20 )
             std::cerr << "enc: mux_write stalled " << mw_ms << " ms (queue was " << q_rem << ")\n";
@@ -697,25 +716,25 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
     }
 }
 
-int NetEncoder::mux_write( AVFormatContext* fc, PktPtr pkt )
+int NetEncoder::mux_write( AVFormatContext* fc, AVPacket* pkt )
 {
     // Late-join support (moved from send_frame): capture the
     // parameter-set prefix from the first key packet and prepend it to
     // every following IDR; the TS muxer tolerates the duplicate.
-    AVPacket* dup = nullptr;
-    if ( is_idr( pkt.get() ) )
+    AVPacket* out = pkt;
+    if ( is_idr( pkt ) )
     {
-        if ( hdr_.empty() && hdr_capture( pkt.get(), hdr_ ) )
+        if ( hdr_.empty() && hdr_capture( pkt, hdr_ ) )
             std::cout << "enc: h264 header captured: " << hdr_.size()
                       << " bytes, repeating on every IDR\n";
-        else if ( !hdr_.empty() && !starts_with( pkt.get(), hdr_ ) )
+        else if ( !hdr_.empty() && !starts_with( pkt, hdr_ ) )
         {
-            dup = av_packet_alloc();
-            if ( dup && av_new_packet( dup, hdr_.size() + (size_t)pkt->size ) >= 0 )
+            if ( av_new_packet( dup_pkt_, static_cast<int>( hdr_.size() ) + pkt->size ) >= 0 )
             {
-                memcpy( dup->data, hdr_.data(), hdr_.size() );
-                memcpy( dup->data + hdr_.size(), pkt->data, pkt->size );
-                av_packet_copy_props( dup, pkt.get() );
+                memcpy( dup_pkt_->data, hdr_.data(), hdr_.size() );
+                memcpy( dup_pkt_->data + hdr_.size(), pkt->data, static_cast<size_t>( pkt->size ) );
+                av_packet_copy_props( dup_pkt_, pkt );
+                out = dup_pkt_;
                 if ( !hdr_logged_ )
                 {
                     std::cout << "enc: header repeat active\n";
@@ -724,14 +743,14 @@ int NetEncoder::mux_write( AVFormatContext* fc, PktPtr pkt )
             }
             else
             {
-                av_packet_free( &dup );
-                dup = nullptr;
+                av_packet_unref( dup_pkt_ );
             }
         }
     }
-    const int r = av_interleaved_write_frame( fc, dup ? dup : pkt.get() );
-    av_packet_free( &dup );
-    return r;  // pkt is freed by PktPtr at scope exit
+    const int r = av_interleaved_write_frame( fc, out );
+    av_packet_unref( dup_pkt_ );
+    av_packet_unref( pkt );
+    return r;
 }
 
 // One viewer-session iteration: allocate the muxer context, open the
@@ -919,10 +938,10 @@ void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
         fc_ = nullptr;
         st_ = nullptr;
     }
-    // Leftover queued packets are dead weight now: free them.
+    // Leftover queued packets are dead weight now: unref them.
     {
         std::lock_guard<std::mutex> plk( pkt_mx_ );
-        pkts_.clear();  // PktPtr destructors free every packet
+        clear_pkt_queue();
     }
     av_write_trailer( fc.p );  // best effort
 }

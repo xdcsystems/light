@@ -8,11 +8,10 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
-#include <deque>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -46,15 +45,6 @@ typedef struct AVFrame AVFrame;
 typedef struct AVPacket AVPacket;
 typedef struct AVStream AVStream;
 typedef struct AVIOContext AVIOContext;
-
-// Owned packet handle: the mux queue holds AVPackets freed via
-// av_packet_free. The deleter is a plain function pointer so the
-// header keeps compiling without the libav* include paths; the
-// deleter body and its value live in net_encoder.cpp. The one-arg
-// unique_ptr ctor is deleted for pointer deleters, so a PktPtr
-// cannot be built without the deleter -- forgetting it is a
-// compile error, not a leak.
-using PktPtr = std::unique_ptr<AVPacket, void ( * )( AVPacket* )>;
 
 class NetEncoder
 {
@@ -125,8 +115,9 @@ private:
 
     bool init_frames();
     void free_frames();
+    void clear_pkt_queue();
     int64_t packet_pts();  // pts of the next frame; may set ts_base_
-    int mux_write( AVFormatContext* fc, PktPtr pkt );
+    int mux_write( AVFormatContext* fc, AVPacket* pkt );
     bool prep_frame( int tensor_fd, MppBuffer mb );
 
 private:
@@ -146,21 +137,29 @@ private:
 
     AVCodecContext* enc_ = nullptr;  // h264_rkmpp
     AVPacket* pkt_ = nullptr;
+    AVPacket* mux_pkt_ = nullptr;
+    AVPacket* dup_pkt_ = nullptr;
     // Three buffers, not two. Two worked only at a steady frame pace;
     // with --net-fps 0 (VFR) frames arrive in clumps after a network
     // pause, and two buffers can run out exactly at the 3-deep rkmpp
     // task queue while an older encode still holds its plane.
-    enum { kBufCount = 3 };
+    enum
+    {
+        kBufCount = 3,
+        kPktQDepth = 8
+    };
     RkmppDrmPool<kBufCount> pool_;  // three ping-pong NV12 dma-bufs, one RAII sub-object
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
     std::array<AVFrame*, kBufCount> frames_ {};  // pre-bound DRM_PRIME frames (one per pool slot)
 
-    // Encoder -> serve() packet queue. A separate mutex from mx_:
-    // network-side wakeups never touch the encode critical section.
+    // Encoder -> serve() preallocated packet ring queue. A separate mutex
+    // from mx_: network-side wakeups never touch the encode critical section.
     std::mutex pkt_mx_;
     std::condition_variable pkt_cv_;
-    std::deque<PktPtr> pkts_;
+    std::array<AVPacket*, kPktQDepth> pkts_ {};
+    size_t pkt_head_ = 0;
+    size_t pkt_count_ = 0;
     int pkt_drops_ = 0;
     bool wait_key_ = true;  // pkt_mx_: drain drops packets until the next IDR (see net_encoder.cpp)
     std::atomic<bool> active_ { false };  // stream path live (serve sets/clears under mx_)
