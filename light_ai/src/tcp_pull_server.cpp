@@ -28,7 +28,11 @@ namespace
     int write_packet( void* opaque, const uint8_t* buf, int buf_size )
     {
         const int fd = *static_cast<const int*>( opaque );
-        const ssize_t n = ::send( fd, buf, static_cast<size_t>( buf_size ), MSG_NOSIGNAL );
+        ssize_t n = 0;
+        do
+        {
+            n = ::send( fd, buf, static_cast<size_t>( buf_size ), MSG_NOSIGNAL );
+        } while ( n < 0 && errno == EINTR );
         if ( n > 0 )
             return static_cast<int>( n );
         if ( errno == EPIPE || errno == ECONNRESET )
@@ -51,7 +55,7 @@ TcpPullServer::~TcpPullServer()
 bool TcpPullServer::listen()
 {
     close_all();
-    const int fd = ::socket( AF_INET, SOCK_STREAM, 0 );
+    const int fd = ::socket( AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0 );
     if ( fd < 0 )
         return false;
     int one = 1;
@@ -78,14 +82,31 @@ bool TcpPullServer::accept_client( const std::atomic<bool>& quit )
     pollfd pf {};
     pf.fd = lfd_;
     pf.events = POLLIN;
-    while ( !quit.load() && ::poll( &pf, 1, kPollMs ) <= 0 )
-    {}
-    if ( quit.load() )
+    while ( !quit.load() )
+    {
+        const int pr = ::poll( &pf, 1, kPollMs );
+        if ( pr < 0 )
+        {
+            if ( errno == EINTR )
+                continue;
+            return false;
+        }
+        if ( pr == 0 )
+            continue;
+        if ( ( pf.revents & ( POLLERR | POLLHUP | POLLNVAL ) ) != 0 )
+            return false;
+        const int cfd = ::accept4( lfd_, nullptr, nullptr, SOCK_CLOEXEC );
+        if ( cfd >= 0 )
+        {
+            cfd_ = cfd;
+            break;
+        }
+        if ( errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR )
+            return false;
+    }
+    if ( quit.load() || cfd_ < 0 )
         return false;
-
-    const int cfd = ::accept4( lfd_, nullptr, nullptr, SOCK_CLOEXEC );
-    if ( cfd < 0 )
-        return false;
+    const int cfd = cfd_;
 
     int one = 1;
     ::setsockopt( cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );

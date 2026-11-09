@@ -131,7 +131,7 @@ namespace
                     return false;
                 const int fh = ( static_cast<int>( data[i + 5] ) << 8 ) | data[i + 6];
                 const int fw = ( static_cast<int>( data[i + 7] ) << 8 ) | data[i + 8];
-                if ( fw < 16 || fh < 16 )
+                if ( fw < 16 || fh < 16 || fw > 8192 || fh > 8192 )
                     return false;
                 if ( out_w )
                     *out_w = fw;
@@ -451,6 +451,8 @@ int NetMjpegSource::read_boundary()
     // Shape B (IP Webcam style): the first part may follow the response
     // headers without a leading CRLF — accept "--boundary\r\n" at the
     // window start.
+    if ( bpat_len_ < 6 )
+        return -1;
     const size_t bare_len = static_cast<size_t>( bpat_len_ ) - 2;
     while ( true )
     {
