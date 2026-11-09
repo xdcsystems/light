@@ -26,9 +26,7 @@ namespace
         char* end = nullptr;
         const long v = std::strtol( s, &end, 10 );
         if ( errno != 0 || end == s || *end != '\0' || v < INT_MIN || v > INT_MAX )
-        {
             return false;
-        }
         *out = static_cast<int>( v );
         return true;
     }
@@ -40,9 +38,7 @@ namespace
         errno = 0;
         char* end = nullptr;
         const float v = std::strtof( s, &end );
-        if ( errno == ERANGE || end == s || *end != '\0' )
-            return false;
-        if ( !std::isfinite( v ) )
+        if ( errno == ERANGE || end == s || *end != '\0' || !std::isfinite( v ) )
             return false;
         *out = v;
         return true;
@@ -57,18 +53,35 @@ namespace
         return false;
     }
 
-    bool apply_box_log( Config& c, const char* v )
+    template <bool Config::*Field>
+    bool apply_flag( Config& c, const char* )
     {
-        c.box_log = v;
+        c.*Field = true;
         return true;
     }
 
-    bool apply_cal( Config& c, const char* v )
+    template <std::string Config::*Field>
+    bool apply_str( Config& c, const char* v )
+    {
+        c.*Field = v;
+        return true;
+    }
+
+    bool set_int( const char* opt, const char* v, int lo, int hi, const char* exp, int& dst )
     {
         int n = 0;
-        if ( !parse_int( v, &n ) || n < 1 || n > 10000 )
-            return value_error( "--cal", v, "1..10000" );
-        c.cal_frames = n;
+        if ( !parse_int( v, &n ) || n < lo || n > hi )
+            return value_error( opt, v, exp );
+        dst = n;
+        return true;
+    }
+
+    bool set_float_01( const char* opt, const char* v, float& dst )
+    {
+        float f = NAN;
+        if ( !parse_float( v, &f ) || f < 0.0f || f > 1.0f )
+            return value_error( opt, v, "0.0..1.0" );
+        dst = f;
         return true;
     }
 
@@ -97,24 +110,6 @@ namespace
         return true;
     }
 
-    bool apply_cal_interval( Config& c, const char* v )
-    {
-        int n = 0;
-        if ( !parse_int( v, &n ) || n < 1 || n > 10000 )
-            return value_error( "--cal-interval", v, "1..10000" );
-        c.cal_interval = n;
-        return true;
-    }
-
-    bool apply_conf( Config& c, const char* v )
-    {
-        float f = NAN;
-        if ( !parse_float( v, &f ) || f < 0.0f || f > 1.0f )
-            return value_error( "--conf", v, "0.0..1.0" );
-        c.conf_thr = f;
-        return true;
-    }
-
     bool apply_config( Config& c, const char* )
     {
         ( void ) c;
@@ -127,104 +122,6 @@ namespace
         if ( !parse_int( v, &n ) || ( n != 0 && n != 1 && n != 2 && n != 3 && n != 4 && n != 7 ) )
             return value_error( "--core", v, "0|1|2|3|4|7" );
         c.core = n;
-        return true;
-    }
-
-    bool apply_cpu_draw( Config& c, const char* )
-    {
-        c.cpu_draw = true;
-        return true;
-    }
-
-    bool apply_device( Config& c, const char* v )
-    {
-        c.device = v;
-        return true;
-    }
-
-    bool apply_dump_cal( Config& c, const char* )
-    {
-        c.dump_cal = true;
-        return true;
-    }
-
-    bool apply_frames( Config& c, const char* v )
-    {
-        int n = 0;
-        if ( !parse_int( v, &n ) || n < 1 )
-            return value_error( "--frames", v, ">= 1" );
-        c.frames = n;
-        return true;
-    }
-
-    bool apply_h( Config& c, const char* v )
-    {
-        int n = 0;
-        if ( !parse_int( v, &n ) || n < 16 || n > 8192 )
-            return value_error( "--h", v, "16..8192" );
-        if ( n % 16 != 0 )
-            std::cerr << "warning: --h " << n << " is not a multiple of 16: some UVC cameras reject it\n";
-        c.cam_h = n;
-        return true;
-    }
-
-    bool apply_iou( Config& c, const char* v )
-    {
-        float f = NAN;
-        if ( !parse_float( v, &f ) || f < 0.0f || f > 1.0f )
-            return value_error( "--iou", v, "0.0..1.0" );
-        c.iou_thr = f;
-        return true;
-    }
-
-    bool apply_model( Config& c, const char* v )
-    {
-        c.model = v;
-        return true;
-    }
-
-    bool apply_net( Config& c, const char* )
-    {
-        c.net = true;
-        return true;
-    }
-
-    bool apply_net_bitrate( Config& c, const char* v )
-    {
-        int n = 0;
-        if ( !parse_int( v, &n ) || n < 1000 || n > 100000 )
-            return value_error( "--net-bitrate", v, "1000..100000 kbps" );
-        c.net_bitrate = n;
-        return true;
-    }
-
-    bool apply_net_fps( Config& c, const char* v )
-    {
-        int n = 0;
-        if ( !parse_int( v, &n ) || n < 0 || n > 120 )
-            return value_error( "--net-fps", v, "0..120" );
-        c.net_fps = n;
-        return true;
-    }
-
-    bool apply_net_h264( Config& c, const char* )
-    {
-        c.net_h264 = true;
-        return true;
-    }
-
-    bool apply_net_host( Config& c, const char* v )
-    {
-        c.net_host = v;
-        return true;
-    }
-
-    bool apply_net_port( Config& c, const char* v )
-    {
-        int n = 0;
-        if ( !parse_int( v, &n ) || n < 1 || n > 65535 )
-            return value_error( "--net-port", v, "1..65535" );
-        c.net_port = n;
         return true;
     }
 
@@ -246,43 +143,49 @@ namespace
         return true;
     }
 
-    bool apply_w( Config& c, const char* v )
+    bool apply_dim( const char* opt, const char* v, int& dst )
     {
-        int n = 0;
-        if ( !parse_int( v, &n ) || n < 16 || n > 8192 )
-            return value_error( "--w", v, "16..8192" );
-        if ( n % 16 != 0 )
-            std::cerr << "warning: --w " << n << " is not a multiple of 16: some UVC cameras reject it\n";
-        c.cam_w = n;
+        if ( !set_int( opt, v, 16, 8192, "16..8192", dst ) )
+            return false;
+        if ( dst % 16 != 0 )
+            std::cerr << "warning: " << opt << " " << dst << " is not a multiple of 16: some UVC cameras reject it\n";
         return true;
     }
 }  // namespace
 
 OptionRegistry::OptionRegistry()
   : table_ { {
-        { "--box-log", { true, "per-frame box CSV for jitter A/B (raw vs smoothed)", apply_box_log } },
-        { "--cal", { true, "calibration frames 1..10000", apply_cal } },
-        { "--cal-dir", { true, "directory for the --cal series (default: dataset/)", apply_cal_dir } },
-        { "--cal-interval", { true, "calibration sampling stride 1..10000", apply_cal_interval } },
-        { "--conf", { true, "confidence threshold 0.0..1.0", apply_conf } },
-        { "--config", { true, "INI config file (key = value); applied BEFORE the CLI options", apply_config } },
-        { "--core", { true, "NPU cores: 0 auto, 1/2/4 = core 0/1/2, 3 (0+1), 7 (0+1+2); ignored with --pool > 1", apply_core } },
-        { "--cpu-draw", { false, "draw boxes on CPU (A/B vs GPU drawer)", apply_cpu_draw } },
-        { "--device", { true, "camera device path", apply_device } },
-        { "--dump-cal", { false, "collect calibration dataset", apply_dump_cal } },
-        { "--frames", { true, "stop after N frames (>= 1; default: run until Ctrl-C)", apply_frames } },
-        { "--h", { true, "camera height", apply_h } },
-        { "--iou", { true, "NMS IoU threshold 0.0..1.0", apply_iou } },
-        { "--model", { true, "RKNN model path", apply_model } },
-        { "--net", { false, "network preview (raw rgb24 or --net-h264)", apply_net } },
-        { "--net-bitrate", { true, "preview bitrate 1000..100000 kbps", apply_net_bitrate } },
-        { "--net-fps", { true, "preview stream fps 1..120, 0 = follow the source (VFR pts from dequeue times)", apply_net_fps } },
-        { "--net-h264", { false, "H.264/MPEG-TS preview instead of raw rgb24", apply_net_h264 } },
-        { "--net-host", { true, "optional UDP destination (h264 push); unset = TCP pull", apply_net_host } },
-        { "--net-port", { true, "preview port 1..65535", apply_net_port } },
-        { "--net-src", { true, "network MJPEG pull source (http://host:port/path); replaces --device", apply_net_src } },
-        { "--pool", { true, "NPU context pool: 1 = single context (baseline), 3 = one engine per core", apply_pool } },
-        { "--w", { true, "camera width", apply_w } },
+        { "--box-log",      { true, "per-frame box CSV for jitter A/B (raw vs smoothed)", &apply_str<&Config::box_log> } },
+        { "--cal",          { true, "calibration frames 1..10000",
+                                     +[]( Config& c, const char* v ) { return set_int( "--cal", v, 1, 10000, "1..10000", c.cal_frames ); } } },
+        { "--cal-dir",      { true, "directory for the --cal series (default: dataset/)", &apply_cal_dir } },
+        { "--cal-interval", { true, "calibration sampling stride 1..10000",
+                                    +[]( Config& c, const char* v ) { return set_int( "--cal-interval", v, 1, 10000, "1..10000", c.cal_interval ); } } },
+        { "--conf",         { true, "confidence threshold 0.0..1.0",
+                                    +[]( Config& c, const char* v ) { return set_float_01( "--conf", v, c.conf_thr ); } } },
+        { "--config",       { true, "INI config file (key = value); applied BEFORE the CLI options", &apply_config } },
+        { "--core",         { true, "NPU cores: 0 auto, 1/2/4 = core 0/1/2, 3 (0+1), 7 (0+1+2); ignored with --pool > 1", &apply_core } },
+        { "--cpu-draw",     { false, "draw boxes on CPU (A/B vs GPU drawer)", &apply_flag<&Config::cpu_draw> } },
+        { "--device",       { true, "camera device path", &apply_str<&Config::device> } },
+        { "--dump-cal",     { false, "collect calibration dataset", &apply_flag<&Config::dump_cal> } },
+        { "--frames",       { true, "stop after N frames (>= 1; default: run until Ctrl-C)",
+                                    +[]( Config& c, const char* v ) { return set_int( "--frames", v, 1, INT_MAX, ">= 1", c.frames ); } } },
+        { "--h",            { true, "camera height", +[]( Config& c, const char* v ) { return apply_dim( "--h", v, c.cam_h ); } } },
+        { "--iou",          { true, "NMS IoU threshold 0.0..1.0",
+                                    +[]( Config& c, const char* v ) { return set_float_01( "--iou", v, c.iou_thr ); } } },
+        { "--model",        { true, "RKNN model path", &apply_str<&Config::model> } },
+        { "--net",          { false, "network preview (raw rgb24 or --net-h264)", &apply_flag<&Config::net> } },
+        { "--net-bitrate",  { true, "preview bitrate 1000..100000 kbps",
+                                    +[]( Config& c, const char* v ) { return set_int( "--net-bitrate", v, 1000, 100000, "1000..100000 kbps", c.net_bitrate ); } } },
+        { "--net-fps",      { true, "preview stream fps 1..120, 0 = follow the source (VFR pts from dequeue times)",
+                                    +[]( Config& c, const char* v ) { return set_int( "--net-fps", v, 0, 120, "0..120", c.net_fps ); } } },
+        { "--net-h264",     { false, "H.264/MPEG-TS preview instead of raw rgb24", &apply_flag<&Config::net_h264> } },
+        { "--net-host",     { true, "optional UDP destination (h264 push); unset = TCP pull", &apply_str<&Config::net_host> } },
+        { "--net-port",     { true, "preview port 1..65535",
+                                    +[]( Config& c, const char* v ) { return set_int( "--net-port", v, 1, 65535, "1..65535", c.net_port ); } } },
+        { "--net-src",      { true, "network MJPEG pull source (http://host:port/path); replaces --device", &apply_net_src } },
+        { "--pool",         { true, "NPU context pool: 1 = single context (baseline), 3 = one engine per core", &apply_pool } },
+        { "--w",            { true, "camera width", +[]( Config& c, const char* v ) { return apply_dim( "--w", v, c.cam_w ); } } },
     } }
 {
 }
