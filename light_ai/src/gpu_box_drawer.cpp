@@ -63,7 +63,7 @@ namespace
     // the whole session: 4 quads x 6 vertices per box, allocated once in
     // init(); draw() only uploads — zero reallocations.
     constexpr int kVertsPerBox = 4 * 6;
-    constexpr GLsizeiptr kVboBytes = GpuBoxList::cap * kVertsPerBox * (GLsizeiptr)sizeof( BatchVert );
+    constexpr GLsizeiptr kVboBytes = GpuBoxList::cap * kVertsPerBox * static_cast<GLsizeiptr>( sizeof( BatchVert ) );
    
     // Layout/size pin for State::vstage
     // (the draw staging buffer now lives in the drawer state, not on the stack).
@@ -357,11 +357,11 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
         EGL_DMA_BUF_PLANE0_OFFSET_EXT,
         0,
         EGL_DMA_BUF_PLANE0_PITCH_EXT,
-        (EGLint)stride,
+        static_cast<EGLint>( stride ),
         EGL_NONE 
     };
     
-    si.img = st_.create_image( st_.dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, ( EGLClientBuffer ) nullptr, iattr );
+    si.img = st_.create_image( st_.dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, static_cast<EGLClientBuffer>( nullptr ), iattr );
     if ( si.img == EGL_NO_IMAGE_KHR )
     {
         std::cerr << "drawer: import tensor failed (slot " << slot << ", 0x" << std::hex << eglGetError() << std::dec << ")\n";
@@ -371,7 +371,7 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
     glBindTexture( GL_TEXTURE_2D, si.tex );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
-    st_.image_target_tex( GL_TEXTURE_2D, (GLeglImageOES)si.img );
+    st_.image_target_tex( GL_TEXTURE_2D, static_cast<GLeglImageOES>( si.img ) );
     glGenFramebuffers( 1, &si.fbo );
     glBindFramebuffer( GL_FRAMEBUFFER, si.fbo );
     glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, si.tex, 0 );
@@ -379,24 +379,10 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
     if ( fst != GL_FRAMEBUFFER_COMPLETE )
     {
         std::cerr << "drawer: FBO incomplete (slot " << slot << ", status 0x" << std::hex << fst << std::dec << ")\n";
-        // A partial attach must not leave si.img set: the idempotent
-        // early return would then report success with a broken FBO.
-        // Tear everything down so a retry starts clean.
         glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-        glDeleteFramebuffers( 1, &si.fbo );
-        glDeleteTextures( 1, &si.tex );
-        if ( st_.destroy_image )
-            st_.destroy_image( st_.dpy, si.img );
-        si = {};
+        release_slot( slot );
         return false;
     }
-    // Geometry guard: the first attach fixes the shared geometry
-    // (st_.w/h/stride feed the viewport, shader math and the sync path).
-    // A later slot with different w/h/stride would either
-    // draw outside its FBO or corrupt the tensor via a stale stride.
-    // Fail loudly instead of silently writing into someone else's pixels.
-    // The partial attach is torn down like the FBO-incomplete path,
-    // so a retry starts clean.
     if ( st_.w == 0 )
     {
         st_.w = w;
@@ -408,11 +394,7 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
         std::cerr << "drawer: slot " << slot << " geometry mismatch: " << w << 'x' << h << " stride=" << stride
                   << " vs " << st_.w << 'x' << st_.h << " stride=" << st_.stride << '\n';
         glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-        glDeleteFramebuffers( 1, &si.fbo );
-        glDeleteTextures( 1, &si.tex );
-        if ( st_.destroy_image )
-            st_.destroy_image( st_.dpy, si.img );
-        si = {};
+        release_slot( slot );
         return false;
     }
     std::cout << "drawer: tensor attached (slot " << slot << ") " << w << 'x' << h << " stride=" << stride
@@ -556,6 +538,18 @@ int GpuBoxDrawer::export_fence()
     return fd;
 }
 
+void GpuBoxDrawer::release_slot( int slot )
+{
+    State::SlotImg& si = st_.slot[slot];
+    if ( si.fbo )
+        glDeleteFramebuffers( 1, &si.fbo );
+    if ( si.tex )
+        glDeleteTextures( 1, &si.tex );
+    if ( si.img != EGL_NO_IMAGE_KHR && st_.destroy_image )
+        st_.destroy_image( st_.dpy, si.img );
+    si = {};
+}
+
 void GpuBoxDrawer::done()
 {
     if ( st_.dpy != EGL_NO_DISPLAY )
@@ -570,18 +564,8 @@ void GpuBoxDrawer::done()
         if ( st_.vao && st_.del_vao )
             st_.del_vao( 1, &st_.vao );
         st_.vao = 0;
-        for ( auto& si : st_.slot )
-        {
-            if ( si.fbo )
-                glDeleteFramebuffers( 1, &si.fbo );
-            if ( si.tex )
-                glDeleteTextures( 1, &si.tex );
-            if ( si.img != EGL_NO_IMAGE_KHR && st_.destroy_image )
-                st_.destroy_image( st_.dpy, si.img );
-            si.img = EGL_NO_IMAGE_KHR;
-            si.tex = 0;
-            si.fbo = 0;
-        }
+        for ( int i = 0; i < State::kSlots; ++i )
+            release_slot( i );
         if ( st_.ctx )
         {
             eglMakeCurrent( st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );

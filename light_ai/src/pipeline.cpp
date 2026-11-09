@@ -181,17 +181,21 @@ Pipeline::Pipeline( const Config& cfg )
     for ( int k = 0; k < npool_; ++k )
         workers_.emplace_back( [this, k] { worker_loop( k ); } );
 
+    for ( int s = 0; s < nsrc_; ++s )
+        start_source( s );
+}
+
+void Pipeline::start_source( int idx )
+{
+    SourceSlot& sl = srcs_[idx];
     bool src_started = false;
     try
     {
-        with_src( []( auto& s ) { s.start(); } );  // no-op for the net source
+        with_src( idx, []( auto& s ) { s.start(); } );  // no-op for the net source
         src_started = true;
     }
     catch ( const std::exception& e )
     {
-        // CameraV4L2::start() throws via xioctl(VIDIOC_STREAMON); every
-        // throw in this codebase is std::runtime_error, so this catch
-        // is total in practice. Recovery follows below.
         std::cerr << "pipeline: source start failed: " << e.what() << '\n';
     }
     catch ( ... )
@@ -200,25 +204,21 @@ Pipeline::Pipeline( const Config& cfg )
     }
     if ( !src_started )
     {
-        // Bounded retry of the full reconnect path: recover() begins with
-        // teardown() on both sources, then does the complete setup
-        // (camera: discovery + S_FMT + REQBUFS + STREAMON; net: connect +
-        // GET + headers). The catch-path teardown is recover()'s own.
         constexpr int k_start_retries = 5;
         for ( int a = 1; a <= k_start_retries; ++a )
         {
             std::this_thread::sleep_for( std::chrono::seconds( 1 ) );
             std::string new_id;
             std::string why;
-            if ( with_src( [&]( auto& s ) { return s.recover( cam_node_, new_id, &why ); } ) == 0 )
+            if ( with_src( idx, [&]( auto& s ) { return s.recover( sl.node, new_id, &why ); } ) == 0 )
             {
-                if ( new_id != cam_node_ )
+                if ( new_id != sl.node )
                 {
-                    std::cout << "source: identity adopted: " << cam_node_ << " -> " << new_id << '\n';
-                    cam_node_ = new_id;
+                    std::cout << "source: identity adopted: " << sl.node << " -> " << new_id << '\n';
+                    sl.node = new_id;
                 }
                 constexpr int k_warmup_frames = 3;
-                warmup_left_ = k_warmup_frames;  // same warm-up discard as the mid-run recovery
+                sl.warmup_left = k_warmup_frames;
                 src_started = true;
                 std::cout << "pipeline: source started on recovery attempt " << a << '\n';
                 break;
@@ -228,89 +228,64 @@ Pipeline::Pipeline( const Config& cfg )
         }
     }
     if ( !src_started )
-    {
-        // Deliberately NOT rethrowing: workers_ are running, and the ctor
-        // must not unwind past them (joinable threads -> std::terminate).
-        // A source that never came up is the recovery case run() already
-        // owns: its first dequeue fails with EIO/ENODEV and
-        // handle_source_failure() keeps trying with the usual pacing,
-        // warm-up discard and pool_discard.
         std::cerr << "pipeline: source never started - run() recovery ladder takes over\n";
-    }
 }
 
-// Source bring-up: source identity (cam_node_ vs the URL), the full
-// setup for the active branch and the static variant selection.
-// Throwing: a failed connect here is fatal, same as a failed camera
-// setup (run() never sees a half-open source).
-
-void Pipeline::init_source()
+void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
 {
-    cam_node_ = cfg_.device;
-
-    if ( use_net_src() )
+    SourceSlot& sl = srcs_[idx];
+    sl.node = ep.uri;
+    if ( ep.kind == SourceKind::NetMjpeg )
     {
-        // Network MJPEG source: the camera stays closed, no V4L2 node.
-        // The source contract is identical, so the recovery ladder in
-        // run() works unchanged; a failed connect here is fatal, same
-        // as a failed camera setup.
-
-        net_src_.emplace();
-
-        // The URL is this source's identity: the recovery ladder
-        // passes cam_node_ to recover(), so it must hold the URL,
-        // not the (empty in net mode) --device value. A URL never
-        // re-enumerates, so recover() keeps new_id == id.
-
-        cam_node_ = cfg_.net_src;
+        auto& net = sl.src.emplace<NetMjpegSource>();
         std::string why;
-        if ( net_src_->setup_device( cfg_.net_src, &why ) != 0 )
+        if ( net.setup_device( sl.node, &why ) != 0 )
             throw std::runtime_error( "net-src: " + why );
     }
     else
     {
-        // Startup fallback for a re-enumerated camera: the configured node
-        // may be gone after a replug (verified live: video20 -> video21)
-        // while the camera itself is alive. ENOENT-only: if the node exists
-        // but setup fails (busy, permissions, wrong node type), the error
-        // stays fatal — a silently substituted source is worse than a loud
-        // one. find_usb_capture_node() skips a missing preferred path on
-        // its own (stat) and trial-setups the candidates, so fake nodes
-        // (metadata-only) are filtered there.
-        
-        if ( !cam_node_.empty() )
+        auto& cam = sl.src.emplace<CameraV4L2>();
+        if ( !sl.node.empty() )
         {
-            struct stat st
-            {};
-            if ( stat( cam_node_.c_str(), &st ) != 0 )
+            struct stat st {};
+            if ( stat( sl.node.c_str(), &st ) != 0 )
             {
-                std::cerr << "camera: configured node " << cam_node_ << " not present, falling back to USB discovery\n";
+                std::cerr << "camera: configured node " << sl.node << " not present, falling back to USB discovery\n";
                 std::string found;
-                if ( find_usb_capture_node( cam_, cam_node_, found ) != 0 )
-                    throw std::runtime_error( "camera: configured node " + cam_node_ + " is missing and no USB capture node found" );
+                if ( find_usb_capture_node( cam, sl.node, found ) != 0 )
+                    throw std::runtime_error( "camera: configured node " + sl.node + " is missing and no USB capture node found" );
                 std::cout << "camera: discovery adopted " << found << '\n';
-                cam_node_ = found;
+                sl.node = found;
             }
         }
         std::string cam_why;
-        if ( cam_.setup_device( cam_node_, &cam_why ) != 0 )
-        {
+        if ( cam.setup_device( sl.node, &cam_why ) != 0 )
             throw std::runtime_error( "camera: " + cam_why );
-        }
     }
+    sl.w = with_src( idx, []( const auto& s ) { return s.width(); } );
+    sl.h = with_src( idx, []( const auto& s ) { return s.height(); } );
+    std::cout << "source: geometry " << sl.w << 'x' << sl.h << '\n';
+}
 
-    // Static source selection (project rules: no virtuals):
-    // the active source is a pointer variant over the member objects. 
-    // Set once here, before any use; M5 adds alternatives without touching call sites.
+void Pipeline::init_source()
+{
+    std::vector<SourceEndpoint> eps = cfg_.sources;
+    if ( eps.empty() )
+    {
+        if ( !cfg_.net_src.empty() )
+            eps.push_back( { SourceKind::NetMjpeg, cfg_.net_src } );
+        else
+            eps.push_back( { SourceKind::V4L2, cfg_.device.empty() ? "/dev/video20" : cfg_.device } );
+    }
+    if ( eps.size() > static_cast<size_t>( kMaxSources ) )
+        throw std::runtime_error( "pipeline: at most 3 sources are supported (one per NPU core)" );
 
-    if ( use_net_src() )
-        src_ = &*net_src_;
-    else
-        src_ = &cam_;
+    nsrc_ = static_cast<int>( eps.size() );
+    for ( int s = 0; s < nsrc_; ++s )
+        init_one_source( s, eps[s] );
 
-    src_w_ = with_src( []( const auto& s ) { return s.width(); } );
-    src_h_ = with_src( []( const auto& s ) { return s.height(); } );
-    std::cout << "source: geometry " << src_w_ << 'x' << src_h_ << '\n';
+    src_w_ = srcs_[0].w;
+    src_h_ = srcs_[0].h;
 }
 
 // M2.5/M4: core pinning.
@@ -442,6 +417,8 @@ int Pipeline::run()
     // (Ctrl-C); the signal path below drains and reports as usual.
     for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.load(); ++i )
     {
+        cur_src_ = i % nsrc_;
+        SourceSlot& active_src = srcs_[cur_src_];
         const auto t0 = clk::now();
 
         uint32_t sz = 0;
@@ -493,10 +470,10 @@ int Pipeline::run()
         // a two-frame gap beats phantoms on a live stream. The counter
         // counts VALID decodes only: garbage frames (fd < 0) do not
         // consume it, so publishing resumes on real data.
-        if ( warmup_left_ > 0 )
+        if ( active_src.warmup_left > 0 )
         {
-            --warmup_left_;
-            if ( warmup_left_ == 0 )
+            --active_src.warmup_left;
+            if ( active_src.warmup_left == 0 )
                 std::cout << "camera: warm-up done, publishing resumed\n";
             continue;
         }
@@ -562,18 +539,19 @@ int Pipeline::handle_source_failure( int cam_err )
             std::cerr << "source: stop requested, recovery aborted\n";
             return -1;
         }
+        SourceSlot& active_src = srcs_[cur_src_];
         std::this_thread::sleep_for( k_cam_reconnect_pause );
         std::string new_id;
         std::string why;
-        if ( with_src( [&]( auto& s ) { return s.recover( cam_node_, new_id, &why ); } ) == 0 )
+        if ( with_src( [&]( auto& s ) { return s.recover( active_src.node, new_id, &why ); } ) == 0 )
         {
-            if ( new_id != cam_node_ )
+            if ( new_id != active_src.node )
             {
-                std::cout << "source: identity adopted: " << cam_node_ << " -> " << new_id << '\n';
-                cam_node_ = new_id;
+                std::cout << "source: identity adopted: " << active_src.node << " -> " << new_id << '\n';
+                active_src.node = new_id;
             }
             ++reconnects_;
-            warmup_left_ = k_warmup_frames;
+            active_src.warmup_left = k_warmup_frames;
             std::cout << "source: reconnected on attempt " << a << '\n';
 
             // M4: frames from the dead stream are never published —
@@ -652,7 +630,7 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
     {
         lb_warned_ = true;
         std::cerr << "pipeline: RGA letterbox drift: x=" << lg.left << " top=" << lg.top << " w=" << lg.w << " h=" << lg.h
-                  << " vs x=" << lb_.left << " top=" << lb_.top << " w=" << lb_.w << " h=" << lb_.h << std::endl;
+                  << " vs x=" << lb_.left << " top=" << lb_.top << " w=" << lb_.w << " h=" << lb_.h << '\n';
     }
     dispatch( slot, frame_idx, ts_us, rga_ok, lb_, cam_ms, dec_ms, ms( t3, t3b ) );
 }
