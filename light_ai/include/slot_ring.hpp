@@ -16,10 +16,6 @@ class RknnEngine;
 // Depth 3 == the maximum NPU pool size.
 struct PubFifo
 {
-    int slots[3] = {};
-    int head = 0;
-    int n = 0;
-
     void push( int s )
     {
         // Defensive guard: 
@@ -60,6 +56,11 @@ struct PubFifo
         head = ( head + 1 ) % 3;
         --n;
     }
+
+public:
+    int slots[3] = {};
+    int head = 0;
+    int n = 0;
 };
 
 // Unlike PubFifo above, Slot is NOT single-threaded: the mutex/cv pair

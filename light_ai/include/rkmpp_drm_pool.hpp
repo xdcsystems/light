@@ -19,12 +19,11 @@
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
 
+#include "dma_sync.hpp"
+
 template <int N>
 struct RkmppDrmPool
 {
-    MppBufferGroup group = nullptr;
-    std::array<MppBuffer, N> buf {};
-
     RkmppDrmPool() = default;
     ~RkmppDrmPool()
     {
@@ -68,7 +67,11 @@ struct RkmppDrmPool
             // Neutral gray fill: the 16-aligned tail columns of the
             // stream keep their fill (never receive RGA data).
             if ( void* p = mpp_buffer_get_ptr( b ) )
+            {
+                dma::DmaSync wr( mpp_buffer_get_fd( b ), true );
                 std::memset( p, 128, bytes );
+                dma::cache_clean( p, bytes );
+            }
         }
         return true;
     }
@@ -90,5 +93,9 @@ private:
             group = nullptr;
         }
     }
+
+public:
+    MppBufferGroup group = nullptr;
+    std::array<MppBuffer, N> buf {};
 };
 

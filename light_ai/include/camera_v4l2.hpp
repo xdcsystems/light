@@ -5,7 +5,7 @@
 
 // The node is NOT part of the instance state: open/reconnect take it as
 // an argument, the class owns only the fd/buffer machinery. Identity
-// ("which node am I on") lives with the owner — Pipeline::cam_node_.
+// ("which node am I on") lives with the owner — Pipeline::SourceSlot::node.
 class CameraV4L2
 {
     struct Buffer
@@ -17,12 +17,16 @@ class CameraV4L2
     enum : unsigned
     {
         kBufCount = 4,
-        kDequeuePollMs = 2000  // dequeue watchdog: no frame within this window = recoverable stall (EIO)
+        kDequeuePollMs = 2000,  // dequeue watchdog: no frame within this window = recoverable stall (EIO)
+        kDefaultWidth = 1280,
+        kDefaultHeight = 960
     };
 
 public:
-    CameraV4L2( int width, int height );
+    CameraV4L2() = default;
     ~CameraV4L2();
+    CameraV4L2( const CameraV4L2& ) = delete;
+    CameraV4L2& operator=( const CameraV4L2& ) = delete;
 
     // Full open+verify path for a node:
     // open, S_FMT, G_FMT verification, REQBUFS, mmap, QBUF.

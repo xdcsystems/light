@@ -30,31 +30,50 @@
 
 class Pipeline
 {
+    enum { kMaxSources = 3 };
+    using VideoSource = std::variant<CameraV4L2, NetMjpegSource>;
+
+    struct SourceSlot
+    {
+        VideoSource src { std::in_place_type<CameraV4L2> };
+        std::string node;
+        int w = 0;
+        int h = 0;
+        int warmup_left = 0;
+    };
+
 public:
     explicit Pipeline( const Config& cfg );
     ~Pipeline();  // stops the workers before the engines die
+    Pipeline( const Pipeline& ) = delete;
+    Pipeline& operator=( const Pipeline& ) = delete;
+    Pipeline( Pipeline&& ) = delete;
+    Pipeline& operator=( Pipeline&& ) = delete;
+
     int run();
     // Graceful shutdown (P1-6): called from the SIGINT/SIGTERM handler;
     // run() exits the frame loop through the normal drain/summary path.
     void request_stop() { stop_.store( true ); }
 
 private:
-    bool use_net_src() const { return !cfg_.net_src.empty(); }
+    // Static heterogeneous source dispatch (up to kMaxSources = 3, one per NPU
+    // core): each SourceSlot owns its active source (CameraV4L2 or
+    // NetMjpegSource) in-place by value — no heap, no virtuals.
+    template <typename F>
+    decltype(auto) with_src( int idx, F&& f )
+    {
+        return std::visit( std::forward<F>( f ), srcs_[idx].src );
+    }
 
-    // Static source selection: the
-    // active source is a pointer variant over the member objects;
-    // with_src() is the single dispatch point. 
-    // A third source type adds one alternative — call sites stay untouched.
     template <typename F>
     decltype(auto) with_src( F&& f )
     {
-        return std::visit( [&f]( auto* s ) -> decltype(auto) { return f( *s ); }, src_ );
+        return with_src( cur_src_, std::forward<F>( f ) );
     }
 
-    // Source bring-up (identity + setup + variant selection),
-    // extracted from the ctor: with the net source branch the ctor crossed the
-    // readability-function-size limit (225 lines / threshold 200).
     void init_source();
+    void init_one_source( int idx, const SourceEndpoint& ep );
+    void start_source( int idx );
     void init_net_sink( const rknn_tensor_attr& ia );
     void init_gpu_drawer();
     void init_aux();
@@ -75,8 +94,9 @@ private:
 
 private:
     Config cfg_;
-    CameraV4L2 cam_;
-    std::string cam_node_;
+    std::array<SourceSlot, kMaxSources> srcs_ {};
+    int nsrc_ = 1;
+    int cur_src_ = 0;
 
     MppDecoder dec_;
     RgaResizer rga_;
@@ -87,6 +107,8 @@ private:
     std::vector<RknnEngine> npus_;
     int npool_ = 1;
     int aux_fd_ = -1;
+    int src_w_ = 0;
+    int src_h_ = 0;    // taken from the source (camera G_FMT or JPEG SOFn)
     int model_w_ = 0;
     int model_h_ = 0;  // taken from the model, not from flags
     
@@ -99,15 +121,11 @@ private:
     bool lb_warned_ = false;
     CalDumper cal_dumper_;
     int reconnects_ = 0;   // source disconnects recovered this run
-    int warmup_left_ = 0;  // publish-discards after a reconnect
     Timings t_;
 
-    std::optional<NetMjpegSource> net_src_;  // active only with --net-src
     std::optional<NetPreview> preview_;
     std::optional<NetEncoder> enc_;
     std::optional<GpuBoxDrawer> drawer_;
-
-    std::variant<CameraV4L2*, NetMjpegSource*> src_ {};
 
     BoxSmoother smoother_;
     Tracker tracker_;

@@ -31,7 +31,7 @@ class NetMjpegSource
     };
 
 public:
-    NetMjpegSource( int width, int height );
+    NetMjpegSource();
     ~NetMjpegSource();
     NetMjpegSource( const NetMjpegSource& ) = delete;
     NetMjpegSource& operator=( const NetMjpegSource& ) = delete;
@@ -82,7 +82,8 @@ private:
     int fd_ = -1;
     int err_streak_ = 0;
     int width_ = 0, height_ = 0;
-    void* pool_ = nullptr;  // one mmap block: kBufCount x kFrameMax, init-time
+    uint32_t primed_len_ = 0;  // first frame read during setup_device to extract SOF dims
+    void* pool_ = nullptr;     // one mmap block: kBufCount x kFrameMax, init-time
     
     Buffer bufs_[kBufCount] = {};
     uint8_t sock_[kSockBuf] = {};

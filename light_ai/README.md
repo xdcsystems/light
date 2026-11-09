@@ -35,7 +35,7 @@ post-processing.
   in the layer's .cpp. Compile-time class constants use an
   unscoped enum (camera_v4l2.hpp kBufCount); references:
   camera_v4l2.cpp / gpu_box_drawer.cpp / net_preview.cpp
-  (anon-namespace helpers), box_smoother.hpp (plain member).
+  (anon-namespace helpers), box_smoother.h (plain member).
   tools/ is exempt (disposable probes).
 - No virtual functions, no inheritance hierarchies: zero vtables, zero
   dynamic polymorphism. Layer boundaries are the composition of concrete
@@ -66,7 +66,7 @@ post-processing.
 ### Comment style
 - Comments are structured, not prose: a header line ending with `:`,
   options/cases one per line, continuation lines indented under their item.
-- Max line length: 110 characters (comments included).
+- Max line length: 140 characters (enforced by `.clang-format` `ColumnLimit: 140`).
 - Do not duplicate rules stated in this README in code comments;
   code comments reference ("see README") or explain local specifics only.
 - A comment describing a mode/value must be verified by an actual run
@@ -74,9 +74,11 @@ post-processing.
   clamp silently allowed it).
   
 ## Layers
-- CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. G_FMT is verified
-               against the requested mode; a driver-side silent mode
-               substitution is a hard error. The node is NOT instance
+- CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. At startup S_FMT
+               requests the preferred 1280x960 MJPEG mode and adopts the
+               dimensions reported by G_FMT; on a mid-run reconnect G_FMT
+               is verified against the locked session dimensions so a
+               replug never changes resolution mid-stream. The node is NOT instance
                state: setup_device(dev)/reconnect(dev) take the path as
                an argument, teardown() is public (no dynamic allocation
                anywhere in the recovery path). Disconnect recovery:
@@ -88,8 +90,7 @@ post-processing.
                in camera_v4l2.cpp): the configured path is preferred,
                otherwise numeric /dev/video* candidates are USB-filtered
                (rkcif/rkisp platform nodes rejected before any S_FMT)
-               and trial-opened; the pipeline tracks the current node in
-               cam_node_ and adopts a re-enumerated one transparently.
+               and trial-opened; the pipeline tracks each source node in `SourceSlot::node` (`srcs_`) and adopts a re-enumerated one transparently.
                A permanent unplug exhausts the 20x1 s window and ends
                the run with exit code 1.
                Robustness (2026-11-02, P1-5/P1-7): every setup_device
@@ -104,11 +105,21 @@ post-processing.
                (BUF_FLAG_ERROR) is a class member: it survives
                dequeue() calls and is reset only by a clean frame or
                by reconnect() after a successful STREAMON.
+- NetMjpegSource : HTTP multipart/x-mixed-replace MJPEG pull source
+               (--net-src http://host:port/path; repeatable alongside
+               --device in Config::sources for M5 multi-camera). Non-blocking TCP connect + SO_RCVTIMEO
+               (5 s), structural JPEG framing into a 4x1 MiB mmap pool
+               (skips header/EXIF segments by length up to SOS, extracts
+               frame dimensions from SOFn, verifies trailing EOI); primes
+               frame 0 in setup_device() so stream geometry is known at
+               startup without --w/--h. Reconnects through the same
+               recovery loop as CameraV4L2.
 - MppDecoder : MJPEG -> YUV422SP decode into an external dma-buf pool
                (adaptive, 2026-11-06: a 4:2:0 source decodes to
                YUV420SP instead — the format is picked from the JPEG
-               sampling factors; the x2 pool covers either),
-               returns the frame fd. Sized from Config, not hard-coded.
+               SOFn Y/Cb/Cr sampling factors; the x2 pool covers either),
+               returns the frame fd. Sized from the active source
+               (V4L2 G_FMT or JPEG SOFn), not from CLI flags.
                Recovery (2026-11-02, P0-1): the packet is drained
                per call on every path (error and success) — MPP no
                longer holds a reference across the decode gap; on
@@ -139,8 +150,10 @@ post-processing.
                would corrupt rknn contexts on reallocation; the move
                ctor transfers ctx/tensor mems and leaves a hollow
                shell (ctx_=0), keeping vector::reserve legal.
-- Pipeline   : model input geometry is read from the model file itself
-               (input_attr), not from CLI flags. Aux allocation happens after
+- Pipeline   : both source geometry (V4L2 G_FMT or JPEG SOFn) and model
+               input geometry (model input_attr) are read from the source
+               and model themselves, not from CLI flags (--w/--h and
+               --mw/--mh are abolished). Aux allocation happens after
                model geometry is known (constructor-order bug fixed; a
                one-line "aux not needed" log confirms the single-pass path).
                Concurrency & shutdown (2026-11-02): publish_oldest()
@@ -151,6 +164,38 @@ post-processing.
                stop flag: run() exits through the normal path (ring
                drain, TOTAL summary, encoder flush, camera
                teardown) instead of being killed outright.
+- BoxSmoother (M3.10): 32-slot class-aware greedy IoU (> 0.30) + EMA
+               (alpha = 0.5) box stabilizer; decays unmatched tracks
+               after 2 misses; optional raw-vs-smoothed CSV via
+               --box-log.
+- Tracker (M3.10-b / M3.11): 8-slot constant-velocity Kalman tracker
+               (2-state filter per axis, velocity clamp 500 px/s,
+               0.90x per-miss velocity decay, size-consistency gate,
+               spawn-dedupe gate, global greedy IoU association) with a 300-point trajectory ring
+               per track; recent_points() feeds the trail renderer.
+- BoxMapper  : fill_gpu_boxes() maps smoothed detections and confirmed
+               trajectory trails into the 128-box GpuBoxList VBO
+               budget, clamped to the exact LbGeom band [left,
+               left+w] x [top, top+h].
+- CalDumper / ConsoleReporter / Timings : calibration PPM dumper
+               (--dump-cal single frame, --cal N --cal-interval K
+               series under --cal-dir, DMA-synced CPU read),
+               throttled detection/track console + CSV reporter, and
+               per-stage FrameTrace accumulator.
+- CliOptions / OptionRegistry / ConfigFileLoader (config/): fixed
+               21-entry std::array option registry with table-driven
+               setter callbacks (OptionRegistry::apply), shared by the
+               CLI parser and the inih-backed INI loader (--config,
+               applied before CLI overrides) — zero if/else ladders.
+               Repeatable --device and --net-src accumulate into
+               Config::sources (std::vector<SourceEndpoint>) for M5
+               hybrid USB + HTTP MJPEG setups; CLI source flags override
+               INI sources, and /dev/video20 is defaulted only when no
+               sources are specified.
+- TcpPullServer : RAII single-viewer TCP pull transport (listener socket,
+               poll-based accept, TCP_NODELAY / SO_SNDBUF / SO_SNDTIMEO,
+               and custom 32 KiB AVIOContext) shared by NetEncoder and
+               NetPreview.
 
 - GpuBoxDrawer (M3.7): box drawing on Mali G610 (EGL/GBM) straight
                into the NPU input tensor. The tensor dma-buf is imported
@@ -185,8 +230,7 @@ post-processing.
                — no upscale, zero CPU pixels (the frames leave for the
                encoder as zero-copy DRM_PRIME descriptors, 2026-10-28,
                see the enc notes below). The stream size is the
-               band's native size (640x360 for the default 1280x720
-               camera; 640x480 at the 1280x960 working mode since
+               band's native size (640x480 for the default 1280x960 camera, 640x360 for 1280x720; 640x480 at the 1280x960 working mode since
                2026-10-30). One viewer at a time; no encode until the
                first viewer connects; a stalled viewer is dropped via
                SO_SNDTIMEO (15 s). Late joiners via repeated
@@ -296,8 +340,7 @@ rate control a nominal fps (25) while pts stay per-dequeue
   1280x960 -> 640x640: s = 1/2,  lb_h = 480, lb_top = 80.
   Detection mapping T (band-based, axial): x_scene = (x_det - lb_left) *
   cam_w / lb_w, y_scene = (y_det - lb_top) * cam_h / lb_h, where
-  (lb_left, lb_top, lb_w, lb_h) is the letterbox band geometry — one
-  LbGeom computed once in the Pipeline ctor and shared by the RGA crop,
+  (lb_left, lb_top, lb_w, lb_h) is the letterbox band geometry — a per-frame `LbGeom` returned by `RgaResizer::resize`, carried in `Slot::lb` and shared by the RGA crop,
   the encoder crop and this scale. Detections on the bars (outside the
   band) are filtered. (The pre-M3.11 note "x_det * cam_w / model_w"
   described only the landscape band, where lb_left = 0 and
@@ -376,8 +419,9 @@ rate control a nominal fps (25) while pts stay per-dequeue
   raw uint8 + img[None] with NO data_format kwarg (tools/save_board_csv.py),
   or float input + data_format='nhwc'. inputs_pass_through, when used,
   also needs the 4-dim shape.
-- Default resolution is 1280x720: same model input geometry as 1080p
-  (identical s, band and T), but single-pass RGA and cheaper MJPEG decode.
+- Default resolution is 1280x960 (since 2026-10-30; 1280x720 earlier):
+  full-frame 2 Mp, single-pass RGA into the 640x640 tensor (640x480
+  letterbox band, lb_top = 80).
 
 - RGA fill/rectangle is KNOWN-BROKEN on this board — do not use it for
   drawing. The kernel refuses fill jobs outright: RGA3 cores cannot fill
@@ -435,7 +479,7 @@ rate control a nominal fps (25) while pts stay per-dequeue
   destination and the descriptor (MPP log: stride [640:368]).
 - h264_rkmpp rc_mode: the live encoder does NOT accept rc_mode (log line:
   "enc: rc_mode option not accepted"); the stream runs CBR at
-  --net-bitrate (default 12000 kbps). Fine for the preview; revisit when
+  `--net-bitrate` (default 12000 kbps). Fine for the preview; revisit when
   bitrate control is actually needed.
 - mpp_buffer_group_get requires a caller string: mpp_assert(caller)
   in mpp_buffer_group_init (mpp/base/mpp_buffer_impl.c:809,
@@ -512,6 +556,12 @@ the live log: "set prep cfg w:h [640:360] stride [640:368]"
 (16-aligned ver stride) replaces the startup default [640:384] on
 the first frame; colors verified clean on the stream (no chroma
 misalignment).
+Update 2026-11-03..09 (Batch B/C + P0 audit): prep_frame (fence poll
++ RGA band crop) runs before mx_; send_frame moves encoded packets
+into an 8-deep preallocated AVPacket ring buffer (av_packet_move_ref, zero
+per-frame heap allocs) and serve() drains them into the muxer on the
+worker thread — the pipeline thread never touches the network. With
+no viewer attached, publish_oldest() skips both draw and encode.
 
 ## Measured performance (1280x960 MJPEG, yolov5s_relu_int8 @ 640x640, daytime, steady, viewer attached)
 
@@ -572,7 +622,7 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
     ./scripts/build.sh
 
 Target CPU flags (CMakeLists.txt TARGET_CPU_FLAGS, 2026-11-02):
--mcpu=cortex-a76 -mtune=cortex-a76.cortex-a55. The dot form is legal
+-mcpu=cortex-a76+dotprod+crypto -mtune=cortex-a76.cortex-a55. The dot form is legal
 only in -mtune (GCC 10.2 rejects -mcpu=cortex-a76+cortex-a55: "+"
 there means a feature modifier). Measured effect on the camera-bound
 pipeline: none (sum 95.5 ms, ~20.0 FPS before and after — the
@@ -608,7 +658,14 @@ configured node (ENOENT) is not fatal: the pipeline falls back to
 find_usb_capture_node() and adopts the winner (startup fallback, M3.8);
 non-ENOENT open errors (EBUSY/EACCES) stay fatal. Options:
 --help/-h prints the option list (generated from the parser table).
---device, --model, --frames, --w, --h, --dump-cal, --conf, --iou,
+--config <path> loads an INI config file (flat key = value; applied
+before CLI flags so CLI always overrides).
+--device, --net-src http://host:port/path (HTTP MJPEG pull source;
+both flags are repeatable and accumulate into Config::sources for M5
+multi-camera; resolution is auto-detected from JPEG SOFn,
+including portrait streams such as 720x1280 -> 368x640 band),
+--model, --frames (>= 1; default: run until Ctrl-C), --dump-cal,
+--conf, --iou,
 --core 0|1|3|7 (NPU core pinning: 0=AUTO default, 1=core0, 3=0+1,
 7=0+1+2; measured: infer 25.1->21.2 ms on 012, FPS unchanged —
 source-bound, M2.5),
@@ -638,12 +695,11 @@ silent zero).
 rgb24, tcp port 1234); --net-fps N paces the stream (default 25).
 --net-h264 switches the preview to the h264 path (h264_rkmpp,
 MPEG-TS): the stream is the letterbox band at its native size
-(640x360 for the default 1280x720 camera), with YOLO boxes drawn
+(640x480 for the default 1280x960 camera), with YOLO boxes drawn
 in. Transport: TCP pull by default — the board listens on
 --net-port (default 1234), the viewer connects by the board's LAN
 IP; --net-host <pc-ip> switches to the legacy UDP push to that
-destination. Bitrate via --net-bitrate (default 12000 kbps; 2500
-is plenty for 640x360).
+destination. Bitrate via `--net-bitrate` (default 12000 kbps; 1500-2500 is plenty for 640x480).
 Viewer (pull, product path): ffplay -fflags nobuffer
 tcp://<board-ip>:1234
 Viewer (UDP push, legacy, low-latency, M3.9): ffplay -fflags
@@ -729,7 +785,7 @@ Established facts:
     decoder (the d3d11va decode failure does not prevent the d3d11
     render context). Press `i` for Frame Timings / Dropped Frames.
 11. Stream health in timed mode (NEW, after the board-side socket/muxer
-    fixes — TCP_NODELAY, 256 KiB SO_SNDBUF, max_delay=0, flush_packets,
+    fixes — TCP_NODELAY, 2 MiB `SO_SNDBUF` (256 KiB initially, raised 2026-11-06), max_delay=0, flush_packets,
     +pat_pmt_at_frames+resend_headers — and --net-bitrate 3000, verified
     by the MPP log "set rc cbr bps [3000000:...]"): ZERO "(Buffering)"
     per session; the status-line cache settles (0.0-1.0 s) and stops

@@ -188,7 +188,7 @@ refer to README.md sections (../README.md).
         connects ffplay -fflags nobuffer tcp://<board-ip>:1234; the
         run command carries no addresses. One viewer; no encode until
         the first viewer connects (publish() sees a null context);
-        a stalled viewer is dropped via SO_SNDTIMEO (2 s), a viewer
+        a stalled viewer is dropped via `SO_SNDTIMEO` (2 s initially; retuned to 15 s on 2026-11-06), a viewer
         drop reopens the listener without touching the pipeline.
         Live log confirmed: listener up before the viewer, "viewer
         connected" at connect time, pipeline steady (~26 FPS,
@@ -322,8 +322,7 @@ refer to README.md sections (../README.md).
       the camera class (the mutable-node design was rejected and
       refactored away in the same revision): find_usb_capture_node()
       prefers the configured path, falls back to USB-filtered numeric
-      /dev/video* candidates with a trial setup; the pipeline tracks
-      cam_node_ and adopts a re-enumerated node (verified live: video20
+      /dev/video* candidates with a trial setup; the pipeline tracks `SourceSlot::node` (`srcs_`) and adopts a re-enumerated node (verified live: video20
       -> video21, recovery on attempt 13, stream continued, viewer
       re-synced via repeated PAT/PMT without a restart). Permanent
       unplug: gives up after 20 attempts, exit code 1 — verified. Known
@@ -375,7 +374,7 @@ refer to README.md sections (../README.md).
       (head-of-line blocking); see the Viewer section.
 
 - [x] M3.10: detection smoothing — closed 2026-10-26. BoxSmoother
-      (include/box_smoother.hpp): EMA on box coords (alpha=0.5,
+      (include/box_smoother.h): EMA on box coords (alpha=0.5,
       effective window ~2-3 frames), greedy IoU>0.3 + class match,
       miss<=2 decay, fixed 32-slot array, zero heap. Per-frame CSV
       via --box-log: raw jitter ~4 px per object -> ~2.5 px smoothed
@@ -384,7 +383,7 @@ refer to README.md sections (../README.md).
       (bottle<->vase flips, n=46 vs n=300).
 - [x] M3.10-b: Kalman trajectory tracker (reconstructed 2026-11-04 --
       the subsystem had no roadmap record; it pre-dates M3.11):
-      greedy IoU association over a per-track constant-velocity
+      global greedy IoU association (pairs sorted descending by IoU) over a per-track constant-velocity
       Kalman filter (one 2-state filter per axis), ring trajectory
       per track (300 pts, ~12 s at 25 fps), no heap/statics
       (fixed-capacity members, project rules). Consumes the SMOOTHED
@@ -473,7 +472,8 @@ refer to README.md sections (../README.md).
       - P0-3(+3b) RknnEngine: non-copyable, safe move ctor (hollow
         shell, ctx_=0) — vector::reserve stays legal.
       - P0-4 main: --w/--h validated (16..8192, non-16-multiple
-        warning; 1080p stays a documented mode).
+        warning; later abolished in 3c708ec — geometry derived from
+        V4L2 G_FMT or JPEG SOFn).
       - P0-5 GpuBoxDrawer: attach_slot() geometry mismatch guard —
         the first attach fixes the shared geometry, any later
         mismatch fails loudly with partial attach cleanup.
@@ -506,10 +506,10 @@ refer to README.md sections (../README.md).
         the compiler warning before any live disconnect.
       Declined by review as by-design: decoder/encoder network
       timeouts, socket close in the encoder destructor.
-      Open leftovers: the mpp_meta put_meta negative ref_count at
-      shutdown (undiagnosed, phase-dependent — see state.md,
-      Shutdown observations); the static-constexpr rule
-      clarification (owner: deferred).
+      Open leftovers: the `mpp_meta` `put_meta` negative `ref_count` at
+  shutdown was CLOSED 2026-11-09 (`reset_and_strip` in `MppDecoder`,
+  see `state.md`, `Shutdown observations`); only the `static`-`constexpr`
+  rule clarification remains (owner: deferred).
 - [ ] M6: toolchain hygiene (recorded 2026-10-27 by owner, restored
       from session notes 2026-10-28): (a) clang-format — one enforced
       style across the tree; the recurring whitespace-only artifacts
@@ -555,6 +555,15 @@ refer to README.md sections (../README.md).
       M5 proper: the multi-camera refactor (per-cam cam+dec+rga
       chains) below — the single-camera pool pacing at the real
       camera cadence is implicitly proven by the same live runs.
+      Update 2026-11-09 (config + `Pipeline` source slots): `Config::sources`
+  (`std::vector<SourceEndpoint>`, `SourceKind::V4L2` / `NetMjpeg`)
+  accumulates any combination of repeatable `--device` and
+  `--net-src` entries from INI or CLI (e.g. 1x USB + 2x HTTP
+  MJPEG), and `Pipeline` holds up to 3 active sources in
+  `srcs_[kMaxSources]` (`std::variant<CameraV4L2, NetMjpegSource>`
+  per slot, round-robin `cur_src_ = i % nsrc_`, independent per-slot
+  reconnect and warmup). Remaining M5 work: per-camera `MppDecoder`,
+  `BoxSmoother`, and `Tracker` instances.
       Pipeline refactor: an array of cam+dec+rga chains, each with its
       own dma-buf/tensor pool, plus a round-robin dispatcher; per-cam
       BoxSmoother. Fusion is NOT volumetric on this NPU (BEV/3D

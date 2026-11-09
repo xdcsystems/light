@@ -8,11 +8,10 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
-#include <deque>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -33,8 +32,9 @@
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
 
-#include "rga_resizer.h"      // LbGeom: band geometry arrives as one object
-#include "rkmpp_drm_pool.hpp" // RkmppDrmPool<kBufCount>: RAII pool sub-object
+#include "rga_resizer.h"       // LbGeom: band geometry arrives as one object
+#include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<kBufCount>: RAII pool sub-object
+#include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
 
 // Opaque ffmpeg types, forward-declared: the header compiles without
 // the libav* include paths, and the compiler checks the handle types
@@ -46,15 +46,6 @@ typedef struct AVPacket AVPacket;
 typedef struct AVStream AVStream;
 typedef struct AVIOContext AVIOContext;
 
-// Owned packet handle: the mux queue holds AVPackets freed via
-// av_packet_free. The deleter is a plain function pointer so the
-// header keeps compiling without the libav* include paths; the
-// deleter body and its value live in net_encoder.cpp. The one-arg
-// unique_ptr ctor is deleted for pointer deleters, so a PktPtr
-// cannot be built without the deleter -- forgetting it is a
-// compile error, not a leak.
-using PktPtr = std::unique_ptr<AVPacket, void ( * )( AVPacket* )>;
-
 class NetEncoder
 {
     // One viewer session's transport (TCP pull or UDP push), RAII:
@@ -62,13 +53,13 @@ class NetEncoder
     // paths of run_session() free everything by scope exit.
     struct Transport
     {
-        AVIOContext* pb = nullptr;
-        uint8_t* iobuf = nullptr;
-        int cfd = -1;
-        bool tcp_pull = false;
-
         ~Transport();
         void close();
+
+    public:
+        TcpPullServer* tcp = nullptr;
+        AVIOContext* udp_pb = nullptr;
+        bool tcp_pull = false;
     };
 
     // RAII guard for the muxer context (run_session): p->pb is nulled
@@ -78,10 +69,18 @@ class NetEncoder
     // the Transport, as before.
     struct FcGuard
     {
-        AVFormatContext* p;
         ~FcGuard();
         FcGuard( const FcGuard& ) = delete;
         FcGuard& operator=( const FcGuard& ) = delete;
+
+    public:
+        AVFormatContext* p;
+    };
+
+    enum
+    {
+        kBufCount = 3,
+        kPktQDepth = 8
     };
 
 public:
@@ -94,6 +93,8 @@ public:
                 int bitrate_kbps );
 
     ~NetEncoder();
+    NetEncoder( const NetEncoder& ) = delete;
+    NetEncoder& operator=( const NetEncoder& ) = delete;
 
     // Called once per frame from the pipeline loop. tensor_fd is the
     // dma-buf of the NPU input tensor (RGB888, w x h); boxes are drawn.
@@ -114,15 +115,18 @@ private:
     // drain_queue() owns the wait/pop loop, mux_write() writes one
     // packet with the IDR-prepend logic; hdr_/hdr_logged_ stay members.
     void drain_queue( AVFormatContext* fc );
-    void run_session( int lfd, bool tcp_pull, const std::string& url );
+    void run_session( TcpPullServer& tcp, bool tcp_pull, const std::string& url );
 
     // Transport setup (accept + socket options / avio_open) and the
     // stream setup (new_stream + header + mpegts options).
-    bool open_transport( int lfd, const std::string& url, AVFormatContext* fc, Transport& t );
+    bool open_transport( const std::string& url, AVFormatContext* fc, Transport& t );
     bool setup_stream( AVFormatContext* fc, AVStream** st, bool tcp_pull );
 
+    bool init_frames();
+    void free_frames();
+    void clear_pkt_queue();
     int64_t packet_pts();  // pts of the next frame; may set ts_base_
-    int mux_write( AVFormatContext* fc, PktPtr pkt );
+    int mux_write( AVFormatContext* fc, AVPacket* pkt );
     bool prep_frame( int tensor_fd, MppBuffer mb );
 
 private:
@@ -141,22 +145,25 @@ private:
     std::atomic< bool > force_idr_ { false };
 
     AVCodecContext* enc_ = nullptr;  // h264_rkmpp
-    AVFrame* frame_ = nullptr;  // NV12 over an MPP DRM buffer
     AVPacket* pkt_ = nullptr;
+    AVPacket* mux_pkt_ = nullptr;
+    AVPacket* dup_pkt_ = nullptr;
     // Three buffers, not two. Two worked only at a steady frame pace;
     // with --net-fps 0 (VFR) frames arrive in clumps after a network
     // pause, and two buffers can run out exactly at the 3-deep rkmpp
     // task queue while an older encode still holds its plane.
-    enum { kBufCount = 3 };
     RkmppDrmPool<kBufCount> pool_;  // three ping-pong NV12 dma-bufs, one RAII sub-object
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
+    std::array<AVFrame*, kBufCount> frames_ {};  // pre-bound DRM_PRIME frames (one per pool slot)
 
-    // Encoder -> serve() packet queue. A separate mutex from mx_:
-    // network-side wakeups never touch the encode critical section.
+    // Encoder -> serve() preallocated packet ring queue. A separate mutex
+    // from mx_: network-side wakeups never touch the encode critical section.
     std::mutex pkt_mx_;
     std::condition_variable pkt_cv_;
-    std::deque<PktPtr> pkts_;
+    std::array<AVPacket*, kPktQDepth> pkts_ {};
+    size_t pkt_head_ = 0;
+    size_t pkt_count_ = 0;
     int pkt_drops_ = 0;
     bool wait_key_ = true;  // pkt_mx_: drain drops packets until the next IDR (see net_encoder.cpp)
     std::atomic<bool> active_ { false };  // stream path live (serve sets/clears under mx_)

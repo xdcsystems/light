@@ -1,13 +1,13 @@
 #!/bin/bash
 set -e
 
-# канонический физический путь к проекту — без симлинков
+# Canonical physical path to the project root — symlinks resolved
 PROJ_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd -P)"
 BUILD_DIR="$PROJ_ROOT/build"
 
-# фиксируем рабочую директорию в физическом написании: CMake наследует
-# написание пути от cwd, и без этого SSH и VS Code получали бы разные
-# значения в логе «Build files have been written to»
+# Pin the working directory to its physical path: CMake inherits the
+# path spelling from cwd, and without this SSH and VS Code would see
+# different paths in "Build files have been written to"
 cd "$PROJ_ROOT"
 
 echo "PROJ_ROOT=$PROJ_ROOT"

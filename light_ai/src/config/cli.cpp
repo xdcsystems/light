@@ -1,4 +1,4 @@
-// cli.cpp (2026-11-08): the parameter layer. The option registry
+// The parameter layer. The option registry
 // (names, ranges, error texts) lives in config/option_registry.{h,cpp};
 // the INI config-file layer lives in config/config_file.{h,cpp}
 // (externals/inih r62, BSD-3-Clause); this file owns the CliOptions
@@ -6,16 +6,61 @@
 // Precedence: defaults < config file < CLI.
 
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "config/cli.hpp"
 #include "config/config_file.h"
 
+namespace
+{
+    bool ensure_writable_dir( const std::string& dir )
+    {
+        std::error_code ec;
+        std::filesystem::create_directories( dir, ec );
+        if ( ec )
+        {
+            std::cerr << "invalid value for --cal-dir: '" << dir << "' (" << ec.message() << ")\n";
+            return false;
+        }
+        const std::string probe = dir + "/.light_ai_write_test";
+        bool ok = false;
+        {
+            std::ofstream f( probe );
+            ok = f.good();
+        }
+        std::filesystem::remove( probe, ec );
+        if ( !ok )
+        {
+            std::cerr << "invalid value for --cal-dir: '" << dir << "' (not writable)\n";
+            return false;
+        }
+        return true;
+    }
+
+    void finalize_sources( std::vector<SourceEndpoint>& ini_srcs, Config& cfg )
+    {
+        if ( cfg.sources.empty() )
+            cfg.sources = std::move( ini_srcs );
+        if ( cfg.sources.empty() )
+            cfg.sources.push_back( { SourceKind::V4L2, "/dev/video20" } );
+
+        cfg.device.clear();
+        cfg.net_src.clear();
+        if ( cfg.sources.front().kind == SourceKind::NetMjpeg )
+            cfg.net_src = cfg.sources.front().uri;
+        else
+            cfg.device = cfg.sources.front().uri;
+    }
+}  // namespace
+
 // ---- CliOptions implementation ----
 
 // Cross-field checks: post-parse, because argv order is arbitrary.
-// Every block moved verbatim from main.cpp (2026-11-08).
 int CliOptions::validate() const
 {
     // --net-h264 is a variant of the preview subsystem, not an independent
@@ -35,33 +80,6 @@ int CliOptions::validate() const
         return 2;
     }
 
-    // A network source replaces the USB camera entirely; the frame
-    // geometry, however, still comes from --w/--h: the RGA letterbox
-    // mapping and the encoder band are computed from them BEFORE the
-    // first frame arrives, and a mismatch with the phone's actual
-    // stream would silently stretch the image (the "substituted
-    // source is worse than a loud one" principle, M3.8). The user
-    // must state the phone's resolution explicitly.
-    // Mutual exclusion, loud version: --net-src clears c.device when it
-    // comes AFTER --device on the command line; the reverse order leaves
-    // both non-empty and one of them is silently ignored (the winner
-    // depends on argv order). Refuse instead of guessing.
-    if ( !cfg_.net_src.empty() && !cfg_.device.empty() )
-    {
-        std::cerr << "--device and --net-src are mutually exclusive; both are set:\n"
-                     "  --device: " << cfg_.device << "\n"
-                     "  --net-src: " << cfg_.net_src << "\n"
-                     "  Pass exactly one of them; --net-src replaces the USB camera entirely.\n";
-        return 2;
-    }
-    if ( !cfg_.net_src.empty() )
-    {
-        std::cerr << "net-src: " << cfg_.net_src << "\n"
-                     "  NOTE: --w/--h must match the phone's stream resolution\n"
-                     "  (IP Webcam: the same values set in the app), e.g.:\n"
-                     "    light_ai --net-src http://<phone-ip>:8080/video --w 1280 --h 720\n";
-    }
-
     // --cal-dir only makes sense with the --cal series; --dump-cal always
     // writes /tmp/cal.ppm and is unaffected. Post-parse for the same
     // reason as --net-h264: order of argv is arbitrary.
@@ -74,6 +92,8 @@ int CliOptions::validate() const
                      "    light_ai --cal 5 --cal-interval 60 --cal-dir /tmp/calrun\n";
         return 2;
     }
+    if ( !cfg_.cal_dir.empty() && !ensure_writable_dir( cfg_.cal_dir ) )
+        return 2;
 
     return 0;
 }
@@ -111,6 +131,8 @@ CliOptions::ParseStatus CliOptions::parse( int argc, char** argv )
         if ( !loader.load( config_path.c_str(), cfg_ ) )
             return ParseStatus::Error;
     }
+    std::vector<SourceEndpoint> ini_srcs = std::move( cfg_.sources );
+    cfg_.sources.clear();
 
     for ( int i = 1; i < argc; ++i )
     {
@@ -135,5 +157,6 @@ CliOptions::ParseStatus CliOptions::parse( int argc, char** argv )
             return ParseStatus::Error;
     }
 
+    finalize_sources( ini_srcs, cfg_ );
     return validate() == 0 ? ParseStatus::Run : ParseStatus::Error;
 }

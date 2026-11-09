@@ -12,6 +12,16 @@ struct Timings
 {
     using clk = std::chrono::steady_clock;
 
+    void set_pool( int p )
+    {
+        if ( p > 1 )
+            pool = p;
+    }
+
+    void add( const FrameTrace& tr );
+    void report( const char* tag );
+
+public:
     double cam = 0, dec = 0, rga = 0, infer = 0, enc = 0;  // sums, ms
     double post = 0.0;
     int n = 0;
@@ -22,13 +32,4 @@ struct Timings
     clk::time_point t0{};  // first frame stamp
     long total = 0;        // frames since start
     int pool = 1;          // in-flight frames; 1 = legacy path
-
-    void set_pool( int p )
-    {
-        if ( p > 1 )
-            pool = p;
-    }
-
-    void add( const FrameTrace& tr );
-    void report( const char* tag );
 };

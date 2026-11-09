@@ -3,7 +3,8 @@
 #include <cstdint>
 #include <utility>
 #include <vector>
-#include "rknn_api.h"
+
+#include <rknn_api.h>
 
 class RknnEngine
 {

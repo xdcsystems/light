@@ -1,12 +1,12 @@
 #!/bin/bash
-# scripts/collect_limited.sh — дамп проекта в части по бюджету размера.
-# Файлы не рвутся: файл целиком попадает в одну часть; если в текущую
-# часть не влезает — часть закрывается и файл открывает следующую.
-# Одиночный файл больше бюджета занимает свою часть целиком (со warning).
+# scripts/collect_limited.sh — dump the project into size-budgeted parts.
+# Files are never split: each file goes into a single part in full; if it does
+# not fit into the current part, the part is closed and the file starts the next.
+# A single file larger than the budget occupies its own part (with a warning).
 #
-# Бюджет: PART_BYTES (байт на часть, по умолчанию 12000).
-# Ориентир: ~3-4 байта на токен кода, т.е. 12000 байт ≈ 3-4k токенов.
-# Переопределение: PART_BYTES=8000 ./scripts/collect_limited.sh
+# Budget: PART_BYTES (bytes per part, default 12000).
+# Rule of thumb: ~3-4 bytes per code token, i.e. 12000 bytes ~= 3-4k tokens.
+# Override: PART_BYTES=8000 ./scripts/collect_limited.sh
 set -euo pipefail
 shopt -s nullglob
 
@@ -14,7 +14,7 @@ PART_BYTES=${PART_BYTES:-12000}
 
 files=(CMakeLists.txt include/*.h include/*.hpp src/*.cpp scripts/*)
 
-# сам скрипт из дампа выкидываем, каталоги — тоже
+# Exclude this script itself and any directories from the dump
 filtered=()
 for f in "${files[@]}"; do
   [[ -f "$f" && "$f" != scripts/collect_limited.sh && "$f" != scripts/collect_project.sh ]] || continue
@@ -27,15 +27,15 @@ if (( ${#files[@]} == 0 )); then
   exit 1
 fi
 
-# объёмы в байтах
+# File sizes in bytes
 sizes=(); total=0
 for f in "${files[@]}"; do
   n=$(wc -c < "$f"); sizes+=("$n"); total=$((total + n))
 done
 
-# жадная упаковка с сохранением порядка
-parts=()   # parts[i]: строка индексов файлов части i
-bytes=()   # bytes[i]: суммарный размер части i
+# Order-preserving greedy packing
+parts=()   # parts[i]: space-separated file indices for part i
+bytes=()   # bytes[i]: total byte size of part i
 for i in "${!files[@]}"; do
   n="${sizes[i]}"
   if (( n > PART_BYTES )); then
@@ -51,7 +51,7 @@ for i in "${!files[@]}"; do
   fi
 done
 
-# запись частей
+# Write parts
 np=${#parts[@]}
 for p in "${!parts[@]}"; do
   out="/tmp/project_part$(( p + 1 )).txt"; : > "$out"
@@ -65,4 +65,3 @@ for p in "${!parts[@]}"; do
   nfiles=$(wc -w <<< "${parts[p]}")
   echo "part$(( p + 1 )): /tmp/project_part$(( p + 1 )).txt  ${bytes[p]} bytes, $nfiles files"
 done
-

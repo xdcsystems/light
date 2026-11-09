@@ -25,17 +25,17 @@ class GpuBoxDrawer
     // Extension entry points: never assumed to be linkable, always via
     // eglGetProcAddress with a null check (libmali does not export all of them as symbols).
 
-    typedef EGLImageKHR( EGLAPIENTRYP P_CreateImage )( EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint * );
-    typedef EGLBoolean( EGLAPIENTRYP P_DestroyImage )( EGLDisplay, EGLImageKHR );
-    typedef EGLSyncKHR( EGLAPIENTRYP P_CreateSync )( EGLDisplay, EGLenum, const EGLint * );
-    typedef EGLBoolean( EGLAPIENTRYP P_DestroySync )( EGLDisplay, EGLSyncKHR );
-    typedef EGLBoolean( EGLAPIENTRYP P_ClientWaitSync )( EGLDisplay, EGLSyncKHR, EGLint, EGLTimeKHR );
-    typedef EGLint( EGLAPIENTRYP P_DupNativeFenceFDANDROID )( EGLDisplay, EGLSyncKHR );
-    typedef EGLDisplay( EGLAPIENTRYP P_GetPlatformDisplayEXT )( EGLenum, void *, const EGLint * );
-    typedef void( GL_APIENTRYP P_ImageTargetTexture2DOES )( GLenum, GLeglImageOES );
-    typedef void( GL_APIENTRYP P_GenVertexArrays )( GLsizei, GLuint * );
-    typedef void( GL_APIENTRYP P_DeleteVertexArrays )( GLsizei, const GLuint * );
-    typedef void( GL_APIENTRYP P_BindVertexArray )( GLuint );
+    using P_CreateImage = EGLImageKHR( EGLAPIENTRYP )( EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint * );
+    using P_DestroyImage = EGLBoolean( EGLAPIENTRYP )( EGLDisplay, EGLImageKHR );
+    using P_CreateSync = EGLSyncKHR( EGLAPIENTRYP )( EGLDisplay, EGLenum, const EGLint * );
+    using P_DestroySync = EGLBoolean( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR );
+    using P_ClientWaitSync = EGLBoolean( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR, EGLint, EGLTimeKHR );
+    using P_DupNativeFenceFDANDROID = EGLint( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR );
+    using P_GetPlatformDisplayEXT = EGLDisplay( EGLAPIENTRYP )( EGLenum, void *, const EGLint * );
+    using P_ImageTargetTexture2DOES = void( GL_APIENTRYP )( GLenum, GLeglImageOES );
+    using P_GenVertexArrays = void( GL_APIENTRYP )( GLsizei, GLuint * );
+    using P_DeleteVertexArrays = void( GL_APIENTRYP )( GLsizei, const GLuint * );
+    using P_BindVertexArray = void( GL_APIENTRYP )( GLuint );
 
     // GL/EGL state by value: no heap, no pimpl.
     struct State
@@ -124,6 +124,7 @@ public:
 
 private:
     void done();
+    void release_slot( int slot );
     void make_current();
     bool make_program();
     // Attribute setup for the batched vertex layout: recorded once into

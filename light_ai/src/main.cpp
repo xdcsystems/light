@@ -29,8 +29,18 @@ void on_stop_signal( int )
 // Trivially constructible/destructible: no heap, no statics.
 struct SignalGuard
 {
-    explicit SignalGuard( Pipeline* p ) { g_pipe.store( p, std::memory_order_release ); }
-    ~SignalGuard() { g_pipe.store( nullptr, std::memory_order_release ); }
+    explicit SignalGuard( Pipeline* p )
+    {
+        g_pipe.store( p, std::memory_order_release );
+        std::signal( SIGINT, on_stop_signal );
+        std::signal( SIGTERM, on_stop_signal );
+    }
+    ~SignalGuard()
+    {
+        std::signal( SIGINT, SIG_DFL );
+        std::signal( SIGTERM, SIG_DFL );
+        g_pipe.store( nullptr, std::memory_order_release );
+    }
     SignalGuard( const SignalGuard& ) = delete;
     SignalGuard& operator=( const SignalGuard& ) = delete;
 };
@@ -51,9 +61,6 @@ int main( int argc, char** argv )
     try
     {
         Pipeline p( cli.config() );
-        std::signal( SIGINT, on_stop_signal );
-        std::signal( SIGTERM, on_stop_signal );
-
         SignalGuard guard( &p );
         const int rc = p.run();
         return rc > 0 ? 0 : 1;

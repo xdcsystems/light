@@ -9,37 +9,39 @@
 
 namespace
 {
-    // fp16 (IEEE 754 half) -> float, bit-exact, no arch extensions needed.
+    // fp16 (IEEE 754 half) -> float via ARM64 hardware __fp16 (single fcvt).
     inline float fp16_to_float( uint16_t h )
     {
-        const uint32_t sign = ( h >> 15 ) & 1u;
-        const uint32_t exp = ( h >> 10 ) & 31u;
-        const uint32_t man = h & 0x3FFu;
+#if defined( __aarch64__ )
+        __fp16 f16 = 0;
+        std::memcpy( &f16, &h, sizeof( f16 ) );
+        return static_cast<float>( f16 );
+#else
+        const uint32_t sign = static_cast<uint32_t>( h & 0x8000U ) << 16U;
+        const uint32_t exp = ( h >> 10U ) & 0x1FU;
+        const uint32_t mant = h & 0x03FFU;
+        uint32_t bits = 0;
+        if ( exp == 0 )
+            bits = mant ? ( sign | ( ( 113U ) << 23U ) | ( mant << 13U ) ) : sign;
+        else if ( exp == 31 )
+            bits = sign | 0x7F800000U | ( mant << 13U );
+        else
+            bits = sign | ( ( exp + 112U ) << 23U ) | ( mant << 13U );
+        float out = 0.0f;
+        std::memcpy( &out, &bits, sizeof( out ) );
+        return out;
+#endif
+    }
 
-        // fp32 assembly from half fields: the low 13 mantissa bits are
-        // always zero, so the shift is lossless.
-        const auto bits = []( uint32_t s, uint32_t e, uint32_t m ) {
-            return ( s << 31 ) | ( e << 23 ) | ( m << 13 );
-        };
-        const auto to_float = []( uint32_t b ) {
-            float f = 0.0f;
-            std::memcpy( &f, &b, 4 );
-            return f;
-        };
-
-        if ( exp == 0 && man == 0 )
-            return to_float( bits( sign, 0, 0 ) );  // +-0
-        if ( exp == 31 )
-            return to_float( bits( sign, 0xFF, man ) );  // +-inf / NaN
-        if ( exp != 0 )
-            return to_float( bits( sign, exp - 15 + 127, man ) );  // normal
-
-        // Subnormal without the shift loop: 2^-14 * man/1024 equals
-        // 2^-14*(1 + man/1024) - 2^-14, and that subtraction is exact in
-        // fp32 (no underflow below 2^-14), so the result is bit-identical
-        // to the loop normalization.
-        return std::copysign( to_float( bits( 0, 127 - 15 + 1, man ) ) - 0x1.0p-14f,
-                sign ? -1.0f : 1.0f );
+    int stride_to_head( int stride )
+    {
+        if ( stride == 8 )
+            return 0;
+        if ( stride == 16 )
+            return 1;
+        if ( stride == 32 )
+            return 2;
+        return -1;
     }
 
     // yolov5 default anchors, already in model-input pixels per stride.
@@ -72,7 +74,7 @@ namespace
     }
 
     // Candidate buffer on the stack: fixed capacity, no heap. The early
-    // cut (obj < 0.05f) keeps the real flow to single digits; the cap
+    // cut (obj < conf_thr) keeps the real flow to single digits; the cap
     // is a safety net.
     constexpr int kMaxCand = 1024;
 
@@ -200,18 +202,17 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
     }
 
     // Fresh frame: out is a preallocated pipeline member (DetList), it
-    // is never reconstructed between calls — clear it at entry. Without
-    // this, detections from previous frames accumulate until the 128
-    // cap saturates and the visible box set freezes (regression from
-    // 7c99906, caught live on 2026-10-27).
+    // is never reconstructed between calls — clear it at entry.
+    // Without this, detections from previous frames accumulate until the 128
+    // cap saturates and the visible box set freezes
     out.clear();
 
     std::array<Box, kMaxCand> cand{};
     int nc = 0;
 
     // Axial mapping: scene = (det - band origin) * cam / band size.
-    // Landscape: the band fills the tensor width (lb_left = 0, lb_w =
-    // model_w) — identical to the legacy uniform-by-width mapping.
+    // Landscape: the band fills the tensor width (lb_left = 0, lb_w = model_w)
+    // - identical to the legacy uniform-by-width mapping.
     // Portrait: the band fills the tensor height; the axes scale
     // separately (both are cam/lb for a uniform fit).
     const float sx = cam_w / lb_w;
@@ -238,6 +239,12 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
             continue;
         }
         const int stride = mw / w;
+        const int head = stride_to_head( stride );
+        if ( head < 0 )
+        {
+            std::cerr << "yolo: head " << gi << " unsupported stride " << stride << '\n';
+            continue;
+        }
         const int per = static_cast<int>( attr.dims[1] ) / 3;  // 85 = 4+1+80
         if ( per * 3 != static_cast<int>( attr.dims[1] ) )
         {
@@ -247,7 +254,7 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
             continue;  // not a 3-anchor yolov5 head - skip
         }
 
-        collect_head( gi, data, h, w, per, stride, lb_left, lb_top, lb_w, lb_h, conf_thr, cand, nc );
+        collect_head( head, data, h, w, per, stride, lb_left, lb_top, lb_w, lb_h, conf_thr, cand, nc );
     }
 
     emit_nms( cand, nc, iou_thr, sx, sy, lb_left, lb_top, cam_w, cam_h, out );

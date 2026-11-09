@@ -7,8 +7,10 @@
 #include "mpp_decoder.hpp"
 
 
-MppDecoder::MppDecoder( int w, int h ) : w_( w ), h_( h )
+int MppDecoder::init( int w, int h )
 {
+    w_ = w;
+    h_ = h;
     // MPP logs its version banner, rc/prep config and teardown meta dumps
     // at info/error level by default. Silence it for production runs;
     // raise back to MPP_LOG_DEBUG temporarily when debugging MPP internals.
@@ -90,14 +92,15 @@ MppDecoder::MppDecoder( int w, int h ) : w_( w ), h_( h )
             ctx_ = nullptr;
             mpi_ = nullptr;
         }
+        return -1;
     }
+    return 0;
 }
 
 MppDecoder::~MppDecoder()
 {
     if ( !ctx_ )
         return;
-    mpi_->reset( ctx_ );
 
     // Strip meta references from the tasks left in the ports. The decoder
     // recycles consumed input tasks back to the user side of the input port
@@ -105,25 +108,9 @@ MppDecoder::~MppDecoder()
     // the pointer dangles, and the decoder teardown (dec_release_task_in_port)
     // dereferences it and double-deinits it ("negative ref_count" /
     // "invalid mem pool ptr"). Dequeued tasks are held, not re-enqueued:
-    // mpp_destroy frees all tasks with its queues anyway.
-    for ( int i = 0; i < 32; i++ ) {
-        MppTask t = nullptr;
-        if ( mpi_->poll( ctx_, MPP_PORT_INPUT, MPP_POLL_NON_BLOCK ) != MPP_OK )
-            break;
-        if ( mpi_->dequeue( ctx_, MPP_PORT_INPUT, &t ) != MPP_OK || !t )
-            break;
-        mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, nullptr );
-        mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, nullptr );
-    }
-    for ( int i = 0; i < 32; i++ ) {
-        MppTask t = nullptr;
-        if ( mpi_->poll( ctx_, MPP_PORT_OUTPUT, MPP_POLL_NON_BLOCK ) != MPP_OK )
-            break;
-        if ( mpi_->dequeue( ctx_, MPP_PORT_OUTPUT, &t ) != MPP_OK || !t )
-            break;
-        mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, nullptr );
-        mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, nullptr );
-    }
+    // mpp_destroy frees all tasks with its queues anyway. Must run BEFORE
+    // reset() as well as after: reset() itself calls dec_release_task_in_port.
+    reset_and_strip();
 
     // Critical order: release every MPP object that may hold references to
     // buffers BEFORE mpp_destroy(). MPP tears down its internal buffer pools
@@ -208,9 +195,10 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
     // otherwise 422SP. Scan is bounded (first 2 KiB) and any parsing
     // doubt keeps the previous value.
     {
-        const size_t lim = size < 2048 ? size : 2048;
         uint8_t v_max = 0;
-        for ( size_t i = 2; i + 4 <= lim; )
+        uint8_t v_min = 0xFF;
+        const size_t scan_lim = size < 2048 ? size : 2048;
+        for ( size_t i = 2; i + 4 <= scan_lim; )
         {
             if ( data[i] != 0xFF )
             {
@@ -218,38 +206,47 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
                 continue;
             }
             const uint8_t m = data[i + 1];
-            if ( m == 0x01 || ( m >= 0xD0 && m <= 0xD9 ) )
+            if ( m == 0xFF )
+            {
+                ++i;
+                continue;
+            }
+            if ( m == 0xD9 || m == 0xDA )
+                break;
+            if ( m == 0x01 || ( m >= 0xD0 && m <= 0xD8 ) )
             {
                 i += 2;
                 continue;
             }
             const uint16_t len = ( static_cast<uint16_t>( data[i + 2] ) << 8 ) | data[i + 3];
-            if ( len < 2 )
+            const size_t seg_end = i + 2 + len;
+            if ( len < 2 || seg_end > size )
                 break;
             if ( m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC )
             {
                 // SOFn: precision(1) height(2) width(2) ncomp(1),
                 // then per component: id(1), h/v packed(1), tq(1).
                 // SOFn table starts at i+10: id(1), packed h/v at i+11 + 3*c, tq(1);
-                // V is the LOW nibble. The old offsets read the width high byte as
-                // ncomp and the Nf byte as hv, so every colour JPEG produced
-                // v_max = 3 -> 420SP, even for true 4:2:2.
-                const uint8_t ncomp = i + 10 <= lim ? data[i + 9] : 0;
-                for ( int c = 0; c < ncomp && i + 10 + static_cast<size_t>( c ) * 3 + 2 < lim; ++c )
+                // V is the LOW nibble.
+                const uint8_t ncomp = i + 10 <= seg_end ? data[i + 9] : 0;
+                for ( int c = 0; c < ncomp && i + 10 + static_cast<size_t>( c ) * 3 + 2 < seg_end; ++c )
                 {
                     const uint8_t hv = data[i + 11 + static_cast<size_t>( c ) * 3];
-                    if ( ( hv & 0x0F ) > v_max )
-                        v_max = hv & 0x0F;
+                    const uint8_t v = hv & 0x0F;
+                    if ( v > v_max )
+                        v_max = v;
+                    if ( v > 0 && v < v_min )
+                        v_min = v;
                 }
                 break;
             }
-            i += 2 + len;
+            i = seg_end;
         }
-        const MppFrameFormat want = v_max >= 2 ? MPP_FMT_YUV420SP : MPP_FMT_YUV422SP;
+        const MppFrameFormat want = ( v_max >= 2 && v_min == 1 ) ? MPP_FMT_YUV420SP : MPP_FMT_YUV422SP;
         if ( v_max && want != out_fmt_ )
         {
             out_fmt_ = want;
-            std::cerr << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( v_max >= 2 ? "0" : "2" )
+            std::cerr << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( want == MPP_FMT_YUV420SP ? "0" : "2" )
                       << " -> out fmt " << ( out_fmt_ == MPP_FMT_YUV420SP ? "420SP" : "422SP" ) << '\n';
         }
     }
@@ -335,13 +332,10 @@ int MppDecoder::retrieve_output()
     if ( mpi_->poll( ctx_, MPP_PORT_OUTPUT, static_cast<MppPollType>( kTaskPollMs ) ) != MPP_OK )
     {
         // The input task (holding pkt_ in its meta) is still queued inside
-        // the decoder. reset() flushes all queued tasks and releases their
-        // meta references; only after it does deinit become safe. Without
-        // the reset this path freed the packet under the decoder (UAF) AND
-        // wedged the decoder forever: the never-dequeued output task
-        // blocked every subsequent input poll (-3 on the next frames).
+        // the decoder. reset_and_strip() clears user-side task meta and
+        // flushes all queued tasks; only after it does deinit become safe.
         std::cerr << "dec: output not ready in " << kTaskPollMs << " ms - flushing decoder\n";
-        mpi_->reset( ctx_ );
+        reset_and_strip();
         drop_packet();
         return -6;
     }
@@ -349,9 +343,9 @@ int MppDecoder::retrieve_output()
     if ( mpi_->dequeue( ctx_, MPP_PORT_OUTPUT, &task ) != MPP_OK || !task )
     {
         // See the -6 path: the input task is still inside the decoder,
-        // reset() is the only way to release its packet reference.
+        // reset_and_strip() releases its packet reference before drop_packet().
         std::cerr << "dec: output dequeue failed - flushing decoder\n";
-        mpi_->reset( ctx_ );
+        reset_and_strip();
         drop_packet();
         return -7;
     }
@@ -426,6 +420,28 @@ int MppDecoder::retrieve_output()
     // -6/-7 paths of the previous frame).
     drop_packet();
     return fd;
+}
+
+void MppDecoder::reset_and_strip()
+{
+    auto strip_ports = [this]() {
+        for ( MppPortType port : { MPP_PORT_INPUT, MPP_PORT_OUTPUT } )
+        {
+            for ( int i = 0; i < 32; ++i )
+            {
+                MppTask t = nullptr;
+                if ( mpi_->poll( ctx_, port, MPP_POLL_NON_BLOCK ) != MPP_OK )
+                    break;
+                if ( mpi_->dequeue( ctx_, port, &t ) != MPP_OK || !t )
+                    break;
+                mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, nullptr );
+                mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, nullptr );
+            }
+        }
+    };
+    strip_ports();
+    mpi_->reset( ctx_ );
+    strip_ports();
 }
 
 int MppDecoder::aux_fd( size_t bytes )

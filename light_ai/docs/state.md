@@ -474,9 +474,10 @@ Open notes:
 - pool-mode rga timing: the cal-dump file I/O is counted inside
   rga_ms (ms(t3,t3b)), unlike the single path — irrelevant without
   --cal, keep in mind for pool rga A/Bs.
-- known accepted races (no live path reaches them today): the
-  destructor drains the ring only via run()'s tail; and ts_base_
-  reset in serve() vs send_frame() read (int64 write, benign).
+- known accepted notes (updated 2026-11-09): `~Pipeline()` joins all
+  workers after `run()` drains `pub_`, and `ts_base_` reset in
+  `run_session()` + `packet_pts()` in `send_frame()` are both
+  serialized under `NetEncoder::mx_`.
 
 ## Pure-infer figure registry (reconcile, M2.6 (c))
 
@@ -503,7 +504,7 @@ are the pure figures; prod steady-state [timing] figures are NOT pure
 | GPU practically idle | debugfs mali0 dvfs_utilization | — | prod | 11-02 | VERIFIED live: busy/idle ticks never fire (batch draw per frame is below the DVFS tick granularity), cur_freq stays 1 GHz in performance; boxes render (visual confirmation) — counter-blind, not draw-dead |
 | -mcpu=cortex-a76 -mtune=cortex-a76.cortex-a55 | CMakeLists TARGET_CPU_FLAGS A/B | int8_mmse_v5, 960p | prod, h264 pull, viewer attached | 11-02 | NO EFFECT vs -mcpu=cortex-a76: sum 95.2-95.8 ms / ~20.0 FPS both — camera-bound, inference lives on the NPU. Kept as documentation of intent. The dot form is legal only in -mtune (GCC 10.2 rejects -mcpu=cortex-a76+cortex-a55: "+" there means a feature modifier) |
 
-## Shutdown observations (2026-11-02): MPP prints on the graceful exit
+## Shutdown observations (2026-11-02): MPP prints on the graceful exit — CLOSED (b8b0bab, 7c0d6d9, 6fa82ac; verified 2026-11-09)
 
 Two post-P1-6 live runs, both Ctrl-C with a viewer attached:
 - Run A (3000 frames, post-P1-5 binary): clean exit — the last MPP
@@ -520,10 +521,12 @@ M3.5-era ref_count warning (that was the mpp_buffer path, closed by
 the EOS fixes) — this one is the mpp_packet/meta path. No crash, no
 other symptoms; the "Processed N frames" line and the exit are clean
 in both runs.
-Backlog: P2 candidate "shutdown-path double packet_deinit" — needs
-src/mpp_decoder.cpp + src/net_encoder.cpp teardown review. Not
-reproducible on demand (phase-dependent; try Ctrl-C at different
-points of the run and record which phase produces the prints).
+Status (CLOSED 2026-11-09): fixed in b8b0bab (NetEncoder EOF drain),
+7c0d6d9, and 6fa82ac (MppDecoder::~MppDecoder strips KEY_INPUT_PACKET
+and KEY_OUTPUT_FRAME task metas on both ports before and after
+mpi_->reset). Verified 2026-11-09: 20x back-to-back teardown loop and
+600-frame --pool 3 --net --net-h264 multi-connect/disconnect run exit
+cleanly with zero mpp_meta / mpp_mem_pool warnings.
 
 ## Pipeline unification (2026-11-03): unified slot-ring path (M4 follow-up)
 
@@ -572,9 +575,9 @@ Three commits over origin/master: 50ff7d4 (FrameTrace), 4b50a36
   to interleave MID-log between stdout chunks (PID check: our own
   process). Direct terminal output preserves order (deinit strictly at
   the end). When order matters: run direct, or split stderr to a file.
-- clang-tidy 11929 (src/mpp_decoder.cpp, started 11-02) hung >14 h
-  with ~zero CPU; killed 11-03. Re-lint pending on the updated
-  pipeline/mpp sources.
+- `clang-tidy` 11929 (`src/mpp_decoder.cpp`, started 11-02) hung >14 h
+  with ~zero CPU; killed 11-03. Resolved 2026-11-09: all 21 `.cpp`
+  translation units pass `scripts/tidy_run.sh` with 0 findings and 0 hangs.
 - CORRECTED (11-03, same day): the "SPSC queue refactor" naming in
   the first draft of this note was wrong. The publish FIFO
   (pub_slots_/pub_head_/pub_n_) has no producer/consumer thread split:
@@ -676,11 +679,9 @@ SUPERSEDED (2026-11-04, owner decision): the 2026-11-03
   yolo_postprocess() is REVERSED -- both ARE to be refactored
   under the 200-line limit. Part of the refactor is already
   done in-tree WITHOUT a state record (the record was lost with
-  the tidy_run.sh removal -- see below). Backlog (M6): audit the
-  current function sizes, finish the remaining splits, record
-  each split here; the "risks correctness" concern stands as a
-  constraint -- every split goes through build + live run
-  verification, not as a mechanical whitespace-style move.
+  the tidy_run.sh removal -- see below). Backlog (M6 — COMPLETED 2026-11-09): function splits completed across
+  all translation units (including `Tracker::associate`), and `scripts/build.sh`
+  enforces `scripts/tidy_run.sh` on every build (`0 findings` across all 21 `.cpp` files).
 
 TIDY INFRASTRUCTURE (2026-11-03):
 - build-tidy compiles without the board's -mtune=...cortex-a55
@@ -726,27 +727,25 @@ READABILITY PASS (post-tidy, 2026-11-03 evening):
   setup was innocent; the push succeeded once the incident cleared.
   Protocol: with an unchanged key and a sudden publickey refusal,
   check githubstatus.com FIRST.
-- Bus error on exit (OPEN, deferred by owner decision): one
-  3000-frame run (h264 pull; viewer connected ~f60, gone ~f1020)
-  printed "Bus error" AFTER "Processed 3000 frames" -- teardown
-  phase, past the main loop. NOT reproduced by: a 300-frame run
-  with no viewer (exit 0, clean mpp_task_queue_deinit) and a
-  1200-frame run with viewer attach+detach (clean drain, EOF
-  reached, exit clean). dmesg: no Mali/dma-buf faults. Hypothesis:
-  phase-dependent teardown race (encoder/mux vs main teardown),
-  same family as the shutdown-observations P2 item. Backlog:
-  reproduce under gdb (or with a core file, ulimit -c unlimited)
-  on a 3000-frame run with a viewer detach; record `echo exit: $?`
-  per run.
+- Bus error on exit (CLOSED 2026-11-09): one
+  3000-frame run on 2026-11-04 (h264 pull; viewer connected ~f60,
+  gone ~f1020) printed "Bus error" AFTER "Processed 3000 frames" --
+  teardown phase, past the main loop. Closed by 6fa82ac (MppDecoder
+  port task meta strip before/after reset) and 3912b2b (NetEncoder
+  preallocated 8-slot AVPacket ring buffer drained before
+  avcodec_free_context). Re-verified 2026-11-09 on a 600-frame
+  --pool 3 --net --net-h264 run with 3 viewer connect/disconnect
+  cycles and a 20x teardown stress loop: exit 0, clean drain.
 - Tracker phantom velocities (OPEN, cosmetic): during miss streaks
   Kalman coasting lets cx/cy/vx/vy run far off-frame (observed
   v=-926.76 px/s, c=(-6.9, 479.3); id churn 1->3->5->7->9->...->21
   across the 3000-frame run -- a returning person fails the IoU
   match and gets a new id). The trail is unaffected
   (out-of-tensor points are clipped at the border check). Backlog:
-  check whether Traj::push runs during coasting (grep 'traj\.|.
-  push' in tracker.cpp); if yes -- push on measure only; consider
-  a velocity clamp / earlier give-up after N misses.
+  VERIFIED & CLOSED 2026-11-09: `Traj::push` runs ONLY on `measure()` and
+  `spawn()` (never during `predict()` / coasting); velocity is clamped
+  (`kVClampPxs = 500`), decays per miss (`kMissVDrop = 90`), and `predict()`
+  stops coasting position once `t.miss >= 2`.
 - Trail verification (M3.11): timing unchanged (post 0.7-1.1 ms,
   sum ~86.5 ms, 25.0 FPS); slow walkers produce a near-continuous
   dashed line with stride 4 + 4 px dedup; the dark-red palette
@@ -1179,3 +1178,77 @@ Open:
   -- next live run.
 - The gl2ext.h candidate and the box_mapper/box_smoother body
   extraction stay in the backlog.
+
+## 2026-11-09 -- Full P0/P1/P2 audit pass (fix/audit-p0)
+
+Complete codebase & documentation audit across four criteria
+(consistency, hidden bugs/UB, architecture/size, C++/OOP rules):
+
+- Teardown & lifetime safety (P0): NetEncoder drains/unrefs the
+  preallocated 8-slot AVPacket ring (3912b2b) BEFORE avcodec_free_context
+  (closing the rkmpp packet/meta teardown race and exit Bus error);
+  NetEncoder ctor guards avformat_network_deinit() and worker thread
+  launch on all throw paths; NetPreview locks mx_ across open/close,
+  sets rw_timeout on the client socket and drops the double close.
+- Format & DMA cache coherency (P0): MppDecoder propagates the
+  detected chroma format (YUV420SP vs YUV422SP) into RgaResizer;
+  ARM64 cache maintenance (dc cvac / dc civac) + DmaSync brackets
+  cover CPU tensor/pool gray-128 init, draw_boxes_cpu, CalDumper
+  and NetPreview reads.
+- Exact LbGeom band clamping (P1): fill_gpu_boxes takes const LbGeom&
+  and clamps both detections and trajectory trails to [left, left+w]
+  x [top, top+h] instead of assuming symmetric (model_w - lb_left)
+  margins.
+- Zero-heap tables & rule alignment (P2): find_usb_capture_node
+  replaces std::map with a stack std::array<int, 64> (zero heap in
+  recovery); OptionRegistry replaces std::map and the 4 group-builder
+  functions with a sorted 23-entry std::array<Entry, 23> (no <map>
+  remains anywhere in the tree); include order (<...> before "...")
+  and header layout (methods before data in separate visibility
+  blocks) aligned across all headers and TUs. Tidy: PASS (0 findings).
+
+
+## Post-audit refactor & auto-geometry pass (2026-11-09)
+
+Six follow-up items closed on `fix/audit-p0` after the P0/P1/P2 audit:
+
+1. Hardware FP16 decode (`src/yolo_postprocess.cpp`): replaced the
+   25-line software bit-manipulation `fp16_to_fp32(uint16_t)` with a
+   direct `std::memcpy` into ARMv8.2-A `__fp16` (`fcvt s0, h0` on
+   Cortex-A76, branchless).
+2. Unified table-driven option dispatch (`include/config/option_registry.h`,
+   `src/config/option_registry.cpp`, `src/config/cli.cpp`,
+   `src/config/config_file.cpp`): added `ApplyFn` callback to
+   `OptionRegistry::Entry` and `OptionRegistry::apply()`. Removed the
+   two duplicated ~100-line `if / else if` ladders from `cli.cpp` and
+   `config_file.cpp` (project rule: branch tables over if-chains).
+3. Zero per-frame heap allocations in `NetEncoder::prep_frame()`
+   (`include/rkmpp_drm_pool.hpp`, `src/net_encoder.cpp`): `RkmppDrmPool`
+   preallocates persistent `AVBufferRef*` wrappers at pool init and
+   `prep_frame()` rebinds `frame_->buf[0]` without calling
+   `av_buffer_create()` on every encoded frame.
+4. Extracted `TcpPullServer` (`include/tcp_pull_server.hpp`,
+   `src/tcp_pull_server.cpp`): consolidated the duplicated TCP pull
+   listener (`socket`, `SO_REUSEADDR`, `bind`, `listen`, `poll`,
+   `accept4`, `TCP_NODELAY`, `SO_SNDBUF`, `SO_SNDTIMEO`) and custom
+   32 KiB `AVIOContext` lifecycle out of `NetEncoder` and `NetPreview`;
+   `include/av_common.hpp` restored to its pure FFmpeg error helper role.
+5. Structural JPEG marker validation (`src/net_mjpeg_source.cpp`,
+   `src/mpp_decoder.cpp`): `jpeg_frame_complete()` walks JPEG segments
+   by their 2-byte big-endian length up to `SOS (0xFFDA)` (skipping
+   `APP1` EXIF thumbnails that carry embedded `FFD8..FFD9` pairs) and
+   verifies the trailing `EOI (0xFFD9)`. `MppDecoder::make_packet()`
+   scans up to `SOS` across the full packet buffer and checks all three
+   `SOF0`/`SOF2` components (`Y=2x2`, `Cb=1x1`, `Cr=1x1`).
+6. Abolished `--w` and `--h` (`cam_w` / `cam_h`); automatic source
+   geometry: `CameraV4L2` adopts negotiated `VIDIOC_G_FMT` dimensions at
+   startup (locking them across mid-run reconnects), while
+   `NetMjpegSource::setup_device()` primes frame 0 and extracts stream
+   dimensions from its `SOFn` header before `MppDecoder`, `RgaResizer`
+   and `NetEncoder` initialize (`kOptionCount` 23 -> 21).
+   Live verification (phone IP Webcam stream, `--net-src
+   http://192.168.1.2:8080/video --net --net-h264 --net-fps 0 --pool 3`,
+   portrait `720x1280` 4:2:0): auto-detected `720x1280` on connect,
+   `420SP` decode path selected, letterbox band `x=[140,500) y=[0,640)`
+   -> `368x640` h264 stream, ~30.5-31.6 FPS wall, detections and
+   Kalman tracks verified live in `mpv`.

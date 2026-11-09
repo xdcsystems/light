@@ -36,11 +36,11 @@ set(ENV{PKG_CONFIG_LIBDIR} "${FFMPEG_PKGCONF_DIR}")
 pkg_check_modules(AV REQUIRED libavformat libavcodec libavutil)
 
 # --- RKNN runtime -----------------------------------------------------------
-# rknn_api.h и librknnrt.so ищутся стандартными средствами CMake.
-# Переопределение: cmake -DRKNN_ROOT=/path/to/rknpu2 ..  (или экспорт
-# переменной окружения RKNN_ROOT). Старый захардкоженный путь с NVMe
-# оставлен только как HINTS — первой подсказкой на текущей машине, на
-# чужой CMake молча пойдёт дальше по стандартным путям.
+# rknn_api.h and librknnrt.so are located via standard CMake find calls.
+# Override: cmake -DRKNN_ROOT=/path/to/rknpu2 .. (or export the
+# RKNN_ROOT environment variable). The legacy hardcoded NVMe path is
+# kept only as HINTS — checked first on the dev board, while on any
+# other machine CMake silently proceeds to the standard system paths.
 find_path(RKNN_API_INCLUDE_DIR rknn_api.h
     HINTS ${RKNN_ROOT}/include $ENV{RKNN_ROOT}/include
           /mnt/nvme_data/work/rknn_model_zoo/3rdparty/rknpu2/include
@@ -78,6 +78,7 @@ add_executable(light_ai
     src/rknn_engine.cpp
     src/yolo_postprocess.cpp
     src/pipeline.cpp
+    src/tcp_pull_server.cpp
     src/net_preview.cpp
     src/net_encoder.cpp
     src/tracker.cpp
@@ -117,18 +118,20 @@ target_link_libraries(light_ai PRIVATE
 target_link_directories(light_ai PRIVATE ${AV_LIBRARY_DIRS})
 
 # --- CPU flags (RK3588: 4x Cortex-A76 cpu4-7 + 4x Cortex-A55 cpu0-3) --------
-# Оба кластера имеют ИДЕНТИЧНЫЙ набор фич (проверено на плате 2026-11-03,
-# /proc/cpuinfo, cpu0 == cpu4): fp asimd aes sha2 crc32 atomics (LSE) fphp
-# asimdhp lrcpc dcpop asimddp (dotprod). Поэтому бинарь с +dotprod/+crypto
-# легален на ВСЕХ восьми ядрах — pin к A76 не нужен, планировщик сам сажает
-# горячие потоки (pipeline main + workers) на A76 (2.3 ГГц), а сетевые/фоновые
-# — куда свободно. LSE-атомики (std::atomic стоп-флага) тоже разрешены на A55.
-# Clang не понимает точечную запись "cortex-a76.cortex-a55" в -mtune (она
-# легальна только в GCC для big.LITTLE), поэтому ветки раздельные.
-# -DTARGET_CPU_FLAGS="..." из CLI попадает в кэш ДО этого блока, а DEFINED
-# видит и кэш, и обычную переменную: дефолт ставится только если
-# переопределения нет. Раньше обычный set() затенял кэш, и CLI-значение
-# молча заменялось дефолтом (флаги терялись).
+# Both clusters expose an IDENTICAL feature set (verified on the board
+# 2026-11-03, /proc/cpuinfo, cpu0 == cpu4): fp asimd aes sha2 crc32
+# atomics (LSE) fphp asimdhp lrcpc dcpop asimddp (dotprod). A binary
+# built with +dotprod/+crypto is therefore legal on ALL eight cores —
+# pinning to A76 is unnecessary; the scheduler places hot threads
+# (pipeline main + workers) on A76 (2.3 GHz) and network/background
+# threads wherever cores are free. LSE atomics (std::atomic stop flag)
+# are valid on A55 as well.
+# Clang rejects the dotted "cortex-a76.cortex-a55" form in -mtune
+# (GCC-only big.LITTLE syntax), so the compiler branches are separate.
+# -DTARGET_CPU_FLAGS="..." from the CLI enters the cache BEFORE this
+# block, and DEFINED sees both cache and normal variables: the default
+# is set only when no override was given. Previously a plain set()
+# shadowed the cache and silently overwrote the CLI value.
 if(NOT DEFINED TARGET_CPU_FLAGS)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         set(TARGET_CPU_FLAGS "-mcpu=cortex-a76+crypto+dotprod")
@@ -139,7 +142,7 @@ if(NOT DEFINED TARGET_CPU_FLAGS)
         "CPU flags for the target SoC")
 endif()
 
-# пробелы -> точки с запятой, чтобы опции скормились компилятору по отдельности
+# spaces -> semicolons so CMake passes each flag to the compiler as a separate argument
 string(REPLACE " " ";" TARGET_CPU_FLAGS_LIST "${TARGET_CPU_FLAGS}")
 
 target_compile_options(light_ai PRIVATE

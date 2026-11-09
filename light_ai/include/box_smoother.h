@@ -51,6 +51,7 @@ public:
 private:
     float iou( const BoxTrack& t, const Detection& d ) const;
 
+private:
     // Named constants, one place to tune;
     // kAlpha is the EMA weight of the TRACK (0.5 = plain average).
     const float kMatchThr = 0.3f;
