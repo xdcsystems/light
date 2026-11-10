@@ -32,7 +32,7 @@ public:
 
     // True while a TCP viewer is attached. The pipeline gates GPU box
     // drawing on it: no viewer - no draw.
-    bool viewer_connected() const { return connected_.load(); }
+    bool viewer_connected() const;
 
     // Called once per frame from the pipeline loop (same thread every time).
     // rgb points into the NPU input tensor; the call may block while the
@@ -43,11 +43,12 @@ private:
     void serve();
 
 private:
-    const int w_, h_, stride_, fps_, port_;
+    const int w_, h_, stride_, fps_, pace_fps_, port_;
     std::thread thread_;
     std::atomic<bool> quit_ { false };
     std::atomic<bool> connected_ { false };
     std::atomic<bool> error_ { false };
+    std::atomic<int64_t> next_send_us_ { 0 };
 
     std::mutex mx_;
     std::condition_variable cv_;

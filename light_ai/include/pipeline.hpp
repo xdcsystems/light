@@ -92,7 +92,7 @@ private:
     void worker_loop( int slot );
     int publish_oldest();                // returns 1 if the frame was valid
     double draw_and_publish( Slot& sl, int ps );   // viewer path; returns enc_ms
-    void pool_discard();                 // drop pending slots on source recovery
+    void pool_discard( int src_idx );    // drop pending slots of src_idx on recovery
     int handle_source_failure( int cam_err );  // 0 = recovered, -1 = fatal
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
 

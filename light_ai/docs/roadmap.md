@@ -537,7 +537,7 @@ refer to README.md sections (../README.md).
       yolov8n is 65 ms (M2-alt), so the figure is a target for a future
       lighter head, not a measurement).
 
-- [ ] M5: multi-camera (proposal, owner decision 2026-10-26): 3x USB
+- [x] M5: multi-camera (proposal, owner decision 2026-10-26, CLOSED 2026-11-10): 3x USB
       cameras from different room angles. Platform budget fits: 3x MJPEG
       ~ 3 MB/s on the shared USB2 half, MPP decode trivial. RGA needs core
       spreading — everything is pinned to RGA3 core0 today (imconfig);
@@ -570,8 +570,9 @@ refer to README.md sections (../README.md).
   MJPEG), and `Pipeline` holds up to 3 active sources in
   `srcs_[kMaxSources]` (`std::variant<CameraV4L2, NetMjpegSource>`
   per slot, round-robin `cur_src_ = i % nsrc_`, independent per-slot
-  reconnect and warmup). Remaining M5 work: per-camera `MppDecoder`,
-  `BoxSmoother`, and `Tracker` instances.
+  reconnect and warmup). Closed 2026-11-10: per-source `MppDecoder`, `BoxSmoother`, `Tracker`,
+  `LbGeom`, and `aux_fd` live in `Pipeline::SourceSlot`; verified live
+  on 1280x960 V4L2 + 720x1280 NetMjpeg at ~50.5 FPS wall.
       Pipeline refactor: an array of cam+dec+rga chains, each with its
       own dma-buf/tensor pool, plus a round-robin dispatcher; per-cam
       BoxSmoother. Fusion is NOT volumetric on this NPU (BEV/3D
@@ -601,39 +602,33 @@ refer to README.md sections (../README.md).
       the exact .clang-format profile (reference files: gpu_box_drawer
       style per Rules) and the first covered module.
 
-- [ ] M5.1: per-frame encoder band (recorded 2026-11-10 by owner):
-      after M5 the h264 band equals source 0's letterbox; with mixed
-      aspects the crop is exact for src 0 only. Inject a per-frame band
-      (from Slot's src_idx/src_w/src_h + LbGeom snapshot) into
-      NetEncoder::publish.
-- [ ] M5.2: composite preview canvas (recorded 2026-11-10 by owner,
-      observed live 2026-11-10): multi-source preview streams one shared
-      640x640 tensor; sources only write their letterbox band, so band
-      regions of source A show stale content of source B (ghosting,
-      confirmed by viewer). Redesign: canvas buffer, per-source RGA blit
-      into its own region (needs dst x-offset in RgaResizer), mandatory
-      letterbox-bar fill, boxes drawn on the canvas, NUT streams the
-      canvas. Check first whether RgaResizer already fills the bars
-      (rga_resizer.cpp) or the ghosting sits in the shared tensor path.
-- [ ] M5.3: narrow pool_discard() by sl.src_idx (recorded 2026-11-10
-      by owner): recovery of one source currently resets in-flight slots
-      of ALL sources (safe, but loses neighbors' frames).
-- [ ] M5.4: infer inflation during an active preview session (recorded
-      2026-11-10 by owner, isolated 2026-11-10): infer 25 -> 45 ms exactly
-      while a viewer is connected, single source too, NOT drawing-related
-      (--cpu-draw gives the same 45.3 with viewer, 25.0 without; GPU path
-      vindicated). Hypotheses: (a) preview writer traffic (memcpy/socket)
-      contends for DDR with the NPU; (b) session state effect: tensor
-      lock/sync for the duration of an active session. Discriminator:
-      --net-fps 5 with a viewer -- if inflation scales down with the
-      preview pace it is (a); if it stays at 45 it is (b).
-      Update 2026-11-10: discriminator ran -- --net-fps 5 with a
-      viewer still gives steady infer 45.4-45.5 (pts step 16384
-      confirms pacing actually dropped), so (a) bandwidth is
-      ruled out -> verdict (b): session-state effect, something
-      locks/syncs per-frame while a session is alive. Next: read
-      src/net_preview.cpp around the connect/disconnect state
-      transitions (what changes with 'viewer connected').
-- [ ] open q: CLI source order (recorded 2026-11-10 by owner): does
-      mixing repeatable --device/--net-src preserve the given order in
-      cfg_.sources? Check src/config/cli.cpp at a convenient moment.
+- [x] M5.1: per-frame encoder band (recorded & closed 2026-11-10):
+      injected per-frame `Slot::lb` into `NetEncoder::publish` / `prep_frame`.
+      Matching aspects keep the 1:1 crop; mixed aspects (e.g. 1280x960 +
+      720x1280 portrait) fit the source band into the encoder frame via
+      `band_geom` and refill NV12 bars with gray 128 on geometry changes.
+- [x] M5.2: shared-tensor letterbox bar refill (recorded & closed 2026-11-10):
+      `RgaResizer` writes only `drect`; when alternating sources with
+      different `LbGeom` share a slot tensor, `Pipeline::frame_dispatch`
+      now refills the tensor with gray 128 (`DmaSync` + `cache_drop`)
+      whenever `sl.lb != ss.lb`, eliminating cross-aspect bar ghosting.
+      (A side-by-side multi-view composite canvas remains an optional
+      future feature.)
+- [x] M5.3: narrow `pool_discard(int src_idx)` by `sl.src_idx` (recorded &
+      closed 2026-11-10): mid-run recovery of one source now discards only
+      in-flight slots of the failed source while preserving healthy
+      neighbors' slots in `pub_` in FIFO order. Verified live via proxy
+      drop/reconnect at ~50 FPS.
+- [x] M5.4: `NetPreview` `--net-fps` pacing, `enc=` timing, and `--pool 3`
+      single-core infer attribution (recorded & closed 2026-11-10):
+      added `pace_fps_` / `next_send_us_` frame gating in `NetPreview`
+      and wrapped `preview_->publish()` in `enc_ms`. Live 3-way A/B
+      (1a no-viewer, 1b `--net-fps 5`, 1c `--net-fps 25`) confirmed that
+      `infer ~45.6 ms` occurs under `--pool 3` even without `--net` (each
+      pooled engine is pinned to a single NPU core 1/2/4 at low DVFS load
+      vs `--pool 1 --core 7` ~23-25 ms; with 2 active cameras at ~50 FPS
+      DVFS scales up and `--pool 3` infer drops to ~30.2-32.0 ms).
+- [x] open q: CLI source order (closed 2026-11-10): verified in
+      `src/config/cli.cpp` and `src/config/option_registry.cpp` — both
+      `--device` and `--net-src` append to `cfg_.sources` in exact `argv`
+      order.

@@ -36,10 +36,17 @@ namespace
         NutSessionGuard( const NutSessionGuard& ) = delete;
         NutSessionGuard& operator=( const NutSessionGuard& ) = delete;
     };
+
+    int64_t now_steady_us()
+    {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch() )
+            .count();
+    }
 }  // namespace
 
 NetPreview::NetPreview( int w, int h, int stride, int fps, int port )
-  : w_( w ), h_( h ), stride_( stride ), fps_( fps > 0 ? fps : 25 ), port_( port )
+  : w_( w ), h_( h ), stride_( stride ), fps_( fps > 0 ? fps : 25 ), pace_fps_( fps > 0 ? fps : 0 ), port_( port )
 {
     avformat_network_init();
     pkt_ = av_packet_alloc();
@@ -134,6 +141,7 @@ void NetPreview::serve()
             stream_ = st;
             frame_step_ = static_cast<uint64_t>( step );
             pts_ = 0;
+            next_send_us_.store( 0, std::memory_order_relaxed );
         }
         connected_.store( true, std::memory_order_release );
 
@@ -155,6 +163,17 @@ void NetPreview::serve()
     }
 }
 
+bool NetPreview::viewer_connected() const
+{
+    if ( !connected_.load( std::memory_order_acquire ) )
+        return false;
+    if ( pace_fps_ <= 0 )
+        return true;
+    const int64_t step_us = 1000000 / pace_fps_;
+    const int64_t next_us = next_send_us_.load( std::memory_order_relaxed );
+    return next_us == 0 || now_steady_us() + step_us / 8 >= next_us;
+}
+
 void NetPreview::publish( const uint8_t* rgb )
 {
     if ( !connected_.load( std::memory_order_acquire ) )
@@ -162,6 +181,16 @@ void NetPreview::publish( const uint8_t* rgb )
     std::lock_guard<std::mutex> lk( mx_ );
     if ( !fc_ || quit_.load() )
         return;
+    if ( pace_fps_ > 0 )
+    {
+        const int64_t step_us = 1000000 / pace_fps_;
+        const int64_t now_us = now_steady_us();
+        const int64_t next_us = next_send_us_.load( std::memory_order_relaxed );
+        if ( next_us > 0 && now_us + step_us / 8 < next_us )
+            return;
+        const int64_t target = next_us > 0 ? next_us + step_us : now_us + step_us;
+        next_send_us_.store( target > now_us ? target : now_us + step_us, std::memory_order_relaxed );
+    }
 
     // Zero per-frame heap allocation: av_write_frame synchronously muxes
     // pkt_->data into the NUT AVIO stream without taking buffer ownership.

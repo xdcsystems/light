@@ -101,7 +101,7 @@ public:
     // ts_us is the dequeue timestamp in microseconds from pipeline
     // start -- the pts source in follow-source mode (--net-fps 0, VFR);
     // ignored in the fixed-fps mode.
-    void publish( int tensor_fd, int acquire_fence_fd = -1, int64_t ts_us = -1 );
+    void publish( int tensor_fd, const LbGeom& band, int acquire_fence_fd = -1, int64_t ts_us = -1 );
 
     // True while the stream path is live (viewer connected in PULL
     // mode / UDP path open). The pipeline gates GPU box drawing on it:
@@ -127,7 +127,7 @@ private:
     void clear_pkt_queue();
     int64_t packet_pts();  // pts of the next frame; may set ts_base_
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
-    bool prep_frame( int tensor_fd, MppBuffer mb );
+    bool prep_frame( int tensor_fd, const LbGeom& band, MppBuffer mb );
 
 private:
     const int w_, h_, fps_, port_, bitrate_kbps_;
@@ -156,6 +156,7 @@ private:
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
     std::array<AVFrame*, kBufCount> frames_ {};  // pre-bound DRM_PRIME frames (one per pool slot)
+    std::array<LbGeom, kBufCount> buf_bands_ {}; // last dst band written per NV12 slot
 
     // Encoder -> serve() preallocated packet ring queue. A separate mutex
     // from mx_: network-side wakeups never touch the encode critical section.

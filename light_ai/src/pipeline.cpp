@@ -589,7 +589,7 @@ int Pipeline::handle_source_failure( int cam_err )
             // flight; wait for DONE, then free without publishing).
 
             if ( npool_ > 1 )
-                pool_discard();
+                pool_discard( cur_src_ );
             return 0;
         }
         std::cerr << "source: reconnect attempt failed: " << why << '\n';
@@ -647,9 +647,15 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
     // Full tensor: draws and preview reads from previous frames
     // may have left resident lines anywhere in it.
 
+    const SourceSlot& ss = srcs_[cur_src_];
+    if ( sl.lb.w > 0
+         && ( sl.lb.left != ss.lb.left || sl.lb.top != ss.lb.top || sl.lb.w != ss.lb.w || sl.lb.h != ss.lb.h ) )
+    {
+        dma::DmaSync wr( sl.eng->input_fd(), true );
+        std::memset( sl.eng->input_data(), 128, sl.eng->input_size() );
+    }
     dma::cache_drop( sl.eng->input_data(),
             static_cast<size_t>( model_w_ ) * model_h_ * 3 );
-    const SourceSlot& ss = srcs_[cur_src_];
     LbGeom lg {};
     const bool rga_ok =
             rga_.resize( fd_src, ss.w, ss.h, sl.eng->input_fd(), model_w_, model_h_, ss.aux_fd, ss.w / 2, ss.h / 2, &lg,
@@ -849,7 +855,7 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
     {
         drawer_->draw_slot( ps, boxes_.d.data(), boxes_.n );
         fence = drawer_->export_fence();
-        if ( preview_ || fence < 0 )
+        if ( prev_live || fence < 0 )
         {
             drawer_->sync_cpu();
             if ( fence >= 0 )
@@ -870,25 +876,36 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
     // enc_->publish() uses RGA hardware DMA and must run outside CPU sync.
     if ( prev_live )
     {
+        const auto t5 = clk::now();
         dma::DmaSync rd( sl.eng->input_fd(), false );
         preview_->publish( static_cast<const uint8_t*>( sl.eng->input_data() ) );
+        enc_ms += ms( t5, clk::now() );
     }
     if ( enc_live )
     {
         const auto t5 = clk::now();
-        enc_->publish( sl.eng->input_fd(), fence, sl.ts_us );
+        enc_->publish( sl.eng->input_fd(), sl.lb, fence, sl.ts_us );
         const auto t6 = clk::now();
         enc_ms = ms( t5, t6 );
     }
     return enc_ms;
 }
 
-void Pipeline::pool_discard()
+void Pipeline::pool_discard( int src_idx )
 {
-    while ( !pub_.empty() )
+    const int n = pub_.size();
+    for ( int i = 0; i < n; ++i )
     {
-        Slot& sl = slots_[pub_.front()];
+        const int s = pub_.front();
+        pub_.pop();
+        Slot& sl = slots_[s];
         std::unique_lock<std::mutex> lk( sl.mx );
+        if ( sl.src_idx != src_idx )
+        {
+            lk.unlock();
+            pub_.push( s );
+            continue;
+        }
 
         // Bounded wait (same 5 s cap as the publish wait, P0-2 class of
         // risk): rknn_run normally completes. quit_ in the predicate
@@ -898,7 +915,7 @@ void Pipeline::pool_discard()
         // still be reading its tensor. It is marked drop instead, so the
         // worker frees it at its DONE transition -- the same contract
         // publish_oldest() uses on its own timeout path.
-        
+
         sl.cv.wait_for( lk, std::chrono::seconds( 5 ), [this, &sl] {
             return quit_.load() || sl.st != Slot::QUEUED;
         } );
@@ -912,7 +929,5 @@ void Pipeline::pool_discard()
             sl.st = Slot::FREE;
             sl.frame = -1;
         }
-        lk.unlock();
-        pub_.pop();
     }
 }

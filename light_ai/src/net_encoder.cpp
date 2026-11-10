@@ -401,7 +401,7 @@ bool NetEncoder::viewer_active() const
     return active_.load();
 }
 
-void NetEncoder::publish( int tensor_fd, int acquire_fence_fd, int64_t ts_us )
+void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_fd, int64_t ts_us )
 {
     if ( quit_.load() || !active_.load() )
     {
@@ -423,7 +423,7 @@ void NetEncoder::publish( int tensor_fd, int acquire_fence_fd, int64_t ts_us )
     // below now covers only encode + mux. The pipeline thread is the
     // sole user of cur_/pool_.buf/acq_fd_ here; serve() touches none of
     // them, and the destructor joins this thread before freeing.
-    if ( !prep_frame( tensor_fd, pool_.buf[cur_] ) )
+    if ( !prep_frame( tensor_fd, band, pool_.buf[cur_] ) )
     {
         error_.store( true );
         {
@@ -451,14 +451,32 @@ void NetEncoder::publish( int tensor_fd, int acquire_fence_fd, int64_t ts_us )
 // RGA prep for the current frame: wait out the GPU draw fence (this RGA
 // driver ignores input fences, so ordering is a poll) and crop the
 // letterbox band of the model tensor into the ping-pong NV12 buffer mb.
-bool NetEncoder::prep_frame( int tensor_fd, MppBuffer mb )
+bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, MppBuffer mb )
 {
+    const LbGeom src_b = ( band.w > 0 && band.h > 0 ) ? band : LbGeom { band_left_, band_w_, band_top_, band_h_ };
+    LbGeom dst_b = ( src_b.w == band_w_ && src_b.h == band_h_ )
+                       ? LbGeom { 0, band_w_, 0, band_h_ }
+                       : band_geom( src_b.w, src_b.h, band_w_, band_h_ );
+    dst_b.left &= ~1;
+    dst_b.top &= ~1;
+    dst_b.w &= ~1;
+    dst_b.h &= ~1;
+
+    LbGeom& prev = buf_bands_[cur_];
+    if ( prev.w > 0 && ( prev.left != dst_b.left || prev.top != dst_b.top || prev.w != dst_b.w || prev.h != dst_b.h ) )
+    {
+        if ( void* p = mpp_buffer_get_ptr( mb ) )
+        {
+            const size_t sz = mpp_buffer_get_size( mb );
+            dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
+            std::memset( p, 128, sz );
+            dma::cache_clean( p, sz );
+        }
+    }
+    prev = dst_b;
+
     rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888 );
-    im_rect srect = { 0, 0, 0, 0 };
-    srect.x = band_left_;
-    srect.y = band_top_;
-    srect.width = band_w_;
-    srect.height = band_h_;
+    im_rect srect = { src_b.left & ~1, src_b.top & ~1, src_b.w & ~1, src_b.h & ~1 };
     // Explicit strides: the VU plane lands at w * vstride_ - exactly where
     // the DRM descriptor below reports it.
     rga_buffer_t dst = wrapbuffer_fd( mpp_buffer_get_fd( mb ), w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
@@ -477,9 +495,7 @@ bool NetEncoder::prep_frame( int tensor_fd, MppBuffer mb )
         ::close( acq_fd_ );
         acq_fd_ = -1;
     }
-    // No scaling: the dst rect matches the src band size, so the
-    // 16-aligned tail columns of the stream keep their gray fill.
-    im_rect drect = { 0, 0, band_w_, band_h_ };
+    im_rect drect = { dst_b.left, dst_b.top, dst_b.w, dst_b.h };
     const IM_STATUS rs = improcess( src, dst, {}, srect, drect, {}, 0 );
     if ( (int)rs <= 0 )
     {

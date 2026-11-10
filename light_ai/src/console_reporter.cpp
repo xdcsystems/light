@@ -25,7 +25,10 @@ void ConsoleReporter::report(
     // Throttled trajectory report: every 15th frame.
     if ( trajs.n > 0 && frame % 15 == 0 )
     {
-        std::cout << "track " << frame << ": " << trajs.n << " track(s)\n";
+        std::cout << "track " << frame;
+        if ( nsrc > 1 )
+            std::cout << " s" << src_idx;
+        std::cout << ": " << trajs.n << " track(s)\n";
         for ( int k = 0; k < trajs.n && k < 8; ++k )
         {
             const TrackState& t = trajs.d[k];
