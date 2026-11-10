@@ -136,7 +136,7 @@ void Pipeline::start_source( int idx )
     bool src_started = false;
     try
     {
-        with_src( idx, []( auto& s ) { s.start(); } );  // no-op for the net source
+        sl.src.start();  // no-op for the net source
         src_started = true;
     }
     catch ( const std::exception& e )
@@ -155,7 +155,7 @@ void Pipeline::start_source( int idx )
             std::this_thread::sleep_for( std::chrono::seconds( 1 ) );
             std::string new_id;
             std::string why;
-            if ( with_src( idx, [&]( auto& s ) { return s.recover( sl.node, new_id, &why ); } ) == 0 )
+            if ( sl.src.recover( sl.node, new_id, &why ) == 0 )
             {
                 if ( new_id != sl.node )
                 {
@@ -182,14 +182,15 @@ void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
     sl.node = ep.uri;
     if ( ep.kind == SourceKind::NetMjpeg )
     {
-        auto& net = sl.src.emplace<NetMjpegSource>();
+        sl.src.use_net();
         std::string why;
-        if ( net.setup_device( sl.node, &why ) != 0 )
+        if ( sl.src.setup_device( sl.node, &why ) != 0 )
             throw std::runtime_error( "net-src: " + why );
     }
     else
     {
-        auto& cam = sl.src.emplace<CameraV4L2>();
+        sl.src.use_camera();
+        auto& cam = sl.src.camera();  // init-path only: USB node discovery
         if ( !sl.node.empty() )
         {
             struct stat st {};
@@ -207,8 +208,8 @@ void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
         if ( cam.setup_device( sl.node, &cam_why ) != 0 )
             throw std::runtime_error( "camera: " + cam_why );
     }
-    sl.w = with_src( idx, []( const auto& s ) { return s.width(); } );
-    sl.h = with_src( idx, []( const auto& s ) { return s.height(); } );
+    sl.w = sl.src.width();
+    sl.h = sl.src.height();
     // M5: per-source decoder init -- sits after the if/else by design,
     // so BOTH the net and the camera branch get it.
     if ( sl.dec.init( sl.w, sl.h ) != 0 )
@@ -297,7 +298,7 @@ int Pipeline::try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err )
     for ( int k = 0; k < nsrc_; ++k )
     {
         const int s = ( cur_src_ + 1 + k ) % nsrc_;
-        const int idx = with_src( s, [&]( auto& src ) { return src.dequeue( &sz, &cam_err, wait_ms ); } );
+        const int idx = srcs_[s].src.dequeue( &sz, &cam_err, wait_ms );
         if ( idx >= 0 )
         {
             cur_src_ = s;
@@ -345,7 +346,7 @@ int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
         int r = -1;
         do
         {
-            r = with_src( 0, [&]( auto& s ) { return s.dequeue( &sz, &cam_err ); } );
+            r = srcs_[0].src.dequeue( &sz, &cam_err );
         } while ( r < 0 && cam_err == EAGAIN && !stop_.load() );
         return r;
     }
@@ -411,14 +412,14 @@ int Pipeline::run()
         if ( sz > 0 )
         {
             fd_src = active_src.dec.decode(
-                    static_cast<const uint8_t*>( with_src( [&]( auto& s ) { return s.buffer( idx ); } ) ), sz );
+                    static_cast<const uint8_t*>( active_src.src.buffer( idx ) ), sz );
         }
         else
         {
             std::cerr << "camera: zero-size frame skipped\n";
         }
         
-        with_src( [&]( auto& s ) { s.requeue( idx ); } );
+        active_src.src.requeue( idx );
 
         const auto t2 = clk::now();
 
@@ -508,7 +509,7 @@ int Pipeline::handle_source_failure( int cam_err )
         std::this_thread::sleep_for( k_cam_reconnect_pause );
         std::string new_id;
         std::string why;
-        if ( with_src( [&]( auto& s ) { return s.recover( active_src.node, new_id, &why ); } ) == 0 )
+        if ( active_src.src.recover( active_src.node, new_id, &why ) == 0 )
         {
             if ( new_id != active_src.node )
             {

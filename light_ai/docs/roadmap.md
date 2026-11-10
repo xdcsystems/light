@@ -651,3 +651,18 @@ refer to README.md sections (../README.md).
       path, clean EOF drain, ~20 FPS unchanged). Pending: the
       encoder overflow probe (STOP/CONT on the viewer) -- next
       session.
+- [x] MediaSource wrapper (proposal 3.1, recorded &
+      closed 2026-11-10): include/media_source.hpp -- one concrete
+      owner of the two source kinds. The std::variant moved into the
+      wrapper's private: (README rule: no virtuals, no heap -- every
+      per-source call is a one-line std::visit, static dispatch).
+      with_src and all 9 call-site lambdas are gone from Pipeline
+      (start_source, init_one_source, try_dequeue_round,
+      dequeue_next_source, run, handle_source_failure); init-path
+      escape hatches camera()/net() remain for USB node discovery
+      only. Verified: build green, tidy 0 findings (all 21 .cpp),
+      live smoke 900 frames V4L2 (geometry read, tracks, late-join,
+      clean EOF drain), mixed-source V4L2 + net-src run (both
+      use_camera/use_net branches, round-robin s0/s1, per-source
+      tracks, Traj wraparound at pts=300, multi-view enc).
+      Pending: the camera replug drill -- next session.

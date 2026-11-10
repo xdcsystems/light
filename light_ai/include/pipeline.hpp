@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <string>
 #include <thread>
-#include <variant>
 #include <vector>
 
 #include "box_smoother.h"
@@ -13,6 +12,7 @@
 #include "config/cli.hpp"
 #include "console_reporter.h"
 #include "frame_trace.h"
+#include "media_source.hpp"
 #include "mpp_decoder.hpp"
 #include "net_mjpeg_source.hpp"
 #include "overlay_sink.hpp"
@@ -26,11 +26,10 @@
 class Pipeline
 {
     enum { kMaxSources = 3 };
-    using VideoSource = std::variant<CameraV4L2, NetMjpegSource>;
 
     struct SourceSlot
     {
-        VideoSource src { std::in_place_type<CameraV4L2> };
+        MediaSource src {};
         // M5: everything below is per-source. The decoder owns its
         // out_frame_/resolution and its detected 4:2:0 vs 4:2:2 format --
         // alternating heterogeneous cameras no longer reset each other
@@ -62,21 +61,6 @@ public:
     void request_stop() { stop_.store( true ); }
 
 private:
-    // Static heterogeneous source dispatch (up to kMaxSources = 3, one per NPU
-    // core): each SourceSlot owns its active source (CameraV4L2 or
-    // NetMjpegSource) in-place by value — no heap, no virtuals.
-    template <typename F>
-    decltype(auto) with_src( int idx, F&& f )
-    {
-        return std::visit( std::forward<F>( f ), srcs_[idx].src );
-    }
-
-    template <typename F>
-    decltype(auto) with_src( F&& f )
-    {
-        return with_src( cur_src_, std::forward<F>( f ) );
-    }
-
     void init_source();
     void init_one_source( int idx, const SourceEndpoint& ep );
     void start_source( int idx );
