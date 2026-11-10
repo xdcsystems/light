@@ -1,5 +1,8 @@
 #pragma once
 
+#include <algorithm>
+#include <cstddef>
+
 // The single IoU implementation for all box consumers (Tracker
 // association/spawn, BoxSmoother matching, YOLOv5 NMS).
 // Two box representations exist in the project, and both are kept:
@@ -42,4 +45,41 @@ inline float box_iou_corners( float ax1, float ay1, float ax2, float ay2,
     const float area_b = ( bx2 - bx1 ) * ( by2 - by1 );
     // +1e-6f: both degenerate zero-area boxes must not crash the NMS.
     return inter / ( area_a + area_b - inter + 1e-6f );
+}
+
+// The one greedy bipartite IoU matching for all consumers (was
+// duplicated in BoxSmoother::update() and Tracker::associate()).
+// Deterministic order: IoU descending, then det index, then track
+// index -- identical to both former policies (BoxSmoother's
+// full-order comparator; Tracker's stable insertion sort over its
+// det-major collection loop produced the same tie-break).
+// Both callers store IouPair (BoxSmoother's nested Pair is now an
+// alias). Accepted pairs are compacted to the front; returns their count.
+// Per-match work (smoothing, measure, promotion) stays with callers:
+// det_trk holds -1 = unmatched, else the matched track index.
+struct IouPair
+{
+    int det;
+    int trk;
+    float iou;
+};
+
+inline size_t greedy_iou_match( IouPair* pairs, size_t np, int* det_trk,
+                                unsigned char* trk_taken )
+{
+    std::sort( pairs, pairs + np, []( const IouPair& a, const IouPair& b ) {
+        return a.iou != b.iou ? a.iou > b.iou
+                              : ( a.det != b.det ? a.det < b.det : a.trk < b.trk );
+    } );
+    size_t na = 0;
+    for ( size_t p = 0; p < np; ++p )
+    {
+        const IouPair pr = pairs[p];
+        if ( det_trk[pr.det] >= 0 || trk_taken[pr.trk] )
+            continue;
+        det_trk[pr.det] = pr.trk;
+        trk_taken[pr.trk] = 1;
+        pairs[na++] = pr;  // compaction cannot overtake: na <= p
+    }
+    return na;
 }

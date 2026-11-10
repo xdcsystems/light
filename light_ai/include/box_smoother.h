@@ -4,6 +4,7 @@
 #include <fstream>
 #include <string>
 
+#include "box_math.hpp"
 #include "yolo_postprocess.hpp"
 
 // EMA smoothing of detection boxes.
@@ -25,12 +26,9 @@ class BoxSmoother
         bool alive = false;
         bool matched = false;
     };
-    struct Pair
-    {
-        float iou;
-        int det;
-        int trk;
-    };
+    // Shared match-pair type (box_math.hpp); the legacy field order
+    // { iou, det, trk } is gone -- aggregate initializers were updated.
+    using Pair = IouPair;
 
     enum
     {

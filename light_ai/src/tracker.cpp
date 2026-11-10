@@ -66,16 +66,10 @@ void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t
 }
 
 void Tracker::associate( const DetList& dets, int64_t ts_us,
-                         std::array<unsigned char, 128>& det_taken,
+                         std::array<int, 128>& det_trk,  // -1 = unmatched
                          std::array<unsigned char, kMaxTracks>& trk_taken )
 {
-    struct MatchPair
-    {
-        int det;
-        int trk;
-        float iou;
-    };
-    std::array<MatchPair, 128 * kMaxTracks> pairs {};
+    std::array<IouPair, 128 * kMaxTracks> pairs {};
     int npairs = 0;
     for ( int k = 0; k < dets.n; ++k )
     {
@@ -97,25 +91,12 @@ void Tracker::associate( const DetList& dets, int64_t ts_us,
                 pairs[npairs++] = { k, i, v };
         }
     }
-    for ( int a = 1; a < npairs; ++a )
-    {
-        const MatchPair cur = pairs[a];
-        int b = a - 1;
-        while ( b >= 0 && pairs[b].iou < cur.iou )
-        {
-            pairs[b + 1] = pairs[b];
-            --b;
-        }
-        pairs[b + 1] = cur;
-    }
-    for ( int p = 0; p < npairs; ++p )
+    const size_t na = greedy_iou_match( pairs.data(), static_cast<size_t>( npairs ),
+                                        det_trk.data(), trk_taken.data() );
+    for ( size_t p = 0; p < na; ++p )
     {
         const int k = pairs[p].det;
         const int i = pairs[p].trk;
-        if ( det_taken[k] || trk_taken[i] )
-            continue;
-        det_taken[k] = 1;
-        trk_taken[i] = 1;
         const Detection& d = dets.d[k];
         Track& t = tracks_[i];
         measure( t, d.x + d.w * 0.5f, d.y + d.h * 0.5f, d.w, d.h, ts_us );
@@ -204,15 +185,16 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
         t.ts_last_us = ts_us;
     }
 
-    std::array<unsigned char, 128> det_taken {};  // DetList capacity
+    std::array<int, 128> det_trk {};  // DetList capacity
+    det_trk.fill( -1 );
     std::array<unsigned char, kMaxTracks> trk_taken {};
-    associate( dets, ts_us, det_taken, trk_taken );
+    associate( dets, ts_us, det_trk, trk_taken );
 
     // Unmatched person detections spawn tentative tracks (slot space
     // permitting).
     for ( int k = 0; k < dets.n; ++k )
     {
-        if ( det_taken[k] || dets.d[k].cls != 0 )
+        if ( det_trk[k] >= 0 || dets.d[k].cls != 0 )
             continue;
         const Detection& d = dets.d[k];
         spawn( d.x + d.w * 0.5f, d.y + d.h * 0.5f, d.w, d.h, ts_us );

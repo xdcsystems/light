@@ -135,7 +135,7 @@ private:
     void predict( Track& t, float dt ) const;
     void measure( Track& t, float cx, float cy, float bw, float bh, int64_t ts_us );
     void associate( const DetList& dets, int64_t ts_us,
-                    std::array<unsigned char, 128>& det_taken,
+                    std::array<int, 128>& det_trk,  // -1 = unmatched, else track idx
                     std::array<unsigned char, kMaxTracks>& trk_taken );
     void spawn( float cx, float cy, float bw, float bh, int64_t ts_us );
 

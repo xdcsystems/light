@@ -1,4 +1,4 @@
-#include <algorithm>  // the deterministic pair order
+#include <algorithm>
 #include <iostream>   // set_log failure note
 
 #include "box_smoother.h"
@@ -42,19 +42,19 @@ void BoxSmoother::update( const DetList& in, DetList& out )
             if ( v <= kMatchThr )
                 continue;
             if ( np < kMaxPairs )
-                pairs_[np++] = { v, i, t };
+                pairs_[np++] = { i, t, v };
         }
     }
-    // Deterministic order: IoU desc, then det index, then track index.
-    std::sort( pairs_.begin(), pairs_.begin() + np, []( const Pair& a, const Pair& b ) {
-        return a.iou != b.iou ? a.iou > b.iou : ( a.det != b.det ? a.det < b.det : a.trk < b.trk );
-    } );
-    for ( int p = 0; p < np; ++p )
+    // Shared greedy matcher (box_math.hpp): same deterministic order
+    // (IoU desc, then det, then track) as before. trk_taken mirrors the
+    // former tracks_[trk].matched gate: matched is reset at update()
+    // start and only set by the per-match loop below.
+    std::array<unsigned char, kTrackCount> trk_taken {};
+    const size_t na = greedy_iou_match( pairs_.data(), static_cast<size_t>( np ),
+                                        det_trk.data(), trk_taken.data() );
+    for ( size_t p = 0; p < na; ++p )
     {
         const Pair& pr = pairs_[p];
-        if ( det_trk[pr.det] >= 0 || tracks_[pr.trk].matched )
-            continue;
-        det_trk[pr.det] = pr.trk;
         BoxTrack& t = tracks_[pr.trk];
         const Detection& d = in.d[pr.det];
         t.x = kAlpha * t.x + ( 1.0f - kAlpha ) * d.x;
