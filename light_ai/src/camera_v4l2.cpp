@@ -61,6 +61,21 @@ namespace
         return pr;
     }
 
+    // Returns 0 when a frame is ready to dequeue, or the errno class
+    // (EAGAIN on non-blocking poll timeout, EIO on watchdog stall).
+    int poll_frame( int fd, int timeout_ms, int default_ms )
+    {
+        const int wait_ms = timeout_ms < 0 ? default_ms : timeout_ms;
+        const int pr = poll_ready( fd, wait_ms );
+        if ( pr > 0 )
+            return 0;
+        if ( pr < 0 )
+            return errno;
+        if ( timeout_ms < 0 )
+            std::cerr << "cam: no frame in " << default_ms << " ms - treating as recoverable stall\n";
+        return timeout_ms >= 0 ? EAGAIN : EIO;
+    }
+
 }  // namespace
 
 // Full open+setup path for the node given by the owner: open + S_FMT +
@@ -366,7 +381,7 @@ void CameraV4L2::start() const
     xioctl( VIDIOC_STREAMON, &t );
 }
 
-int CameraV4L2::dequeue( uint32_t* size, int* err )  // NOLINT(readability-make-member-function-const)
+int CameraV4L2::dequeue( uint32_t* size, int* err, int timeout_ms )  // NOLINT(readability-make-member-function-const)
 {
     v4l2_buffer buf {};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -374,26 +389,16 @@ int CameraV4L2::dequeue( uint32_t* size, int* err )  // NOLINT(readability-make-
     bool have = false;  // loop until a clean buffer comes out
     while ( !have )
     {
-        // Watchdog: the wait is bounded by poll(). A camera that silently
-        // stops delivering frames (wedged UVC endpoint, firmware stall)
-        // never produces an errno, so an unguarded blocking DQBUF hung
-        // the pipeline thread forever and recovery never ran.
-        // The timeout is reported as EIO, the recoverable class,
-        // so a stall goes through the same reconnect path as a disappearing
-        // device. 2 s is far beyond any legitimate inter-frame gap
-        // (worst measured: ~53 ms).
-        const int pr = poll_ready( fd_, static_cast<int>( kDequeuePollMs ) );
-        if ( pr < 0 )
+        // Watchdog: the wait is bounded by poll(). In single-source mode
+        // (timeout_ms < 0) a 2 s timeout is reported as EIO (recoverable
+        // stall); in multi-source non-blocking mode (timeout_ms >= 0) a
+        // 0/short poll timeout returns EAGAIN so the dispatcher can
+        // service other ready cameras immediately.
+        const int perr = poll_frame( fd_, timeout_ms, static_cast<int>( kDequeuePollMs ) );
+        if ( perr != 0 )
         {
             if ( err )
-                *err = errno;
-            return -1;
-        }
-        if ( pr == 0 )
-        {
-            std::cerr << "cam: no frame in " << kDequeuePollMs << " ms - treating as recoverable stall\n";
-            if ( err )
-                *err = EIO;
+                *err = perr;
             return -1;
         }
         if ( ioctl( fd_, VIDIOC_DQBUF, &buf ) < 0 )
@@ -407,7 +412,7 @@ int CameraV4L2::dequeue( uint32_t* size, int* err )  // NOLINT(readability-make-
         if ( buf.flags & V4L2_BUF_FLAG_ERROR )
         {
             requeue( static_cast<int>( buf.index ) );
-            // the streak survives dequeue() calls 
+            // the streak survives dequeue() calls
             // (e.g. corrupt frames followed by a poll timeout),
             // so the watchdog threshold reflects the real buffer history.
             ++err_streak_;

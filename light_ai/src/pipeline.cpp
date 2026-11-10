@@ -291,31 +291,88 @@ void Pipeline::init_aux()
                   << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
 }
 
+int Pipeline::try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err )
+{
+    constexpr double k_stall_ms = 2000.0;
+    for ( int k = 0; k < nsrc_; ++k )
+    {
+        const int s = ( cur_src_ + 1 + k ) % nsrc_;
+        const int idx = with_src( s, [&]( auto& src ) { return src.dequeue( &sz, &cam_err, wait_ms ); } );
+        if ( idx >= 0 )
+        {
+            cur_src_ = s;
+            srcs_[s].last_ok_tp = clk::now();
+            return idx;
+        }
+        if ( cam_err != EAGAIN )
+        {
+            cur_src_ = s;
+            return -1;
+        }
+        if ( ms( srcs_[s].last_ok_tp, clk::now() ) >= k_stall_ms )
+        {
+            std::cerr << "source s" << s << ": no frame in " << static_cast<int>( k_stall_ms )
+                      << " ms - treating as recoverable stall\n";
+            cur_src_ = s;
+            cam_err = EIO;
+            return -1;
+        }
+    }
+    return -2;
+}
+
+int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err )
+{
+    if ( nsrc_ <= 1 )
+    {
+        cur_src_ = 0;
+        return with_src( 0, [&]( auto& s ) { return s.dequeue( &sz, &cam_err ); } );
+    }
+    while ( !stop_.load() )
+    {
+        int r = try_dequeue_round( 0, sz, cam_err );
+        if ( r != -2 )
+            return r;
+        r = try_dequeue_round( 2, sz, cam_err );
+        if ( r != -2 )
+            return r;
+    }
+    cam_err = EINTR;
+    return -1;
+}
+
 int Pipeline::run()
 {
     int ok = 0;
     const auto t_start = clk::now();
 
     for ( int s = 0; s < nsrc_; ++s )
+    {
         srcs_[s].smoother.set_log( source_box_log( cfg_.box_log, s, nsrc_ ) );
+        srcs_[s].last_ok_tp = t_start;
+    }
     // frames == 0 (the default): no frame budget -- run until stop
     // (Ctrl-C); the signal path below drains and reports as usual.
     for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.load(); ++i )
     {
-        cur_src_ = i % nsrc_;
-        SourceSlot& active_src = srcs_[cur_src_];
         const auto t0 = clk::now();
 
         uint32_t sz = 0;
         int cam_err = 0;
-        
-        const int idx = with_src( [&]( auto& s ) { return s.dequeue( &sz, &cam_err ); } );
+
+        const int idx = dequeue_next_source( sz, cam_err );
         if ( idx < 0 )
         {
+            if ( stop_.load() )
+                break;
             if ( handle_source_failure( cam_err ) != 0 )
                 return -1;
+            const auto now = clk::now();
+            for ( int s = 0; s < nsrc_; ++s )
+                srcs_[s].last_ok_tp = now;
             continue;
         }
+        SourceSlot& active_src = srcs_[cur_src_];
         const auto t1 = clk::now();
 
         // Zero-size packet guard: a dying/reconnecting camera can hand

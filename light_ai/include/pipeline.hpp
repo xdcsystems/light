@@ -45,6 +45,7 @@ class Pipeline
         int w = 0;
         int h = 0;
         int warmup_left = 0;
+        Timings::clk::time_point last_ok_tp {};
     };
 
 public:
@@ -85,6 +86,8 @@ private:
     void worker_loop( int slot );
     int publish_oldest();                // returns 1 if the frame was valid
     void pool_discard( int src_idx );    // drop pending slots of src_idx on recovery
+    int try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err );
+    int dequeue_next_source( uint32_t& sz, int& cam_err );
     int handle_source_failure( int cam_err );  // 0 = recovered, -1 = fatal
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
 

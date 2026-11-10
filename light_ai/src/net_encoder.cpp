@@ -218,9 +218,10 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     ctx->time_base = vfr_ ? AVRational { 1, 90000 } : AVRational { 1, fps_ };
     // VFR: rc still needs a numeric fps — 0/1 reaches MPP as the auto
     // marker (65535) and the CBR per-frame budget collapses (stream
-    // dries to ~83 kbps). Nominal 25 for rate control only; pts stay
-    // VFR from dequeue times.
-    ctx->framerate = vfr_ ? AVRational { 25, 1 } : AVRational { fps_, 1 };
+    // dries to ~83 kbps). Nominal 25 (30 in multi-view) for rate control
+    // only; pts stay VFR from dequeue times.
+    const int nom_fps = vfr_ ? ( nsrc_ > 1 ? 30 : 25 ) : fps_;
+    ctx->framerate = AVRational { nom_fps, 1 };
     ctx->bit_rate = static_cast<int64_t>( bitrate_kbps_ ) * 1000;
     // gop_size reaches MPP as rc:gop (rkmpp_set_enc_cfg):
     // a captured stream shows I-frames every 26 for GOP 25.
@@ -454,14 +455,22 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_f
         acq_fd_ = -1;
     }
     acq_fd_ = acquire_fence_fd;
-    ts_us_ = ts_us;
-    cur_ = ( cur_ + 1 ) % kBufCount;
+    const int64_t min_step_us = nsrc_ > 1 ? ( fps_ > 0 ? 1000000 / fps_ : 30000 ) : 0;
+    const bool do_enc = ( nsrc_ <= 1 || ts_us < 0 || last_enc_ts_us_ < 0
+                          || ( ts_us - last_enc_ts_us_ ) >= min_step_us );
+    if ( do_enc )
+    {
+        ts_us_ = ts_us;
+        last_enc_ts_us_ = ts_us;
+        cur_ = ( cur_ + 1 ) % kBufCount;
+    }
 
     // Fence wait + RGA crop run OUTSIDE the lock: the critical section
-    // below now covers only encode + mux. The pipeline thread is the
-    // sole user of cur_/pool_.buf/acq_fd_ here; serve() touches none of
-    // them, and the destructor joins this thread before freeing.
-    if ( !prep_frame( tensor_fd, band, src_idx, pool_.buf[cur_] ) )
+    // below now covers only encode + mux. In multi-view mode when two
+    // cameras finish within a few ms of each other, !do_enc still updates
+    // the source's tile in the persistent composite canvas (mb = nullptr)
+    // without emitting a duplicate 2-ms-apart H.264 frame.
+    if ( !prep_frame( tensor_fd, band, src_idx, do_enc ? pool_.buf[cur_] : nullptr ) )
     {
         error_.store( true );
         {
@@ -470,6 +479,8 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_f
         }
         return;
     }
+    if ( !do_enc )
+        return;
 
     std::lock_guard<std::mutex> lk( mx_ );
 
@@ -541,7 +552,7 @@ bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, Mpp
         std::cerr << "enc: RGA convert failed: " << imStrError( rs ) << "\n";
         return false;
     }
-    if ( nsrc_ > 1 )
+    if ( nsrc_ > 1 && mb != nullptr )
     {
         rga_buffer_t out = wrapbuffer_fd( mpp_buffer_get_fd( mb ), w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
         const IM_STATUS cs = imcopy( dst, out );
@@ -986,6 +997,7 @@ void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
         st_ = st;
         pts_ = 0;
         ts_base_ = -1;  // M4: VFR pts restart from zero per session
+        last_enc_ts_us_ = -1;
         active_.store( true );
     }
 

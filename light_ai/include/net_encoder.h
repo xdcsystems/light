@@ -81,7 +81,7 @@ class NetEncoder
     {
         kBufCount = 3,
         kPoolCount = kBufCount + 1,
-        kPktQDepth = 8
+        kPktQDepth = 32
     };
 
 public:
@@ -183,6 +183,7 @@ private:
     bool vfr_ = false;
     int64_t ts_us_ = -1;
     int64_t ts_base_ = -1;
+    int64_t last_enc_ts_us_ = -1;
     uint64_t frames_sent_ = 0;
     int model_w_ = 0, model_h_ = 0;  // NPU tensor geometry (RGB888)
     int band_left_ = 0, band_top_ = 0;  // visible letterbox band in the tensor

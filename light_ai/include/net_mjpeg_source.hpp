@@ -40,19 +40,20 @@ public:
     // 0 on success, non-zero fills *why.
     int setup_device( const std::string& url, std::string* why );
     void teardown();
-    // V4L2 STREAMON has no HTTP analog; kept for the source contract.
-    void start() const {}
+    // Drains frames accumulated in the TCP socket during Pipeline init
+    // so run() starts at the live edge alongside CameraV4L2::start().
+    void start();
 
     // Returns the buffer index holding one complete JPEG frame;
     // size receives the frame length. On failure returns -1 with the errno
     // class in *err, same ladder as the camera: EIO = recoverable stall
     // (watchdog, hangup, corrupt-frame streak, desync),
-    // ENODEV = closed by teardown.
+    // ENODEV = closed by teardown, EAGAIN = no frame ready within timeout_ms.
     // Corrupt frames (no SOI) are delivered anyway --
     // the decoder's SOI guard is the defense in depth;
     // the streak survives across calls, reset only by a clean frame or reconnect().
 
-    int dequeue( uint32_t* size, int* err );
+    int dequeue( uint32_t* size, int* err, int timeout_ms = -1 );
     void requeue( int index );
     void* buffer( int index ) const { return bufs_[index].start; }
     size_t buffer_size( int index ) const { return bufs_[index].length; }
@@ -67,6 +68,10 @@ private:
     int connect_tcp( const std::string& host, int port, std::string* why );
     int send_get( const std::string& host, int port, const std::string& path, std::string* why ) const;
     int read_headers( std::string* why );
+    bool has_buffered_header() const;
+    int poll_part_ready( int timeout_ms );
+    bool wait_part_ready( int timeout_ms, int* err );
+    int read_latest_part( int slot, uint32_t* size );
     int read_part( int slot, uint32_t* size );
     int read_boundary();
     int read_part_header( long* need );

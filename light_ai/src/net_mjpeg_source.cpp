@@ -304,7 +304,7 @@ int NetMjpegSource::net_fill( int timeout_ms )
     if ( sock_end_ == static_cast<size_t>( kSockBuf ) )
         return -2;  // wedged full: the caller's desync protocol
     pollfd p { fd_, POLLIN, 0 };
-    const int pr = ::poll( &p, 1, timeout_ms > 0 ? timeout_ms : 1 );
+    const int pr = ::poll( &p, 1, timeout_ms >= 0 ? timeout_ms : 0 );
     if ( pr < 0 )
         return errno == EINTR ? 0 : -1;
     if ( pr == 0 )
@@ -527,6 +527,86 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
     return 0;
 }
 
+bool NetMjpegSource::has_buffered_header() const
+{
+    if ( bpat_len_ < 6 )
+        return false;
+    const size_t avail = sock_end_ - sock_pos_;
+    const size_t bare_len = static_cast<size_t>( bpat_len_ ) - 2;
+    size_t b_end = kNpos;
+    if ( avail >= bare_len && std::memcmp( sock_ + sock_pos_, bpat_ + 2, bare_len ) == 0 )
+    {
+        b_end = bare_len;
+    }
+    else
+    {
+        const size_t f = net_find( bpat_, static_cast<size_t>( bpat_len_ ) );
+        if ( f != kNpos )
+            b_end = f + static_cast<size_t>( bpat_len_ );
+    }
+    if ( b_end == kNpos || avail < b_end + 4 )
+        return false;
+    for ( size_t p = b_end; p + 4 <= avail; ++p )
+    {
+        if ( std::memcmp( sock_ + sock_pos_ + p, "\r\n\r\n", 4 ) == 0 )
+            return true;
+    }
+    return false;
+}
+
+int NetMjpegSource::poll_part_ready( int timeout_ms )
+{
+    if ( has_buffered_header() )
+        return 1;
+    int wait_ms = timeout_ms;
+    while ( true )
+    {
+        const int r = net_fill( wait_ms );
+        if ( r < 0 )
+            return r;
+        if ( has_buffered_header() )
+            return 1;
+        if ( r == 0 )
+            return 0;
+        wait_ms = 0;
+    }
+}
+
+bool NetMjpegSource::wait_part_ready( int timeout_ms, int* err )
+{
+    if ( timeout_ms < 0 )
+        return true;
+    const int pr = poll_part_ready( timeout_ms );
+    if ( pr > 0 )
+        return true;
+    if ( pr == -2 )
+    {
+        ++err_streak_;
+        sock_pos_ = sock_end_;
+    }
+    if ( err )
+        *err = ( pr == 0 || ( pr == -2 && err_streak_ < kErrStreakMax ) ) ? EAGAIN : EIO;
+    return false;
+}
+
+void NetMjpegSource::start()
+{
+    // Drain frames accumulated in the TCP socket while the Pipeline
+    // constructor initialized NPU tensors, encoder and GPU drawer,
+    // keeping only the freshest valid frame in slot 0 (primed_len_).
+    for ( int guard = 0; guard < 64 && poll_part_ready( 0 ) > 0; ++guard )
+    {
+        uint32_t n = 0;
+        if ( read_part( 0, &n ) != 0 )
+            break;
+        int fw = 0;
+        int fh = 0;
+        const auto* p = static_cast<const uint8_t*>( bufs_[0].start );
+        if ( jpeg_frame_complete( p, &n, &fw, &fh ) && fw == width_ && fh == height_ )
+            primed_len_ = n;
+    }
+}
+
 int NetMjpegSource::read_part( int slot, uint32_t* size )
 {
     long need = 0;
@@ -539,7 +619,38 @@ int NetMjpegSource::read_part( int slot, uint32_t* size )
     return receive_body( slot, need, size );
 }
 
-int NetMjpegSource::dequeue( uint32_t* size, int* err )
+int NetMjpegSource::read_latest_part( int slot, uint32_t* size )
+{
+    uint32_t n = 0;
+    int rc = read_part( slot, &n );
+    if ( rc == -2 )
+    {
+        // Desynced stream: drop the buffered window, count the streak,
+        // one resync retry before handing over to the reconnect ladder.
+        ++err_streak_;
+        sock_pos_ = sock_end_;
+        if ( err_streak_ < kErrStreakMax )
+        {
+            n = 0;
+            rc = read_part( slot, &n );
+        }
+    }
+    if ( rc != 0 )
+        return rc;
+    // If multiple frames queued up in the TCP buffer during a Wi-Fi burst,
+    // advance to the freshest complete frame so the stream never lags.
+    for ( int skip = 0; skip < 4 && poll_part_ready( 0 ) > 0; ++skip )
+    {
+        uint32_t next_n = 0;
+        if ( read_part( slot, &next_n ) != 0 )
+            break;
+        n = next_n;
+    }
+    *size = n;
+    return 0;
+}
+
+int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
 {
     if ( err )
         *err = 0;
@@ -564,6 +675,8 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err )
         err_streak_ = 0;
         return 0;
     }
+    if ( !wait_part_ready( timeout_ms, err ) )
+        return -1;
     int slot = -1;
     for ( int k = 0; k < kBufCount; ++k )
     {
@@ -581,19 +694,7 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err )
         slot = 0;
     }
     uint32_t n = 0;
-    int rc = read_part( slot, &n );
-    if ( rc == -2 )
-    {
-        // Desynced stream: drop the buffered window, count the streak,
-        // one resync retry before handing over to the reconnect ladder.
-        ++err_streak_;
-        sock_pos_ = sock_end_;
-        if ( err_streak_ < kErrStreakMax )
-        {
-            n = 0;
-            rc = read_part( slot, &n );
-        }
-    }
+    const int rc = read_latest_part( slot, &n );
     if ( rc != 0 )
     {
         if ( err )

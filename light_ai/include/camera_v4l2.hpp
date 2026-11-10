@@ -59,7 +59,7 @@ public:
     // Corrupt buffers (BUF_FLAG_ERROR) are counted ACROSS calls --
     // the err_streak_ member, reset only by a clean frame or by reconnect();
     // kBufCount in a row = recoverable stall.
-    int dequeue( uint32_t* size, int* err );
+    int dequeue( uint32_t* size, int* err, int timeout_ms = -1 );
     void requeue( int index );
     void* buffer( int index ) const { return bufs_[index].start; }
     size_t buffer_size( int index ) const { return bufs_[index].length; }
