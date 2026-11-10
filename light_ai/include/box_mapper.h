@@ -1,6 +1,6 @@
 // Scene -> tensor coordinate mapping for detection boxes and track trails.
 // Sole consumer:
-// Pipeline::draw_and_publish (GPU and CPU draw paths share the same mapped batch).
+// OverlaySink::draw_and_publish (GPU and CPU draw paths share the same mapped batch).
 // Colors live in box_mapper.cpp;
 // these declarations keep both draw paths in sync.
 

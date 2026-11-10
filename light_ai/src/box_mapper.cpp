@@ -42,6 +42,7 @@ void trail_color( int id, uint8_t& r, uint8_t& g, uint8_t& b )
 void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& tracker,
                      GpuBoxList& boxes, const LbGeom& lb, float sx, float sy )
 {
+    boxes.clear();
     for ( int k = 0; k < dets.n; ++k )
     {
         const Detection& d = dets.d[k];

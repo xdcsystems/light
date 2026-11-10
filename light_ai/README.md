@@ -197,11 +197,15 @@ post-processing.
                and custom 32 KiB AVIOContext) shared by NetEncoder and
                NetPreview.
 
+- OverlaySink : owns the overlay rendering and network preview output
+               path (GpuBoxDrawer + draw_boxes_cpu fallback, NetEncoder
+               H.264 and NetPreview raw NUT), keeping Pipeline focused
+               on source capture, NPU pool scheduling and per-source state.
 - GpuBoxDrawer (M3.7): box drawing on Mali G610 (EGL/GBM) straight
                into the NPU input tensor. The tensor dma-buf is imported
                as an EGLImage; one draw call per frame; native fence
                sync; falls back to CPU drawing (draw_boxes_cpu in
-               pipeline.cpp) if the tensor pitch is not usable or init
+               overlay_sink.cpp) if the tensor pitch is not usable or init
                fails. --cpu-draw forces the CPU path (A/B baseline).
                attach_slot() fixes the shared geometry on the first
                attach; any later attach with different w/h/stride

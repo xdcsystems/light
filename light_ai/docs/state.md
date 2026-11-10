@@ -1252,3 +1252,18 @@ Six follow-up items closed on `fix/audit-p0` after the P0/P1/P2 audit:
    `420SP` decode path selected, letterbox band `x=[140,500) y=[0,640)`
    -> `368x640` h264 stream, ~30.5-31.6 FPS wall, detections and
    Kalman tracks verified live in `mpv`.
+
+## 2026-11-10 -- P3 deduplication, M5/M5.1-M5.4 closure & OverlaySink
+
+1. Phase P3 deduplication & encapsulation (`d7591de`):
+   - `include/jpeg_probe.hpp`: unified structural JPEG marker walk (`probe_jpeg_sof`) shared by `NetMjpegSource` and `MppDecoder`.
+   - `include/box_math.hpp`: unified `box_iou` (xywh) and `box_iou_corners` (NMS) shared by `yolo_postprocess`, `BoxSmoother` and `Tracker`.
+   - Encapsulated `DmaSync` and `PubFifo` data members into `private:`; cleaned up FFmpeg forward declarations.
+2. M5 + M5.1-M5.4 multi-source closure (`59e405e`):
+   - `Pipeline::SourceSlot` owns per-source `MppDecoder`, `BoxSmoother`, `Tracker`, `LbGeom` and `aux_fd`; `Slot` carries `src_idx`, `src_w`, `src_h`; `ConsoleReporter` prints `s<src_idx>` when `nsrc > 1`.
+   - M5.1: `NetEncoder::publish` / `prep_frame` accept per-frame `Slot::lb`, letterbox mixed aspects via `band_geom` and refill NV12 bars with gray 128 on geometry changes.
+   - M5.2: `Pipeline::frame_dispatch` refills the NPU input tensor with gray 128 whenever a slot switches between sources with different `LbGeom`.
+   - M5.3: `Pipeline::pool_discard(int src_idx)` drops only in-flight slots of the recovering source while preserving healthy neighbors in `pub_`.
+   - M5.4: `NetPreview` honours `--net-fps` pacing (`pace_fps_` / `next_send_us_`) and `OverlaySink::draw_and_publish` accounts `preview_->publish()` in `enc_ms`. Live 3-way A/B attributed `--pool 3` single-camera `infer ~45.6 ms` to single-core NPU pinning (1/2/4) at low DVFS load (drops to `~30.2-32.0 ms` under dual-camera `~50.5 FPS` load).
+3. Pipeline decomposition (`OverlaySink`):
+   - Extracted `include/overlay_sink.hpp` + `src/overlay_sink.cpp` (`NetPreview`, `NetEncoder`, `GpuBoxDrawer`, `GpuBoxList`, `draw_boxes_cpu`) out of `Pipeline` (`src/pipeline.cpp` -225 lines); `fill_gpu_boxes` clears `boxes` at entry per the preallocated buffer contract.

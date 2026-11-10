@@ -1,21 +1,17 @@
-#include <cstring>
-#include <filesystem>
 #include <chrono>
-#include <cmath>
-#include <iostream>
-#include <stdexcept>
-#include <thread>
-#include <mutex>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <iostream>
+#include <mutex>
+#include <stdexcept>
 #include <sys/stat.h>  // stat(): startup node fallback
-#include <unistd.h>
-#include <linux/videodev2.h>
+#include <thread>
 
+#include "dma_sync.hpp"
 #include "pipeline.hpp"
 #include "yolo_postprocess.hpp"
-#include "dma_sync.hpp"
-#include "box_mapper.h"
 
 namespace
 {
@@ -34,76 +30,6 @@ namespace
         const size_t dot = path.rfind( '.' );
         const std::string suf = "_s" + std::to_string( idx );
         return dot == std::string::npos ? path + suf : path.substr( 0, dot ) + suf + path.substr( dot );
-    }
-
-    // CPU baseline: 1-px outlines straight into the NPU tensor (RGB888).
-    // The caller pre-maps boxes to tensor coordinates — the same geometry as the GPU path;
-    // colors come from the box itself. Used when the GPU drawer
-    // is unavailable, or forced by --cpu-draw (A/B baseline).
-    // Geometry parity with the GPU path: fully off-screen and
-    // degenerate (< 1 px) boxes are skipped, like the GPU viewport /
-    // discard, and the pixel span uses floor/ceil like the rasterizer.
-    // Porter-Duff alpha: the per-box alpha blends over the
-    // existing tensor pixels; a == 255 stays an opaque write.
-
-    void draw_boxes_cpu( uint8_t* rgb, int w, int h, int stride, const GpuBox* boxes, int n )
-    {
-        auto clamp = []( int v, int hi ) {
-            return v < 0 ? 0 : ( v > hi ? hi : v );
-        };
-        for ( int i = 0; i < n; ++i )
-        {
-            const GpuBox& b = boxes[i];
-            // Fully off-screen boxes are skipped: the clamp-only path drew
-            // a degenerate 1-px line right on the frame edge, while the
-            // GPU viewport clips the same input to nothing.
-            if ( b.x1 <= 0.0f || b.x0 >= static_cast<float>( w ) || b.y1 <= 0.0f
-                 || b.y0 >= static_cast<float>( h ) )
-                continue;
-            // Degenerate boxes (< 1 px in either axis) are skipped for
-            // parity with the GPU drawer's discard (x1 - x0 < 1.0f):
-            // the CPU path used to paint them as a line.
-            if ( b.x1 - b.x0 < 1.0f || b.y1 - b.y0 < 1.0f )
-                continue;
-            // Pixel-span rounding matched to the GPU rasterizer: pixel k is
-            // touched when its [k, k+1) span intersects the box span, so the
-            // left/top edge floor()s and the right/bottom edge ceil()s-1.
-            // The former truncation ran one pixel short on the right/bottom
-            // edges vs the GPU path (A/B asymmetry).
-            const int x0 = clamp( static_cast<int>( std::floor( b.x0 ) ), w - 1 );
-            const int y0 = clamp( static_cast<int>( std::floor( b.y0 ) ), h - 1 );
-            const int x1 = std::max( x0, clamp( static_cast<int>( std::ceil( b.x1 ) ) - 1, w - 1 ) );
-            const int y1 = std::max( y0, clamp( static_cast<int>( std::ceil( b.y1 ) ) - 1, h - 1 ) );
-            // Porter-Duff over with the per-box alpha (trail fade):
-            // out = (src*a + dst*(255-a) + 127) / 255. Reading the
-            // pixel is safe here: cache_drop ran before the draw and
-            // cache_clean runs after, so the CPU view is coherent.
-            // a >= 255 (detections) keeps the old opaque write.
-            auto put = [&]( int x, int y ) {
-                uint8_t* px = rgb + static_cast<size_t>( y ) * stride + x * 3;
-                const unsigned a = b.a;
-                if ( a >= 255 )
-                {
-                    px[0] = b.r;
-                    px[1] = b.g;
-                    px[2] = b.b;
-                    return;
-                }
-                px[0] = static_cast<uint8_t>( ( b.r * a + px[0] * ( 255 - a ) + 127 ) / 255 );
-                px[1] = static_cast<uint8_t>( ( b.g * a + px[1] * ( 255 - a ) + 127 ) / 255 );
-                px[2] = static_cast<uint8_t>( ( b.b * a + px[2] * ( 255 - a ) + 127 ) / 255 );
-            };
-            for ( int x = x0; x <= x1; ++x )
-            {
-                put( x, y0 );
-                put( x, y1 );
-            }
-            for ( int y = y0; y <= y1; ++y )
-            {
-                put( x0, y );
-                put( x1, y );
-            }
-        }
     }
 
 }  // namespace
@@ -172,8 +98,7 @@ Pipeline::Pipeline( const Config& cfg )
             src_h_ = srcs_[s].h;
     }
 
-    init_net_sink( ia );
-    init_gpu_drawer();
+    sink_.init( cfg_, npus_, model_w_, model_h_, srcs_[0].lb );
     init_aux();
 
     if ( cfg_.cal_frames > 0 && cfg_.cal_dir.empty() )
@@ -341,77 +266,6 @@ void Pipeline::setup_cores()
     }
     std::cout << "npu: pool of " << npool_ << " engines, one per core\n";
     t_.set_pool( npool_ );
-}
-
-// Preview/encoder bring-up (M3.5). Verbatim move out of the ctor.
-void Pipeline::init_net_sink( const rknn_tensor_attr& ia )
-{
-    if ( !cfg_.net )
-        return;
-
-    // Hard confirmation of tensor contiguity:
-    // if size_with_stride equals w*h*3, the buffer is exactly the PPM dump layout (stride = w*3).
-    std::cout << "net: tensor stride check: size_with_stride=" << ia.size_with_stride
-              << " vs " << model_w_ * model_h_ * 3 << "\n";
-
-    if ( cfg_.net_h264 )
-    {
-        // M3.5 pull: empty net_host = TCP pull server
-        // (listener on net_port, the viewer connects to the board's LAN IP);
-        // a non-empty net_host keeps the legacy UDP push to that destination.
-        // The h264 encoder consumes the NPU input tensor AFTER box drawing,
-        // at the NATIVE letterbox-band size (no upscale):
-        // w = model_w, h = cam_h * (model_w / cam_w) — for the default
-        // 1280x720 camera and a 640x640 tensor that is 640x360 (16:9).
-        // M5: band = source 0's letterbox (SourceSlot::lb); mixed
-        // aspects: exact crop for src 0; follow-up: per-frame band into NetEncoder::publish.
-
-        // Band-crop target: landscape crops a horizontal strip of the
-        // full tensor width; portrait a vertical strip of the full tensor height.
-        // The stream width is 16-aligned up (MPP hor_stride requirement); the tail stays gray.
-
-        enc_.emplace( model_w_, model_h_, srcs_[0].lb, cfg_.net_fps, cfg_.net_port, cfg_.net_host, cfg_.net_bitrate );
-        if ( cfg_.net_host.empty() )
-            std::cout << "net: h264 PULL server on port " << cfg_.net_port << ", " << cfg_.net_bitrate
-                      << " kbps (viewer: ffplay tcp://<board-ip>:" << cfg_.net_port << ")\n";
-        else
-            std::cout << "net: h264 preview -> " << cfg_.net_host << ':' << cfg_.net_port
-                      << ", " << cfg_.net_bitrate << " kbps\n";
-    }
-    else
-    {
-        preview_.emplace( model_w_, model_h_, model_w_ * 3, cfg_.net_fps, cfg_.net_port );
-        std::cout << "net: preview server on port " << cfg_.net_port << "\n";
-    }
-}
-
-// M3.7: GPU box drawing (Mali G610, EGL/GBM) straight into the NPU tensor.
-// Init once, only with a preview sink active. On failure the CPU path
-// (draw_boxes_cpu, this file) stays as the fallback.
-// --cpu-draw forces the CPU path (A/B baseline).
-void Pipeline::init_gpu_drawer()
-{
-    if ( ( !preview_ && !enc_ ) || cfg_.cpu_draw )
-        return;
-
-    drawer_.emplace();
-
-    // M4: one EGLImage per slot, attached once at startup (attach_slot is idempotent per slot);
-    // draw switches FBOs between slots.
-    bool drew_ok = drawer_->init();
-    for ( int k = 0; drew_ok && k < npool_; ++k )
-        drew_ok = drawer_->attach_slot( k, npus_[k].input_fd(), model_w_, model_h_,
-                static_cast<uint32_t>( model_w_ ) * 3 );
-
-    if ( !drew_ok )
-    {
-        std::cerr << "pipeline: gpu drawer unavailable, CPU fallback\n";
-        drawer_.reset();
-    }
-    else
-    {
-        std::cout << "net: gpu box drawing active (Mali G610, EGL/GBM)\n";
-    }
 }
 
 // Aux buffer only for the two-pass path (source over 8x the model input).
@@ -813,8 +667,8 @@ int Pipeline::publish_oldest()
         ss.tracker.update( dets_, sl.ts_us, trajs_ );
 
         rep_.report( sl.frame, dets_, trajs_, sl.src_idx, nsrc_ );
-        if ( preview_ || enc_ )
-            enc_ms = draw_and_publish( sl, ps );
+        if ( sink_.enabled() )
+            enc_ms = sink_.draw_and_publish( sl, ps, dets_, trajs_, ss.tracker );
     }
 
     sl.tr.enc = enc_ms;
@@ -826,69 +680,6 @@ int Pipeline::publish_oldest()
     lk.unlock();
     pub_.pop();
     return npu_ok ? 1 : 0;
-}
-
-// Viewer gating (rule: output only for a connected viewer,
-// recognition never gates). Both flags are per-frame atomics:
-// a late joiner misses at most one frame of boxes. With no
-// viewer the GPU draw pass is skipped entirely - the encoder
-// gate would drop the frame anyway, this just saves the draw.
-
-double Pipeline::draw_and_publish( Slot& sl, int ps )
-{
-    double enc_ms = 0.0;
-    const bool enc_live = enc_ && enc_->viewer_active();
-    const bool prev_live = preview_ && preview_->viewer_connected();
-    if ( !enc_live && !prev_live )
-        return enc_ms;
-
-    // Boxes mapped to tensor coordinates ONCE for both drawing paths.
-    // Inverse of the postprocess mapping: det = scene * (lb / cam) + origin.
-
-    const SourceSlot& ss = srcs_[sl.src_idx];
-    const float sx = sl.lb.w / static_cast<float>( sl.src_w );
-    const float sy = sl.lb.h / static_cast<float>( sl.src_h );
-    boxes_.clear();
-    fill_gpu_boxes( dets_, trajs_, ss.tracker, boxes_, sl.lb, sx, sy );
-    int fence = -1;  // GPU draw fence, consumed by enc publish
-    if ( drawer_ )
-    {
-        drawer_->draw_slot( ps, boxes_.d.data(), boxes_.n );
-        fence = drawer_->export_fence();
-        if ( prev_live || fence < 0 )
-        {
-            drawer_->sync_cpu();
-            if ( fence >= 0 )
-                ::close( fence );
-            fence = -1;
-        }
-    }
-    else
-    {
-        dma::DmaSync wr( sl.eng->input_fd(), true );
-        dma::cache_drop( sl.eng->input_data(), static_cast<size_t>( model_w_ ) * model_h_ * 3 );
-        draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ),
-                        model_w_, model_h_, model_w_ * 3, boxes_.d.data(), boxes_.n );
-        dma::cache_clean( sl.eng->input_data(), static_cast<size_t>( model_w_ ) * model_h_ * 3 );
-    }
-
-    // READ bracket covers the NUT preview (CPU read) only;
-    // enc_->publish() uses RGA hardware DMA and must run outside CPU sync.
-    if ( prev_live )
-    {
-        const auto t5 = clk::now();
-        dma::DmaSync rd( sl.eng->input_fd(), false );
-        preview_->publish( static_cast<const uint8_t*>( sl.eng->input_data() ) );
-        enc_ms += ms( t5, clk::now() );
-    }
-    if ( enc_live )
-    {
-        const auto t5 = clk::now();
-        enc_->publish( sl.eng->input_fd(), sl.lb, fence, sl.ts_us );
-        const auto t6 = clk::now();
-        enc_ms = ms( t5, t6 );
-    }
-    return enc_ms;
 }
 
 void Pipeline::pool_discard( int src_idx )

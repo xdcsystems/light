@@ -1,32 +1,27 @@
 #pragma once
 #include <array>
-#include <vector>
-#include <string>
 #include <atomic>
 #include <cstdint>
-#include <condition_variable>
-#include <mutex>
-#include <optional>
+#include <string>
 #include <thread>
 #include <variant>
+#include <vector>
 
-#include "config/cli.hpp"
+#include "box_smoother.h"
+#include "cal_dumper.hpp"
 #include "camera_v4l2.hpp"
-#include "yolo_postprocess.hpp"
+#include "config/cli.hpp"
+#include "console_reporter.h"
+#include "frame_trace.h"
 #include "mpp_decoder.hpp"
+#include "net_mjpeg_source.hpp"
+#include "overlay_sink.hpp"
 #include "rga_resizer.h"
 #include "rknn_engine.hpp"
-#include "cal_dumper.hpp"
-#include "net_preview.hpp"
-#include "net_encoder.h"
-#include "gpu_box_drawer.hpp"
-#include "box_smoother.h"
-#include "tracker.hpp"
-#include "console_reporter.h"
 #include "slot_ring.hpp"
-#include "frame_trace.h"
 #include "timings.hpp"
-#include "net_mjpeg_source.hpp"
+#include "tracker.hpp"
+#include "yolo_postprocess.hpp"
 
 class Pipeline
 {
@@ -84,14 +79,11 @@ private:
     void init_source();
     void init_one_source( int idx, const SourceEndpoint& ep );
     void start_source( int idx );
-    void init_net_sink( const rknn_tensor_attr& ia );
-    void init_gpu_drawer();
     void init_aux();
     void setup_cores();
 
     void worker_loop( int slot );
     int publish_oldest();                // returns 1 if the frame was valid
-    double draw_and_publish( Slot& sl, int ps );   // viewer path; returns enc_ms
     void pool_discard( int src_idx );    // drop pending slots of src_idx on recovery
     int handle_source_failure( int cam_err );  // 0 = recovered, -1 = fatal
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
@@ -123,25 +115,19 @@ private:
     
     // M5: per-source letterbox geometry lives in SourceSlot::lb; the
     // RGA per-frame LbGeom is cross-checked against the owning source's
-    // at dispatch (one-time warn). The encoder band is source 0's
-    // (mixed aspects: exact crop for src 0; per-frame band injection
-    // into NetEncoder::publish is the follow-up).
+    // at dispatch (one-time warn).
     bool lb_warned_ = false;
     CalDumper cal_dumper_;
     int reconnects_ = 0;   // source disconnects recovered this run
     Timings t_;
 
-    std::optional<NetPreview> preview_;
-    std::optional<NetEncoder> enc_;
-    std::optional<GpuBoxDrawer> drawer_;
-
+    OverlaySink sink_ {};
     ConsoleReporter rep_;  // throttled reports + final summary
     TrajList trajs_;
 
-    // Per-frame detection buffers: preallocated members, cleared each
+    // Per-frame detection buffer: preallocated member, cleared each
     // frame -- zero heap traffic in the steady-state path.
     DetList dets_;
-    GpuBoxList boxes_;
 
     std::array<Slot, 3> slots_ {};
     std::vector<std::thread> workers_;   // one per pooled engine
