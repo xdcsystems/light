@@ -425,6 +425,21 @@ int CameraV4L2::dequeue( uint32_t* size, int* err, int timeout_ms )  // NOLINT(r
         }
         have = true;
     }
+    for ( unsigned skip = 0; skip + 1 < kBufCount && poll_ready( fd_, 0 ) > 0; ++skip )
+    {
+        v4l2_buffer next_buf {};
+        next_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        next_buf.memory = V4L2_MEMORY_MMAP;
+        if ( ioctl( fd_, VIDIOC_DQBUF, &next_buf ) < 0 )
+            break;
+        if ( ( next_buf.flags & V4L2_BUF_FLAG_ERROR ) || next_buf.bytesused == 0 )
+        {
+            requeue( static_cast<int>( next_buf.index ) );
+            continue;
+        }
+        requeue( static_cast<int>( buf.index ) );
+        buf = next_buf;
+    }
     err_streak_ = 0;  // clean buffer resets the streak
     if ( err )
         *err = 0;

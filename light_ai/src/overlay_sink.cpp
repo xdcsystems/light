@@ -152,26 +152,21 @@ double OverlaySink::draw_and_publish( Slot& sl,
     const float sy = sl.lb.h / static_cast<float>( sl.src_h );
     boxes_.clear();
     fill_gpu_boxes( dets, trajs, tracker, boxes_, sl.lb, sx, sy );
-    int fence = -1;
-    if ( drawer_ )
+    if ( boxes_.n > 0 )
     {
-        drawer_->draw_slot( ps, boxes_.d.data(), boxes_.n );
-        fence = drawer_->export_fence();
-        if ( prev_live || fence < 0 )
+        if ( drawer_ )
         {
+            drawer_->draw_slot( ps, boxes_.d.data(), boxes_.n );
             drawer_->sync_cpu();
-            if ( fence >= 0 )
-                ::close( fence );
-            fence = -1;
         }
-    }
-    else
-    {
-        dma::DmaSync wr( sl.eng->input_fd(), true );
-        dma::cache_drop( sl.eng->input_data(), static_cast<size_t>( model_w_ ) * model_h_ * 3 );
-        draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ),
-                        model_w_, model_h_, model_w_ * 3, boxes_.d.data(), boxes_.n );
-        dma::cache_clean( sl.eng->input_data(), static_cast<size_t>( model_w_ ) * model_h_ * 3 );
+        else
+        {
+            dma::DmaSync wr( sl.eng->input_fd(), true );
+            dma::cache_drop( sl.eng->input_data(), static_cast<size_t>( model_w_ ) * model_h_ * 3 );
+            draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ),
+                            model_w_, model_h_, model_w_ * 3, boxes_.d.data(), boxes_.n );
+            dma::cache_clean( sl.eng->input_data(), static_cast<size_t>( model_w_ ) * model_h_ * 3 );
+        }
     }
 
     if ( prev_live )
@@ -184,7 +179,7 @@ double OverlaySink::draw_and_publish( Slot& sl,
     if ( enc_live )
     {
         const auto t5 = clk::now();
-        enc_->publish( sl.eng->input_fd(), sl.lb, fence, sl.ts_us, sl.src_idx );
+        enc_->publish( sl.eng->input_fd(), sl.lb, -1, sl.ts_us, sl.src_idx );
         const auto t6 = clk::now();
         enc_ms = ms( t5, t6 );
     }

@@ -84,10 +84,12 @@ private:
     void setup_cores();
 
     void worker_loop( int slot );
+    bool front_slot_done();
+    void drain_done_slots( int& ok );
     int publish_oldest();                // returns 1 if the frame was valid
     void pool_discard( int src_idx );    // drop pending slots of src_idx on recovery
     int try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err );
-    int dequeue_next_source( uint32_t& sz, int& cam_err );
+    int dequeue_next_source( uint32_t& sz, int& cam_err, int& ok );
     int handle_source_failure( int cam_err );  // 0 = recovered, -1 = fatal
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
 

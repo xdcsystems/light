@@ -15,7 +15,7 @@ class NetMjpegSource
     {
         kBufCount = 4,
         kFrameMax = 1 << 20,  // 1 MiB per JPEG frame cap (cast to size_t at use sites)
-        kSockBuf = 32 * 1024,
+        kSockBuf = 256 * 1024,
         kHdrMax = 8 * 1024,
         kPollMs = 2000,      // per-fill watchdog, same window as the camera
         kErrStreakMax = 4,   // corrupt/short-frame streak tolerance

@@ -220,12 +220,12 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     // marker (65535) and the CBR per-frame budget collapses (stream
     // dries to ~83 kbps). Nominal 25 (30 in multi-view) for rate control
     // only; pts stay VFR from dequeue times.
-    const int nom_fps = vfr_ ? ( nsrc_ > 1 ? 30 : 25 ) : fps_;
+    const int nom_fps = vfr_ ? ( nsrc_ > 1 ? 25 * nsrc_ : 25 ) : fps_;
     ctx->framerate = AVRational { nom_fps, 1 };
     ctx->bit_rate = static_cast<int64_t>( bitrate_kbps_ ) * 1000;
     // gop_size reaches MPP as rc:gop (rkmpp_set_enc_cfg):
     // a captured stream shows I-frames every 26 for GOP 25.
-    ctx->gop_size = vfr_ ? 25 : fps_;  // 1 s: a late joiner waits at most one GOP
+    ctx->gop_size = vfr_ ? nom_fps : fps_;  // 1 s: a late joiner waits at most one GOP
     ctx->max_b_frames = 0;  // no reorder: minimal latency
     // Rate control: this ffmpeg-rockchip build has no rc_mode AVOption
     // -- a generic rc_mode option here is silently ignored, and the
@@ -455,7 +455,13 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_f
         acq_fd_ = -1;
     }
     acq_fd_ = acquire_fence_fd;
-    const int64_t min_step_us = nsrc_ > 1 ? ( fps_ > 0 ? 1000000 / fps_ : 20000 ) : 0;
+    bool q_busy = false;
+    {
+        std::lock_guard<std::mutex> qlk( pkt_mx_ );
+        q_busy = pkt_count_ >= 4;
+    }
+    const int64_t vfr_step_us = q_busy ? 20000 : 4000;
+    const int64_t min_step_us = nsrc_ > 1 ? ( fps_ > 0 ? 1000000 / fps_ : vfr_step_us ) : 0;
     const bool do_enc = ( nsrc_ <= 1 || ts_us < 0 || last_enc_ts_us_ < 0
                           || ( ts_us - last_enc_ts_us_ ) >= min_step_us );
     if ( do_enc )
@@ -725,7 +731,11 @@ int64_t NetEncoder::packet_pts()
         return static_cast<int64_t>( frames_sent_ ) * 3600;  // 25 fps grid
     if ( ts_base_ < 0 )
         ts_base_ = ts_us_;  // per-session base on the first timestamp
-    return av_rescale( ts_us_ - ts_base_, 90000, 1000000 );
+    int64_t p = av_rescale( ts_us_ - ts_base_, 90000, 1000000 );
+    if ( last_pts_ >= 0 && p <= last_pts_ )
+        p = last_pts_ + 1;
+    last_pts_ = p;
+    return p;
 }
 
 // Batch C follow-up: the mux side of serve(), split out for tidy
@@ -997,6 +1007,7 @@ void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
         st_ = st;
         pts_ = 0;
         ts_base_ = -1;  // M4: VFR pts restart from zero per session
+        last_pts_ = -1;
         last_enc_ts_us_ = -1;
         active_.store( true );
     }

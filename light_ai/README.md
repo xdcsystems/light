@@ -104,7 +104,9 @@ post-processing.
                the first one. The consecutive-corrupt-buffer streak
                (BUF_FLAG_ERROR) is a class member: it survives
                dequeue() calls and is reset only by a clean frame or
-               by reconnect() after a successful STREAMON.
+               by reconnect() after a successful STREAMON. dequeue()
+               drains any newer ready V4L2 buffers (poll_ready(0)) so
+               the capture ring never accumulates stale-frame lag.
 - NetMjpegSource : HTTP multipart/x-mixed-replace MJPEG pull source
                (--net-src http://host:port/path; repeatable alongside
                --device in Config::sources for M5 multi-camera). Non-blocking TCP connect + SO_RCVTIMEO
@@ -113,9 +115,12 @@ post-processing.
                frame dimensions from SOFn, verifies trailing EOI); primes
                frame 0 in setup_device() so stream geometry is known at
                startup without --w/--h, drains init-time TCP backlog in
-               start(), skips burst-queued stale frames in read_latest_part(),
-               and supports non-blocking poll_part_ready(timeout_ms) for M5
-               multi-camera scheduling. Reconnects through the same
+               start(), buffers into a 256 KiB socket window and verifies
+               that the full multipart payload (Content-Length or closing
+               boundary) is resident before reporting ready in
+               poll_part_ready(timeout_ms), skips burst-queued stale frames
+               in read_latest_part(), and drops incomplete/corrupt JPEGs
+               with EAGAIN before decode. Reconnects through the same
                recovery loop as CameraV4L2.
 - MppDecoder : MJPEG -> YUV422SP decode into an external dma-buf pool
                (adaptive, 2026-11-06: a 4:2:0 source decodes to

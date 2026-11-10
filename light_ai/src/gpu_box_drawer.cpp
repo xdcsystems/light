@@ -483,6 +483,8 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
     glBindBuffer( GL_ARRAY_BUFFER, st_.vbo );
     glBufferSubData( GL_ARRAY_BUFFER, 0, (GLsizeiptr)cnt * sizeof( BatchVert ), v );
     glDrawArrays( GL_TRIANGLES, 0, cnt );
+    glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+    glFlush();
 }
 
 void GpuBoxDrawer::sync_cpu()
@@ -530,6 +532,7 @@ int GpuBoxDrawer::export_fence()
     EGLSyncKHR sync = st_.create_sync( st_.dpy, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr );
     if ( sync == EGL_NO_SYNC_KHR )
         return -1;
+    glFlush();
     // dup'ed fd: our copy, we own it — the caller must close() it (or
     // hand it to an RGA acquire, which consumes it the same way).
     const int fd = st_.dup_fence( st_.dpy, sync );

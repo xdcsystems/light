@@ -321,19 +321,42 @@ int Pipeline::try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err )
     return -2;
 }
 
-int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err )
+bool Pipeline::front_slot_done()
 {
-    if ( nsrc_ <= 1 )
+    if ( pub_.empty() )
+        return false;
+    Slot& sl = slots_[pub_.front()];
+    std::lock_guard<std::mutex> lk( sl.mx );
+    return sl.st == Slot::DONE;
+}
+
+void Pipeline::drain_done_slots( int& ok )
+{
+    while ( front_slot_done() && !stop_.load() )
+        ok += publish_oldest();
+}
+
+int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
+{
+    drain_done_slots( ok );
+    if ( nsrc_ <= 1 && pub_.empty() )
     {
         cur_src_ = 0;
-        return with_src( 0, [&]( auto& s ) { return s.dequeue( &sz, &cam_err ); } );
+        int r = -1;
+        do
+        {
+            r = with_src( 0, [&]( auto& s ) { return s.dequeue( &sz, &cam_err ); } );
+        } while ( r < 0 && cam_err == EAGAIN && !stop_.load() );
+        return r;
     }
     while ( !stop_.load() )
     {
+        drain_done_slots( ok );
         int r = try_dequeue_round( 0, sz, cam_err );
         if ( r != -2 )
             return r;
-        r = try_dequeue_round( 2, sz, cam_err );
+        drain_done_slots( ok );
+        r = try_dequeue_round( 1, sz, cam_err );
         if ( r != -2 )
             return r;
     }
@@ -360,7 +383,7 @@ int Pipeline::run()
         uint32_t sz = 0;
         int cam_err = 0;
 
-        const int idx = dequeue_next_source( sz, cam_err );
+        const int idx = dequeue_next_source( sz, cam_err, ok );
         if ( idx < 0 )
         {
             if ( stop_.load() )
@@ -425,12 +448,13 @@ int Pipeline::run()
         // legacy synchronous semantics. pool 3 keeps publish-before-reuse.
         const double cam_ms = ms( t0, t1 );
         const double dec_ms = ms( t1, t2 );
+        drain_done_slots( ok );
         if ( pub_.size() == npool_ )
             ok += publish_oldest();
         const int slot = acquire_slot( ok );
         if ( slot < 0 )
             break;  // stop requested with every slot in flight: leave through the normal path
-        const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( t0 - t_start ).count();
+        const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( t1 - t_start ).count();
         frame_dispatch( slot, i, fd_src, ts_us, cam_ms, dec_ms );
         if ( npool_ == 1 )
             ok += publish_oldest();

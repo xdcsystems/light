@@ -573,7 +573,9 @@ refer to README.md sections (../README.md).
   2 s stall watchdog `last_ok_tp`, independent reconnect and warmup).
   Closed 2026-11-10: per-source `MppDecoder`, `BoxSmoother`, `Tracker`,
   `LbGeom`, and `aux_fd` live in `Pipeline::SourceSlot`; verified live
-  on 1280x960 V4L2 + 720x1280 NetMjpeg over 3000 frames at 51.83 FPS wall.
+  on 1280x960 V4L2 + 720x1280 NetMjpeg over 3000 frames at 49.75-51.83 FPS
+  wall with eager DONE-slot draining, full-frame TCP readiness checks,
+  latest-buffer V4L2 draining, and 0.6-0.9 ms GPU+RGA+H.264 multi-view encode.
       Pipeline refactor: an array of cam+dec+rga chains, each with its
       own dma-buf/tensor pool, plus a round-robin dispatcher; per-cam
       BoxSmoother. Fusion is NOT volumetric on this NPU (BEV/3D

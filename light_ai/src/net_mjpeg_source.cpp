@@ -532,6 +532,8 @@ bool NetMjpegSource::has_buffered_header() const
     if ( bpat_len_ < 6 )
         return false;
     const size_t avail = sock_end_ - sock_pos_;
+    if ( avail >= static_cast<size_t>( kSockBuf ) )
+        return true;
     const size_t bare_len = static_cast<size_t>( bpat_len_ ) - 2;
     size_t b_end = kNpos;
     if ( avail >= bare_len && std::memcmp( sock_ + sock_pos_, bpat_ + 2, bare_len ) == 0 )
@@ -546,9 +548,39 @@ bool NetMjpegSource::has_buffered_header() const
     }
     if ( b_end == kNpos || avail < b_end + 4 )
         return false;
+    size_t h_end = kNpos;
     for ( size_t p = b_end; p + 4 <= avail; ++p )
     {
         if ( std::memcmp( sock_ + sock_pos_ + p, "\r\n\r\n", 4 ) == 0 )
+        {
+            h_end = p + 4;
+            break;
+        }
+    }
+    if ( h_end == kNpos )
+        return false;
+    const uint8_t* ph = sock_ + sock_pos_ + b_end;
+    const size_t phl = h_end - 4 - b_end;
+    const size_t clp = ci_find( ph, phl, "content-length:" );
+    if ( clp != kNpos )
+    {
+        const char* s = reinterpret_cast<const char*>( ph ) + clp + 15;
+        while ( *s == ' ' || *s == '\t' )
+            ++s;
+        errno = 0;
+        char* end = nullptr;
+        const long need = std::strtol( s, &end, 10 );
+        if ( errno == 0 && end != s && need >= 0 )
+        {
+            if ( need > kFrameMax )
+                return true;
+            return ( avail - h_end ) >= static_cast<size_t>( need );
+        }
+    }
+    const size_t pat_len = static_cast<size_t>( bpat_len_ );
+    for ( size_t p = h_end; p + pat_len <= avail; ++p )
+    {
+        if ( std::memcmp( sock_ + sock_pos_ + p, bpat_, pat_len ) == 0 )
             return true;
     }
     return false;
@@ -701,14 +733,20 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
             *err = EIO;  // EOF / watchdog / recv error: recoverable
         return -1;
     }
-    bufs_[slot].in_flight = true;
     const uint8_t* p = static_cast<const uint8_t*>( bufs_[slot].start );
     int fw = 0;
     int fh = 0;
     if ( !jpeg_frame_complete( p, &n, &fw, &fh ) || fw != width_ || fh != height_ )
-        ++err_streak_;  // corrupt/truncated or mismatched-dim payload
-    else
-        err_streak_ = 0;
+    {
+        ++err_streak_;
+        std::cerr << "net-src: corrupt/incomplete JPEG frame (" << n
+                  << " bytes, streak " << err_streak_ << ") dropped\n";
+        if ( err )
+            *err = ( err_streak_ >= kErrStreakMax ) ? EIO : EAGAIN;
+        return -1;
+    }
+    err_streak_ = 0;
+    bufs_[slot].in_flight = true;
     if ( size )
         *size = n;
     return slot;

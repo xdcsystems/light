@@ -183,6 +183,7 @@ private:
     bool vfr_ = false;
     int64_t ts_us_ = -1;
     int64_t ts_base_ = -1;
+    int64_t last_pts_ = -1;
     int64_t last_enc_ts_us_ = -1;
     uint64_t frames_sent_ = 0;
     int model_w_ = 0, model_h_ = 0;  // NPU tensor geometry (RGB888)
