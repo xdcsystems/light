@@ -11,15 +11,12 @@
 
 #include "dma_sync.hpp"
 #include "pipeline.hpp"
+#include "timings.hpp"
 #include "yolo_postprocess.hpp"
 
 namespace
 {
     using clk = std::chrono::steady_clock;
-
-    inline double ms( clk::time_point a, clk::time_point b ) {
-        return std::chrono::duration<double, std::milli>( b - a ).count();
-    }
 
     // M5: per-source box-log path: with several sources "boxes.csv"
     // becomes "boxes_s1.csv" (suffix before the extension; no dot -> append).

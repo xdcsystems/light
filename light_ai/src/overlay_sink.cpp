@@ -12,15 +12,11 @@
 #include "dma_sync.hpp"
 #include "rknn_engine.hpp"
 #include "slot_ring.hpp"
+#include "timings.hpp"
 
 namespace
 {
     using clk = std::chrono::steady_clock;
-
-    inline double ms( clk::time_point a, clk::time_point b )
-    {
-        return std::chrono::duration<double, std::milli>( b - a ).count();
-    }
 
     // CPU baseline: 1-px outlines straight into the NPU tensor (RGB888).
     // The caller pre-maps boxes to tensor coordinates — the same geometry as the GPU path;

@@ -23,6 +23,7 @@ extern "C"
 #include <libavutil/dict.h>
 }
 
+#include "muxer_teardown.hpp"
 #include "net_encoder.h"
 #include "av_common.hpp"
 
@@ -912,11 +913,8 @@ void NetEncoder::Transport::close()
 // then frees the muxer context.
 NetEncoder::FcGuard::~FcGuard()
 {
-    if ( p )
-    {
-        p->pb = nullptr;
-        avformat_free_context( p );
-    }
+    teardown_muxer( p );  // muxer_teardown.hpp: pb is detached first (the
+                          // Transport destructor owns the avio context)
 }
 
 // Transport setup, verbatim move out of run_session(): TCP pull

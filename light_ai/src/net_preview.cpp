@@ -13,6 +13,7 @@ extern "C"
 }
 
 #include "av_common.hpp"
+#include "muxer_teardown.hpp"
 #include "net_preview.hpp"
 #include "tcp_pull_server.hpp"
 
@@ -25,11 +26,7 @@ namespace
 
         ~NutSessionGuard()
         {
-            if ( fc )
-            {
-                fc->pb = nullptr;
-                avformat_free_context( fc );
-            }
+            teardown_muxer( fc );  // shared with NetEncoder::FcGuard
             tcp.close_client();
         }
         explicit NutSessionGuard( TcpPullServer& s ) : tcp( s ) {}

@@ -33,3 +33,10 @@ public:
     long total = 0;        // frames since start
     int pool = 1;          // in-flight frames; 1 = legacy path
 };
+
+// Milliseconds between two steady-clock stamps; was duplicated
+// verbatim in pipeline.cpp and overlay_sink.cpp anonymous namespaces.
+inline double ms( Timings::clk::time_point a, Timings::clk::time_point b )
+{
+    return std::chrono::duration<double, std::milli>( b - a ).count();
+}

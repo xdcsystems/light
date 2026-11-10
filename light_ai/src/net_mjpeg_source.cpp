@@ -1,5 +1,6 @@
 #include <cctype>
 #include <cerrno>
+#include <climits>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -106,6 +107,36 @@ namespace
         if ( out_h )
             *out_h = info.h;
         return data[sz - 2] == 0xFF && data[sz - 1] == 0xD9;
+    }
+    // In-bounds Content-Length parser shared by read_part_header() and
+    // has_buffered_header(): replaces the copy-pasted ci_find + strtol
+    // blocks, which scanned for a terminator that may lie outside the
+    // non-NUL-terminated window (read past sock_ when the value touched
+    // its edge) and silently accepted partial values cut by the buffer.
+    // Strict contract: no signs, no embedded whitespace, digits must end
+    // at an in-bounds CR/LF; overflow is rejected.
+    bool parse_content_length( const uint8_t* ph, size_t phl, long* out )
+    {
+        const size_t clp = ci_find( ph, phl, "content-length:" );
+        if ( clp == kNpos )
+            return false;
+        size_t p = clp + 15;  // past "content-length:"
+        while ( p < phl && ( ph[p] == ' ' || ph[p] == '\t' ) )
+            ++p;
+        if ( p >= phl || ph[p] < '0' || ph[p] > '9' )
+            return false;
+        long v = 0;
+        while ( p < phl && ph[p] >= '0' && ph[p] <= '9' )
+        {
+            if ( v > ( LONG_MAX - ( ph[p] - '0' ) ) / 10 )
+                return false;  // overflow: not a sane Content-Length
+            v = v * 10 + ( ph[p] - '0' );
+            ++p;
+        }
+        if ( p >= phl || ( ph[p] != '\r' && ph[p] != '\n' ) )
+            return false;  // truncated mid-value or trailing junk
+        *out = v;
+        return true;
     }
 }  // namespace
 
@@ -463,18 +494,7 @@ int NetMjpegSource::read_part_header( long* need )
     const uint8_t* ph = sock_ + sock_pos_;
     const size_t phl = hend - 4 - sock_pos_;
     *need = -1;
-    const size_t clp = ci_find( ph, phl, "content-length:" );
-    if ( clp != kNpos )
-    {
-        const char* s = reinterpret_cast<const char*>( ph ) + clp + 15;
-        while ( *s == ' ' || *s == '\t' )
-            ++s;
-        errno = 0;
-        char* end = nullptr;
-        const long v = std::strtol( s, &end, 10 );
-        if ( errno == 0 && end != s )
-            *need = v;
-    }
+    parse_content_length( ph, phl, need );
     sock_pos_ = hend;
     return 0;
 }
@@ -576,21 +596,12 @@ bool NetMjpegSource::has_buffered_header() const
         return false;
     const uint8_t* ph = sock_ + sock_pos_ + b_end;
     const size_t phl = h_end - 4 - b_end;
-    const size_t clp = ci_find( ph, phl, "content-length:" );
-    if ( clp != kNpos )
+    long cl = 0;
+    if ( parse_content_length( ph, phl, &cl ) )
     {
-        const char* s = reinterpret_cast<const char*>( ph ) + clp + 15;
-        while ( *s == ' ' || *s == '\t' )
-            ++s;
-        errno = 0;
-        char* end = nullptr;
-        const long need = std::strtol( s, &end, 10 );
-        if ( errno == 0 && end != s && need >= 0 )
-        {
-            if ( need > kFrameMax )
-                return true;
-            return ( avail - h_end ) >= static_cast<size_t>( need );
-        }
+        if ( cl > kFrameMax )
+            return true;
+        return ( avail - h_end ) >= static_cast<size_t>( cl );
     }
     const size_t pat_len = static_cast<size_t>( bpat_len_ );
     for ( size_t p = h_end; p + pat_len <= avail; ++p )
