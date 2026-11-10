@@ -38,9 +38,6 @@
 #include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<kBufCount>: RAII pool sub-object
 #include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
 
-// Opaque ffmpeg types, forward-declared: the header compiles without
-// the libav* include paths, and the compiler checks the handle types
-// at call sites instead of trusting comments.
 struct AVFormatContext;
 struct AVCodecContext;
 struct AVFrame;
@@ -64,11 +61,10 @@ class NetEncoder
         bool tcp_pull = false;
     };
 
-    // RAII guard for the muxer context (run_session): p->pb is nulled
-    // first -- the Transport destructor owns the avio context and
-    // closes it -- then the context is freed. Same declaration
-    // position as Transport -> same destruction order: fc dies AFTER
-    // the Transport, as before.
+    // RAII guard for the muxer context (run_session): p->pb is nulled first
+    // -- the Transport destructor owns the avio context and closes it 
+    // -- then the context is freed. Same declaration position as 
+    // Transport -> same destruction order: fc dies AFTER the Transport, as before.
     struct FcGuard
     {
         ~FcGuard();
@@ -184,7 +180,10 @@ private:
     int64_t ts_us_ = -1;
     int64_t ts_base_ = -1;
     int64_t last_pts_ = -1;
-    int64_t last_enc_ts_us_ = -1;
+    // Atomic: written under mx_ by the serve thread on session (re)start,
+    // read/written by publish() on the pipeline thread WITHOUT mx_ (only the
+    // active_ gate in between) -- a plain int64_t was a data race (UB).
+    std::atomic<int64_t> last_enc_ts_us_ { -1 };
     uint64_t frames_sent_ = 0;
     int model_w_ = 0, model_h_ = 0;  // NPU tensor geometry (RGB888)
     int band_left_ = 0, band_top_ = 0;  // visible letterbox band in the tensor
