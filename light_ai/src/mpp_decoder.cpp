@@ -109,9 +109,12 @@ MppDecoder::~MppDecoder()
     // with the packet pointer still in the meta. Once we deinit that packet,
     // the pointer dangles, and the decoder teardown (dec_release_task_in_port)
     // dereferences it and double-deinits it ("negative ref_count" /
-    // "invalid mem pool ptr"). Dequeued tasks are held, not re-enqueued:
-    // mpp_destroy frees all tasks with its queues anyway. Must run BEFORE
-    // reset() as well as after: reset() itself calls dec_release_task_in_port.
+    // "invalid mem pool ptr"). Dequeued tasks are cleared and re-enqueued:
+    // the same helper serves the runtime recovery paths (-6/-7), where
+    // losing the tasks would permanently shrink the port queues; in the
+    // destructor it makes no difference -- mpp_destroy frees the tasks with
+    // their queues regardless. Must run BEFORE reset() as well as after:
+    // reset() itself calls dec_release_task_in_port.
     reset_and_strip();
 
     // Critical order: release every MPP object that may hold references to
@@ -393,6 +396,15 @@ void MppDecoder::reset_and_strip()
                     break;
                 mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, nullptr );
                 mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, nullptr );
+                // Re-enqueue: this helper also runs on the runtime recovery
+                // paths (-6/-7 in retrieve_output()). Dropping the dequeued
+                // tasks there permanently shrank BOTH port queues: the input
+                // side starved submit_input() into an endless -3 series after
+                // the first timeout, the output side lost its frame slots.
+                // In the destructor path this is semantically a no-op:
+                // mpp_destroy frees the tasks together with the queues
+                // regardless of which side holds them.
+                mpi_->enqueue( ctx_, port, t );
             }
         }
     };
