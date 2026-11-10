@@ -6,6 +6,7 @@
 #include <mutex>
 
 #include "frame_trace.h"
+#include "pod_ring.hpp"
 #include "rga_resizer.h"  // LbGeom: a Slot member by value - the full type is required here
 #include "yolo_postprocess.hpp"
 
@@ -18,54 +19,41 @@ struct PubFifo
 {
     // The defensive guards are the point of the design: the depth-3
     // invariant ("in the fifo live exactly the slots with st != FREE;
-    // at most kMaxSlots of them") lives in comments across three
-    // functions -- one refactor away from a silent corruption
-    // (push would overwrite slots_[head_] and inflate n_ past front/pop
-    // coherence), so violations get a loud log, never silent damage.
-
+    // at most kMaxSlots of them") survives here as loud logs in the
+    // wrappers -- PodRing itself is guard-free by design.
     void push( int s )
     {
-        if ( n_ >= kMaxSlots )
+        if ( !ring_.push( s ) )
         {
-            std::cerr << "pubfifo: overflow (n=" << n_ << ", head=" << head_ << "), "
-                      << "incoming slot " << s << " dropped\n";
-            return;
+            std::cerr << "pubfifo: overflow (n=" << ring_.n << ", head=" << ring_.head
+                      << "), incoming slot " << s << " dropped\n";
         }
-        slots_[( head_ + n_ ) % kMaxSlots] = s;
-        ++n_;
     }
     int front() const
     {
-        if ( n_ <= 0 )
+        if ( ring_.empty() )
         {
-            std::cerr << "pubfifo: empty (n=" << n_ << ", head=" << head_ << "), front invalid\n";
+            std::cerr << "pubfifo: empty (n=" << ring_.n << "), front invalid\n";
             return 0;
         }
-        return slots_[head_];
+        return ring_.front();
     }
     void pop()
     {
-        // Underflow guard: a stray pop() must never drive n_ negative --
-        // slots_[(head_ + n_) % kMaxSlots] with n_ < 0 is a negative index (UB).
-        // Mirrors the overflow guard in push(): loud log, no corruption.
-        if ( n_ <= 0 )
+        if ( ring_.empty() )
         {
-            std::cerr << "pubfifo: underflow (n=" << n_ << ", head=" << head_ << "), pop refused\n";
+            std::cerr << "pubfifo: underflow (n=" << ring_.n << "), pop refused\n";
             return;
         }
-        head_ = ( head_ + 1 ) % kMaxSlots;
-        --n_;
+        ring_.pop();
     }
-    bool empty() const { return n_ == 0; }
-    int size() const { return n_; }
+    bool empty() const { return ring_.empty(); }
+    int size() const { return ring_.size(); }
 
 private:
     enum { kMaxSlots = 3 };
-    int slots_[kMaxSlots] {};
-    int head_ = 0;
-    int n_ = 0;
+    PodRing<int, kMaxSlots> ring_;
 };
-
 // Unlike PubFifo above, Slot is NOT single-threaded: the mutex/cv pair
 // guards the handoff between the pipeline thread and the worker.
 

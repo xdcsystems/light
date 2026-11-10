@@ -62,7 +62,7 @@ void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t
     t.bw += ( bw - t.bw ) * a;
     t.bh += ( bh - t.bh ) * a;
     // Trajectory keeps FACTS only: measured points, never predicted ones.
-    t.traj.push( ts_us, cx, cy );
+    t.traj.push( TrajPoint{ ts_us, cx, cy } );
 }
 
 void Tracker::associate( const DetList& dets, int64_t ts_us,
@@ -175,9 +175,8 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
         t.ts_last_us = ts_us;
         t.hits = 1;
         t.miss = 0;
-        t.traj.head = 0;
-        t.traj.n = 0;
-        t.traj.push( ts_us, cx, cy );
+        t.traj.clear();
+        t.traj.push( TrajPoint{ ts_us, cx, cy } );
         return;
     }
     // No free slot: the detection is dropped (the cap is a safety net,
@@ -248,7 +247,7 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
         s.vy = t.fy.v;
         s.bw = t.bw;
         s.bh = t.bh;
-        s.n_pts = t.traj.n;
+        s.n_pts = t.traj.size();
         out.push( s );
     }
 }
@@ -265,16 +264,13 @@ int Tracker::recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) co
         if ( t.life == TRACK_FREE || t.id != id )
             continue;
         const Traj& tr = t.traj;
-        const int n = tr.n;
+        const int n = tr.size();
         int w = 0;  // write index into dst
         for ( int k = 0; k < n && w < dst_cap; ++k )
         {
             if ( k % stride != 0 )
                 continue;
-            const int idx = ( tr.head - 1 - k + kTrajPoints ) % kTrajPoints;
-            dst[w].ts_us = tr.p[idx].ts_us;
-            dst[w].x = tr.p[idx].x;
-            dst[w].y = tr.p[idx].y;
+            dst[w] = tr.back( k );  // back(k): newest (k = 0) -> oldest
             ++w;
         }
         for ( int a = 0, b = w - 1; a < b; ++a, --b )

@@ -637,3 +637,17 @@ refer to README.md sections (../README.md).
       `src/config/cli.cpp` and `src/config/option_registry.cpp` — both
       `--device` and `--net-src` append to `cfg_.sources` in exact `argv`
       order.
+- [x] PodRing<T, N> ring generalization (proposal 3.2, recorded &
+      closed 2026-11-10): include/pod_ring.hpp, the ring twin of
+      PodList<T, N> (push/pop/front/clear/size/empty/full, back(k)
+      indexing from the end, push_slot() for an in-place fill).
+      Absorbed all three hand-written rings: PubFifo (slot_ring.hpp
+      -- the loud-log guards stay in the wrapper), Tracker::Traj
+      (tracker.hpp -- recent_points() walks via back(k)),
+      NetEncoder::pkts_ (net_encoder.h/.cpp -- push_slot() fill; the
+      overflow policy unchanged verbatim: full-queue flush + forced
+      IDR). Verified: build green, tidy 0 findings (all 21 .cpp),
+      live smoke 2x900 frames (trails render, late-join wait_key_
+      path, clean EOF drain, ~20 FPS unchanged). Pending: the
+      encoder overflow probe (STOP/CONT on the viewer) -- next
+      session.

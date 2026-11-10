@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "pod_list.hpp"
+#include "pod_ring.hpp"
 #include "yolo_postprocess.hpp"
 
 // ---- Public vocabulary of the tracker -------------------------------
@@ -98,21 +99,8 @@ class Tracker
     };
 
     // Ring trajectory per track: oldest first, newest always included.
-    struct Traj
-    {
-        void push( int64_t ts, float x, float y )
-        {
-            p[head] = { ts, x, y };
-            head = ( head + 1 ) % kTrajPoints;
-            if ( n < kTrajPoints )
-                ++n;
-        }
-
-    public:
-        std::array<TrajPoint, kTrajPoints> p {};
-        int head = 0;
-        int n = 0;
-    };
+    // PodRing: push() wraps at the cap, back(k) walks newest -> oldest.
+    using Traj = PodRing<TrajPoint, kTrajPoints>;
 
     // One track: two-axis KF + size EMA + lifecycle + ring.
     struct Track

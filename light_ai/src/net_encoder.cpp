@@ -458,7 +458,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_f
     bool q_busy = false;
     {
         std::lock_guard<std::mutex> qlk( pkt_mx_ );
-        q_busy = pkt_count_ >= 4;
+        q_busy = pkts_.n >= 4;
     }
     const int64_t vfr_step_us = q_busy ? 20000 : 4000;
     const int64_t min_step_us = nsrc_ > 1 ? ( fps_ > 0 ? 1000000 / fps_ : vfr_step_us ) : 0;
@@ -608,7 +608,7 @@ bool NetEncoder::init_frames()
     dup_pkt_ = av_packet_alloc();
     if ( !mux_pkt_ || !dup_pkt_ )
         return false;
-    for ( auto*& qp : pkts_ )
+    for ( auto*& qp : pkts_.d )
     {
         qp = av_packet_alloc();
         if ( !qp )
@@ -624,7 +624,7 @@ void NetEncoder::free_frames()
         if ( fr )
             av_frame_free( &fr );
     }
-    for ( auto*& qp : pkts_ )
+    for ( auto*& qp : pkts_.d )
     {
         if ( qp )
             av_packet_free( &qp );
@@ -637,12 +637,11 @@ void NetEncoder::free_frames()
 
 void NetEncoder::clear_pkt_queue()
 {
-    for ( size_t i = 0; i < pkt_count_; ++i )
+    while ( !pkts_.empty() )
     {
-        av_packet_unref( pkts_[( pkt_head_ + i ) % kPktQDepth] );
+        av_packet_unref( pkts_.front() );
+        pkts_.pop();
     }
-    pkt_head_ = 0;
-    pkt_count_ = 0;
 }
 
 bool NetEncoder::send_frame( AVStream* st )
@@ -686,24 +685,23 @@ bool NetEncoder::send_frame( AVStream* st )
         // to serve()'s drain loop.
         {
             std::lock_guard<std::mutex> plk( pkt_mx_ );
-            if ( pkt_count_ >= kPktQDepth )
+            if ( pkts_.full() )
             {
                 // Overflow = serve() stalled (slow viewer / Wi-Fi burst).
                 // Dropping one packet tears the reference chain: every later
                 // P-frame decodes into corruption until the next IDR. Flush
                 // the whole queue, re-arm the IDR gate and force an IDR on
                 // the next frame: the gap is one frame, not a full GOP.
-                const size_t ndrop = pkt_count_;
+                const int ndrop = pkts_.n;
                 clear_pkt_queue();
                 force_idr_.store( true );
                 wait_key_ = true;
                 ++pkt_drops_;
                 std::cerr << "enc: packet queue overflow: flushed " << ndrop << " pkts (drop " << pkt_drops_ << "), IDR next frame\n";
             }
-            const size_t tail = ( pkt_head_ + pkt_count_ ) % kPktQDepth;
-            av_packet_unref( pkts_[tail] );
-            av_packet_move_ref( pkts_[tail], pkt );
-            ++pkt_count_;
+            AVPacket*& tail = pkts_.push_slot();  // commits n; !full() guaranteed above
+            av_packet_unref( tail );
+            av_packet_move_ref( tail, pkt );
             pkt_cv_.notify_one();
         }
         ret = avcodec_receive_packet( enc_, pkt );
@@ -760,24 +758,22 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
         {
             std::unique_lock<std::mutex> plk( pkt_mx_ );
             pkt_cv_.wait( plk, [this] {
-                return quit_.load() || error_.load() || pkt_count_ > 0;
+                return quit_.load() || error_.load() || pkts_.n > 0;
             } );
             if ( quit_.load() || error_.load() )
                 return;
-            AVPacket* front = pkts_[pkt_head_];
+            AVPacket* front = pkts_.front();
             if ( wait_key_ && !is_idr( front ) )
             {
                 av_packet_unref( front );
-                pkt_head_ = ( pkt_head_ + 1 ) % kPktQDepth;
-                --pkt_count_;
+                pkts_.pop();
                 continue;
             }
             wait_key_ = false;
             av_packet_unref( mux_pkt_ );
             av_packet_move_ref( mux_pkt_, front );
-            pkt_head_ = ( pkt_head_ + 1 ) % kPktQDepth;
-            --pkt_count_;
-            q_rem = pkt_count_;
+            pkts_.pop();
+            q_rem = pkts_.n;
         }
         // Ownership of the packet buffer moved into mux_pkt_ via
         // av_packet_move_ref; mux_write consumes and unrefs it without

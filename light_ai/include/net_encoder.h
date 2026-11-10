@@ -22,6 +22,8 @@
 // imported by the rkmpp wrapper by fd -- no CPU pixel copies anywhere in the path.
 #include <libavutil/hwcontext_drm.h>
 
+#include "pod_ring.hpp"
+
 // The DRM_FORMAT_* constants (NV12, MOD_LINEAR) live in drm_fourcc.h:
 // this header uses only the descriptor TYPE (hwcontext_drm.h) --
 // the constants are the cpp's business.
@@ -165,9 +167,7 @@ private:
     // from mx_: network-side wakeups never touch the encode critical section.
     std::mutex pkt_mx_;
     std::condition_variable pkt_cv_;
-    std::array<AVPacket*, kPktQDepth> pkts_ {};
-    size_t pkt_head_ = 0;
-    size_t pkt_count_ = 0;
+    PodRing<AVPacket*, kPktQDepth> pkts_ {};
     int pkt_drops_ = 0;
     bool wait_key_ = true;  // pkt_mx_: drain drops packets until the next IDR (see net_encoder.cpp)
     std::atomic<bool> active_ { false };  // stream path live (serve sets/clears under mx_)
