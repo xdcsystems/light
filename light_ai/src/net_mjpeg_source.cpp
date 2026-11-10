@@ -118,7 +118,7 @@ NetMjpegSource::NetMjpegSource()
     // reports it and the pipeline fails loud, as everywhere.
     const size_t bytes = static_cast<size_t>( kBufCount ) * static_cast<size_t>( kFrameMax );
     pool_ = ::mmap( nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
-    if ( pool_ == MAP_FAILED )
+    if ( pool_ == reinterpret_cast<void *>( -1 ) )  // MAP_FAILED: its ((void *) -1) lives in a system header
         return;  // pool_ stays nullptr; setup_device fails loud
     for ( int k = 0; k < kBufCount; ++k )
     {

@@ -142,11 +142,11 @@ void GpuBoxDrawer::setup_attribs() const
 {
     glBindBuffer( GL_ARRAY_BUFFER, st_.vbo );
     glEnableVertexAttribArray( st_.apos );
-    glVertexAttribPointer( st_.apos, 2, GL_FLOAT, GL_FALSE, sizeof( BatchVert ), (void *)nullptr );
+    glVertexAttribPointer( st_.apos, 2, GL_FLOAT, GL_FALSE, sizeof( BatchVert ), nullptr );
     if ( st_.acol >= 0 )
     {
         glEnableVertexAttribArray( st_.acol );
-        glVertexAttribPointer( st_.acol, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof( BatchVert ), (void *)8 );
+        glVertexAttribPointer( st_.acol, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof( BatchVert ), reinterpret_cast<void *>( 8 ) );
     }
 }
 
@@ -163,7 +163,7 @@ bool GpuBoxDrawer::init()
     st_ = State {};
     ready_ = false;
 
-    st_.get_platform_display = (P_GetPlatformDisplayEXT)eglGetProcAddress( "eglGetPlatformDisplayEXT" );
+    st_.get_platform_display = reinterpret_cast<P_GetPlatformDisplayEXT>( eglGetProcAddress( "eglGetPlatformDisplayEXT" ) );
     if ( !st_.get_platform_display )
     {
         std::cerr << "drawer: eglGetPlatformDisplayEXT missing\n";
@@ -181,8 +181,8 @@ bool GpuBoxDrawer::init()
         done();  // init() error path: release everything created so far
         return false;
     }
-    typedef void *( *P_gbm_create_device )( int );
-    P_gbm_create_device gbm_create_device = (P_gbm_create_device)dlsym( st_.dl_gbm, "gbm_create_device" );
+    using P_gbm_create_device = void *( * )( int );
+    P_gbm_create_device gbm_create_device = reinterpret_cast<P_gbm_create_device>( dlsym( st_.dl_gbm, "gbm_create_device" ) );
     if ( !gbm_create_device )
     {
         std::cerr << "drawer: gbm_create_device missing\n";
@@ -213,8 +213,8 @@ bool GpuBoxDrawer::init()
                 eglTerminate( d );
             if ( dev )
             {
-                typedef void ( *P_gbm_destroy_device )( void * );
-                auto destroy_dev = (P_gbm_destroy_device)dlsym( st_.dl_gbm, "gbm_destroy_device" );
+                using P_gbm_destroy_device = void ( * )( void * );
+                auto destroy_dev = reinterpret_cast<P_gbm_destroy_device>( dlsym( st_.dl_gbm, "gbm_destroy_device" ) );
                 if ( destroy_dev )
                     destroy_dev( dev );
             }
@@ -245,16 +245,16 @@ bool GpuBoxDrawer::init()
     // Extension entry points: never assumed to be linkable, always via
     // eglGetProcAddress with a null check (the probe proved libmali does
     // not export all of them as symbols).
-    st_.create_image = (P_CreateImage)eglGetProcAddress( "eglCreateImageKHR" );
-    st_.destroy_image = (P_DestroyImage)eglGetProcAddress( "eglDestroyImageKHR" );
-    st_.create_sync = (P_CreateSync)eglGetProcAddress( "eglCreateSyncKHR" );
-    st_.destroy_sync = (P_DestroySync)eglGetProcAddress( "eglDestroySyncKHR" );
-    st_.client_wait = (P_ClientWaitSync)eglGetProcAddress( "eglClientWaitSyncKHR" );
-    st_.dup_fence = (P_DupNativeFenceFDANDROID)eglGetProcAddress( "eglDupNativeFenceFDANDROID" );
-    st_.image_target_tex = (P_ImageTargetTexture2DOES)eglGetProcAddress( "glEGLImageTargetTexture2DOES" );
-    st_.gen_vao = (P_GenVertexArrays)eglGetProcAddress( "glGenVertexArrays" );
-    st_.del_vao = (P_DeleteVertexArrays)eglGetProcAddress( "glDeleteVertexArrays" );
-    st_.bind_vao = (P_BindVertexArray)eglGetProcAddress( "glBindVertexArray" );
+    st_.create_image = reinterpret_cast<P_CreateImage>( eglGetProcAddress( "eglCreateImageKHR" ) );
+    st_.destroy_image = reinterpret_cast<P_DestroyImage>( eglGetProcAddress( "eglDestroyImageKHR" ) );
+    st_.create_sync = reinterpret_cast<P_CreateSync>( eglGetProcAddress( "eglCreateSyncKHR" ) );
+    st_.destroy_sync = reinterpret_cast<P_DestroySync>( eglGetProcAddress( "eglDestroySyncKHR" ) );
+    st_.client_wait = reinterpret_cast<P_ClientWaitSync>( eglGetProcAddress( "eglClientWaitSyncKHR" ) );
+    st_.dup_fence = reinterpret_cast<P_DupNativeFenceFDANDROID>( eglGetProcAddress( "eglDupNativeFenceFDANDROID" ) );
+    st_.image_target_tex = reinterpret_cast<P_ImageTargetTexture2DOES>( eglGetProcAddress( "glEGLImageTargetTexture2DOES" ) );
+    st_.gen_vao = reinterpret_cast<P_GenVertexArrays>( eglGetProcAddress( "glGenVertexArrays" ) );
+    st_.del_vao = reinterpret_cast<P_DeleteVertexArrays>( eglGetProcAddress( "glDeleteVertexArrays" ) );
+    st_.bind_vao = reinterpret_cast<P_BindVertexArray>( eglGetProcAddress( "glBindVertexArray" ) );
 
     if ( !st_.create_image || !st_.image_target_tex )
     {
@@ -309,7 +309,7 @@ bool GpuBoxDrawer::init()
     glBufferData( GL_ARRAY_BUFFER, kVboBytes, nullptr, GL_STREAM_DRAW );
     // VAO (ES3 only, when the entry points exist): attributes are
     // recorded once here; draw() then does a single glBindVertexArray.
-    const char *glver = (const char *)glGetString( GL_VERSION );
+    const char *glver = reinterpret_cast<const char *>( glGetString( GL_VERSION ) );
     st_.es3 = glver && strstr( glver, "ES 3." ) != nullptr && st_.gen_vao && st_.del_vao && st_.bind_vao;
     if ( st_.es3 )
     {
@@ -408,8 +408,8 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
     // around y = h/2).
     BatchVert* v = st_.vstage.data();
     int cnt = 0;
-    const float xs = 2.0f / (float)st_.w;
-    const float ys = 2.0f / (float)st_.h;
+    const float xs = 2.0f / static_cast<float>( st_.w );
+    const float ys = 2.0f / static_cast<float>( st_.h );
     const float t = 1.0f;  // outline thickness, tensor px
 
     auto push = [&]( float x0, float y0, float x1, float y1, const GpuBox &b ) {
@@ -469,7 +469,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
         setup_attribs();  // ES3: attributes live in the VAO
     
     glBindBuffer( GL_ARRAY_BUFFER, st_.vbo );
-    glBufferSubData( GL_ARRAY_BUFFER, 0, (GLsizeiptr)cnt * sizeof( BatchVert ), v );
+    glBufferSubData( GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>( cnt ) * sizeof( BatchVert ), v );
     glDrawArrays( GL_TRIANGLES, 0, cnt );
     glBindFramebuffer( GL_FRAMEBUFFER, 0 );
     glFlush();
@@ -570,10 +570,10 @@ void GpuBoxDrawer::done()
     // Unconditional: init may fail after dlopen/dlopen+open, and those handles must go too.
     if ( st_.dl_gbm )
     {
-        typedef void ( *P_gbm_destroy_device )( void * );
+        using P_gbm_destroy_device = void ( * )( void * );
         if ( st_.gbm_dev )
         {
-            auto destroy_dev = (P_gbm_destroy_device)dlsym( st_.dl_gbm, "gbm_destroy_device" );
+            auto destroy_dev = reinterpret_cast<P_gbm_destroy_device>( dlsym( st_.dl_gbm, "gbm_destroy_device" ) );
             if ( destroy_dev )
                 destroy_dev( st_.gbm_dev );
             st_.gbm_dev = nullptr;

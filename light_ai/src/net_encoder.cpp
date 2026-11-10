@@ -52,7 +52,7 @@ namespace
 {
     bool is_idr( const AVPacket* q )
     {
-        for ( size_t i = 0; i + 4 <= (size_t)q->size; ++i )
+        for ( size_t i = 0; i + 4 <= static_cast<size_t>( q->size ); ++i )
             if ( q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
             {
                 const uint8_t t = q->data[i+3] & 0x1F;
@@ -69,19 +69,19 @@ namespace
         // 4-byte (00 00 00 01) prefixes occur in the wild; anchoring
         // on 3-byte only silently matched nothing on 4-byte input.
         size_t i = 0;
-        while ( i + 3 <= (size_t)q->size &&
+        while ( i + 3 <= static_cast<size_t>( q->size ) &&
                 !( q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 ) )
             ++i;
-        if ( i + 4 > (size_t)q->size )
+        if ( i + 4 > static_cast<size_t>( q->size ) )
             return false;
         bool saw_sps = false;
-        while ( i + 4 <= (size_t)q->size && q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
+        while ( i + 4 <= static_cast<size_t>( q->size ) && q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
         {
             const uint8_t t = q->data[i+3] & 0x1F;
             if ( t == 7 ) saw_sps = true;
             if ( t == 5 || t == 1 || t == 10 ) break;  // slice/EoS NAL: header ends here
             size_t j = i + 3;
-            while ( j + 3 <= (size_t)q->size && !( q->data[j] == 0 && q->data[j+1] == 0 && q->data[j+2] == 1 ) ) ++j;
+            while ( j + 3 <= static_cast<size_t>( q->size ) && !( q->data[j] == 0 && q->data[j+1] == 0 && q->data[j+2] == 1 ) ) ++j;
             i = j;
         }
         if ( saw_sps && i > 0 )
@@ -94,7 +94,7 @@ namespace
 
     bool starts_with( const AVPacket* q, const std::vector< uint8_t >& h )
     {
-        return !h.empty() && q->size >= (int)h.size() && memcmp( q->data, h.data(), h.size() ) == 0;
+        return !h.empty() && q->size >= static_cast<int>( h.size() ) && memcmp( q->data, h.data(), h.size() ) == 0;
     }
 
     int calc_tile_w( int model_w, const LbGeom& band, int nsrc )
@@ -242,7 +242,7 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     // Force CBR through MPP: see the rate-control comment above. At this
     // point mpp_init has run and nothing has been encoded yet, so a
     // re-issued MPP_ENC_SET_CFG is safe. Non-fatal on any mismatch.
-    RKMPPPriv* rc_priv = reinterpret_cast< RKMPPPriv* >( ctx->priv_data );
+    RKMPPPriv* rc_priv = static_cast< RKMPPPriv* >( ctx->priv_data );
     if ( rc_priv && rc_priv->mctx && rc_priv->mapi && rc_priv->mcfg )
     {
         mpp_enc_cfg_set_s32( rc_priv->mcfg, "rc:mode", MPP_ENC_RC_MODE_CBR );
@@ -317,13 +317,13 @@ NetEncoder::~NetEncoder()
         // Without the flush the wrapper tears down its pools first and
         // then runs mpp_frame_deinit on the leftovers — "non-positive
         // ref_count" / "invalid mem pool ptr" at exit.
-        auto* ctx = static_cast<AVCodecContext*>( enc_ );
+        auto* ctx = enc_;
         // Drain only if frames were actually encoded: EOF on an idle
         // encoder makes the wrapper's flush path touch an already-torn-down
         // MPP pool ("invalid mem pool ptr" at exit, idle-run case).
         if ( frames_sent_ > 0 )
         {
-            AVPacket* pkt = static_cast<AVPacket*>( pkt_ );
+            AVPacket* pkt = pkt_;
             // The wrapper runs a NON_BLOCK output timeout (no LOW_DELAY
             // flag): EAGAIN during flush means "frames still in flight",
             // not "done". Stopping at the first EAGAIN leaves up to
@@ -383,7 +383,7 @@ NetEncoder::~NetEncoder()
                 std::cout << eagains << ")";
             std::cout << "\n";
         }
-        avcodec_free_context( reinterpret_cast<AVCodecContext**>( &enc_ ) );
+        avcodec_free_context( &enc_ );
     }
     free_frames();
     if ( pkt_ )
@@ -553,7 +553,7 @@ bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, Mpp
     rga_buffer_t dst = wrapbuffer_fd( mpp_buffer_get_fd( target ), w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
     im_rect drect = { dst_b.left, dst_b.top, dst_b.w, dst_b.h };
     const IM_STATUS rs = improcess( src, dst, {}, srect, drect, {}, 0 );
-    if ( (int)rs <= 0 )
+    if ( static_cast<int>( rs ) <= 0 )
     {
         std::cerr << "enc: RGA convert failed: " << imStrError( rs ) << "\n";
         return false;
@@ -562,7 +562,7 @@ bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, Mpp
     {
         rga_buffer_t out = wrapbuffer_fd( mpp_buffer_get_fd( mb ), w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
         const IM_STATUS cs = imcopy( dst, out );
-        if ( (int)cs <= 0 )
+        if ( static_cast<int>( cs ) <= 0 )
         {
             std::cerr << "enc: RGA composite copy failed: " << imStrError( cs ) << "\n";
             return false;
@@ -657,7 +657,7 @@ bool NetEncoder::send_frame( AVStream* st )
     // (RKMPPPriv above).
     if ( force_idr_.exchange( false ) )
     {
-        RKMPPPriv* priv = reinterpret_cast< RKMPPPriv* >( enc_->priv_data );
+        RKMPPPriv* priv = static_cast< RKMPPPriv* >( enc_->priv_data );
         if ( priv && priv->mctx && priv->mapi )
         {
             MPP_RET rc = priv->mapi->control( priv->mctx, MPP_ENC_SET_IDR_FRAME, nullptr );
@@ -673,7 +673,7 @@ bool NetEncoder::send_frame( AVStream* st )
         return false;
     }
 
-    AVPacket* pkt = static_cast<AVPacket*>( pkt_ );
+    AVPacket* pkt = pkt_;
     ret = avcodec_receive_packet( enc_, pkt );
     while ( ret >= 0 )  // drains the burst; EAGAIN/EOF end it
     {
@@ -922,7 +922,7 @@ bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, bool tcp_
     st->codecpar->format = AV_PIX_FMT_NV12;
     st->codecpar->width = w_;
     st->codecpar->height = h_;
-    st->codecpar->bit_rate = static_cast<AVCodecContext*>( enc_ )->bit_rate;
+    st->codecpar->bit_rate = enc_->bit_rate;
     st->time_base = vfr_ ? AVRational { 1, 90000 } : AVRational { 1, fps_ };
     st->avg_frame_rate = vfr_ ? AVRational { 0, 1 } : AVRational { fps_, 1 };
 

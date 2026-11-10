@@ -211,7 +211,7 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
         }
         bufs_[i].length = buf.length;
         bufs_[i].start = mmap( nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, buf.m.offset );
-        if ( bufs_[i].start == MAP_FAILED )
+        if ( bufs_[i].start == reinterpret_cast<void *>( -1 ) )  // MAP_FAILED: its ((void *) -1) lives in a system header
         {
             bufs_[i].start = nullptr;
             std::cerr << "camera: mmap idx=" << i << ": " << strerror( errno ) << '\n';

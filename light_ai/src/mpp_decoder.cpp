@@ -354,7 +354,7 @@ int MppDecoder::retrieve_output()
     else if ( mpp_frame_get_errinfo( f ) || mpp_frame_get_discard( f ) )
     {
         std::cerr << "dec: DECODE-ERROR errinfo=0x" << std::hex << mpp_frame_get_errinfo( f ) << std::dec
-                  << " discard=" << mpp_frame_get_discard( f ) << " fmt=" << (int)mpp_frame_get_fmt( f ) << '\n';
+                  << " discard=" << mpp_frame_get_discard( f ) << " fmt=" << static_cast<int>( mpp_frame_get_fmt( f ) ) << '\n';
     }
     else
     {
