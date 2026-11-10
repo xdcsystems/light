@@ -10,19 +10,30 @@ void Tracker::reset()
     next_id_ = 1;
 }
 
-void Tracker::kf_predict( AxisKF& k, float dt ) const
+// Covariance-only predict: grows P exactly like the full predict step
+// but leaves the state untouched. Used while a confirmed track is
+// unmatched (miss >= 2): the position stays frozen so the IoU gate can
+// still re-associate the reappearing object at the last seen spot, but
+// the covariance keeps growing -- otherwise P sat at its post-update
+// size for the whole gap and the tiny Kalman gain made the track crawl
+// to the new measurement instead of snapping.
+void Tracker::kf_predict_cov( AxisKF& k, float dt, float q ) const
 {
-    k.x += k.v * dt;
     const float p00 = k.p[0];
     const float p01 = k.p[1];
     const float p10 = k.p[2];
     const float p11 = k.p[3];
     const float dt2 = dt * dt;
-    const float q = static_cast<float>( kQAccel );
     k.p[0] = p00 + dt * ( p10 + p01 ) + dt2 * p11 + q * dt2 * dt / 3.0f;
     k.p[1] = p01 + dt * p11 + q * dt2 / 2.0f;
     k.p[2] = p10 + dt * p11 + q * dt2 / 2.0f;
     k.p[3] = p11 + q * dt;
+}
+
+void Tracker::kf_predict( AxisKF& k, float dt ) const
+{
+    k.x += k.v * dt;
+    kf_predict_cov( k, dt, static_cast<float>( kQAccel ) );
 }
 
 void Tracker::kf_update( AxisKF& k, float z ) const
@@ -48,8 +59,18 @@ void Tracker::kf_update( AxisKF& k, float z ) const
 
 void Tracker::predict( Track& t, float dt ) const
 {
+    // miss >= 2: freeze the state (the IoU gate must still find the
+    // reappearing object near the last seen spot) but keep growing the
+    // covariance, so the gain at the reappearance update matches the
+    // real length of the gap. Only confirmed tracks reach miss >= 2
+    // (tentative ones die at kMaxTentMiss), and kMaxMiss caps the
+    // growth at 15 frames.
     if ( t.miss >= 2 )
+    {
+        kf_predict_cov( t.fx, dt, static_cast<float>( kQAccel ) );
+        kf_predict_cov( t.fy, dt, static_cast<float>( kQAccel ) );
         return;
+    }
     kf_predict( t.fx, dt );
     kf_predict( t.fy, dt );
 }

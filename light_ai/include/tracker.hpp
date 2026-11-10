@@ -131,6 +131,7 @@ public:
 
 private:
     void kf_predict( AxisKF& k, float dt ) const;
+    void kf_predict_cov( AxisKF& k, float dt, float q ) const;
     void kf_update( AxisKF& k, float z ) const;
     void predict( Track& t, float dt ) const;
     void measure( Track& t, float cx, float cy, float bw, float bh, int64_t ts_us );
