@@ -612,8 +612,10 @@ refer to README.md sections (../README.md).
       different `LbGeom` share a slot tensor, `Pipeline::frame_dispatch`
       now refills the tensor with gray 128 (`DmaSync` + `cache_drop`)
       whenever `sl.lb != ss.lb`, eliminating cross-aspect bar ghosting.
-      (A side-by-side multi-view composite canvas remains an optional
-      future feature.)
+      Multi-view composite canvas in `NetEncoder` closed 2026-11-10:
+      `nsrc == 2` streams 1280x480 Side-by-Side (2x1), `nsrc == 3` streams
+      1280x960 Grid (2x2) via a persistent 4th NV12 DRM buffer + RGA3
+      `imcopy` (`enc=0.9-1.3 ms` over 3000 frames).
 - [x] M5.3: narrow `pool_discard(int src_idx)` by `sl.src_idx` (recorded &
       closed 2026-11-10): mid-run recovery of one source now discards only
       in-flight slots of the failed source while preserving healthy

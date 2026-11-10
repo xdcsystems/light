@@ -239,10 +239,15 @@ post-processing.
                first viewer connects; a stalled viewer is dropped via
                SO_SNDTIMEO (15 s). Late joiners via repeated
                PAT/PMT/SDT.
-               The NV12 dma-buf pool is three buffers deep (2026-11-02,
+               The NV12 dma-buf pool is three ring buffers deep (2026-11-02,
                P1-4): two could run out exactly at the 3-deep rkmpp
                task queue when VFR frames arrive in clumps after a
                network pause; the slot index advance is modulus-based.
+               In M5 multi-camera mode (nsrc > 1) a 4th NV12 buffer holds
+               a persistent composite multi-view canvas (1280x480 Side-by-Side
+               2x1 for 2 sources, 1280x960 Grid 2x2 for 3 sources, 640x480 per
+               tile): RGA3 updates the active source's tile and DMA-copies the
+               composite canvas into the current ring slot (0.9-1.3 ms enc).
                2026-11-01: board-side stream fixes verified live —
                TCP_NODELAY + 2 MiB SO_SNDBUF on the accepted socket,
                max_delay=0, flush_packets=1,

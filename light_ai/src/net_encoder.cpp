@@ -96,11 +96,47 @@ namespace
     {
         return !h.empty() && q->size >= (int)h.size() && memcmp( q->data, h.data(), h.size() ) == 0;
     }
+
+    int calc_tile_w( int model_w, const LbGeom& band, int nsrc )
+    {
+        return nsrc > 1 ? ( ( model_w + 15 ) & ~15 ) : ( ( band.w + 15 ) & ~15 );
+    }
+
+    int calc_tile_h( int model_h, const LbGeom& band, int nsrc )
+    {
+        return nsrc > 1 ? ( ( ( model_h * 3 / 4 ) + 15 ) & ~15 ) : band.h;
+    }
+
+    int calc_stream_w( int model_w, const LbGeom& band, int nsrc )
+    {
+        const int tw = calc_tile_w( model_w, band, nsrc );
+        return nsrc > 1 ? tw * 2 : tw;
+    }
+
+    int calc_stream_h( int model_h, const LbGeom& band, int nsrc )
+    {
+        const int th = calc_tile_h( model_h, band, nsrc );
+        return nsrc > 2 ? th * 2 : th;
+    }
+
+    void fill_nv12_gray( MppBuffer mb )
+    {
+        if ( void* p = mpp_buffer_get_ptr( mb ) )
+        {
+            const size_t sz = mpp_buffer_get_size( mb );
+            dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
+            std::memset( p, 128, sz );
+            dma::cache_clean( p, sz );
+        }
+    }
 }  // namespace
 
-NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, int port, const std::string& host, int bitrate_kbps )
-  : w_( ( band.w + 15 ) & ~15 )  // MPP hor_stride: stream width 16-aligned up
-  , h_( band.h )
+NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, int port, const std::string& host, int bitrate_kbps, int nsrc )
+  : w_( calc_stream_w( model_w, band, nsrc ) )
+  , h_( calc_stream_h( model_h, band, nsrc ) )
+  , tile_w_( calc_tile_w( model_w, band, nsrc ) )
+  , tile_h_( calc_tile_h( model_h, band, nsrc ) )
+  , nsrc_( nsrc > 1 ? nsrc : 1 )
   , fps_( fps )
   , port_( port )
   , bitrate_kbps_( bitrate_kbps > 0 ? bitrate_kbps : 12000 )
@@ -112,11 +148,9 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     avformat_network_init();
 
     // Visible letterbox band inside the tensor: everything outside is the
-    // gray padding memset once at startup. The stream is the band at its
-    // NATIVE size — no upscale. Band geometry arrives from the Pipeline
-    // (single-owner LbGeom, the same numbers as the RGA crop and the
-    // postprocess scale). The clamps below stay as
-    // defensive guards only.
+    // gray padding memset once at startup. In single-camera mode the stream
+    // is the band at its NATIVE size; with nsrc_ > 1 each source gets a
+    // tile_w_ x tile_h_ cell in a Side-by-Side (2x1) or Grid (2x2) canvas.
 
     band_h_ = band.h;
     band_top_ = band.top;
@@ -130,8 +164,12 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
         band_w_ = model_w_;
     if ( band_left_ < 0 )
         band_left_ = 0;
-    std::cout << "enc: tensor band x=[" << band_left_ << ',' << band_left_ + band_w_ << ") y=[" << band_top_ << ',' << band_top_ + band_h_
-              << ") of " << model_w_ << 'x' << model_h_ << " -> " << w_ << 'x' << h_ << '\n';
+    if ( nsrc_ > 1 )
+        std::cout << "enc: multi-view " << nsrc_ << " sources, tile " << tile_w_ << 'x' << tile_h_
+                  << " -> " << w_ << 'x' << h_ << '\n';
+    else
+        std::cout << "enc: tensor band x=[" << band_left_ << ',' << band_left_ + band_w_ << ") y=[" << band_top_ << ',' << band_top_ + band_h_
+                  << ") of " << model_w_ << 'x' << model_h_ << " -> " << w_ << 'x' << h_ << '\n';
 
     // Three NV12 dma-bufs: a plane held by an older encode is never
     // overwritten by RGA on the next frame; the third buffer absorbs
@@ -401,7 +439,7 @@ bool NetEncoder::viewer_active() const
     return active_.load();
 }
 
-void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_fd, int64_t ts_us )
+void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_fd, int64_t ts_us, int src_idx )
 {
     if ( quit_.load() || !active_.load() )
     {
@@ -423,7 +461,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_f
     // below now covers only encode + mux. The pipeline thread is the
     // sole user of cur_/pool_.buf/acq_fd_ here; serve() touches none of
     // them, and the destructor joins this thread before freeing.
-    if ( !prep_frame( tensor_fd, band, pool_.buf[cur_] ) )
+    if ( !prep_frame( tensor_fd, band, src_idx, pool_.buf[cur_] ) )
     {
         error_.store( true );
         {
@@ -448,53 +486,54 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_f
     }
 }
 
+void NetEncoder::wait_draw_fence()
+{
+    if ( acq_fd_ < 0 )
+        return;
+    pollfd pf {};
+    pf.fd = acq_fd_;
+    pf.events = POLLIN;
+    // The pipeline thread is also the camera thread. A long stall
+    // here stops DQBUF and the driver drops frames. 8 ms is enough
+    // for a healthy Mali fence; on timeout the boxes may lag one
+    // frame, which is cheaper than a 200 ms capture freeze.
+    if ( ::poll( &pf, 1, 8 ) <= 0 )
+        std::cerr << "enc: draw fence wait failed, boxes may lag a frame\n";
+    ::close( acq_fd_ );
+    acq_fd_ = -1;
+}
+
 // RGA prep for the current frame: wait out the GPU draw fence (this RGA
 // driver ignores input fences, so ordering is a poll) and crop the
-// letterbox band of the model tensor into the ping-pong NV12 buffer mb.
-bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, MppBuffer mb )
+// letterbox band of the model tensor into the ping-pong NV12 buffer mb
+// (or into the persistent composite buffer pool_.buf[kBufCount] + DMA copy
+// when nsrc_ > 1).
+bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb )
 {
+    wait_draw_fence();
+    const int sidx = ( nsrc_ > 1 && src_idx >= 0 && src_idx < nsrc_ && src_idx < kBufCount ) ? src_idx : 0;
     const LbGeom src_b = ( band.w > 0 && band.h > 0 ) ? band : LbGeom { band_left_, band_w_, band_top_, band_h_ };
-    LbGeom dst_b = ( src_b.w == band_w_ && src_b.h == band_h_ )
-                       ? LbGeom { 0, band_w_, 0, band_h_ }
-                       : band_geom( src_b.w, src_b.h, band_w_, band_h_ );
-    dst_b.left &= ~1;
-    dst_b.top &= ~1;
+    const int tw = nsrc_ > 1 ? tile_w_ : band_w_;
+    const int th = nsrc_ > 1 ? tile_h_ : band_h_;
+    LbGeom dst_b = ( src_b.w == tw && src_b.h == th )
+                       ? LbGeom { 0, tw, 0, th }
+                       : band_geom( src_b.w, src_b.h, tw, th );
+    dst_b.left = ( ( sidx % 2 ) * tile_w_ + dst_b.left ) & ~1;
+    dst_b.top = ( ( sidx / 2 ) * tile_h_ + dst_b.top ) & ~1;
     dst_b.w &= ~1;
     dst_b.h &= ~1;
 
-    LbGeom& prev = buf_bands_[cur_];
+    MppBuffer target = nsrc_ > 1 ? pool_.buf[kBufCount] : mb;
+    LbGeom& prev = buf_bands_[nsrc_ > 1 ? static_cast<uint32_t>( sidx ) : cur_];
     if ( prev.w > 0 && ( prev.left != dst_b.left || prev.top != dst_b.top || prev.w != dst_b.w || prev.h != dst_b.h ) )
-    {
-        if ( void* p = mpp_buffer_get_ptr( mb ) )
-        {
-            const size_t sz = mpp_buffer_get_size( mb );
-            dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
-            std::memset( p, 128, sz );
-            dma::cache_clean( p, sz );
-        }
-    }
+        fill_nv12_gray( target );
     prev = dst_b;
 
     rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888 );
     im_rect srect = { src_b.left & ~1, src_b.top & ~1, src_b.w & ~1, src_b.h & ~1 };
     // Explicit strides: the VU plane lands at w * vstride_ - exactly where
     // the DRM descriptor below reports it.
-    rga_buffer_t dst = wrapbuffer_fd( mpp_buffer_get_fd( mb ), w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
-
-    if ( acq_fd_ >= 0 )
-    {
-        pollfd pf {};
-        pf.fd = acq_fd_;
-        pf.events = POLLIN;
-        // The pipeline thread is also the camera thread. A long stall
-        // here stops DQBUF and the driver drops frames. 8 ms is enough
-        // for a healthy Mali fence; on timeout the boxes may lag one
-        // frame, which is cheaper than a 200 ms capture freeze.
-        if ( ::poll( &pf, 1, 8 ) <= 0 )
-            std::cerr << "enc: draw fence wait failed, boxes may lag a frame\n";
-        ::close( acq_fd_ );
-        acq_fd_ = -1;
-    }
+    rga_buffer_t dst = wrapbuffer_fd( mpp_buffer_get_fd( target ), w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
     im_rect drect = { dst_b.left, dst_b.top, dst_b.w, dst_b.h };
     const IM_STATUS rs = improcess( src, dst, {}, srect, drect, {}, 0 );
     if ( (int)rs <= 0 )
@@ -502,7 +541,16 @@ bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, MppBuffer mb )
         std::cerr << "enc: RGA convert failed: " << imStrError( rs ) << "\n";
         return false;
     }
-
+    if ( nsrc_ > 1 )
+    {
+        rga_buffer_t out = wrapbuffer_fd( mpp_buffer_get_fd( mb ), w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
+        const IM_STATUS cs = imcopy( dst, out );
+        if ( (int)cs <= 0 )
+        {
+            std::cerr << "enc: RGA composite copy failed: " << imStrError( cs ) << "\n";
+            return false;
+        }
+    }
     return true;
 }
 

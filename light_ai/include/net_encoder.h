@@ -80,6 +80,7 @@ class NetEncoder
     enum
     {
         kBufCount = 3,
+        kPoolCount = kBufCount + 1,
         kPktQDepth = 8
     };
 
@@ -90,7 +91,8 @@ public:
                 int fps,
                 int port,
                 const std::string& host,
-                int bitrate_kbps );
+                int bitrate_kbps,
+                int nsrc = 1 );
 
     ~NetEncoder();
     NetEncoder( const NetEncoder& ) = delete;
@@ -101,7 +103,7 @@ public:
     // ts_us is the dequeue timestamp in microseconds from pipeline
     // start -- the pts source in follow-source mode (--net-fps 0, VFR);
     // ignored in the fixed-fps mode.
-    void publish( int tensor_fd, const LbGeom& band, int acquire_fence_fd = -1, int64_t ts_us = -1 );
+    void publish( int tensor_fd, const LbGeom& band, int acquire_fence_fd = -1, int64_t ts_us = -1, int src_idx = 0 );
 
     // True while the stream path is live (viewer connected in PULL
     // mode / UDP path open). The pipeline gates GPU box drawing on it:
@@ -127,10 +129,11 @@ private:
     void clear_pkt_queue();
     int64_t packet_pts();  // pts of the next frame; may set ts_base_
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
-    bool prep_frame( int tensor_fd, const LbGeom& band, MppBuffer mb );
+    void wait_draw_fence();
+    bool prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb );
 
 private:
-    const int w_, h_, fps_, port_, bitrate_kbps_;
+    const int w_, h_, tile_w_, tile_h_, nsrc_, fps_, port_, bitrate_kbps_;
     const std::string host_;
     std::thread thread_;
     std::atomic<bool> quit_ { false };
@@ -152,7 +155,7 @@ private:
     // with --net-fps 0 (VFR) frames arrive in clumps after a network
     // pause, and two buffers can run out exactly at the 3-deep rkmpp
     // task queue while an older encode still holds its plane.
-    RkmppDrmPool<kBufCount> pool_;  // three ping-pong NV12 dma-bufs, one RAII sub-object
+    RkmppDrmPool<kPoolCount> pool_;  // 3 ring NV12 dma-bufs + 1 composite canvas (multi-view)
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
     std::array<AVFrame*, kBufCount> frames_ {};  // pre-bound DRM_PRIME frames (one per pool slot)

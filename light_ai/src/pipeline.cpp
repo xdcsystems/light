@@ -98,7 +98,7 @@ Pipeline::Pipeline( const Config& cfg )
             src_h_ = srcs_[s].h;
     }
 
-    sink_.init( cfg_, npus_, model_w_, model_h_, srcs_[0].lb );
+    sink_.init( cfg_, npus_, model_w_, model_h_, srcs_[0].lb, nsrc_ );
     init_aux();
 
     if ( cfg_.cal_frames > 0 && cfg_.cal_dir.empty() )

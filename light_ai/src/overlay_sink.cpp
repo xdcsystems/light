@@ -81,7 +81,8 @@ void OverlaySink::init( const Config& cfg,
                         const std::vector<RknnEngine>& npus,
                         int model_w,
                         int model_h,
-                        const LbGeom& primary_band )
+                        const LbGeom& primary_band,
+                        int nsrc )
 {
     model_w_ = model_w;
     model_h_ = model_h;
@@ -94,7 +95,7 @@ void OverlaySink::init( const Config& cfg,
 
     if ( cfg.net_h264 )
     {
-        enc_.emplace( model_w_, model_h_, primary_band, cfg.net_fps, cfg.net_port, cfg.net_host, cfg.net_bitrate );
+        enc_.emplace( model_w_, model_h_, primary_band, cfg.net_fps, cfg.net_port, cfg.net_host, cfg.net_bitrate, nsrc );
         if ( cfg.net_host.empty() )
             std::cout << "net: h264 PULL server on port " << cfg.net_port << ", " << cfg.net_bitrate
                       << " kbps (viewer: ffplay tcp://<board-ip>:" << cfg.net_port << ")\n";
@@ -183,7 +184,7 @@ double OverlaySink::draw_and_publish( Slot& sl,
     if ( enc_live )
     {
         const auto t5 = clk::now();
-        enc_->publish( sl.eng->input_fd(), sl.lb, fence, sl.ts_us );
+        enc_->publish( sl.eng->input_fd(), sl.lb, fence, sl.ts_us, sl.src_idx );
         const auto t6 = clk::now();
         enc_ms = ms( t5, t6 );
     }

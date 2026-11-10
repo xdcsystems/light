@@ -26,7 +26,8 @@ public:
                const std::vector<RknnEngine>& npus,
                int model_w,
                int model_h,
-               const LbGeom& primary_band );
+               const LbGeom& primary_band,
+               int nsrc = 1 );
 
     bool enabled() const { return preview_.has_value() || enc_.has_value(); }
 
