@@ -279,11 +279,21 @@ int NetMjpegSource::send_get( const std::string& host, int port, const std::stri
     size_t off = 0;
     while ( off < req.size() )
     {
-        const ssize_t w = ::send( fd_, req.data() + off, req.size() - off, 0 );
+        // MSG_NOSIGNAL: a mid-GET disconnect must not raise SIGPIPE;
+        // the flag keeps this call self-contained even if the global
+        // ignore is ever removed.
+        const ssize_t w = ::send( fd_, req.data() + off, req.size() - off, MSG_NOSIGNAL );
+        if ( w < 0 && errno == EINTR )
+            continue;
         if ( w <= 0 )
         {
+            // w == 0 on a blocking socket cannot happen for a nonzero
+            // buffer, but errno is only set on failure: reading it
+            // after a zero return would report a stale value from an
+            // unrelated earlier call.
             if ( why )
-                *why = std::string( "send: " ) + strerror( errno );
+                *why = std::string( "send: " )
+                       + ( w < 0 ? strerror( errno ) : "peer closed, 0 bytes sent" );
             return -1;
         }
         off += static_cast<size_t>( w );
@@ -310,6 +320,11 @@ int NetMjpegSource::net_fill( int timeout_ms )
     if ( pr == 0 )
         return 0;
     const ssize_t n = ::recv( fd_, sock_ + sock_end_, static_cast<size_t>( kSockBuf ) - sock_end_, 0 );
+    if ( n < 0 && errno == EINTR )
+        return 0;  // interrupted before any data (e.g. a stop signal arriving
+                   // between poll() and recv()): not a connection error, the
+                   // caller retries on the next fill -- treating it as fatal
+                   // would turn Ctrl-C shutdown into a spurious reconnect
     if ( n <= 0 )
         return -1;  // 0 = EOF, -1 = error: the connection is gone either way
     sock_end_ += static_cast<size_t>( n );

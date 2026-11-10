@@ -35,6 +35,8 @@ namespace
         } while ( n < 0 && errno == EINTR );
         if ( n > 0 )
             return static_cast<int>( n );
+        if ( n == 0 )
+            return AVERROR_EOF;  // errno is stale after a zero return: never read it here
         if ( errno == EPIPE || errno == ECONNRESET )
             return AVERROR( EPIPE );
         if ( errno == EAGAIN || errno == EWOULDBLOCK )

@@ -34,6 +34,14 @@ struct SignalGuard
         g_pipe.store( p, std::memory_order_release );
         std::signal( SIGINT, on_stop_signal );
         std::signal( SIGTERM, on_stop_signal );
+
+        // Network daemon: writes to closed sockets/pipes must not kill the process.
+        // MSG_NOSIGNAL covers our own send calls; SIG_IGN covers the rest (FFmpeg internals, 
+        // any fd that turns out to be a broken pipe). Deliberately NOT restored to SIG_DFL in
+        // the dtor: during unwinding the teardown path (FFmpeg flush) may still write to sockets,
+        // and dying with SIGPIPE there would skip cleanup entirely.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-cstyle-cast): SIG_IGN expands to a C-style 
+        std::signal( SIGPIPE, SIG_IGN ); // cast inside the glibc system header; the cast is not ours to fix here.
     }
     ~SignalGuard()
     {
