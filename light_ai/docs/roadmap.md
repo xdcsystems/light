@@ -563,16 +563,17 @@ refer to README.md sections (../README.md).
       M5 proper: the multi-camera refactor (per-cam cam+dec+rga
       chains) below — the single-camera pool pacing at the real
       camera cadence is implicitly proven by the same live runs.
-      Update 2026-11-09 (config + `Pipeline` source slots): `Config::sources`
-  (`std::vector<SourceEndpoint>`, `SourceKind::V4L2` / `NetMjpeg`)
-  accumulates any combination of repeatable `--device` and
-  `--net-src` entries from INI or CLI (e.g. 1x USB + 2x HTTP
-  MJPEG), and `Pipeline` holds up to 3 active sources in
-  `srcs_[kMaxSources]` (`std::variant<CameraV4L2, NetMjpegSource>`
-  per slot, round-robin `cur_src_ = i % nsrc_`, independent per-slot
-  reconnect and warmup). Closed 2026-11-10: per-source `MppDecoder`, `BoxSmoother`, `Tracker`,
+      Update 2026-11-09..10 (config + `Pipeline` source slots + non-blocking
+  dispatcher): `Config::sources` (`std::vector<SourceEndpoint>`,
+  `SourceKind::V4L2` / `NetMjpeg`) accumulates any combination of
+  repeatable `--device` and `--net-src` entries from INI or CLI
+  (e.g. 1x USB + 2x HTTP MJPEG), and `Pipeline` holds up to 3 active
+  sources in `srcs_[kMaxSources]` (`std::variant<CameraV4L2, NetMjpegSource>`
+  per slot, non-blocking round-robin `dequeue_next_source` with per-slot
+  2 s stall watchdog `last_ok_tp`, independent reconnect and warmup).
+  Closed 2026-11-10: per-source `MppDecoder`, `BoxSmoother`, `Tracker`,
   `LbGeom`, and `aux_fd` live in `Pipeline::SourceSlot`; verified live
-  on 1280x960 V4L2 + 720x1280 NetMjpeg at ~50.5 FPS wall.
+  on 1280x960 V4L2 + 720x1280 NetMjpeg over 3000 frames at 51.83 FPS wall.
       Pipeline refactor: an array of cam+dec+rga chains, each with its
       own dma-buf/tensor pool, plus a round-robin dispatcher; per-cam
       BoxSmoother. Fusion is NOT volumetric on this NPU (BEV/3D

@@ -112,7 +112,10 @@ post-processing.
                (skips header/EXIF segments by length up to SOS, extracts
                frame dimensions from SOFn, verifies trailing EOI); primes
                frame 0 in setup_device() so stream geometry is known at
-               startup without --w/--h. Reconnects through the same
+               startup without --w/--h, drains init-time TCP backlog in
+               start(), skips burst-queued stale frames in read_latest_part(),
+               and supports non-blocking poll_part_ready(timeout_ms) for M5
+               multi-camera scheduling. Reconnects through the same
                recovery loop as CameraV4L2.
 - MppDecoder : MJPEG -> YUV422SP decode into an external dma-buf pool
                (adaptive, 2026-11-06: a 4:2:0 source decodes to
@@ -565,12 +568,13 @@ the live log: "set prep cfg w:h [640:360] stride [640:368]"
 (16-aligned ver stride) replaces the startup default [640:384] on
 the first frame; colors verified clean on the stream (no chroma
 misalignment).
-Update 2026-11-03..09 (Batch B/C + P0 audit): prep_frame (fence poll
-+ RGA band crop) runs before mx_; send_frame moves encoded packets
-into an 8-deep preallocated AVPacket ring buffer (av_packet_move_ref, zero
-per-frame heap allocs) and serve() drains them into the muxer on the
-worker thread — the pipeline thread never touches the network. With
-no viewer attached, publish_oldest() skips both draw and encode.
+Update 2026-11-03..10 (Batch B/C + P0 audit + M5 multi-view): prep_frame
+(fence poll + RGA band crop) runs before mx_; send_frame moves encoded
+packets into a 32-deep preallocated AVPacket ring buffer (av_packet_move_ref,
+zero per-frame heap allocs, sized to absorb ~200 ms Wi-Fi stalls without
+queue flushes) and serve() drains them into the muxer on the worker thread —
+the pipeline thread never touches the network. With no viewer attached,
+publish_oldest() skips both draw and encode.
 
 ## Measured performance (1280x960 MJPEG, yolov5s_relu_int8 @ 640x640, daytime, steady, viewer attached)
 

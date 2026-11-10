@@ -455,7 +455,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_f
         acq_fd_ = -1;
     }
     acq_fd_ = acquire_fence_fd;
-    const int64_t min_step_us = nsrc_ > 1 ? ( fps_ > 0 ? 1000000 / fps_ : 30000 ) : 0;
+    const int64_t min_step_us = nsrc_ > 1 ? ( fps_ > 0 ? 1000000 / fps_ : 20000 ) : 0;
     const bool do_enc = ( nsrc_ <= 1 || ts_us < 0 || last_enc_ts_us_ < 0
                           || ( ts_us - last_enc_ts_us_ ) >= min_step_us );
     if ( do_enc )
