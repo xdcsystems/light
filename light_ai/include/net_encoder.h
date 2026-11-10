@@ -157,7 +157,7 @@ private:
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
     std::array<AVFrame*, kBufCount> frames_ {};  // pre-bound DRM_PRIME frames (one per pool slot)
-    std::array<LbGeom, kBufCount> buf_bands_ {}; // last dst band written per NV12 slot
+    std::array<LbGeom, kPoolCount> buf_bands_ {}; // last band: NV12 slot (single-view) or canvas cell (multi-view)
 
     // Encoder -> serve() preallocated packet ring queue. A separate mutex
     // from mx_: network-side wakeups never touch the encode critical section.

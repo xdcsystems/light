@@ -174,6 +174,28 @@ namespace
             dma::cache_clean( p, sz );
         }
     }
+
+    // Fill one canvas cell (NV12 semi-planar): Y rows + interleaved UV
+    // rows, bounded to the rect. Multi-view only -- the whole-canvas
+    // memset erased every neighbor's tile: live ones went gray until
+    // their next publish, an offline one stayed gray until reconnect.
+    void fill_nv12_gray_rect( MppBuffer mb, int stride, int vstride, const im_rect& rc )
+    {
+        if ( void* p = mpp_buffer_get_ptr( mb ) )
+        {
+            uint8_t* py = static_cast<uint8_t*>( p );
+            const size_t ysz = static_cast<size_t>( stride ) * static_cast<size_t>( vstride );
+            dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
+            for ( int r = 0; r < rc.height; ++r )
+                std::memset( py + static_cast<size_t>( rc.y + r ) * stride + rc.x, 128,
+                             static_cast<size_t>( rc.width ) );
+            uint8_t* puv = py + ysz;
+            for ( int r = 0; r < rc.height / 2; ++r )
+                std::memset( puv + static_cast<size_t>( rc.y / 2 + r ) * stride + ( rc.x / 2 ) * 2, 128,
+                             static_cast<size_t>( rc.width / 2 ) * 2 );
+            dma::cache_clean( p, mpp_buffer_get_size( mb ) );
+        }
+    }
 }  // namespace
 
 NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, int port, const std::string& host, int bitrate_kbps, int nsrc )
@@ -181,7 +203,7 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
   , h_( calc_stream_h( model_h, band, nsrc ) )
   , tile_w_( calc_tile_w( model_w, band, nsrc ) )
   , tile_h_( calc_tile_h( model_h, band, nsrc ) )
-  , nsrc_( nsrc > 1 ? nsrc : 1 )
+  , nsrc_( nsrc > 1 ? ( nsrc > 4 ? 4 : nsrc ) : 1 )  // 2x2 grid max: the canvas and buf_bands_ are sized for 4
   , fps_( fps )
   , port_( port )
   , bitrate_kbps_( bitrate_kbps > 0 ? bitrate_kbps : 12000 )
@@ -209,6 +231,8 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
         band_w_ = model_w_;
     if ( band_left_ < 0 )
         band_left_ = 0;
+    if ( nsrc > 4 )
+        std::cerr << "enc: clamping source count " << nsrc << " -> 4 (2x2 grid max)\n";
     if ( nsrc_ > 1 )
         std::cout << "enc: multi-view " << nsrc_ << " sources, tile " << tile_w_ << 'x' << tile_h_
                   << " -> " << w_ << 'x' << h_ << '\n';
@@ -573,7 +597,7 @@ void NetEncoder::wait_draw_fence()
 bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb )
 {
     wait_draw_fence();
-    const int sidx = ( nsrc_ > 1 && src_idx >= 0 && src_idx < nsrc_ && src_idx < kBufCount ) ? src_idx : 0;
+    const int sidx = ( nsrc_ > 1 && src_idx >= 0 && src_idx < nsrc_ && src_idx < kPoolCount ) ? src_idx : 0;
     const LbGeom src_b = ( band.w > 0 && band.h > 0 ) ? band : LbGeom { band_left_, band_w_, band_top_, band_h_ };
     const int tw = nsrc_ > 1 ? tile_w_ : band_w_;
     const int th = nsrc_ > 1 ? tile_h_ : band_h_;
@@ -588,7 +612,13 @@ bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, Mpp
     MppBuffer target = nsrc_ > 1 ? pool_.buf[kBufCount] : mb;
     LbGeom& prev = buf_bands_[nsrc_ > 1 ? static_cast<uint32_t>( sidx ) : cur_];
     if ( prev.w > 0 && ( prev.left != dst_b.left || prev.top != dst_b.top || prev.w != dst_b.w || prev.h != dst_b.h ) )
-        fill_nv12_gray( target );
+    {
+        if ( nsrc_ > 1 )
+            fill_nv12_gray_rect( target, w_, vstride_,
+                im_rect { ( sidx % 2 ) * tile_w_, ( sidx / 2 ) * tile_h_, tile_w_, tile_h_ } );
+        else
+            fill_nv12_gray( target );
+    }
     prev = dst_b;
 
     rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888 );
