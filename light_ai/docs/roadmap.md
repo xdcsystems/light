@@ -666,3 +666,16 @@ refer to README.md sections (../README.md).
       use_camera/use_net branches, round-robin s0/s1, per-source
       tracks, Traj wraparound at pts=300, multi-view enc).
       Pending: the camera replug drill -- next session.
+- [x] Typed vstage in GpuBoxDrawer (proposal 3.3, recorded &
+      closed 2026-11-10): State::vstage becomes
+      std::array<BatchVert, GpuBoxList::cap * kVertsPerBox>.
+      BatchVert + kVertsPerBox moved to the header (the .cpp's
+      kVboBytes references them via GpuBoxDrawer::); the raw
+      uint8_t[36864] buffer, the magic 36864, static_assert,
+      alignas(4) and the reinterpret_cast are gone -- the size and
+      layout are now compiler-derived from the struct definition.
+      Bit-identical by construction: 128 x 24 verts x 12 B. The
+      BGR/probe-calibration comment moved with the struct into the
+      header. Verified: build green, tidy 0 findings (all 21 .cpp),
+      live smoke 900 frames V4L2 (boxes, colors, trails rendered
+      identically, clean EOF drain).

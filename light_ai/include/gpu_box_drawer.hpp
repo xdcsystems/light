@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstdint>
 
 #include <EGL/egl.h>
@@ -37,6 +38,20 @@ class GpuBoxDrawer
     using P_DeleteVertexArrays = void( GL_APIENTRYP )( GLsizei, const GLuint * );
     using P_BindVertexArray = void( GL_APIENTRYP )( GLuint );
 
+    // Batched VBO vertex layout (moved out of gpu_box_drawer.cpp: the
+    // draw() staging buffer is typed by it). r/g/b/a fields are GL
+    // component order; GL red lands in memory byte2 (the dma-buf reads
+    // as BGR -- probe calibration), so the TENSOR R is stored in the
+    // field named 'b'. 12 bytes, natural align 4: no padding, no alignas.
+public:
+    struct BatchVert
+    {
+        float x, y;
+        uint8_t r, g, b, a;
+    };
+    static constexpr int kVertsPerBox = 4 * 6;  // 4 quads x 6 vertices per box
+
+private:
     // GL/EGL state by value: no heap, no pimpl.
     struct State
     {
@@ -49,9 +64,9 @@ class GpuBoxDrawer
         uint32_t stride = 0;
 
         // Preallocated draw() staging buffer, not a per-call stack array.
-        // Size is fixed: 128 boxes (PodList cap) x 24 verts x 12 B = 36864;
-        // gpu_box_drawer.cpp pins the layout with a static_assert.
-        alignas( 4 ) uint8_t vstage[36864] {};
+        // Typed: one slot per vertex of the batched VBO
+        // (GpuBoxList cap x kVertsPerBox; see BatchVert above).
+        std::array<BatchVert, GpuBoxList::cap * kVertsPerBox> vstage {};
 
         // Per-slot import cache. Geometry (w/h/stride) is shared across
         // slots, only the dma-buf fd differs.

@@ -49,26 +49,14 @@ namespace
             "precision mediump float; varying vec4 v_col; "
             "void main(){ gl_FragColor=v_col; }";
 
-    // Batched vertex: 2 floats + 4 normalized ubytes = 12 bytes. The
-    // r/g/b/a fields are GL component order; GL red lands in memory byte2
-    // (the dma-buf reads as BGR — probe calibration), so the TENSOR R is
-    // stored in the field named 'b'.
-    struct BatchVert
-    {
-        float x, y;
-        uint8_t r, g, b, a;
-    };
-
     // PodList<GpuBox, 128> hard cap (mirrors the header type). One VBO for
     // the whole session: 4 quads x 6 vertices per box, allocated once in
     // init(); draw() only uploads — zero reallocations.
-    constexpr int kVertsPerBox = 4 * 6;
-    constexpr GLsizeiptr kVboBytes = GpuBoxList::cap * kVertsPerBox * static_cast<GLsizeiptr>( sizeof( BatchVert ) );
-   
-    // Layout/size pin for State::vstage
-    // (the draw staging buffer now lives in the drawer state, not on the stack).
-    static_assert( GpuBoxList::cap * kVertsPerBox * sizeof( BatchVert ) == 36864,
-            "BatchVert size vs State::vstage drift" );
+    // BatchVert + kVertsPerBox live in the header: State::vstage is typed
+    // by them (std::array), the reinterpret_cast is gone.
+    constexpr GLsizeiptr kVboBytes =
+            GpuBoxList::cap * GpuBoxDrawer::kVertsPerBox *
+            static_cast<GLsizeiptr>( sizeof( GpuBoxDrawer::BatchVert ) );
 
     // Compile/link diagnostics: libmali returns non-zero handles even for
     // failed shaders — without these checks a broken program degrades
@@ -418,7 +406,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
     // green-band test sat at the center row, which is symmetric under a
     // flip and could not catch this; a live frame did (boxes were mirrored
     // around y = h/2).
-    BatchVert* v = reinterpret_cast< BatchVert* >( st_.vstage );
+    BatchVert* v = st_.vstage.data();
     int cnt = 0;
     const float xs = 2.0f / (float)st_.w;
     const float ys = 2.0f / (float)st_.h;
