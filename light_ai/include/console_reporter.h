@@ -12,7 +12,7 @@
 class ConsoleReporter
 {
 public:
-    void report( int frame, const DetList& dets, const TrajList& trajs ) const;
+    void report( int frame, const DetList& dets, const TrajList& trajs, int src_idx = 0, int nsrc = 1 ) const;
     void summary( int ok, double wall, int reconnects ) const;
 };
 

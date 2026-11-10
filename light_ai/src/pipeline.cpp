@@ -21,8 +21,19 @@ namespace
 {
     using clk = std::chrono::steady_clock;
 
-    inline double ms( clk::time_point a, clk::time_point b ) { 
-        return std::chrono::duration<double, std::milli>( b - a ).count(); 
+    inline double ms( clk::time_point a, clk::time_point b ) {
+        return std::chrono::duration<double, std::milli>( b - a ).count();
+    }
+
+    // M5: per-source box-log path: with several sources "boxes.csv"
+    // becomes "boxes_s1.csv" (suffix before the extension; no dot -> append).
+    std::string source_box_log( const std::string& path, int idx, int nsrc )
+    {
+        if ( path.empty() || nsrc <= 1 )
+            return path;
+        const size_t dot = path.rfind( '.' );
+        const std::string suf = "_s" + std::to_string( idx );
+        return dot == std::string::npos ? path + suf : path.substr( 0, dot ) + suf + path.substr( dot );
     }
 
     // CPU baseline: 1-px outlines straight into the NPU tensor (RGB888).
@@ -112,11 +123,11 @@ Pipeline::Pipeline( const Config& cfg )
     for ( int k = 0; k < npool_; ++k )
         npus_.emplace_back( cfg_.model.c_str() );
 
-    // Source bring-up (identity, setup, variant selection): establishes
-    // src_w_ and src_h_ from the device (G_FMT) or stream (JPEG SOFn).
+    // M5: source bring-up (identity, setup, per-source decoders) --
+    // each SourceSlot owns its MppDecoder (its own resolution and
+    // detected 4:2:0/4:2:2 format). Runs BEFORE the model dims are read:
+    // the per-source letterbox pass below needs model_w_/model_h_.
     init_source();
-    if ( dec_.init( src_w_, src_h_ ) != 0 )
-        throw std::runtime_error( "mpp decoder init failed" );
 
     for ( auto& e : npus_ )
     {
@@ -148,9 +159,18 @@ Pipeline::Pipeline( const Config& cfg )
     model_h_ = static_cast<int>( ia.dims[ia.n_dims - 3] );
     cal_dumper_.init( cfg_.dump_cal, cfg_.cal_frames, cfg_.cal_interval, cfg_.cal_dir, model_w_, model_h_ );
 
-    // Letterbox geometry computed once via band_geom:
-    // the same numbers the RGA crop writes.
-    lb_ = band_geom( src_w_, src_h_, model_w_, model_h_ );
+    // M5: per-source letterbox geometry (the same numbers the RGA crop
+    // writes); src_w_/src_h_ become the max across sources.
+    src_w_ = 0;
+    src_h_ = 0;
+    for ( int s = 0; s < nsrc_; ++s )
+    {
+        srcs_[s].lb = band_geom( srcs_[s].w, srcs_[s].h, model_w_, model_h_ );
+        if ( srcs_[s].w > src_w_ )
+            src_w_ = srcs_[s].w;
+        if ( srcs_[s].h > src_h_ )
+            src_h_ = srcs_[s].h;
+    }
 
     init_net_sink( ia );
     init_gpu_drawer();
@@ -264,6 +284,10 @@ void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
     }
     sl.w = with_src( idx, []( const auto& s ) { return s.width(); } );
     sl.h = with_src( idx, []( const auto& s ) { return s.height(); } );
+    // M5: per-source decoder init -- sits after the if/else by design,
+    // so BOTH the net and the camera branch get it.
+    if ( sl.dec.init( sl.w, sl.h ) != 0 )
+        throw std::runtime_error( "mpp decoder init failed for " + sl.node );
     std::cout << "source: geometry " << sl.w << 'x' << sl.h << '\n';
 }
 
@@ -281,16 +305,10 @@ void Pipeline::init_source()
         throw std::runtime_error( "pipeline: at most 3 sources are supported (one per NPU core)" );
 
     nsrc_ = static_cast<int>( eps.size() );
+    // M5: per-source decoders -- mixed resolutions (1280x960 USB next to
+    // 1280x720 net) are now supported; the shared-resolution gate is gone.
     for ( int s = 0; s < nsrc_; ++s )
         init_one_source( s, eps[s] );
-
-    src_w_ = srcs_[0].w;
-    src_h_ = srcs_[0].h;
-    for ( int s = 1; s < nsrc_; ++s )
-    {
-        if ( srcs_[s].w != src_w_ || srcs_[s].h != src_h_ )
-            throw std::runtime_error( "pipeline: all sources must share the same resolution until per-source decoders land" );
-    }
 }
 
 // M2.5/M4: core pinning.
@@ -345,14 +363,14 @@ void Pipeline::init_net_sink( const rknn_tensor_attr& ia )
         // at the NATIVE letterbox-band size (no upscale):
         // w = model_w, h = cam_h * (model_w / cam_w) — for the default
         // 1280x720 camera and a 640x640 tensor that is 640x360 (16:9).
-        // Band geometry comes from the pipeline's single LbGeom:
-        // the same numbers the RGA crop writes.
+        // M5: band = source 0's letterbox (SourceSlot::lb); mixed
+        // aspects: exact crop for src 0; follow-up: per-frame band into NetEncoder::publish.
 
         // Band-crop target: landscape crops a horizontal strip of the
         // full tensor width; portrait a vertical strip of the full tensor height.
         // The stream width is 16-aligned up (MPP hor_stride requirement); the tail stays gray.
 
-        enc_.emplace( model_w_, model_h_, lb_, cfg_.net_fps, cfg_.net_port, cfg_.net_host, cfg_.net_bitrate );
+        enc_.emplace( model_w_, model_h_, srcs_[0].lb, cfg_.net_fps, cfg_.net_port, cfg_.net_host, cfg_.net_bitrate );
         if ( cfg_.net_host.empty() )
             std::cout << "net: h264 PULL server on port " << cfg_.net_port << ", " << cfg_.net_bitrate
                       << " kbps (viewer: ffplay tcp://<board-ip>:" << cfg_.net_port << ")\n";
@@ -401,15 +419,22 @@ void Pipeline::init_gpu_drawer()
 // 1920x1080 still needs the 960x540 intermediate.
 void Pipeline::init_aux()
 {
-    if ( src_w_ > 8 * model_w_ || src_h_ > 8 * model_h_ )
+    // M5: aux is per-source (lives in the owning decoder's DRM pool):
+    // one source may need the two-pass path while others do not.
+    bool any_aux = false;
+    for ( int s = 0; s < nsrc_; ++s )
     {
-        aux_fd_ = dec_.aux_fd( static_cast<size_t>( src_w_ / 2 ) * ( src_h_ / 2 ) * 2 );
-        if ( aux_fd_ < 0 )
-            throw std::runtime_error( "pipeline: aux buffer alloc failed" );
-        return;
+        SourceSlot& ss = srcs_[s];
+        if ( ss.w <= 8 * model_w_ && ss.h <= 8 * model_h_ )
+            continue;
+        ss.aux_fd = ss.dec.aux_fd( static_cast<size_t>( ss.w / 2 ) * ( ss.h / 2 ) * 2 );
+        if ( ss.aux_fd < 0 )
+            throw std::runtime_error( "pipeline: aux buffer alloc failed for source " + ss.node );
+        any_aux = true;
     }
-    std::cout << "aux not needed: " << src_w_ << 'x' << src_h_
-              << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
+    if ( !any_aux )
+        std::cout << "aux not needed: max " << src_w_ << 'x' << src_h_
+                  << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
 }
 
 int Pipeline::run()
@@ -417,7 +442,8 @@ int Pipeline::run()
     int ok = 0;
     const auto t_start = clk::now();
 
-    smoother_.set_log( cfg_.box_log );
+    for ( int s = 0; s < nsrc_; ++s )
+        srcs_[s].smoother.set_log( source_box_log( cfg_.box_log, s, nsrc_ ) );
     // frames == 0 (the default): no frame budget -- run until stop
     // (Ctrl-C); the signal path below drains and reports as usual.
     for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.load(); ++i )
@@ -450,9 +476,8 @@ int Pipeline::run()
         int fd_src = -1;
         if ( sz > 0 )
         {
-            fd_src = with_src( [&]( auto& s ) {
-                return dec_.decode( static_cast<const uint8_t*>( s.buffer( idx ) ), sz );
-            } );
+            fd_src = active_src.dec.decode(
+                    static_cast<const uint8_t*>( with_src( [&]( auto& s ) { return s.buffer( idx ); } ) ), sz );
         }
         else
         {
@@ -624,20 +649,22 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
 
     dma::cache_drop( sl.eng->input_data(),
             static_cast<size_t>( model_w_ ) * model_h_ * 3 );
+    const SourceSlot& ss = srcs_[cur_src_];
     LbGeom lg {};
     const bool rga_ok =
-            rga_.resize( fd_src, src_w_, src_h_, sl.eng->input_fd(), model_w_, model_h_, aux_fd_, src_w_ / 2, src_h_ / 2, &lg,
-                    dec_.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
+            rga_.resize( fd_src, ss.w, ss.h, sl.eng->input_fd(), model_w_, model_h_, ss.aux_fd, ss.w / 2, ss.h / 2, &lg,
+                    ss.dec.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
     cal_dumper_.maybe( frame_idx, sl.eng->input_fd(), static_cast<const uint8_t*>( sl.eng->input_data() ), sl.eng->input_size() );
     const auto t3b = clk::now();
-    // Cross-check RGA geometry against the single-owner one (warn once).
-    if ( !lb_warned_ && ( lg.left != lb_.left || lg.top != lb_.top || lg.w != lb_.w || lg.h != lb_.h ) )
+    // Cross-check RGA geometry against the owning source's (warn once).
+    if ( !lb_warned_ && ( lg.left != ss.lb.left || lg.top != ss.lb.top || lg.w != ss.lb.w || lg.h != ss.lb.h ) )
     {
         lb_warned_ = true;
-        std::cerr << "pipeline: RGA letterbox drift: x=" << lg.left << " top=" << lg.top << " w=" << lg.w << " h=" << lg.h
-                  << " vs x=" << lb_.left << " top=" << lb_.top << " w=" << lb_.w << " h=" << lb_.h << '\n';
+        std::cerr << "pipeline: RGA letterbox drift (src " << cur_src_ << "): x=" << lg.left << " top=" << lg.top
+                  << " w=" << lg.w << " h=" << lg.h
+                  << " vs x=" << ss.lb.left << " top=" << ss.lb.top << " w=" << ss.lb.w << " h=" << ss.lb.h << '\n';
     }
-    dispatch( slot, frame_idx, ts_us, rga_ok, lb_, cam_ms, dec_ms, ms( t3, t3b ) );
+    dispatch( slot, frame_idx, ts_us, rga_ok, ss.lb, cam_ms, dec_ms, ms( t3, t3b ) );
 }
 
 // --- M4: context-pool machinery --------------------------------------------
@@ -684,7 +711,7 @@ void Pipeline::worker_loop( int slot )
             if ( okr )
             {
                 const auto tp0 = clk::now();
-                yolo_postprocess( *sl.eng, static_cast<float>( src_w_ ), static_cast<float>( src_h_ ),
+                yolo_postprocess( *sl.eng, static_cast<float>( sl.src_w ), static_cast<float>( sl.src_h ),
                         static_cast<float>( model_w_ ), static_cast<float>( model_h_ ), sl.lb,
                         sl.dets, cfg_.conf_thr, cfg_.iou_thr );
                 sl.tr.post = ms( tp0, clk::now() );
@@ -716,9 +743,13 @@ void Pipeline::worker_loop( int slot )
 
 void Pipeline::dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, const LbGeom& lb, double cam_ms, double dec_ms, double rga_ms )
 {
+    const SourceSlot& ss = srcs_[cur_src_];
     Slot& sl = slots_[slot];
     {
         std::lock_guard<std::mutex> lk( sl.mx );
+        sl.src_idx = cur_src_;
+        sl.src_w = ss.w;
+        sl.src_h = ss.h;
         sl.frame = frame_idx;
         sl.ts_us = ts_us;
         sl.rga_ok = rga_ok;
@@ -770,11 +801,12 @@ int Pipeline::publish_oldest()
         // M3.10: EMA smoothing on scene-coord boxes; the raw list is kept
         // only for the --box-log jitter A/B CSV.
 
-        smoother_.update( sl.dets, dets_ );
-        smoother_.log_frame( sl.frame, sl.dets, dets_ );
-        tracker_.update( dets_, sl.ts_us, trajs_ );
-        
-        rep_.report( sl.frame, dets_, trajs_ );
+        SourceSlot& ss = srcs_[sl.src_idx];
+        ss.smoother.update( sl.dets, dets_ );
+        ss.smoother.log_frame( sl.frame, sl.dets, dets_ );
+        ss.tracker.update( dets_, sl.ts_us, trajs_ );
+
+        rep_.report( sl.frame, dets_, trajs_, sl.src_idx, nsrc_ );
         if ( preview_ || enc_ )
             enc_ms = draw_and_publish( sl, ps );
     }
@@ -807,10 +839,11 @@ double Pipeline::draw_and_publish( Slot& sl, int ps )
     // Boxes mapped to tensor coordinates ONCE for both drawing paths.
     // Inverse of the postprocess mapping: det = scene * (lb / cam) + origin.
 
-    const float sx = sl.lb.w / static_cast<float>( src_w_ );
-    const float sy = sl.lb.h / static_cast<float>( src_h_ );
+    const SourceSlot& ss = srcs_[sl.src_idx];
+    const float sx = sl.lb.w / static_cast<float>( sl.src_w );
+    const float sy = sl.lb.h / static_cast<float>( sl.src_h );
     boxes_.clear();
-    fill_gpu_boxes( dets_, trajs_, tracker_, boxes_, sl.lb, sx, sy );
+    fill_gpu_boxes( dets_, trajs_, ss.tracker, boxes_, sl.lb, sx, sy );
     int fence = -1;  // GPU draw fence, consumed by enc publish
     if ( drawer_ )
     {

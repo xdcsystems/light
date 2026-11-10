@@ -36,6 +36,16 @@ class Pipeline
     struct SourceSlot
     {
         VideoSource src { std::in_place_type<CameraV4L2> };
+        // M5: everything below is per-source. The decoder owns its
+        // out_frame_/resolution and its detected 4:2:0 vs 4:2:2 format --
+        // alternating heterogeneous cameras no longer reset each other
+        // (the old shared dec_ info_change resets). Smoother/tracker keep
+        // per-camera state; lb is each source's own letterbox geometry.
+        MppDecoder dec {};
+        BoxSmoother smoother {};
+        Tracker tracker {};
+        LbGeom lb {};
+        int aux_fd = -1;  // per-source RGA intermediate (decoder DRM pool)
         std::string node;
         int w = 0;
         int h = 0;
@@ -98,26 +108,24 @@ private:
     int nsrc_ = 1;
     int cur_src_ = 0;
 
-    MppDecoder dec_;
-    RgaResizer rga_;
+    RgaResizer rga_;  // shared, stateless: writes any source into any slot tensor
     // Context pool: npus_[0] IS the pool-1 engine;
     // --pool 3 loads the model three times, one engine per NPU core.
     // The vector never reallocates after the ctor,
     // so &npus_[k] stays valid for the whole session.
     std::vector<RknnEngine> npus_;
     int npool_ = 1;
-    int aux_fd_ = -1;
     int src_w_ = 0;
-    int src_h_ = 0;    // taken from the source (camera G_FMT or JPEG SOFn)
+    int src_h_ = 0;    // MAX across sources (init_aux sizing + diagnostics);
+                       // per-source geometry is SourceSlot::w/h
     int model_w_ = 0;
     int model_h_ = 0;  // taken from the model, not from flags
     
-    // Single-source letterbox geometry. Computed once in the ctor
-    // via band_geom and fed to BOTH consumers --
-    // the encoder crop (NetEncoder ctor) and the postprocess scale
-    // (dispatch). RGA stays the pixel writer; its per-frame LbGeom
-    // is cross-checked against this one at dispatch (one-time warn).
-    LbGeom lb_ {};
+    // M5: per-source letterbox geometry lives in SourceSlot::lb; the
+    // RGA per-frame LbGeom is cross-checked against the owning source's
+    // at dispatch (one-time warn). The encoder band is source 0's
+    // (mixed aspects: exact crop for src 0; per-frame band injection
+    // into NetEncoder::publish is the follow-up).
     bool lb_warned_ = false;
     CalDumper cal_dumper_;
     int reconnects_ = 0;   // source disconnects recovered this run
@@ -127,8 +135,6 @@ private:
     std::optional<NetEncoder> enc_;
     std::optional<GpuBoxDrawer> drawer_;
 
-    BoxSmoother smoother_;
-    Tracker tracker_;
     ConsoleReporter rep_;  // throttled reports + final summary
     TrajList trajs_;
 

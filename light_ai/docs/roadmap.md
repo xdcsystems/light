@@ -600,3 +600,40 @@ refer to README.md sections (../README.md).
       stay out of unit scope — live-run territory. Open sub-questions:
       the exact .clang-format profile (reference files: gpu_box_drawer
       style per Rules) and the first covered module.
+
+- [ ] M5.1: per-frame encoder band (recorded 2026-11-10 by owner):
+      after M5 the h264 band equals source 0's letterbox; with mixed
+      aspects the crop is exact for src 0 only. Inject a per-frame band
+      (from Slot's src_idx/src_w/src_h + LbGeom snapshot) into
+      NetEncoder::publish.
+- [ ] M5.2: composite preview canvas (recorded 2026-11-10 by owner,
+      observed live 2026-11-10): multi-source preview streams one shared
+      640x640 tensor; sources only write their letterbox band, so band
+      regions of source A show stale content of source B (ghosting,
+      confirmed by viewer). Redesign: canvas buffer, per-source RGA blit
+      into its own region (needs dst x-offset in RgaResizer), mandatory
+      letterbox-bar fill, boxes drawn on the canvas, NUT streams the
+      canvas. Check first whether RgaResizer already fills the bars
+      (rga_resizer.cpp) or the ghosting sits in the shared tensor path.
+- [ ] M5.3: narrow pool_discard() by sl.src_idx (recorded 2026-11-10
+      by owner): recovery of one source currently resets in-flight slots
+      of ALL sources (safe, but loses neighbors' frames).
+- [ ] M5.4: infer inflation during an active preview session (recorded
+      2026-11-10 by owner, isolated 2026-11-10): infer 25 -> 45 ms exactly
+      while a viewer is connected, single source too, NOT drawing-related
+      (--cpu-draw gives the same 45.3 with viewer, 25.0 without; GPU path
+      vindicated). Hypotheses: (a) preview writer traffic (memcpy/socket)
+      contends for DDR with the NPU; (b) session state effect: tensor
+      lock/sync for the duration of an active session. Discriminator:
+      --net-fps 5 with a viewer -- if inflation scales down with the
+      preview pace it is (a); if it stays at 45 it is (b).
+      Update 2026-11-10: discriminator ran -- --net-fps 5 with a
+      viewer still gives steady infer 45.4-45.5 (pts step 16384
+      confirms pacing actually dropped), so (a) bandwidth is
+      ruled out -> verdict (b): session-state effect, something
+      locks/syncs per-frame while a session is alive. Next: read
+      src/net_preview.cpp around the connect/disconnect state
+      transitions (what changes with 'viewer connected').
+- [ ] open q: CLI source order (recorded 2026-11-10 by owner): does
+      mixing repeatable --device/--net-src preserve the given order in
+      cfg_.sources? Check src/config/cli.cpp at a convenient moment.

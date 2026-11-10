@@ -79,6 +79,9 @@ struct Slot
 {
     RknnEngine* eng = nullptr;
     DetList dets;                    // worker-side postprocess output
+    int src_idx = 0;                 // owning source (M5); set at dispatch, read at publish
+    int src_w = 0;                   // source geometry snapshot: the worker reads these,
+    int src_h = 0;                   // never cur_src_ (it has no view of the main loop)
     int frame = -1;                  // global frame index (logs)
     int64_t ts_us = -1;              // dequeue time, µs from start (VFR pts)
     bool rga_ok = false;             // captured at dispatch

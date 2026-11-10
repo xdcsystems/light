@@ -18,7 +18,8 @@ namespace
     };
 }  // namespace
 
-void ConsoleReporter::report( int frame, const DetList& dets, const TrajList& trajs ) const
+void ConsoleReporter::report(
+    int frame, const DetList& dets, const TrajList& trajs, int src_idx, int nsrc ) const
 {
     const CoutFmtGuard fmt_guard {};
     // Throttled trajectory report: every 15th frame.
@@ -37,7 +38,10 @@ void ConsoleReporter::report( int frame, const DetList& dets, const TrajList& tr
     // Throttled report: every 15th frame, up to 8 boxes per report.
     if ( dets.n > 0 && frame % 15 == 0 )
     {
-        std::cout << "frame " << frame << ": " << dets.n << " det(s)\n";
+        std::cout << "frame " << frame;
+        if ( nsrc > 1 )
+            std::cout << " s" << src_idx;
+        std::cout << ": " << dets.n << " det(s)\n";
         for ( int k = 0; k < dets.n && k < 8; ++k )
         {
             const Detection& d = dets.d[k];
