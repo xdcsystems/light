@@ -588,8 +588,7 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
         dma::DmaSync wr( sl.eng->input_fd(), true );
         std::memset( sl.eng->input_data(), 128, sl.eng->input_size() );
     }
-    dma::cache_drop( sl.eng->input_data(),
-            static_cast<size_t>( model_w_ ) * model_h_ * 3 );
+    dma::cache_drop( sl.eng->input_data(), sl.eng->input_size() );
     LbGeom lg {};
     const bool rga_ok =
             rga_.resize( fd_src, ss.w, ss.h, sl.eng->input_fd(), model_w_, model_h_, ss.aux_fd, ss.w / 2, ss.h / 2, &lg,

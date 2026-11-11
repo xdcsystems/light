@@ -158,10 +158,10 @@ double OverlaySink::draw_and_publish( Slot& sl,
         else
         {
             dma::DmaSync wr( sl.eng->input_fd(), true );
-            dma::cache_drop( sl.eng->input_data(), static_cast<size_t>( model_w_ ) * model_h_ * 3 );
+            dma::cache_drop( sl.eng->input_data(), sl.eng->input_size() );
             draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ),
                             model_w_, model_h_, model_w_ * 3, boxes_.d.data(), boxes_.n );
-            dma::cache_clean( sl.eng->input_data(), static_cast<size_t>( model_w_ ) * model_h_ * 3 );
+            dma::cache_clean( sl.eng->input_data(), sl.eng->input_size() );
         }
     }
 
@@ -169,6 +169,8 @@ double OverlaySink::draw_and_publish( Slot& sl,
     {
         const auto t5 = clk::now();
         dma::DmaSync rd( sl.eng->input_fd(), false );
+        if ( drawer_ )
+            dma::cache_drop( sl.eng->input_data(), sl.eng->input_size() );
         preview_->publish( static_cast<const uint8_t*>( sl.eng->input_data() ) );
         enc_ms += ms( t5, clk::now() );
     }
