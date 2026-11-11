@@ -29,8 +29,10 @@ class Pipeline
 
     struct SourceSlot
     {
-        // hot-attach (README): slot stays configured while the source is away
-        bool absent = false;
+        // hot-attach (README): slot stays configured while the source is away;
+        // probe_loop() flips it after a successful bring-up (probe_source)
+        std::atomic<bool> absent = false;
+        SourceKind kind = SourceKind::V4L2;  // survives teardown for the probe path
         MediaSource src {};
         // M5: everything below is per-source. The decoder owns its
         // out_frame_/resolution and its detected 4:2:0 vs 4:2:2 format --
@@ -67,6 +69,8 @@ private:
     void init_source();
     void init_one_source( int idx, const SourceEndpoint& ep );
     void start_source( int idx );
+    void probe_source( int idx );  // hot-attach: one (re)bring-up step, never throws
+    void probe_loop();
     void init_aux();
     void setup_cores();
 
@@ -125,5 +129,7 @@ private:
     std::vector<std::thread> workers_;   // one per pooled engine
     std::atomic<bool> quit_ { false };
     std::atomic<bool> stop_ { false };  // set by the signal handler
+    std::thread probe_th_;   // hot-attach prober: armed in run(), joined on exit
+    std::atomic<bool> probe_quit_ { false };
     PubFifo pub_;
 };
