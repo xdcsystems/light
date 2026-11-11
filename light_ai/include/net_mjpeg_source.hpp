@@ -49,9 +49,9 @@ public:
     // class in *err, same ladder as the camera: EIO = recoverable stall
     // (watchdog, hangup, corrupt-frame streak, desync),
     // ENODEV = closed by teardown, EAGAIN = no frame ready within timeout_ms.
-    // Corrupt frames (no SOI) are delivered anyway --
-    // the decoder's SOI guard is the defense in depth;
-    // the streak survives across calls, reset only by a clean frame or reconnect().
+    // Corrupt/incomplete frames are dropped with EAGAIN (or EIO once the
+    // streak reaches kErrStreakMax); the streak survives across calls and
+    // resets only on a clean frame or reconnect().
 
     int dequeue( uint32_t* size, int* err, int timeout_ms = -1 );
     void requeue( int index );

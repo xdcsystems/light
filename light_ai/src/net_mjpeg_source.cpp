@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
@@ -652,16 +653,21 @@ void NetMjpegSource::start()
     // Drain frames accumulated in the TCP socket while the Pipeline
     // constructor initialized NPU tensors, encoder and GPU drawer,
     // keeping only the freshest valid frame in slot 0 (primed_len_).
+    // Read into slot 1 first so a failed/corrupt drain never clobbers
+    // the valid primed frame already sitting in slot 0.
     for ( int guard = 0; guard < 64 && poll_part_ready( 0 ) > 0; ++guard )
     {
         uint32_t n = 0;
-        if ( read_part( 0, &n ) != 0 )
+        if ( read_part( 1, &n ) != 0 )
             break;
         int fw = 0;
         int fh = 0;
-        const auto* p = static_cast<const uint8_t*>( bufs_[0].start );
+        const auto* p = static_cast<const uint8_t*>( bufs_[1].start );
         if ( jpeg_frame_complete( p, &n, &fw, &fh ) && fw == width_ && fh == height_ )
+        {
+            std::swap( bufs_[0].start, bufs_[1].start );
             primed_len_ = n;
+        }
     }
 }
 
@@ -695,14 +701,36 @@ int NetMjpegSource::read_latest_part( int slot, uint32_t* size )
     }
     if ( rc != 0 )
         return rc;
+    int scratch = -1;
+    for ( int k = 0; k < kBufCount; ++k )
+    {
+        if ( k != slot && !bufs_[k].in_flight )
+        {
+            scratch = k;
+            break;
+        }
+    }
     // If multiple frames queued up in the TCP buffer during a Wi-Fi burst,
-    // advance to the freshest complete frame so the stream never lags.
-    for ( int skip = 0; skip < 4 && poll_part_ready( 0 ) > 0; ++skip )
+    // advance to the freshest complete frame via a scratch slot so a failed
+    // or corrupt skip never clobbers the frame already in `slot`.
+    for ( int skip = 0; scratch >= 0 && skip < 4 && poll_part_ready( 0 ) > 0; ++skip )
     {
         uint32_t next_n = 0;
-        if ( read_part( slot, &next_n ) != 0 )
+        const int sr = read_part( scratch, &next_n );
+        if ( sr != 0 )
+        {
+            if ( sr == -2 )
+                sock_pos_ = sock_end_;
             break;
-        n = next_n;
+        }
+        int fw = 0;
+        int fh = 0;
+        const auto* p = static_cast<const uint8_t*>( bufs_[scratch].start );
+        if ( jpeg_frame_complete( p, &next_n, &fw, &fh ) && fw == width_ && fh == height_ )
+        {
+            std::swap( bufs_[slot].start, bufs_[scratch].start );
+            n = next_n;
+        }
     }
     *size = n;
     return 0;
