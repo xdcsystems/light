@@ -100,7 +100,14 @@ Pipeline::Pipeline( const Config& cfg )
             src_h_ = srcs_[s].h;
     }
 
-    sink_.init( cfg_, npus_, model_w_, model_h_, srcs_[0].lb, nsrc_ );
+    // all-absent startup: the ctor skipped the letterbox for absent
+    // slots, and a zero band crashes the encoder (mpp_buffer_get
+    // size 0). Feed the full-model band instead; the probe path
+    // refreshes per-slot geometry on the real attach.
+    auto enc_lb = srcs_[0].lb;
+    if ( srcs_[0].w == 0 || srcs_[0].h == 0 )
+        enc_lb = band_geom( model_w_, model_h_, model_w_, model_h_ );
+    sink_.init( cfg_, npus_, model_w_, model_h_, enc_lb, nsrc_ );
     init_aux();
 
     if ( cfg_.cal_frames > 0 && cfg_.cal_dir.empty() )
