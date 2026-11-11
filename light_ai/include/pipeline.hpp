@@ -29,6 +29,8 @@ class Pipeline
 
     struct SourceSlot
     {
+        // hot-attach (README): slot stays configured while the source is away
+        bool absent = false;
         MediaSource src {};
         // M5: everything below is per-source. The decoder owns its
         // out_frame_/resolution and its detected 4:2:0 vs 4:2:2 format --

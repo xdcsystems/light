@@ -129,6 +129,8 @@ Pipeline::Pipeline( const Config& cfg )
 
 void Pipeline::start_source( int idx )
 {
+    if ( srcs_[idx].absent )
+        return;
     SourceSlot& sl = srcs_[idx];
     bool src_started = false;
     try
@@ -182,7 +184,7 @@ void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
         sl.src.use_net();
         std::string why;
         if ( sl.src.setup_device( sl.node, &why ) != 0 )
-            throw std::runtime_error( "net-src: " + why );
+            { sl.absent = true; std::cerr << "net-src: absent at startup: " << why << "\n"; return; }
     }
     else
     {
@@ -196,14 +198,14 @@ void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
                 std::cerr << "camera: configured node " << sl.node << " not present, falling back to USB discovery\n";
                 std::string found;
                 if ( find_usb_capture_node( cam, sl.node, found ) != 0 )
-                    throw std::runtime_error( "camera: configured node " + sl.node + " is missing and no USB capture node found" );
+                    { sl.absent = true; std::cerr << "camera: node " << sl.node << " absent at startup\n"; return; }
                 std::cout << "camera: discovery adopted " << found << '\n';
                 sl.node = found;
             }
         }
         std::string cam_why;
         if ( cam.setup_device( sl.node, &cam_why ) != 0 )
-            throw std::runtime_error( "camera: " + cam_why );
+            { sl.absent = true; std::cerr << "camera: absent at startup: " << cam_why << "\n"; return; }
     }
     sl.w = sl.src.width();
     sl.h = sl.src.height();
@@ -221,13 +223,17 @@ void Pipeline::init_source()
     {
         if ( !cfg_.net_src.empty() )
             eps.push_back( { SourceKind::NetMjpeg, cfg_.net_src } );
-        else
-            eps.push_back( { SourceKind::V4L2, cfg_.device.empty() ? "/dev/video20" : cfg_.device } );
+        else if ( !cfg_.device.empty() )
+            eps.push_back( { SourceKind::V4L2, cfg_.device } );
     }
     if ( eps.size() > static_cast<size_t>( kMaxSources ) )
         throw std::runtime_error( "pipeline: at most 3 sources are supported (one per NPU core)" );
 
     nsrc_ = static_cast<int>( eps.size() );
+    // an empty source list is a legitimate waiting-for-attach run (README);
+    // the sleep loop itself lands with the udev patch
+    if ( nsrc_ == 0 )
+        std::cout << "sources configured: none - waiting for attach\n";
     // M5: per-source decoders -- mixed resolutions (1280x960 USB next to
     // 1280x720 net) are now supported; the shared-resolution gate is gone.
     for ( int s = 0; s < nsrc_; ++s )
@@ -295,6 +301,8 @@ int Pipeline::try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err )
     for ( int k = 0; k < nsrc_; ++k )
     {
         const int s = ( cur_src_ + 1 + k ) % nsrc_;
+        if ( srcs_[s].absent )
+            continue;
         const int idx = srcs_[s].src.dequeue( &sz, &cam_err, wait_ms );
         if ( idx >= 0 )
         {
