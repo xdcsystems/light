@@ -10,13 +10,12 @@ void Tracker::reset()
     next_id_ = 1;
 }
 
-// Covariance-only predict: grows P exactly like the full predict step
-// but leaves the state untouched. Used while a confirmed track is
-// unmatched (miss >= 2): the position stays frozen so the IoU gate can
-// still re-associate the reappearing object at the last seen spot, but
-// the covariance keeps growing -- otherwise P sat at its post-update
-// size for the whole gap and the tiny Kalman gain made the track crawl
-// to the new measurement instead of snapping.
+// Covariance-only predict: grows P exactly like the full predict step but leaves the state
+// untouched. Used while a confirmed track is unmatched (miss >= 2): the position stays
+// frozen so the IoU gate can still re-associate the reappearing object at the last seen spot,
+// but the covariance keeps growing -- otherwise P sat at its post-update size for the whole
+// gap and the tiny Kalman gain made the track crawl to the new measurement instead of snapping.
+
 void Tracker::kf_predict_cov( AxisKF& k, float dt, float q ) const
 {
     const float p00 = k.p[0];
@@ -59,12 +58,10 @@ void Tracker::kf_update( AxisKF& k, float z ) const
 
 void Tracker::predict( Track& t, float dt ) const
 {
-    // miss >= 2: freeze the state (the IoU gate must still find the
-    // reappearing object near the last seen spot) but keep growing the
-    // covariance, so the gain at the reappearance update matches the
-    // real length of the gap. Only confirmed tracks reach miss >= 2
-    // (tentative ones die at kMaxTentMiss), and kMaxMiss caps the
-    // growth at 15 frames.
+    // miss >= 2: freeze the state (the IoU gate must still find the reappearing object
+    // near the last seen spot) but keep growing the covariance, so the gain 
+    // at the reappearance update matches the real length of the gap. Only confirmed tracks
+    // reach miss >= 2 (tentative ones die at kMaxTentMiss), and kMaxMiss caps the growth at 15 frames.
     if ( t.miss >= 2 )
     {
         kf_predict_cov( t.fx, dt, static_cast<float>( kQAccel ) );
@@ -77,13 +74,68 @@ void Tracker::predict( Track& t, float dt ) const
 
 void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t ts_us )
 {
-    kf_update( t.fx, cx );
-    kf_update( t.fy, cy );
+    // Height prior: the detector flips between full-body and partially-cut
+    // boxes; the raw box center then jumps by half the height difference
+    // (hundreds of px) and the KF reads it as a crouch even for a person who
+    // only edged out of view. Re-anchor the center to the box BOTTOM and the
+    // prior height instead: the feet stay put when only the upper part is
+    // clipped. The prior updates only from plausibly full boxes, so a run of
+    // clipped detections never shrinks it. The bh EMA (drawn box size) is
+    // frozen while clipped, so the rendered box does not collapse either.
     const float a = static_cast<float>( kSizeEma ) / 100.0f;
+    const float clip_r = static_cast<float>( kClipRatioPct ) / 100.0f;
+    const float full_r = static_cast<float>( kFullBandPct ) / 100.0f;
+    // Prior refresh from near-full boxes only. The old condition updated
+    // the prior from anything >= 0.75*prior: intermediate heights from a
+    // leaning person passed that test and dragged the prior down, which
+    // dragged the clip threshold down with it, until anchored boxes
+    // classified as "full" again and the false crouch returned.
+    if ( t.hp <= 0.0f )
+        t.hp = bh;
+    else if ( bh >= t.hp * full_r )
+        t.hp += ( bh - t.hp ) * a;
+    float cy_meas = cy;
+    if ( t.hp > 0.0f && bh < t.hp * clip_r )
+    {
+        // clipped: bottom edge stays, lost height restored from the prior
+        cy_meas = cy + bh * 0.5f - t.hp * 0.5f;
+    }
+    else
+    {
+        t.bh += ( bh - t.bh ) * a;
+    }
+    kf_update( t.fx, cx );
+    kf_update( t.fy, cy_meas );
     t.bw += ( bw - t.bw ) * a;
-    t.bh += ( bh - t.bh ) * a;
-    // Trajectory keeps FACTS only: measured points, never predicted ones.
-    t.traj.push( TrajPoint{ ts_us, cx, cy } );
+    
+    // Every push is still backed by a real detection (measure() runs only on a match),
+    // but the pushed position is the KF posterior, not the raw measured center.
+    // The raw center jumps +-50-100 px when the detector flips between full-body and
+    // partially-cut boxes: the box SIZE changes, dragging the center even for a still person,
+    // and no spatial threshold helps against jumps that large. The posterior absorbs the size
+    // jitter (steady-state gain ~0.1 at r=25) and is also exactly what fill_gpu_boxes draws as
+    // the track box, so the trail tracks the rendered box instead of disagreeing with it.
+    // The kTrajMinStepPx gate still applies: with the posterior as input a standing person
+    // pushes almost nothing.
+    
+    if ( t.traj.empty() )
+    {
+        t.traj.push( TrajPoint{ ts_us, t.fx.x, t.fy.x } );
+    }
+    else
+    {
+        const TrajPoint last = t.traj.back( 0 );  // newest pushed point
+        const float dx = t.fx.x - last.x;
+        const float dy = t.fy.x - last.y;
+        const float step = static_cast<float>( kTrajMinStepPx );
+        if ( dx * dx + dy * dy >= step * step )
+            t.traj.push( TrajPoint{ ts_us, t.fx.x, t.fy.x } );
+    }
+
+    // Time-based eviction lives in update(), not here: it must run every
+    // frame for every alive track, not only on matches -- during a
+    // detection gap measure() is never called and stale points would
+    // freeze in the ring for the whole gap.
 }
 
 void Tracker::associate( const DetList& dets, int64_t ts_us,
@@ -100,7 +152,11 @@ void Tracker::associate( const DetList& dets, int64_t ts_us,
         for ( int i = 0; i < kMaxTracks; ++i )
         {
             const Track& t = tracks_[i];
-            if ( t.life == TRACK_FREE || t.bw <= 0.0f || t.bh <= 0.0f )
+            if ( t.life != TRACK_TENT && t.life != TRACK_CONF )
+                continue;  // FREE: unused; DEAD: ghost must not steal a match
+                           // from a fresh detection (a re-entering person
+                           // spawns a new track instead)
+            if ( t.bw <= 0.0f || t.bh <= 0.0f )
                 continue;
             const float rw = d.w / t.bw * 100.0f;
             const float rh = d.h / t.bh * 100.0f;
@@ -130,19 +186,26 @@ void Tracker::associate( const DetList& dets, int64_t ts_us,
 
 void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
 {
-    // Dedupe: an unmatched detection overlapping an alive track beyond
-    // kSpawnDedupeGate is treated as a duplicate of it and dropped.
-    // The metric is the same box IoU the association uses -- symmetric
-    // in both sizes, no second notion of "closeness". Deliberately no
-    // size-consistency check here: a squeezed partial box (person half
-    // out of frame) fails that gate in association, which is exactly
-    // the path that used to spawn duplicates -- it must be suppressed,
-    // not allowed through.
+    // Dedupe: an unmatched detection overlapping an alive track beyond kSpawnDedupeGate
+    // is treated as a duplicate of it and dropped. The metric is the same box IoU 
+    // the association uses -- symmetric in both sizes, no second notion of "closeness".
+    // Deliberately no size-consistency check here: a squeezed partial box (person half
+    // out of frame) fails that gate in association, which is exactly the path that used
+    // to spawn duplicates -- it must be suppressed, not allowed through.
+
     const float nx = cx - bw * 0.5f;
     const float ny = cy - bh * 0.5f;
+
     for ( const Track& t : tracks_ )
     {
-        if ( t.life == TRACK_FREE || t.bw <= 0.0f || t.bh <= 0.0f )
+        // Only TENT/CONF are real owners of their spot: a DEAD ghost is a
+        // fading visual trail, its KF state is frozen at the last seen
+        // position. If a person re-enters the frame while the ghost still
+        // lingers there, the ghost must NOT suppress the new spawn --
+        // otherwise the person stays trackless for the whole ghost
+        // lifetime (kTrailMaxAgeMs) and the dedupe log spams per frame.
+        if ( ( t.life != TRACK_TENT && t.life != TRACK_CONF ) ||
+             t.bw <= 0.0f || t.bh <= 0.0f )
             continue;
         const float iou = box_iou( nx, ny, bw, bh,
                                    t.fx.x - t.bw * 0.5f, t.fy.x - t.bh * 0.5f, t.bw, t.bh );
@@ -154,10 +217,9 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
             return;
         }
 
-        // Optional: a track that has already missed frames may have
-        // drifted away from a genuinely new object standing there.
-        // Uncomment to relax the gate for such tracks:
-        // if ( t.miss > 0 ) continue;  -- must come BEFORE the IoU check
+        // Optional: a track that has already missed frames may have drifted away
+        // from a genuinely new object standing there. Uncomment to relax the gate
+        // for such tracks: if ( t.miss > 0 ) continue;  -- must come BEFORE the IoU check
     }
 
     for ( Track& t : tracks_ )
@@ -189,13 +251,13 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
 {
     out.clear();
 
-    // Predict every alive track to the current timestamp. dt comes from
-    // the real frame timestamps (VFR-honest) and is clamped both ways:
-    // zero/negative (reused slot) must not collapse the filter, a long
-    // pause must not explode the prediction.
+    // Predict every alive track to the current timestamp. dt comes from the real frame
+    // timestamps (VFR-honest) and is clamped both ways: zero/negative (reused slot) must not
+    // collapse the filter, a long pause must not explode the prediction.
+
     for ( Track& t : tracks_ )
     {
-        if ( t.life == TRACK_FREE )
+        if ( t.life == TRACK_FREE || t.life == TRACK_DEAD )
             continue;
         float dt = static_cast<float>( ts_us - t.ts_last_us ) * 1e-6f;
         if ( dt < 1e-3f )
@@ -206,13 +268,30 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
         t.ts_last_us = ts_us;
     }
 
+    // Time-based trail eviction, every frame, every alive track: with the
+    // kTrajMinStepPx push gate the pushes are sparse, so eviction inside
+    // measure() would stall for the whole detection gap and stale points
+    // would freeze in the ring.
+    {
+        const int64_t max_age_us = static_cast<int64_t>( kTrailMaxAgeMs ) * 1000;
+        for ( Track& t : tracks_ )
+        {
+            if ( t.life == TRACK_FREE )
+                continue;
+            while ( !t.traj.empty() && t.traj.front().ts_us < ts_us - max_age_us )
+                t.traj.pop();
+            // ghost whose trail has fully aged out releases its slot
+            if ( t.life == TRACK_DEAD && t.traj.empty() )
+                t.life = TRACK_FREE;
+        }
+    }
+
     std::array<int, 128> det_trk {};  // DetList capacity
     det_trk.fill( -1 );
     std::array<unsigned char, kMaxTracks> trk_taken {};
     associate( dets, ts_us, det_trk, trk_taken );
 
-    // Unmatched person detections spawn tentative tracks (slot space
-    // permitting).
+    // Unmatched person detections spawn tentative tracks (slot space permitting).
     for ( int k = 0; k < dets.n; ++k )
     {
         if ( det_trk[k] >= 0 || dets.d[k].cls != 0 )
@@ -228,7 +307,7 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
         Track& t = tracks_[i];
         if ( t.life == TRACK_FREE )
             continue;
-        if ( !trk_taken[i] )
+        if ( !trk_taken[i] && t.life != TRACK_DEAD )
         {
             ++t.miss;
             const float drop =
@@ -237,7 +316,12 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
             t.fy.v *= drop;
             if ( ( t.life == TRACK_TENT && t.miss >= kMaxTentMiss ) ||
                  ( t.life == TRACK_CONF && t.miss > kMaxMiss ) )
-                t.life = TRACK_FREE;
+            {
+                // die into a ghost, not into nothing: the trail keeps
+                // rendering while its points are alive, fading by age
+                t.life = TRACK_DEAD;
+                t.ts_dead_us = ts_us;
+            }
         }
         if ( t.life == TRACK_FREE )
             continue;
@@ -255,9 +339,8 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
     }
 }
 
-
-// M3.11: trail sampling. Oldest-first output, newest point always
-// included: walk the ring backwards, keep every `stride`-th hit.
+// Oldest-first output, newest point always included: walk the ring backwards,
+// keep every `stride`-th hit.
 int Tracker::recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) const
 {
     if ( stride <= 0 || dst == nullptr || dst_cap <= 0 )

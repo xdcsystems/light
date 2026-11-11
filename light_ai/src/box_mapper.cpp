@@ -40,7 +40,8 @@ void trail_color( int id, uint8_t& r, uint8_t& g, uint8_t& b )
 }  // namespace
 
 void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& tracker,
-                     GpuBoxList& boxes, const LbGeom& lb, float sx, float sy )
+                     GpuBoxList& boxes, const LbGeom& lb, float sx, float sy,
+                     int64_t now_us )
 {
     boxes.clear();
     for ( int k = 0; k < dets.n; ++k )
@@ -80,9 +81,19 @@ void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& 
         for ( int k = 0; k < trajs.n; ++k )
         {
             const TrackState& t = trajs.d[k];
-            if ( t.state != TRACK_CONF )
-                continue;  // trail after confirmation only
-            const int ns = tracker.recent_points( t.id, 4, samp, 20 );
+            // trail after confirmation; DEAD ghosts keep drawing too: their
+            // points fade by age and the ring drains via the tracker-side
+            // per-frame eviction, so a ghost trail self-terminates when its
+            // youngest point ages out
+            if ( t.state != TRACK_CONF && t.state != TRACK_DEAD )
+                continue;
+            // stride 1: the ring is already thinned by the tracker-side
+            // kTrajMinStepPx push gate, so every stored point is an honest
+            // path vertex. The old stride 4 was a jitter-thinning hack for
+            // per-frame pushes; over a sparse ring it both skips path
+            // vertices (disconnected trail) and re-randomizes the sampled
+            // subset on every new push (residual swarming).
+            const int ns = tracker.recent_points( t.id, 1, samp, 20 );
             float prev_px = 0.0f;
             float prev_py = 0.0f;
             bool have_prev = false;  // spatial dedup state (per track)
@@ -111,9 +122,27 @@ void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& 
                 p.x1 = px + 1.5f;
                 p.y1 = py + 1.5f;
                 trail_color( t.id, p.r, p.g, p.b );
-                int a = 255 - ( ns - 1 - j ) * 10;  // newest opaque
-                if ( a < 60 )
-                    a = 60;
+                // Age-based fade: newest point opaque, alpha falls linearly
+                // with the point's age and reaches 0 exactly at the age the
+                // tracker evicts it (kTrailMaxAgeMs). The old index-based
+                // formula with a floor of 60 only approximated this while
+                // pushes were per-frame; with the sparse gated pushes it
+                // made stale points sit at the floor and then pop out
+                // abruptly. No floor: fully transparent == already evicted.
+                int64_t age_us = now_us - samp[j].ts_us;
+                if ( age_us < 0 )
+                    age_us = 0;
+                const int64_t max_age_us = tracker.trail_max_age_us();
+                // fully transparent == evicted: the tracker evicts on a
+                // strict-less-than, so a point exactly at max age survives
+                // one frame with alpha 0 -- do not push that quad at all
+                if ( age_us >= max_age_us )
+                    continue;
+                int a = 255 - static_cast<int>( age_us * 255 / max_age_us );
+                if ( a < 0 )
+                    a = 0;
+                if ( a > 255 )
+                    a = 255;
                 p.a = static_cast<uint8_t>( a );
                 boxes.push( p );
             }

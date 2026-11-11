@@ -147,7 +147,7 @@ double OverlaySink::draw_and_publish( Slot& sl,
     const float sx = sl.lb.w / static_cast<float>( sl.src_w );
     const float sy = sl.lb.h / static_cast<float>( sl.src_h );
     boxes_.clear();
-    fill_gpu_boxes( dets, trajs, tracker, boxes_, sl.lb, sx, sy );
+    fill_gpu_boxes( dets, trajs, tracker, boxes_, sl.lb, sx, sy, sl.ts_us );
     if ( boxes_.n > 0 )
     {
         if ( drawer_ )

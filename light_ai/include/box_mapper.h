@@ -17,6 +17,11 @@
 // Scene->tensor mapping is (s, lb_top) -- identical for both loops.
 // Detection boxes win the VBO budget (GpuBoxList::cap).
 
+// now_us: current frame timestamp, drives the per-point alpha fade:
+// newest point opaque, fades to 0 over kTrailMaxAgeMs -- matching the
+// tracker-side eviction, so a point disappears from the batch the same
+// moment its alpha would reach zero.
 void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& tracker,
-                     GpuBoxList& boxes, const LbGeom& lb, float sx, float sy );
+                     GpuBoxList& boxes, const LbGeom& lb, float sx, float sy,
+                     int64_t now_us );
 
