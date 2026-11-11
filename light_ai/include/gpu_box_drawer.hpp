@@ -49,7 +49,7 @@ public:
         float x, y;
         uint8_t r, g, b, a;
     };
-    static constexpr int kVertsPerBox = 4 * 6;  // 4 quads x 6 vertices per box
+    enum { kVertsPerBox = 4 * 6 };  // 4 quads x 6 vertices per box
 
 private:
     // GL/EGL state by value: no heap, no pimpl.
