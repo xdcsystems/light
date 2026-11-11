@@ -94,11 +94,30 @@ void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t
         t.hp = bh;
     else if ( bh >= t.hp * full_r )
         t.hp += ( bh - t.hp ) * a;
+    // Continuous clip anchor: the anchor strength grows with how clipped
+    // the box is. The old binary threshold at 0.75*prior made boxes
+    // hovering near the line flip between "anchored" and "raw" from match
+    // to match -- a ~100 px center jump per flip (observed velocity
+    // spikes of -350 px/s). w = (1 - bh/hp) / (1 - clip_r), clamped to
+    // [0,1]: a full box gets w=0 (raw center), bh <= 0.75*prior gets
+    // w=1 (fully anchored to bottom + prior height), in between --
+    // proportional blend, so no jump can exist at the boundary by design.
     float cy_meas = cy;
-    if ( t.hp > 0.0f && bh < t.hp * clip_r )
+    if ( t.hp > 0.0f )
     {
-        // clipped: bottom edge stays, lost height restored from the prior
-        cy_meas = cy + bh * 0.5f - t.hp * 0.5f;
+        float w = ( 1.0f - bh / t.hp ) / ( 1.0f - clip_r );
+        if ( w < 0.0f )
+            w = 0.0f;
+        if ( w > 1.0f )
+            w = 1.0f;
+        // bottom edge stays, lost height restored from the prior
+        cy_meas = cy + w * ( bh * 0.5f - t.hp * 0.5f );
+        // drawn box size: the clipped fraction is restored from the
+        // prior proportionally to w. w=1 reproduces the old frozen-EMA
+        // behavior (the box keeps the prior height), w<1 blends
+        // smoothly instead of switching the EMA on/off.
+        const float bh_meas = bh + w * ( t.hp - bh );
+        t.bh += ( bh_meas - t.bh ) * a;
     }
     else
     {

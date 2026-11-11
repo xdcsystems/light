@@ -32,7 +32,10 @@ void ConsoleReporter::report(
         for ( int k = 0; k < trajs.n && k < 8; ++k )
         {
             const TrackState& t = trajs.d[k];
-            std::cout << "  id=" << t.id << ( t.state == TRACK_CONF ? " conf" : " tent" )
+            const char* life_tag = ( t.state == TRACK_CONF )  ? " conf"
+                                   : ( t.state == TRACK_DEAD ) ? " dead"
+                                                                : " tent";
+            std::cout << "  id=" << t.id << life_tag
                       << std::fixed << std::setprecision( 1 ) << " c=("
                       << t.cx << ',' << t.cy << ") v=(" << t.vx << ',' << t.vy << ") pts=" << t.n_pts << '\n';
         }
