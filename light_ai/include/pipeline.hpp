@@ -43,6 +43,7 @@ class Pipeline
         std::string node;
         int w = 0;
         int h = 0;
+        int frames = 0;
         int warmup_left = 0;
         Timings::clk::time_point last_ok_tp {};
     };

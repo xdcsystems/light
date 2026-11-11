@@ -374,7 +374,7 @@ int Pipeline::run()
     }
     // frames == 0 (the default): no frame budget -- run until stop
     // (Ctrl-C); the signal path below drains and reports as usual.
-    for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.load(); ++i )
+    for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.load(); )
     {
         const auto t0 = clk::now();
 
@@ -453,7 +453,8 @@ int Pipeline::run()
         if ( slot < 0 )
             break;  // stop requested with every slot in flight: leave through the normal path
         const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( t1 - t_start ).count();
-        frame_dispatch( slot, i, fd_src, ts_us, cam_ms, dec_ms );
+        frame_dispatch( slot, active_src.frames++, fd_src, ts_us, cam_ms, dec_ms );
+        ++i;
         if ( npool_ == 1 )
             ok += publish_oldest();
     }
