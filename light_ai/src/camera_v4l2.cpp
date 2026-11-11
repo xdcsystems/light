@@ -48,17 +48,15 @@ namespace
         return ok;
     }
 
-    // poll(2) with EINTR retries, in the spirit of xioctl() above:
-    // returns >0 (ready), 0 (timeout) or <0 (error, errno set).
+    // Single poll(2) call without an internal EINTR loop: when SIGINT/SIGTERM
+    // sets stop_, poll() returns -1 (EINTR) immediately instead of restarting
+    // a new 2000 ms wait; non-stop EINTR is retried by the pipeline loop.
     int poll_ready( int fd, int timeout_ms )
     {
         pollfd pfd {};
         pfd.fd = fd;
         pfd.events = POLLIN;
-        int pr = ::poll( &pfd, 1, timeout_ms );
-        while ( pr < 0 && errno == EINTR )
-            pr = ::poll( &pfd, 1, timeout_ms );
-        return pr;
+        return ::poll( &pfd, 1, timeout_ms );
     }
 
     // Returns 0 when a frame is ready to dequeue, or the errno class

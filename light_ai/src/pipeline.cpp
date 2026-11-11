@@ -302,7 +302,7 @@ int Pipeline::try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err )
             srcs_[s].last_ok_tp = clk::now();
             return idx;
         }
-        if ( cam_err != EAGAIN )
+        if ( cam_err != EAGAIN && cam_err != EINTR )
         {
             cur_src_ = s;
             return -1;
@@ -344,7 +344,7 @@ int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
         do
         {
             r = srcs_[0].src.dequeue( &sz, &cam_err );
-        } while ( r < 0 && cam_err == EAGAIN && !stop_.load() );
+        } while ( r < 0 && ( cam_err == EAGAIN || cam_err == EINTR ) && !stop_.load() );
         return r;
     }
     while ( !stop_.load() )
