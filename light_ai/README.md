@@ -244,11 +244,16 @@ post-processing.
                RGB888 -> NV12 1:1 into its own ping-pong MPP dma-bufs
                — no upscale, zero CPU pixels (the frames leave for the
                encoder as zero-copy DRM_PRIME descriptors, 2026-10-28,
-               see the enc notes below). The stream size is the
-               band's native size (640x480 for the default 1280x960 camera, 640x360 for 1280x720; 640x480 at the 1280x960 working mode since
-               2026-10-30). One viewer at a time; no encode until the
-               first viewer connects; a stalled viewer is dropped via
-               SO_SNDTIMEO (15 s). Late joiners via repeated
+               see the enc notes below). The stream canvas is canonical (2026-11-12): 640x480
+               single-view; multi-view composes 640x480 tiles into
+               1280x480 (2x1, 2 sources) or 1280x960 (2x2, 3+ sources),
+               mixed-aspect sources letterboxed per LbGeom. Absent
+               tiles stream a pre-rendered NO SIGNAL plate (stamped
+               once at init; see docs/state.md, "NO SIGNAL idle
+               stream") paced by --net-fps, excluded from --frames and
+               the timing stats. One viewer at a time; no encode until
+               the first viewer connects; a stalled viewer is dropped
+               via SO_SNDTIMEO (15 s). Late joiners via repeated
                PAT/PMT/SDT.
                The NV12 dma-buf pool is three ring buffers deep (2026-11-02,
                P1-4): two could run out exactly at the 3-deep rkmpp
