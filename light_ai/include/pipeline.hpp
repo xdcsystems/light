@@ -132,5 +132,6 @@ private:
     std::thread probe_th_;   // hot-attach prober: armed in run(), joined on exit
     std::atomic<bool> probe_quit_ { false };
     uint64_t probe_ticks_ = 0;  // prober round counter: throttles the probe log
+    long long scan_log_ms_ = 0;  // last camera-scan log stamp: throttles discovery spam (30 s)
     PubFifo pub_;
 };

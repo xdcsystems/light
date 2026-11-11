@@ -89,4 +89,5 @@ private:
 // -- the caller re-opens the winning node via reconnect().
 // Returns 0 and fills `out`; non-zero when nothing usable is found.
 
-int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::string& out );
+int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::string& out,
+                           long long* last_scan_log_ms = nullptr );

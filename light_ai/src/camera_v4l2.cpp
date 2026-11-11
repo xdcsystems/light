@@ -1,4 +1,5 @@
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -285,7 +286,8 @@ int CameraV4L2::reconnect( const std::string& dev, std::string* why )
 // filtered by the USB capture check and the first one whose setup passes wins.
 // The trial leaves the camera closed on every outcome — the caller re-opens
 // the winning node via reconnect().
-int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::string& out )
+int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::string& out,
+                           long long* last_scan_log_ms )
 {
     struct stat st
     {};
@@ -301,7 +303,19 @@ int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::s
         std::cerr << "camera: reconnect setup on " << preferred << " failed: " << why << '\n';
         cam.teardown();
     }
-    std::cerr << "camera: node " << preferred << " not present, scanning /dev/video*\n";
+    // Scan-log throttle (owned by the caller): the prober repeats the
+    // scan every 2 s while the slot stays absent -- without the throttle
+    // the log fills with identical lines every 2 s. The scan itself is
+    // NOT throttled, only the print (recover() path passes no pointer:
+    // rare by construction, prints every time).
+    const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch() ).count();
+    if ( !last_scan_log_ms || *last_scan_log_ms == 0 || now_ms - *last_scan_log_ms >= 30000 )
+    {
+        std::cerr << "camera: node " << preferred << " not present, scanning /dev/video*\n";
+        if ( last_scan_log_ms )
+            *last_scan_log_ms = now_ms;
+    }
     std::array<int, 64> cands {};
     int nc = 0;
     DIR* d = opendir( "/dev" );

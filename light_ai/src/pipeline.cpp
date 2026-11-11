@@ -210,7 +210,7 @@ void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
             {
                 std::cerr << "camera: configured node " << sl.node << " not present, falling back to USB discovery\n";
                 std::string found;
-                if ( find_usb_capture_node( cam, sl.node, found ) != 0 )
+                if ( find_usb_capture_node( cam, sl.node, found, &scan_log_ms_ ) != 0 )
                     { sl.absent = true; std::cerr << "camera: node " << sl.node << " absent at startup\n"; return; }
                 std::cout << "camera: discovery adopted " << found << '\n';
                 sl.node = found;
@@ -253,7 +253,7 @@ void Pipeline::probe_source( int idx )
         if ( !sl.node.empty() )
         {
             std::string found;
-            if ( find_usb_capture_node( cam, sl.node, found ) != 0 )
+            if ( find_usb_capture_node( cam, sl.node, found, &scan_log_ms_ ) != 0 )
                 return;
             if ( !found.empty() && found != sl.node )
             {
