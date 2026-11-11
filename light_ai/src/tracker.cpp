@@ -137,18 +137,57 @@ void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t
     // The kTrajMinStepPx gate still applies: with the posterior as input a standing person
     // pushes almost nothing.
     
+    // Trail push from a median window (kTrailMedianN posteriors). A stale
+    // window must not mix with post-gap positions, so it resets whenever
+    // the ring is empty (fresh spawn, or fully aged-out trail).
     if ( t.traj.empty() )
+        t.mwin_n = 0;
+    t.mwin_x[t.mwin_n % kTrailMedianN] = t.fx.x;
+    t.mwin_y[t.mwin_n % kTrailMedianN] = t.fy.x;
+    ++t.mwin_n;
+    if ( t.mwin_n >= kTrailMedianN )
     {
-        t.traj.push( TrajPoint{ ts_us, t.fx.x, t.fy.x } );
-    }
-    else
-    {
-        const TrajPoint last = t.traj.back( 0 );  // newest pushed point
-        const float dx = t.fx.x - last.x;
-        const float dy = t.fy.x - last.y;
-        const float step = static_cast<float>( kTrajMinStepPx );
-        if ( dx * dx + dy * dy >= step * step )
-            t.traj.push( TrajPoint{ ts_us, t.fx.x, t.fy.x } );
+        float xs[kTrailMedianN];
+        float ys[kTrailMedianN];
+        for ( int m = 0; m < kTrailMedianN; ++m )
+        {
+            xs[m] = t.mwin_x[m];
+            ys[m] = t.mwin_y[m];
+        }
+        for ( int m = 1; m < kTrailMedianN; ++m )  // insertion sort, tiny N
+        {
+            const float vx = xs[m];
+            int q = m;
+            while ( q > 0 && xs[q - 1] > vx )
+            {
+                xs[q] = xs[q - 1];
+                --q;
+            }
+            xs[q] = vx;
+            const float vy = ys[m];
+            q = m;
+            while ( q > 0 && ys[q - 1] > vy )
+            {
+                ys[q] = ys[q - 1];
+                --q;
+            }
+            ys[q] = vy;
+        }
+        const float mx = xs[kTrailMedianN / 2];
+        const float my = ys[kTrailMedianN / 2];
+        if ( t.traj.empty() )
+        {
+            t.traj.push( TrajPoint{ ts_us, mx, my } );
+        }
+        else
+        {
+            const TrajPoint last = t.traj.back( 0 );  // newest pushed point
+            const float dx = mx - last.x;
+            const float dy = my - last.y;
+            const float step = static_cast<float>( kTrajMinStepPx );
+            if ( dx * dx + dy * dy >= step * step )
+                t.traj.push( TrajPoint{ ts_us, mx, my } );
+        }
     }
 
     // Time-based eviction lives in update(), not here: it must run every
@@ -198,6 +237,7 @@ void Tracker::associate( const DetList& dets, int64_t ts_us,
         measure( t, d.x + d.w * 0.5f, d.y + d.h * 0.5f, d.w, d.h, ts_us );
         ++t.hits;
         t.miss = 0;
+        t.ts_last_match_us = ts_us;
         if ( t.life == TRACK_TENT && t.hits >= kConfirmHits )
             t.life = TRACK_CONF;
     }
@@ -258,6 +298,7 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
         t.ts_last_us = ts_us;
         t.hits = 1;
         t.miss = 0;
+        t.ts_last_match_us = ts_us;
         t.traj.clear();
         t.traj.push( TrajPoint{ ts_us, cx, cy } );
         return;
@@ -333,7 +374,10 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
                 static_cast<float>( kMissVDrop ) / 100.0f;
             t.fx.v *= drop;
             t.fy.v *= drop;
-            if ( ( t.life == TRACK_TENT && t.miss >= kMaxTentMiss ) ||
+            const bool tent_expired = t.life == TRACK_TENT &&
+                ( ts_us - t.ts_last_match_us ) >
+                    static_cast<int64_t>( kTentMaxAgeMs ) * 1000;
+            if ( tent_expired ||
                  ( t.life == TRACK_CONF && t.miss > kMaxMiss ) )
             {
                 // die into a ghost, not into nothing: the trail keeps

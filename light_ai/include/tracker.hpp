@@ -73,7 +73,23 @@ class Tracker
         kTrajPoints = 300,  // ring per track (~12 s at 25 fps)
         kConfirmHits = 3,   // consecutive matches to confirm a track
         kMaxMiss = 15,      // confirmed track dies after this many misses
-        kMaxTentMiss = 2,   // tentative dies after this many misses
+        kMaxTentMiss = 2,   // tentative miss counter: still drives the KF
+                            // freeze (miss >= 2) and velocity damping, but
+                            // DEATH is time-based now (see kTentMaxAgeMs):
+                            // with sparse weak detections the period between
+                            // person boxes (4-5 frames) exceeded the
+                            // 2-miss patience, so a tentative died before
+                            // its second match and the next detection
+                            // spawned a fresh track -- a spawn-storm of
+                            // one-point ghosts while the person stood in
+                            // frame
+        kTentMaxAgeMs = 1000,  // tentative dies after this long with no
+                               // match: a miss COUNTER is dishonest under
+                               // sparse/VFR detection (2 misses can be 70 ms
+                               // or 700 ms), wall-clock patience is not.
+                               // Covers the observed ~150 ms detection
+                               // period with margin; a tent without a
+                               // single confirmation never outlives 1 s
         kIoUGate = 30,      // min IoU x100 to accept a match
         kSizeMin = 40,      // det/track size ratio gate, lower x100
         kSizeMax = 200,     // det/track size ratio gate, upper x100
@@ -100,6 +116,16 @@ class Tracker
                                 // movement episode, and they stay on screen forever
                                 // as a frozen clump. Evict by TIME: points older
                                 // than this leave from the head of the ring
+        kTrailMedianN = 5,   // trail points are pushed from the median of the
+                             // last N KF posteriors: the detector re-sizes
+                             // the box every frame and the posterior wobbles
+                             // by a few px even so, so the plain step gate
+                             // passes physically impossible alternation
+                             // (A,B,A,B within 2-3 frames) that renders as
+                             // shuffled bright/dim dots along the path. The
+                             // median cancels alternation, real drift
+                             // survives; lag is N/2 frames, negligible for a
+                             // seconds-long trail
         kClipRatioPct = 75,  // a measured box height below this fraction of the
                              // height prior is treated as clipped (partial
                              // exit / occlusion): the measured center is
@@ -140,7 +166,13 @@ class Tracker
         float hp = 0.0f;  // height prior: quasi-constant person height,
                           // updated only from plausibly full-body boxes,
                           // used to re-anchor clipped ones (see measure)
+        float mwin_x[kTrailMedianN] = {};  // median window for trail pushes,
+        float mwin_y[kTrailMedianN] = {};  // see measure()
+        int mwin_n = 0;
         int64_t ts_last_us = 0;
+        int64_t ts_last_match_us = 0;  // last time measure() matched this
+                                       // track: drives the tentative
+                                       // time-based patience (kTentMaxAgeMs)
         int64_t ts_dead_us = 0;  // moment the track died (TRACK_DEAD), for
                                  // diagnosing; the ghost lifetime is driven by
                                  // the trail points' own ages, not by this

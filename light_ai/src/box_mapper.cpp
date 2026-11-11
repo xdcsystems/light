@@ -143,6 +143,19 @@ void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& 
                     a = 0;
                 if ( a > 255 )
                     a = 255;
+                // Spatial coherence: pure chronological alpha is monotone
+                // in time but not along the drawn path -- when the path
+                // retraces itself, an old dim dot sits next to a fresh
+                // bright one and the fade reads as shuffled. Blend with an
+                // index ramp over the drawn sample (oldest drawn -> 0,
+                // newest -> untouched): both factors are monotone in j
+                // (the ring is served oldest-first), so the product is
+                // monotone along the path by construction. The age term
+                // still drives the global fade-to-zero: a standing
+                // person's frozen window fades out over kTrailMaxAgeMs,
+                // and evicted (invisible) tail points never pop.
+                if ( ns > 1 )
+                    a = a * j / ( ns - 1 );
                 p.a = static_cast<uint8_t>( a );
                 boxes.push( p );
             }
