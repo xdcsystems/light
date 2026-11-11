@@ -131,5 +131,6 @@ private:
     std::atomic<bool> stop_ { false };  // set by the signal handler
     std::thread probe_th_;   // hot-attach prober: armed in run(), joined on exit
     std::atomic<bool> probe_quit_ { false };
+    uint64_t probe_ticks_ = 0;  // prober round counter: throttles the probe log
     PubFifo pub_;
 };

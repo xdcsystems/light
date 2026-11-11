@@ -91,8 +91,11 @@ post-processing.
                otherwise numeric /dev/video* candidates are USB-filtered
                (rkcif/rkisp platform nodes rejected before any S_FMT)
                and trial-opened; the pipeline tracks each source node in `SourceSlot::node` (`srcs_`) and adopts a re-enumerated one transparently.
-               A permanent unplug exhausts the 20x1 s window and ends
-               the run with exit code 1.
+               A mid-run recoverable failure (ENODEV/EIO) flips the
+               slot to absent; probe_loop() re-attaches on its own
+               cadence (recover() for a detached slot, setup_device for
+               a fresh one). A permanent unplug no longer ends the run:
+               the remaining sources keep streaming.
                Robustness (2026-11-02, P1-5/P1-7): every setup_device
                error path after open() calls teardown() itself — a
                failed setup leaks neither fd nor mappings; the usb
