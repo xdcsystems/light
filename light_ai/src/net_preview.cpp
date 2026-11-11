@@ -154,7 +154,8 @@ void NetPreview::serve()
             fc_ = nullptr;
             stream_ = nullptr;
         }
-        av_write_trailer( s.fc );
+        if ( !error_.load() )
+            av_write_trailer( s.fc );
         if ( !quit_.load() )
             std::cout << "net: viewer gone, waiting for a new one\n";
     }

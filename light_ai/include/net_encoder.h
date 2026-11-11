@@ -194,5 +194,6 @@ private:
     // prepended to every following IDR (late-joiner support).
     // Plain members: function-local statics are forbidden outside tools/.
     std::vector< uint8_t > hdr_;
+    std::vector< uint8_t > idr_buf_;
     bool hdr_logged_ = false;
 };

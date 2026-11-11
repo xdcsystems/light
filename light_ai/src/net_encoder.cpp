@@ -134,6 +134,8 @@ namespace
             const uint8_t t = q->data[i+code_len] & 0x1F;
             if ( t == 7 || t == 8 )  // SPS or PPS already in the packet
                 return true;
+            if ( t == 5 || t == 1 || t == 10 )
+                break;  // slice/EoS NAL reached without SPS/PPS
             size_t j = i + code_len;
             while ( j < n && !is_code_at( q, j, n ) )
                 ++j;
@@ -683,6 +685,7 @@ bool NetEncoder::init_frames()
     dup_pkt_ = av_packet_alloc();
     if ( !mux_pkt_ || !dup_pkt_ )
         return false;
+    idr_buf_.reserve( 256 * 1024 );
     for ( auto*& qp : pkts_.d )
     {
         qp = av_packet_alloc();
@@ -886,25 +889,25 @@ int NetEncoder::mux_write( AVFormatContext* fc, AVPacket* pkt )
                       << " bytes, repeating on every IDR\n";
         else if ( !hdr_.empty() && !has_param_sets( pkt ) )
         {
-            if ( av_new_packet( dup_pkt_, static_cast<int>( hdr_.size() ) + pkt->size ) >= 0 )
+            const size_t total = hdr_.size() + static_cast<size_t>( pkt->size );
+            idr_buf_.resize( total );
+            std::memcpy( idr_buf_.data(), hdr_.data(), hdr_.size() );
+            std::memcpy( idr_buf_.data() + hdr_.size(), pkt->data, static_cast<size_t>( pkt->size ) );
+            av_packet_copy_props( dup_pkt_, pkt );
+            dup_pkt_->buf = nullptr;
+            dup_pkt_->data = idr_buf_.data();
+            dup_pkt_->size = static_cast<int>( total );
+            out = dup_pkt_;
+            if ( !hdr_logged_ )
             {
-                memcpy( dup_pkt_->data, hdr_.data(), hdr_.size() );
-                memcpy( dup_pkt_->data + hdr_.size(), pkt->data, static_cast<size_t>( pkt->size ) );
-                av_packet_copy_props( dup_pkt_, pkt );
-                out = dup_pkt_;
-                if ( !hdr_logged_ )
-                {
-                    std::cout << "enc: header repeat active\n";
-                    hdr_logged_ = true;
-                }
-            }
-            else
-            {
-                av_packet_unref( dup_pkt_ );
+                std::cout << "enc: header repeat active\n";
+                hdr_logged_ = true;
             }
         }
     }
-    const int r = av_interleaved_write_frame( fc, out );
+    const int r = av_write_frame( fc, out );
+    dup_pkt_->data = nullptr;
+    dup_pkt_->size = 0;
     av_packet_unref( dup_pkt_ );
     av_packet_unref( pkt );
     return r;
@@ -1099,5 +1102,6 @@ void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
         std::lock_guard<std::mutex> plk( pkt_mx_ );
         clear_pkt_queue();
     }
-    av_write_trailer( fc.p );  // best effort
+    if ( !error_.load() )
+        av_write_trailer( fc.p );  // best effort on a healthy socket
 }
