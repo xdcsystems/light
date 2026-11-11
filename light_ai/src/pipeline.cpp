@@ -100,13 +100,11 @@ Pipeline::Pipeline( const Config& cfg )
             src_h_ = srcs_[s].h;
     }
 
-    // all-absent startup: the ctor skipped the letterbox for absent
-    // slots, and a zero band crashes the encoder (mpp_buffer_get
-    // size 0). Feed the full-model band instead; the probe path
-    // refreshes per-slot geometry on the real attach.
-    auto enc_lb = srcs_[0].lb;
-    if ( srcs_[0].w == 0 || srcs_[0].h == 0 )
-        enc_lb = band_geom( model_w_, model_h_, model_w_, model_h_ );
+    // Canonical letterbox band: 4:3 of the model input. The canvas is
+    // source-independent now -- absent slots show the NO SIGNAL idle
+    // plate (idle_tick), real bands land per-frame via prep_frame's
+    // band_geom (probe refresh still fills per-slot geometry).
+    const LbGeom enc_lb = band_geom( model_w_, model_h_ * 3 / 4, model_w_, model_h_ );
     sink_.init( cfg_, npus_, model_w_, model_h_, enc_lb, nsrc_ );
     init_aux();
 
@@ -434,9 +432,37 @@ void Pipeline::init_aux()
                   << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
 }
 
+// NO SIGNAL idle publish: while at least one configured source is
+// absent, absent tiles show the gray NO SIGNAL plate in the stream.
+// Paced like --net-fps (25 FPS in follow-source mode); idle encodes
+// are NOT counted in --frames or the timing stats and never touch
+// the NPU. A fully live composition skips the work entirely.
+void Pipeline::idle_tick()
+{
+    if ( !sink_.enabled() )
+        return;
+    const int64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0_ ).count();
+    const int64_t step_us = cfg_.net_fps > 0 ? 1000000LL / cfg_.net_fps : 40000;
+    if ( last_idle_us_ >= 0 && now_us - last_idle_us_ < step_us )
+        return;
+    bool absent[ kMaxSources ] = {};
+    bool any_absent = nsrc_ == 0;  // no configured sources: one gray canvas
+    for ( int s = 0; s < nsrc_; ++s )
+    {
+        absent[ s ] = srcs_[ s ].absent.load();
+        any_absent = any_absent || absent[ s ];
+    }
+    if ( !any_absent )
+        return;
+    last_idle_us_ = now_us;
+    sink_.publish_idle( now_us, absent, nsrc_ );
+}
+
 int Pipeline::try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err )
 {
     constexpr double k_stall_ms = 2000.0;
+    idle_tick();  // mixed state: absent tiles keep publishing NO SIGNAL
     for ( int k = 0; k < nsrc_; ++k )
     {
         const int s = ( cur_src_ + 1 + k ) % nsrc_;
@@ -484,12 +510,16 @@ void Pipeline::drain_done_slots( int& ok )
 int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
 {
     drain_done_slots( ok );
+    idle_tick();
     if ( nsrc_ == 0 )
     {
         // waiting for attach: nothing to dequeue, park until stop
         // (hot-adding sources beyond the configured set is a separate feature)
         while ( !stop_.load() )
+        {
+            idle_tick();
             std::this_thread::sleep_for( std::chrono::milliseconds( 40 ) );
+        }
         cam_err = EINTR;
         return -1;
     }
@@ -501,7 +531,9 @@ int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
         {
             if ( srcs_[0].absent.load() )
             {
-                // all-absent park: 40 ms quanta; probe_loop() flips the flag
+                // all-absent park: NO SIGNAL idle publish + 40 ms quanta;
+                // probe_loop() flips the flag
+                idle_tick();
                 std::this_thread::sleep_for( std::chrono::milliseconds( 40 ) );
                 continue;
             }
@@ -519,7 +551,9 @@ int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
             any_live = any_live || !srcs_[s].absent.load();
         if ( !any_live )
         {
-            // all-absent park: 40 ms quanta; probe_loop() flips the flags
+            // all-absent park: NO SIGNAL idle publish + 40 ms quanta;
+            // probe_loop() flips the flags
+            idle_tick();
             std::this_thread::sleep_for( std::chrono::milliseconds( 40 ) );
             continue;
         }
@@ -539,6 +573,7 @@ int Pipeline::run()
 {
     int ok = 0;
     const auto t_start = clk::now();
+    t0_ = std::chrono::steady_clock::now();  // idle pts base: same timeline as live ts_us
     // hot-attach prober (README): armed for the whole run(); the local
     // guard joins it on ANY exit -- drain, fatal error, exception unwind
     struct ProbeStop

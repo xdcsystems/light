@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -36,6 +37,10 @@ public:
                              const DetList& dets,
                              const TrajList& trajs,
                              const Tracker& tracker );
+
+    // NO SIGNAL idle publish (h264 path only): forwards to the encoder's
+    // idle path; the raw NUT preview keeps its live-only diagnostic role.
+    void publish_idle( int64_t ts_us, const bool* absent, int nabs );
 
 private:
     void init_gpu_drawer( const Config& cfg, const std::vector<RknnEngine>& npus );

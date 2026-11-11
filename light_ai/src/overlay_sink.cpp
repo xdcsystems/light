@@ -108,6 +108,15 @@ void OverlaySink::init( const Config& cfg,
     init_gpu_drawer( cfg, npus );
 }
 
+// NO SIGNAL idle publish: h264 path only -- the encoder RGA-copies the
+// pre-rendered gray plate into the absent tiles. The raw NUT preview
+// keeps its live-only diagnostic role (no idle frames there).
+void OverlaySink::publish_idle( int64_t ts_us, const bool* absent, int nabs )
+{
+    if ( enc_ )
+        enc_->publish_idle( ts_us, absent, nabs );
+}
+
 void OverlaySink::init_gpu_drawer( const Config& cfg, const std::vector<RknnEngine>& npus )
 {
     if ( ( !preview_ && !enc_ ) || cfg.cpu_draw )

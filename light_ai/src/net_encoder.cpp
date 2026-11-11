@@ -10,6 +10,7 @@
 #include <im2d.h>
 #include <rga.h>
 #include <libdrm/drm_fourcc.h>  // DRM_FORMAT_*
+#include <stb_easy_font.h>
 
 extern "C"
 {
@@ -198,6 +199,128 @@ namespace
             dma::cache_clean( p, mpp_buffer_get_size( mb ) );
         }
     }
+
+    // One stb_easy_font vertex: x/y/z float + color uint8[4], 16 bytes,
+    // four per quad -- the lib emits 1-px-thick axis-aligned stroke quads,
+    // so rasterization is a scaled bbox fill (smooth at any scale; the
+    // raster font8x8 stays in externals as a spare).
+    struct FontVertex
+    {
+        float x;
+        float y;
+        float z;
+        unsigned char c[ 4 ];
+    };
+
+    // The lib API is char*-based (legacy C): copy into a fixed buffer --
+    // const_cast is banned by the project gate (.clang-tidy keeps
+    // cppcoreguidelines-pro-type-const-cast on).
+    void font_txt( char* dst, int cap, const char* s )
+    {
+        const int n = static_cast<int>( std::strlen( s ) );
+        const int m = n < cap - 1 ? n : cap - 1;
+        std::memcpy( dst, s, static_cast<size_t>( m ) );
+        dst[ m ] = 0;
+    }
+
+    // Rendered text size in Y pixels, for callers that center the plate.
+    int text_width( const char* s, int scale )
+    {
+        if ( !s )
+            return 0;
+        constexpr int k_txt_cap = 64;
+        char txt[ k_txt_cap ];
+        font_txt( txt, k_txt_cap, s );
+        return stb_easy_font_width( txt ) * scale;
+    }
+
+    int text_height( const char* s, int scale )
+    {
+        if ( !s )
+            return 0;
+        constexpr int k_txt_cap = 64;
+        char txt[ k_txt_cap ];
+        font_txt( txt, k_txt_cap, s );
+        return stb_easy_font_height( txt ) * scale;
+    }
+
+    // Renders `s` at (x, y) -- the glyph-area top left -- in the Y plane
+    // `py` (row stride `stride`), scaling every stroke quad by `scale`.
+    // `val` is the Y luminance (0..255). Characters outside the table
+    // render as blanks. The caller owns the DMA cache sync.
+    void stamp_text( uint8_t* py, int stride, int x, int y,
+                     const char* s, int scale, uint8_t val )
+    {
+        if ( !py || scale <= 0 || !s )
+            return;
+        constexpr int k_txt_cap = 64;
+        char txt[ k_txt_cap ];
+        font_txt( txt, k_txt_cap, s );
+        stb_easy_font_spacing( 0 );  // default spacing; keeps the static referenced
+        unsigned char col[ 4 ] = { val, val, val, 255 };
+        char vbuf[ 8192 ];  // 128 quads -- enough for any short label
+        const int nq = stb_easy_font_print( 0.0f, 0.0f, txt, col, vbuf,
+                                            static_cast<int>( sizeof( vbuf ) ) );
+        for ( int q = 0; q < nq; ++q )
+        {
+            const FontVertex* v = reinterpret_cast<const FontVertex*>( vbuf ) + q * 4;
+            float min_x = v[ 0 ].x;
+            float max_x = v[ 0 ].x;
+            float min_y = v[ 0 ].y;
+            float max_y = v[ 0 ].y;
+            for ( int k = 1; k < 4; ++k )
+            {
+                if ( v[ k ].x < min_x )
+                    min_x = v[ k ].x;
+                if ( v[ k ].x > max_x )
+                    max_x = v[ k ].x;
+                if ( v[ k ].y < min_y )
+                    min_y = v[ k ].y;
+                if ( v[ k ].y > max_y )
+                    max_y = v[ k ].y;
+            }
+            // Stroke quads carry integer coords, so the scaled fill is
+            // exact: [min*scale, max*scale) per axis -- no +1 rounding.
+            const int ix0 = x + static_cast<int>( min_x * scale );
+            const int iy0 = y + static_cast<int>( min_y * scale );
+            int ix1 = x + static_cast<int>( max_x * scale );
+            int iy1 = y + static_cast<int>( max_y * scale );
+            if ( ix1 > stride )
+                ix1 = stride;
+            for ( int ry = iy0; ry < iy1; ++ry )
+            {
+                if ( ry < 0 )
+                    continue;
+                uint8_t* row = py + static_cast<size_t>( ry ) * stride;
+                for ( int rx = ix0; rx < ix1; ++rx )
+                    if ( rx >= 0 )
+                        row[ rx ] = val;
+            }
+        }
+    }
+
+    // NO SIGNAL plate (idle canvas): a one-time CPU raster at init -- the
+    // README zero-copy rule governs the FRAME path, and this follows the
+    // gray-letterbox memset precedent (init-time only, never per frame).
+    // stb_easy_font stroke glyphs at 3x -- the same raster will serve the
+    // box labels. Centered in every tile (single-view: once).
+    void draw_no_signal( MppBuffer mb, int w, int tile_w, int tile_h, int nsrc )
+    {
+        if ( !mb )
+            return;
+        const char* msg = "NO SIGNAL";
+        constexpr int k_text_scale = 3;
+        const int x0 = ( tile_w - text_width( msg, k_text_scale ) ) / 2;
+        const int y0 = ( tile_h - text_height( msg, k_text_scale ) ) / 2;
+        uint8_t* py = static_cast<uint8_t*>( mpp_buffer_get_ptr( mb ) );
+        if ( !py )
+            return;
+        dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
+        for ( int t = 0; t < nsrc; ++t )
+            stamp_text( py, w, ( t % 2 ) * tile_w + x0, ( t / 2 ) * tile_h + y0,
+                        msg, k_text_scale, 16 );
+        dma::cache_clean( py, mpp_buffer_get_size( mb ) );
+    }
 }  // namespace
 
 NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, int port, const std::string& host, int bitrate_kbps, int nsrc )
@@ -257,6 +380,17 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
         avformat_network_deinit();
         throw std::runtime_error( "net encoder: " + pool_why );
     }
+
+    // Idle canvas (NO SIGNAL): a dedicated dma-buf, gray-filled by the
+    // pool alloc and stamped with the plate in every tile, once at init.
+    // publish_idle() RGA-copies from it -- the NPU tensor is never touched.
+    std::string idle_why;
+    if ( !idle_pool_.alloc( static_cast<size_t>( w_ ) * vstride_ * 3 / 2, MODULE_TAG, __FUNCTION__, &idle_why ) )
+    {
+        avformat_network_deinit();
+        throw std::runtime_error( "net encoder: idle canvas: " + idle_why );
+    }
+    draw_no_signal( idle_pool_.buf[ 0 ], w_, tile_w_, tile_h_, nsrc_ );
 
     const AVCodec* codec = avcodec_find_encoder_by_name( "h264_rkmpp" );
     if ( !codec )
@@ -572,6 +706,98 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_f
             pkt_cv_.notify_all();  // serve() closes and reopens the stream path
         }
     }
+}
+
+// NO SIGNAL publish (idle): mirrors publish() -- encode/mux under mx_,
+// RGA outside it, error path wakes serve(). The caller paces idle
+// encodes at a fixed fps; updating last_enc_ts_us_ keeps live and idle
+// encodes inside one budget: a live frame right after an idle one sees
+// a fresh ts and skips the duplicate encode (multi-view do_enc window).
+// The frame counter and the timing stats never see idle frames.
+void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
+{
+    if ( quit_.load() || !active_.load() )
+        return;
+    bool any = false;
+    for ( int s = 0; s < nsrc_; ++s )
+        any = any || ( !absent || s >= nabs || absent[ s ] );
+    if ( !any )
+        return;  // every tile went live since the tick was scheduled
+    {
+        std::lock_guard<std::mutex> qlk( pkt_mx_ );
+        if ( pkts_.n >= 4 )
+            return;  // encode queue full: skip this tick
+    }
+    ts_us_ = ts_us;
+    last_enc_ts_us_ = ts_us;
+    cur_ = ( cur_ + 1 ) % kBufCount;
+    if ( !prep_idle_frame( absent, nabs, pool_.buf[ cur_ ] ) )
+    {
+        error_.store( true );
+        {
+            std::lock_guard<std::mutex> nlk( pkt_mx_ );
+            pkt_cv_.notify_all();  // serve() closes and reopens the stream path
+        }
+        return;
+    }
+    std::lock_guard<std::mutex> lk( mx_ );
+    if ( !fc_ || !enc_ )
+        return;  // viewer dropped while copying: frame dropped with it
+    if ( !send_frame( st_ ) )
+    {
+        error_.store( true );
+        {
+            std::lock_guard<std::mutex> nlk( pkt_mx_ );
+            pkt_cv_.notify_all();  // serve() closes and reopens the stream path
+        }
+    }
+}
+
+bool NetEncoder::prep_idle_frame( const bool* absent, int nabs, MppBuffer mb )
+{
+    rga_buffer_t idl = wrapbuffer_fd( mpp_buffer_get_fd( idle_pool_.buf[ 0 ] ),
+                                      w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
+    rga_buffer_t out = wrapbuffer_fd( mpp_buffer_get_fd( mb ),
+                                      w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
+    if ( nsrc_ <= 1 )
+    {
+        // Single-view: the idle canvas IS the frame; the band stamp below
+        // forces the gray refill on live resume (plate pixels must not
+        // survive around the live picture).
+        buf_bands_[ cur_ ] = LbGeom { 0, 1, 0, 1 };
+        const IM_STATUS cs = imcopy( idl, out );
+        if ( static_cast<int>( cs ) <= 0 )
+        {
+            std::cerr << "enc: RGA idle copy failed: " << imStrError( cs ) << "\n";
+            return false;
+        }
+        return true;
+    }
+    // Multi-view: stamp the plate tile into every absent cell of the
+    // persistent composite canvas; live tiles keep their last picture.
+    MppBuffer cv = pool_.buf[ kBufCount ];
+    rga_buffer_t cvs = wrapbuffer_fd( mpp_buffer_get_fd( cv ),
+                                      w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
+    for ( int s = 0; s < nsrc_; ++s )
+    {
+        if ( absent && s < nabs && !absent[ s ] )
+            continue;
+        im_rect tile = { ( s % 2 ) * tile_w_, ( s / 2 ) * tile_h_, tile_w_, tile_h_ };
+        const IM_STATUS rs = improcess( idl, cvs, {}, tile, tile, {}, 0 );
+        if ( static_cast<int>( rs ) <= 0 )
+        {
+            std::cerr << "enc: RGA idle tile copy failed: " << imStrError( rs ) << "\n";
+            return false;
+        }
+        buf_bands_[ s ] = LbGeom { 0, 1, 0, 1 };  // forces the gray refill on live resume
+    }
+    const IM_STATUS cs = imcopy( cvs, out );
+    if ( static_cast<int>( cs ) <= 0 )
+    {
+        std::cerr << "enc: RGA idle composite copy failed: " << imStrError( cs ) << "\n";
+        return false;
+    }
+    return true;
 }
 
 void NetEncoder::wait_draw_fence()

@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <thread>
@@ -81,6 +82,10 @@ private:
     void pool_discard( int src_idx );    // drop pending slots of src_idx on recovery
     int try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err );
     int dequeue_next_source( uint32_t& sz, int& cam_err, int& ok );
+
+    // NO SIGNAL idle publish: gray plate tiles for absent sources at a
+    // fixed pace; not counted in --frames or the timing stats.
+    void idle_tick();
     int handle_source_failure( int cam_err );  // 0 = recovered, -1 = fatal
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
 
@@ -133,5 +138,7 @@ private:
     std::atomic<bool> probe_quit_ { false };
     uint64_t probe_ticks_ = 0;  // prober round counter: throttles the probe log
     long long scan_log_ms_ = 0;  // last camera-scan log stamp: throttles discovery spam (30 s)
+    std::chrono::steady_clock::time_point t0_ {};  // idle pts base (NO SIGNAL timeline)
+    int64_t last_idle_us_ = -1;  // last NO SIGNAL publish stamp (us since t0_)
     PubFifo pub_;
 };

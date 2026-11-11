@@ -103,6 +103,14 @@ public:
     // ignored in the fixed-fps mode.
     void publish( int tensor_fd, const LbGeom& band, int acquire_fence_fd = -1, int64_t ts_us = -1, int src_idx = 0 );
 
+    // NO SIGNAL publish (idle): RGA-copies the pre-rendered idle canvas
+    // (gray + the plate) into the ring slot / composite canvas cells of
+    // every absent source, then encodes one frame. Called by
+    // Pipeline::idle_tick while at least one configured tile has no live
+    // source; idle encodes share the last_enc_ts_us_ budget with live
+    // ones and are NOT counted in --frames or the timing stats.
+    void publish_idle( int64_t ts_us, const bool* absent, int nabs );
+
     // True while the stream path is live (viewer connected in PULL
     // mode / UDP path open). The pipeline gates GPU box drawing on it:
     // recognition runs continuously, output does not.
@@ -130,6 +138,10 @@ private:
     void wait_draw_fence();
     bool prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb );
 
+    // NO SIGNAL frame assembly (idle path): copies the idle-plate tile(s)
+    // into the target buffer. False on RGA failure.
+    bool prep_idle_frame( const bool* absent, int nabs, MppBuffer mb );
+
 private:
     const int w_, h_, tile_w_, tile_h_, nsrc_, fps_, port_, bitrate_kbps_;
     const std::string host_;
@@ -154,6 +166,7 @@ private:
     // pause, and two buffers can run out exactly at the 3-deep rkmpp
     // task queue while an older encode still holds its plane.
     RkmppDrmPool<kPoolCount> pool_;  // 3 ring NV12 dma-bufs + 1 composite canvas (multi-view)
+    RkmppDrmPool<1> idle_pool_;  // pre-rendered NO SIGNAL canvas: gray + plate, stamped once at init
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
     std::array<AVFrame*, kBufCount> frames_ {};  // pre-bound DRM_PRIME frames (one per pool slot)
