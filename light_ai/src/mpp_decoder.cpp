@@ -265,9 +265,12 @@ int MppDecoder::submit_input()
         // Hand the task back so the decoder thread is not stuck waiting
         // for it forever on the next poll. A failed re-enqueue means the
         // queue state is broken: log it loudly, no third attempt.
-        // Packet is dropped with the failed task: clear the dangling
-        // KEY_INPUT_PACKET pointer before the task goes back to the port.
-        mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, nullptr );
+        // Packet is dropped with the failed task: pop both meta keys via
+        // get_* (set_*(nullptr) inserts a null entry and leaves meta_size > 0).
+        MppPacket old_p = nullptr;
+        MppFrame old_f = nullptr;
+        mpp_task_meta_get_packet( task, KEY_INPUT_PACKET, &old_p );
+        mpp_task_meta_get_frame( task, KEY_OUTPUT_FRAME, &old_f );
         if ( mpi_->enqueue( ctx_, MPP_PORT_INPUT, task ) != MPP_OK )
         {
             std::cerr << "dec: task re-enqueue failed, decoder queue state broken\n";
@@ -292,20 +295,19 @@ int MppDecoder::retrieve_output()
     if ( mpi_->poll( ctx_, MPP_PORT_OUTPUT, static_cast<MppPollType>( kTaskPollMs ) ) != MPP_OK )
     {
         // The input task (holding pkt_ in its meta) is still queued inside
-        // the decoder. reset() flushes all queued tasks; only after it does
-        // deinit become safe.
+        // the decoder. reset_and_strip() pops any residual task meta and
+        // flushes the ports before drop_packet().
         std::cerr << "dec: output not ready in " << kTaskPollMs << " ms - flushing decoder\n";
-        mpi_->reset( ctx_ );
+        reset_and_strip();
         drop_packet();
         return -6;
     }
     MppTask task = nullptr;
     if ( mpi_->dequeue( ctx_, MPP_PORT_OUTPUT, &task ) != MPP_OK || !task )
     {
-        // See the -6 path: the input task is still inside the decoder,
-        // reset() releases its packet reference before drop_packet().
+        // See the -6 path: flush and strip task meta before drop_packet().
         std::cerr << "dec: output dequeue failed - flushing decoder\n";
-        mpi_->reset( ctx_ );
+        reset_and_strip();
         drop_packet();
         return -7;
     }
@@ -325,8 +327,8 @@ int MppDecoder::retrieve_output()
         const size_t bs = mpp_frame_get_buf_size( f );
         std::cerr << "dec: info_change " << w << 'x' << h << " buf_size=" << bs << '\n';
 
-        // Return the task BEFORE touching out_frame_
-        mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, nullptr );
+        // Return the output task BEFORE touching out_frame_ (get_frame above
+        // already popped KEY_OUTPUT_FRAME, leaving meta_size == 0).
         mpi_->enqueue( ctx_, MPP_PORT_OUTPUT, task );
 
         mpp_frame_set_width( out_frame_, w );
@@ -372,7 +374,6 @@ int MppDecoder::retrieve_output()
         }
     }
 
-    mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, nullptr );
     mpi_->enqueue( ctx_, MPP_PORT_OUTPUT, task );
     // The output task is back in the free list, the decoder no longer
     // references the packet: safe point for deinit (instead of the top
@@ -384,30 +385,30 @@ int MppDecoder::retrieve_output()
 
 void MppDecoder::reset_and_strip()
 {
-    // Teardown-only helper (~MppDecoder): dequeue any residual tasks from
-    // both ports and clear their meta pointers before and after reset() so
-    // mpp_destroy() never double-deinits pkt_ or out_frame_. Tasks are
-    // intentionally not re-enqueued: enqueueing on MPP_PORT_INPUT submits
-    // a new job to the decoder thread, and mpp_destroy() frees the task
-    // pool with the context regardless.
-    auto strip_ports = [this]() {
-        for ( MppPortType port : { MPP_PORT_INPUT, MPP_PORT_OUTPUT } )
+    // Pop any residual KEY_INPUT_PACKET / KEY_OUTPUT_FRAME nodes from
+    // tasks sitting in the ports (get_* removes the key so meta_size
+    // becomes 0, whereas set_*(nullptr) inserts a key with a null value)
+    // and return the tasks before mpi_->reset() reconciles the queues to
+    // status 0, meta_size 0.
+    for ( MppPortType port : { MPP_PORT_INPUT, MPP_PORT_OUTPUT } )
+    {
+        for ( int i = 0; i < 4; ++i )
         {
-            for ( int i = 0; i < 32; ++i )
-            {
-                MppTask t = nullptr;
-                if ( mpi_->poll( ctx_, port, MPP_POLL_NON_BLOCK ) != MPP_OK )
-                    break;
-                if ( mpi_->dequeue( ctx_, port, &t ) != MPP_OK || !t )
-                    break;
-                mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, nullptr );
-                mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, nullptr );
-            }
+            MppTask t = nullptr;
+            if ( mpi_->poll( ctx_, port, MPP_POLL_NON_BLOCK ) != MPP_OK )
+                break;
+            if ( mpi_->dequeue( ctx_, port, &t ) != MPP_OK || !t )
+                break;
+            MppPacket old_p = nullptr;
+            MppFrame old_f = nullptr;
+            mpp_task_meta_get_packet( t, KEY_INPUT_PACKET, &old_p );
+            mpp_task_meta_get_frame( t, KEY_OUTPUT_FRAME, &old_f );
+            mpi_->enqueue( ctx_, port, t );
+            if ( !old_p && !old_f )
+                break;
         }
-    };
-    strip_ports();
+    }
     mpi_->reset( ctx_ );
-    strip_ports();
 }
 
 int MppDecoder::aux_fd( size_t bytes )
