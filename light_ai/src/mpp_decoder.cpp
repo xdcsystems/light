@@ -292,10 +292,10 @@ int MppDecoder::retrieve_output()
     if ( mpi_->poll( ctx_, MPP_PORT_OUTPUT, static_cast<MppPollType>( kTaskPollMs ) ) != MPP_OK )
     {
         // The input task (holding pkt_ in its meta) is still queued inside
-        // the decoder. reset_and_strip() clears user-side task meta and
-        // flushes all queued tasks; only after it does deinit become safe.
+        // the decoder. reset() flushes all queued tasks; only after it does
+        // deinit become safe.
         std::cerr << "dec: output not ready in " << kTaskPollMs << " ms - flushing decoder\n";
-        reset_and_strip();
+        mpi_->reset( ctx_ );
         drop_packet();
         return -6;
     }
@@ -303,9 +303,9 @@ int MppDecoder::retrieve_output()
     if ( mpi_->dequeue( ctx_, MPP_PORT_OUTPUT, &task ) != MPP_OK || !task )
     {
         // See the -6 path: the input task is still inside the decoder,
-        // reset_and_strip() releases its packet reference before drop_packet().
+        // reset() releases its packet reference before drop_packet().
         std::cerr << "dec: output dequeue failed - flushing decoder\n";
-        reset_and_strip();
+        mpi_->reset( ctx_ );
         drop_packet();
         return -7;
     }
@@ -384,6 +384,12 @@ int MppDecoder::retrieve_output()
 
 void MppDecoder::reset_and_strip()
 {
+    // Teardown-only helper (~MppDecoder): dequeue any residual tasks from
+    // both ports and clear their meta pointers before and after reset() so
+    // mpp_destroy() never double-deinits pkt_ or out_frame_. Tasks are
+    // intentionally not re-enqueued: enqueueing on MPP_PORT_INPUT submits
+    // a new job to the decoder thread, and mpp_destroy() frees the task
+    // pool with the context regardless.
     auto strip_ports = [this]() {
         for ( MppPortType port : { MPP_PORT_INPUT, MPP_PORT_OUTPUT } )
         {
@@ -396,15 +402,6 @@ void MppDecoder::reset_and_strip()
                     break;
                 mpp_task_meta_set_packet( t, KEY_INPUT_PACKET, nullptr );
                 mpp_task_meta_set_frame( t, KEY_OUTPUT_FRAME, nullptr );
-                // Re-enqueue: this helper also runs on the runtime recovery
-                // paths (-6/-7 in retrieve_output()). Dropping the dequeued
-                // tasks there permanently shrank BOTH port queues: the input
-                // side starved submit_input() into an endless -3 series after
-                // the first timeout, the output side lost its frame slots.
-                // In the destructor path this is semantically a no-op:
-                // mpp_destroy frees the tasks together with the queues
-                // regardless of which side holds them.
-                mpi_->enqueue( ctx_, port, t );
             }
         }
     };
