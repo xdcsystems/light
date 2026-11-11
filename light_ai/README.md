@@ -657,8 +657,21 @@ scripts/install_rknn.sh (download + SHA256 verify + pip install).
 
 ## Run
     sudo ./build/light_ai \
-        --device /dev/video20 --frames 3000 \
-        --net --net-h264 --net-fps 0 --pool 3
+        --device /dev/video20 \
+        --frames 3000 \
+        --net --net-h264 \
+        --net-fps 0 \
+        --pool 3
+
+    sudo ./build/light_ai \
+        --device /dev/video20 \
+        --net-src http://192.168.1.2:8080/video  \
+        --pool 3 \
+        --net \
+        --net-h264 \
+        --net-fps 0 \
+        --net-bitrate 3000 \
+        --frames 3000
 
 (LD_LIBRARY_PATH=/usr/local/lib was required earlier; since the
 2026-10-28 rebuild ldconfig resolves /usr/local/lib — ldd verified.

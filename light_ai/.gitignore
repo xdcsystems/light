@@ -1,32 +1,28 @@
-venv/
-*.whl
-*.rknn
-dataset/
-dataset_mix/
-dataset_night/
-dataset_day2/
+# build and temp files
 *.o
 *.d
-temp*.txt
-
-# разрешаем коммит артефактов
-!misc/README.md
-!misc/*.whl
+*.bak
+*.bak-p*
 tidy-report.txt
+temp*.txt
+tools/bench_npu
+
+# python
+venv/
+
+# models and datasets are not tracked (see README, Build):
+# the wheel lives in GitHub Releases (rknn-toolkit-lite2-v2.5.0),
+# installed by scripts/install_rknn.sh (download + SHA256 verify)
+*.rknn
+*.whl
+dataset*/
+dataset_*.tgz
+artifacts/
+
+# misc: untracked artifacts, the only exception is README
+misc/preds_*.csv
+misc/boxlog_*.csv
+!misc/README.md
 
 # clangd index cache
 .cache/
-dataset_day3/
-dataset_dusk/
-artifacts/
-misc/preds_*.csv
-misc/boxlog_*.csv
-
-# dataset dumps (calibration/oracle inputs, ~100 MB+)
-dataset/
-dataset_night2/
-dataset_*.tgz
-*.bak-p*
-tools/bench_npu
-misc/*.whl
-*.bak

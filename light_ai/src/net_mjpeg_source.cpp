@@ -473,7 +473,7 @@ int NetMjpegSource::read_boundary()
             return 0;
         }
         if ( avail >= static_cast<size_t>( kSockBuf ) )
-            return -2;  // 32 KiB without a boundary: desynced stream
+            return -2;  // 256 KiB without a boundary: desynced stream
         const int r = net_fill( kPollMs );
         if ( r == -2 )
             return -2;
