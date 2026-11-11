@@ -1,67 +1,78 @@
-#!/bin/bash
-# scripts/collect_limited.sh — dump the project into size-budgeted parts.
-# Files are never split: each file goes into a single part in full; if it does
-# not fit into the current part, the part is closed and the file starts the next.
-# A single file larger than the budget occupies its own part (with a warning).
-#
-# Budget: PART_BYTES (bytes per part, default 12000).
-# Rule of thumb: ~3-4 bytes per code token, i.e. 12000 bytes ~= 3-4k tokens.
-# Override: PART_BYTES=8000 ./scripts/collect_limited.sh
+#!/usr/bin/env bash
+# Collect project files into a single text dump.
+# Usage:
+#   ./scripts/collect_project.sh [output_file]           # full project (default: project_dump.txt)
+#   ./scripts/collect_project.sh --core [output_file]    # core only (no tools/ and externals/)
+
 set -euo pipefail
-shopt -s nullglob
 
-PART_BYTES=${PART_BYTES:-12000}
+# If located in scripts/, step up to project root; otherwise use current dir.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$(basename "${SCRIPT_DIR}")" == "scripts" ]]; then
+    ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+else
+    ROOT="$(pwd)"
+fi
+cd "${ROOT}"
 
-files=(CMakeLists.txt include/*.h include/*.hpp src/*.cpp scripts/*)
-
-# Exclude this script itself and any directories from the dump
-filtered=()
-for f in "${files[@]}"; do
-  [[ -f "$f" && "$f" != scripts/collect_limited.sh && "$f" != scripts/collect_project.sh ]] || continue
-  filtered+=("$f")
-done
-files=("${filtered[@]}")
-
-if (( ${#files[@]} == 0 )); then
-  echo "collect_limited.sh: files not found" >&2
-  exit 1
+MODE="full"
+if [[ "${1:-}" == "--core" ]]; then
+    MODE="core"
+    shift
 fi
 
-# File sizes in bytes
-sizes=(); total=0
-for f in "${files[@]}"; do
-  n=$(wc -c < "$f"); sizes+=("$n"); total=$((total + n))
-done
+OUT="${1:-project_dump.txt}"
+# Resolve relative path for reliable self-exclusion
+OUT_REL="${OUT#./}"
 
-# Order-preserving greedy packing
-parts=()   # parts[i]: space-separated file indices for part i
-bytes=()   # bytes[i]: total byte size of part i
-for i in "${!files[@]}"; do
-  n="${sizes[i]}"
-  if (( n > PART_BYTES )); then
-    echo "collect_limited.sh: WARNING: ${files[i]} ($n bytes) exceeds PART_BYTES=$PART_BYTES, goes into its own part" >&2
-  fi
-  last=$(( ${#parts[@]} - 1 ))
-  if (( last >= 0 && bytes[last] + n <= PART_BYTES )); then
-    parts[last]+=" $i"
-    bytes[last]=$(( bytes[last] + n ))
-  else
-    parts+=( "$i" )
-    bytes+=( "$n" )
-  fi
-done
+collect_files() {
+    if [[ "${MODE}" == "core" ]]; then
+        find \
+            .clang-format .clang-tidy .gitignore CMakeLists.txt README.md \
+            docs include src scripts misc \
+            -type f 2>/dev/null
+    else
+        find . -type f \
+            -not -path './.git/*' \
+            -not -path './build*' \
+            -not -path './out/*' \
+            -not -path '*/__pycache__/*' \
+            -not -path './.venv/*' \
+            -not -path './.cache/*' \
+            -not -path './.idea/*' \
+            -not -path './.vscode/*'
+    fi \
+    | sed 's|^\./||' \
+    | grep -v -E "^(${OUT_REL}|project_dump.*\.txt)$" \
+    | grep -v -E '\.(rknn|onnx|pt|pth|whl|ppm|pgm|pbm|raw|nv12|nv16|rgb|jpg|jpeg|png|bmp|gif|mp4|mkv|ts|nut|h264|bin|o|a|so|dylib|exe|pyc|csv|log|tar|gz|zip)$' \
+    | LC_ALL=C sort -u
+}
 
-# Write parts
-np=${#parts[@]}
-for p in "${!parts[@]}"; do
-  out="/tmp/project_part$(( p + 1 )).txt"; : > "$out"
-  for i in ${parts[p]}; do
-    { echo "===== ${files[i]} ====="; cat "${files[i]}"; echo; } >> "$out"
-  done
-done
+mapfile -t FILES < <(collect_files)
 
-echo "== total: $total bytes, $np parts (budget $PART_BYTES bytes/part)"
-for p in "${!parts[@]}"; do
-  nfiles=$(wc -w <<< "${parts[p]}")
-  echo "part$(( p + 1 )): /tmp/project_part$(( p + 1 )).txt  ${bytes[p]} bytes, $nfiles files"
-done
+if [[ "${#FILES[@]}" -eq 0 ]]; then
+    echo "Error: no files matched in ${ROOT}" >&2
+    exit 1
+fi
+
+{
+    echo "# Project tree"
+    printf '%s\n' "${FILES[@]}"
+    echo
+
+    for f in "${FILES[@]}"; do
+        echo "================================================================================"
+        echo "FILE: ${f}"
+        echo "================================================================================"
+        cat "${f}"
+        # Guarantee trailing newline before the next separator
+        if [[ -s "${f}" && "$(tail -c1 "${f}" | wc -l)" -eq 0 ]]; then
+            echo
+        fi
+        echo
+    done
+} > "${OUT}"
+
+LINES="$(wc -l < "${OUT}")"
+BYTES="$(wc -c < "${OUT}")"
+echo "Saved ${#FILES[@]} files (${LINES} lines, ${BYTES} bytes) -> ${OUT} (mode: ${MODE})"
