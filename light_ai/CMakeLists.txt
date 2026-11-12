@@ -124,9 +124,11 @@ target_link_directories(light_ai PRIVATE ${AV_LIBRARY_DIRS})
 # Both clusters expose an IDENTICAL feature set (verified on the board 2026-11-03,
 # /proc/cpuinfo, cpu0 == cpu4): fp asimd aes sha2 crc32 atomics (LSE)
 # fphp asimdhp lrcpc dcpop asimddp (dotprod). A binary built with +dotprod/+crypto 
-# is therefore legal on ALL eight cores — pinning to A76 is unnecessary;
-# the scheduler places hot threads (pipeline main + workers) on A76 (2.3 GHz)
-# and network/background threads wherever cores are free.
+# is therefore legal on ALL eight cores. Instruction set aside, the hot
+# threads (pipeline main + NPU workers) are pinned to the A76 cluster in
+# pipeline.cpp (best-effort; 2026-11-12 audit follow-up): a bursty
+# cv-woken worker may drift to A55 under CFS/EAS. Network/background
+# threads stay with the scheduler.
 # LSE atomics (std::atomic stop flag) are valid on A55 as well.
 # Clang rejects the dotted "cortex-a76.cortex-a55" form in -mtune (GCC-only big.LITTLE syntax),
 # so the compiler branches are separate.

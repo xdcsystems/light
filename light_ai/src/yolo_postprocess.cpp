@@ -150,8 +150,7 @@ namespace
                     float best_cls = 0.0f;
                     for ( int c = 5; c < per; ++c )
                     {
-                        const float v = fp16_to_float( data[off + c * cell_hw] );
-                        if ( v > best_cls )
+                        if ( const float v = fp16_to_float( data[off + c * cell_hw] ); v > best_cls )
                         {
                             best_cls = v;
                             best = c;

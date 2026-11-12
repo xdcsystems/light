@@ -616,8 +616,7 @@ bool NetMjpegSource::has_buffered_header() const
     }
     else
     {
-        const size_t f = net_find( bpat_, static_cast<size_t>( bpat_len_ ) );
-        if ( f != kNpos )
+        if ( const size_t f = net_find( bpat_, static_cast<size_t>( bpat_len_ ) ); f != kNpos )
             b_end = f + static_cast<size_t>( bpat_len_ );
     }
     if ( b_end == kNpos || avail < b_end + 4 )
@@ -756,8 +755,7 @@ int NetMjpegSource::read_latest_part( int slot, uint32_t* size )
     for ( int skip = 0; scratch >= 0 && skip < 4 && poll_part_ready( 0 ) > 0; ++skip )
     {
         uint32_t next_n = 0;
-        const int sr = read_part( scratch, &next_n );
-        if ( sr != 0 )
+        if ( const int sr = read_part( scratch, &next_n ); sr != 0 )
         {
             if ( sr == -2 )
                 sock_pos_ = sock_end_;
@@ -820,8 +818,7 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
         slot = 0;
     }
     uint32_t n = 0;
-    const int rc = read_latest_part( slot, &n );
-    if ( rc != 0 )
+    if ( const int rc = read_latest_part( slot, &n ); rc != 0 )
     {
         if ( err )
             *err = EIO;  // EOF / watchdog / recv error: recoverable

@@ -10,6 +10,7 @@
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
+#include <algorithm>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <initializer_list>
@@ -394,8 +395,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
         return;
     if ( slot < 0 || slot >= State::kSlots || st_.slot[slot].fbo == 0 )
         return;
-    if ( n > GpuBoxList::cap )
-        n = GpuBoxList::cap;
+    n = std::min( n, static_cast<int>( GpuBoxList::cap ) );
     make_current();
 
     // Batched quads in tensor coordinates. The viewport clips anything

@@ -6,6 +6,7 @@
 #pragma once
 #include <array>
 #include <ostream>
+#include <string_view>
 
 struct Config;
 
@@ -32,7 +33,7 @@ public:
 
     OptionRegistry();
 
-    const Option* find( const char* name ) const;
+    const Option* find( std::string_view name ) const;
     void print_usage( std::ostream& os ) const;
 
 private:

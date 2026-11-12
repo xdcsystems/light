@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <vector>
 #include <chrono>
 #include <cstring>
@@ -349,14 +350,10 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     band_top_ = band.top;
     band_w_ = band.w;
     band_left_ = band.left;
-    if ( band_h_ > model_h_ )
-        band_h_ = model_h_;
-    if ( band_top_ < 0 )
-        band_top_ = 0;
-    if ( band_w_ > model_w_ )
-        band_w_ = model_w_;
-    if ( band_left_ < 0 )
-        band_left_ = 0;
+    band_h_ = std::min( band_h_, model_h_ );
+    band_top_ = std::max( band_top_, 0 );
+    band_w_ = std::min( band_w_, model_w_ );
+    band_left_ = std::max( band_left_, 0 );
     if ( nsrc > 4 )
         std::cerr << "enc: clamping source count " << nsrc << " -> 4 (2x2 grid max)\n";
     if ( nsrc_ > 1 )
@@ -1195,8 +1192,7 @@ bool NetEncoder::open_transport( const std::string& url, AVFormatContext* fc, Tr
 
     // UDP: no handshake and no listener — the socket is opened once,
     // packets are pushed regardless of whether a viewer is listening.
-    const int ret = avio_open( &t.udp_pb, url.c_str(), AVIO_FLAG_WRITE );
-    if ( ret < 0 )
+    if ( const int ret = avio_open( &t.udp_pb, url.c_str(), AVIO_FLAG_WRITE ); ret < 0 )
     {
         std::cerr << "enc: udp open failed: " << av_err_str( ret ) << '\n';
         std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );

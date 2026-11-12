@@ -8,6 +8,7 @@
 #include <cctype>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <ini.h>
 
 #include "config/cli.hpp"
@@ -27,14 +28,14 @@ namespace
     // Normalization: leading dashes stripped, '_' -> '-', then the
     // "--" prefix re-attached -- both `net_h264 = true` and
     // `--net-h264 = true` land on the same table row.
-    std::string normalize_key( const char* key )
+    std::string normalize_key( std::string_view key )
     {
         std::string norm;
-        for ( const char* p = key; *p; ++p )
+        for ( const char ch : key )
         {
-            if ( *p == '-' && norm.empty() )
+            if ( ch == '-' && norm.empty() )
                 continue;
-            norm += ( *p == '_' ) ? '-' : *p;
+            norm += ( ch == '_' ) ? '-' : ch;
         }
         return norm;
     }
@@ -79,8 +80,7 @@ namespace
                       << "supported\n";
             return 0;
         }
-        const OptionRegistry::Option* o =
-                cx->reg->find( ( "--" + norm ).c_str() );
+        const OptionRegistry::Option* o = cx->reg->find( "--" + norm );
         if ( o == nullptr )
         {
             std::cerr << "config: unknown key: '" << key

@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <sys/stat.h>  // stat(): startup node fallback
 #include <thread>
+#include <sched.h>
 
 #include "dma_sync.hpp"
 #include "pipeline.hpp"
@@ -605,6 +606,33 @@ int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
     return -1;
 }
 
+namespace
+{
+    // Affinity pinning (2026-11-12 audit follow-up; supersedes the old
+    // "the scheduler places hot threads on A76" note in CMakeLists):
+    // a bursty cv-woken worker is not guaranteed to stay on the big
+    // cluster under CFS/EAS. RK3588 stock DT: A76 = cpu 4-7. Best-effort:
+    // any error keeps the scheduler default -- a run on an alien board
+    // must not die here. Spawn order matters: a child inherits the
+    // creator's mask, so probe_th_ is spawned BEFORE the pipeline pin.
+    enum { kBigCpuFirst = 4, kBigCpuLast = 7 };
+
+    void pin_current_big( const char* who )
+    {
+        cpu_set_t cpuset;
+        CPU_ZERO( &cpuset );
+        for ( int c = kBigCpuFirst; c <= kBigCpuLast; ++c )
+            CPU_SET( c, &cpuset );
+        if ( sched_setaffinity( 0, sizeof( cpuset ), &cpuset ) != 0 )
+        {
+            std::cerr << "pin: " << who << " -> A76 cpu" << kBigCpuFirst << '-'
+                      << kBigCpuLast << " failed, scheduler fallback\n";
+            return;
+        }
+        std::cout << "pin: " << who << " -> A76 cpu" << kBigCpuFirst << '-' << kBigCpuLast << '\n';
+    }
+}  // namespace
+
 int Pipeline::run()
 {
     int ok = 0;
@@ -624,6 +652,9 @@ int Pipeline::run()
     } probe_stop { this };
     if ( nsrc_ > 0 )
         probe_th_ = std::thread( &Pipeline::probe_loop, this );
+    // Spawn order: probe_th_ above was spawned BEFORE this pin, so the
+    // prober keeps the scheduler default, as intended (see pin_current_big).
+    pin_current_big( "pipeline main" );
 
     for ( int s = 0; s < nsrc_; ++s )
     {
@@ -851,6 +882,7 @@ Pipeline::~Pipeline()
 
 void Pipeline::worker_loop( int slot )
 {
+    pin_current_big( "npu worker" );
     Slot& sl = slots_[slot];
     while ( !quit_.load() )  // the only exit is the quit check after the wait
     {

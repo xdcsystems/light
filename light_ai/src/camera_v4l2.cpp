@@ -415,8 +415,7 @@ int CameraV4L2::dequeue( uint32_t* size, int* err, int timeout_ms )  // NOLINT(r
         // stall); in multi-source non-blocking mode (timeout_ms >= 0) a
         // 0/short poll timeout returns EAGAIN so the dispatcher can
         // service other ready cameras immediately.
-        const int perr = poll_frame( fd_, timeout_ms, static_cast<int>( kDequeuePollMs ) );
-        if ( perr != 0 )
+        if ( const int perr = poll_frame( fd_, timeout_ms, static_cast<int>( kDequeuePollMs ) ); perr != 0 )
         {
             if ( err )
                 *err = perr;

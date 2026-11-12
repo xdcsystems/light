@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdint>
 
 #include "box_mapper.h"
@@ -50,17 +51,19 @@ bool band_box( float x, float y, float w, float h,
     b.y0 = y * sy + static_cast<float>( lb.top );
     b.x1 = ( x + w ) * sx + static_cast<float>( lb.left );
     b.y1 = ( y + h ) * sy + static_cast<float>( lb.top );
-    if ( b.x1 <= static_cast<float>( lb.left ) || b.y1 <= static_cast<float>( lb.top ) ||
-         b.x0 >= static_cast<float>( lb.left + lb.w ) || b.y0 >= static_cast<float>( lb.top + lb.h ) )
+    const float lb_left = static_cast<float>( lb.left );
+    const float lb_top = static_cast<float>( lb.top );
+    const float lb_right = static_cast<float>( lb.left + lb.w );
+    const float lb_bottom = static_cast<float>( lb.top + lb.h );
+    if ( b.x1 <= lb_left || b.y1 <= lb_top || b.x0 >= lb_right || b.y0 >= lb_bottom )
         return false;
-    if ( b.x0 < static_cast<float>( lb.left ) )
-        b.x0 = static_cast<float>( lb.left );
-    if ( b.y0 < static_cast<float>( lb.top ) )
-        b.y0 = static_cast<float>( lb.top );
-    if ( b.x1 > static_cast<float>( lb.left + lb.w ) )
-        b.x1 = static_cast<float>( lb.left + lb.w );
-    if ( b.y1 > static_cast<float>( lb.top + lb.h ) )
-        b.y1 = static_cast<float>( lb.top + lb.h );
+    // The reject gate above keeps every coordinate one-sided inside the
+    // band: the opposite clamp bound never fires, the values are the
+    // same four one-sided fixes the explicit ifs used to produce.
+    b.x0 = std::clamp( b.x0, lb_left, lb_right );
+    b.y0 = std::clamp( b.y0, lb_top, lb_bottom );
+    b.x1 = std::clamp( b.x1, lb_left, lb_right );
+    b.y1 = std::clamp( b.y1, lb_top, lb_bottom );
     return b.x1 - b.x0 >= 2.0f && b.y1 - b.y0 >= 2.0f;
 }
 

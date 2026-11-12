@@ -1,7 +1,35 @@
+#include <algorithm>
 #include <cmath>
 
 #include "tracker.hpp"
 #include "box_math.hpp"
+
+namespace
+{
+    // Median of 5 values, 7-comparator selection network: the minimal
+    // oblivious net (an exhaustive search confirms no 6-comparator median
+    // network exists), loop-free, ~7 branches vs ~10-19 for the former
+    // insertion sort. Reorders `v` in place; callers pass a disposable copy.
+    float median_of_5( float* v )
+    {
+        const auto order2 = []( float& a, float& b ) {
+            if ( b < a )
+            {
+                const float t = a;
+                a = b;
+                b = t;
+            }
+        };
+        order2( v[0], v[1] );
+        order2( v[2], v[3] );
+        order2( v[0], v[2] );
+        order2( v[1], v[3] );
+        order2( v[1], v[2] );
+        order2( v[1], v[4] );
+        order2( v[2], v[4] );
+        return v[2];
+    }
+}  // namespace
 
 void Tracker::reset()
 {
@@ -159,27 +187,8 @@ void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t
             xs[m] = t.mwin_x[m];
             ys[m] = t.mwin_y[m];
         }
-        for ( int m = 1; m < kTrailMedianN; ++m )  // insertion sort, tiny N
-        {
-            const float vx = xs[m];
-            int q = m;
-            while ( q > 0 && xs[q - 1] > vx )
-            {
-                xs[q] = xs[q - 1];
-                --q;
-            }
-            xs[q] = vx;
-            const float vy = ys[m];
-            q = m;
-            while ( q > 0 && ys[q - 1] > vy )
-            {
-                ys[q] = ys[q - 1];
-                --q;
-            }
-            ys[q] = vy;
-        }
-        const float mx = xs[kTrailMedianN / 2];
-        const float my = ys[kTrailMedianN / 2];
+        const float mx = median_of_5( xs );
+        const float my = median_of_5( ys );
         if ( t.traj.empty() )
         {
             t.traj.push( TrajPoint{ ts_us, mx, my } );
@@ -471,12 +480,7 @@ int Tracker::recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) co
             dst[w] = tr.back( k );  // back(k): newest (k = 0) -> oldest
             ++w;
         }
-        for ( int a = 0, b = w - 1; a < b; ++a, --b )
-        {
-            const TrajPoint tmp = dst[a];
-            dst[a] = dst[b];
-            dst[b] = tmp;
-        }
+        std::reverse( dst, dst + w );
         return w;
     }
     return 0;

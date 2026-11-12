@@ -4,12 +4,15 @@
 // validate through it, so both sources reject identically.
 
 #include <cerrno>
+#include <cctype>
+#include <charconv>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <string_view>
 
 #include "config/option_registry.h"
 #include "config/cli.hpp"
@@ -20,12 +23,23 @@ namespace
     {
         if ( !s || !*s )
             return false;
-        errno = 0;
-        char* end = nullptr;
-        const long v = std::strtol( s, &end, 10 );
-        if ( errno != 0 || end == s || *end != '\0' || v < INT_MIN || v > INT_MAX )
+        // strtol front-end kept over from_chars: from_chars rejects what
+        // strtol accepted (leading whitespace, an explicit '+'), and
+        // silently narrowing acceptance would change what "  10" / "+10"
+        // mean. Overflow is caught by from_chars (result_out_of_range) --
+        // no errno, no INT_MIN/INT_MAX compare. One deliberate edge: a
+        // bare "+" was strtol-accepted as 0, it is rejected now.
+        const char* ptr = s;
+        while ( std::isspace( static_cast<unsigned char>( *ptr ) ) )
+            ++ptr;
+        if ( *ptr == '+' )
+            ++ptr;
+        const char* const last = s + std::strlen( s );
+        int v = 0;
+        const auto res = std::from_chars( ptr, last, v );
+        if ( res.ec != std::errc{} || res.ptr != last )
             return false;
-        *out = static_cast<int>( v );
+        *out = v;
         return true;
     }
 
@@ -171,11 +185,13 @@ OptionRegistry::OptionRegistry()
 {
 }
 
-const OptionRegistry::Option* OptionRegistry::find( const char* name ) const
+const OptionRegistry::Option* OptionRegistry::find( std::string_view name ) const
 {
     for ( const auto& e : table_ )
     {
-        if ( std::strcmp( e.name, name ) == 0 )
+        // view compare, not strcmp: a string_view is not NUL-terminated
+        // in general; the table names are literals, so == is exact.
+        if ( e.name == name )
             return &e.opt;
     }
     return nullptr;

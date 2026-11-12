@@ -119,8 +119,7 @@ void NetPreview::serve()
         st->codecpar->codec_tag = MKTAG( 'R', 'G', 'B', 24 );
 
         std::cout << "net: write_header attempt, codec_tag=0x" << std::hex << st->codecpar->codec_tag << std::dec << "\n";
-        const int ret2 = avformat_write_header( s.fc, nullptr );
-        if ( ret2 < 0 )
+        if ( const int ret2 = avformat_write_header( s.fc, nullptr ); ret2 < 0 )
         {
             std::cerr << "net: write_header failed: " << av_err_str( ret2 ) << '\n';
             continue;
