@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "camera_v4l2.hpp"
 #include "net_mjpeg_source.hpp"
@@ -62,9 +63,11 @@ public:
         return std::visit( [&]( const auto& s ) { return s.buffer( idx ); }, src_ );
     }
     // One recovery-ladder step: node discovery (camera) / reconnect (both).
-    int recover( const std::string& id, std::string& new_id, std::string* why )
+    // busy_nodes: /dev nodes reserved by the other source slots (camera only).
+    int recover( const std::string& id, std::string& new_id, const std::vector<std::string>& busy_nodes,
+                 std::string* why )
     {
-        return std::visit( [&]( auto& s ) { return s.recover( id, new_id, why ); }, src_ );
+        return std::visit( [&]( auto& s ) { return s.recover( id, new_id, busy_nodes, why ); }, src_ );
     }
     int width() const
     {

@@ -114,8 +114,9 @@ namespace
     // blocks, which scanned for a terminator that may lie outside the
     // non-NUL-terminated window (read past sock_ when the value touched
     // its edge) and silently accepted partial values cut by the buffer.
-    // Strict contract: no signs, no embedded whitespace, digits must end
-    // at an in-bounds CR/LF; overflow is rejected.
+    // Strict contract: no signs, no embedded whitespace; digits may end
+    // at optional trailing OWS (RFC 7230 field-value excludes it) before
+    // an in-bounds CR/LF; overflow is rejected.
     bool parse_content_length( const uint8_t* ph, size_t phl, long* out )
     {
         const size_t clp = ci_find( ph, phl, "content-length:" );
@@ -134,6 +135,12 @@ namespace
             v = v * 10 + ( ph[p] - '0' );
             ++p;
         }
+        // RFC 7230 OWS: some camera servers emit "Content-Length: 12345 \r\n"
+        // with a trailing space; without skipping it the header fell through
+        // to the slow no-Content-Length body scan (keep-window + full-stream
+        // boundary search). Any other trailing junk still rejects.
+        while ( p < phl && ( ph[p] == ' ' || ph[p] == '\t' ) )
+            ++p;
         if ( p >= phl || ( ph[p] != '\r' && ph[p] != '\n' ) )
             return false;  // truncated mid-value or trailing junk
         *out = v;
@@ -244,7 +251,8 @@ void NetMjpegSource::teardown()
         b.in_flight = false;
 }
 
-int NetMjpegSource::recover( const std::string& id, std::string& new_id, std::string* why )
+int NetMjpegSource::recover( const std::string& id, std::string& new_id, const std::vector<std::string>&,
+                             std::string* why )
 {
     new_id = id;  // a URL never re-enumerates
     return setup_device( id, why );
@@ -263,7 +271,12 @@ int NetMjpegSource::connect_tcp( const std::string& host, int port, std::string*
             *why = "addr resolution failed for " + host;
         return -1;
     }
-    fd_ = ::socket( res->ai_family, res->ai_socktype, res->ai_protocol );
+    // SOCK_CLOEXEC: this fd must not leak into a fork()/exec() (this app
+    // never forks, but a library or deploy wrapper might). The flag belongs
+    // to the socket() type argument -- putting SOCK_CLOEXEC into
+    // hints.ai_socktype makes getaddrinfo fail with EAI_SOCKTYPE, killing
+    // the connection outright.
+    fd_ = ::socket( res->ai_family, res->ai_socktype | SOCK_CLOEXEC, res->ai_protocol );
     if ( fd_ < 0 )
     {
         if ( why )
@@ -348,15 +361,14 @@ int NetMjpegSource::net_fill( int timeout_ms )
     pollfd p { fd_, POLLIN, 0 };
     const int pr = ::poll( &p, 1, timeout_ms >= 0 ? timeout_ms : 0 );
     if ( pr < 0 )
-        return errno == EINTR ? 0 : -1;
+        return errno == EINTR ? kIntr : -1;
     if ( pr == 0 )
         return 0;
     const ssize_t n = ::recv( fd_, sock_ + sock_end_, static_cast<size_t>( kSockBuf ) - sock_end_, 0 );
     if ( n < 0 && errno == EINTR )
-        return 0;  // interrupted before any data (e.g. a stop signal arriving
-                   // between poll() and recv()): not a connection error, the
-                   // caller retries on the next fill -- treating it as fatal
-                   // would turn Ctrl-C shutdown into a spurious reconnect
+        return kIntr;  // interrupted before any data (e.g. a stop signal arriving
+                       // between poll() and recv()): not a connection error and
+                       // not a watchdog expiry -- callers retry the fill
     if ( n <= 0 )
         return -1;  // 0 = EOF, -1 = error: the connection is gone either way
     sock_end_ += static_cast<size_t>( n );
@@ -386,7 +398,10 @@ int NetMjpegSource::read_headers( std::string* why )
                 *why = "response headers oversized";
             return -1;
         }
-        if ( net_fill( kPollMs ) <= 0 )
+        const int r = net_fill( kPollMs );
+        if ( r == kIntr )
+            continue;  // EINTR: transient, not a watchdog expiry
+        if ( r <= 0 )
         {
             if ( why )
                 *why = "no HTTP response within the watchdog window";
@@ -417,6 +432,18 @@ int NetMjpegSource::read_headers( std::string* why )
         return -1;
     }
     size_t v = bpos + 9;
+    // RFC 7230 BWS around "=" and RFC 2046 quoted-string: many cameras
+    // emit boundary="xyz" (some with a space after the '='). Without
+    // skipping the OWS and the opening quote the loop below terminated
+    // at once with vlen == 0, so every quoted-boundary server failed
+    // with "empty multipart boundary". The closing quote is already in
+    // the terminator set, so the value is copied clean; boundary=""
+    // still rejects as empty, and an over-long quoted value still fails
+    // the kBoundaryMax check below.
+    while ( v < hl && ( h[ v ] == ' ' || h[ v ] == '\t' ) )
+        ++v;
+    if ( v < hl && h[ v ] == '"' )
+        ++v;
     size_t vlen = 0;
     while ( v + vlen < hl && h[v + vlen] != '\r' && h[v + vlen] != '\n' && h[v + vlen] != '"'
             && h[v + vlen] != ';' && vlen < static_cast<size_t>( kBoundaryMax ) )
@@ -477,6 +504,8 @@ int NetMjpegSource::read_boundary()
         const int r = net_fill( kPollMs );
         if ( r == -2 )
             return -2;
+        if ( r == kIntr )
+            continue;  // EINTR: transient, not a watchdog expiry
         if ( r <= 0 )
             return -1;
     }
@@ -488,7 +517,10 @@ int NetMjpegSource::read_part_header( long* need )
     {
         if ( sock_end_ - sock_pos_ >= static_cast<size_t>( kSockBuf ) )
             return -2;
-        if ( net_fill( kPollMs ) <= 0 )
+        const int r = net_fill( kPollMs );
+        if ( r == kIntr )
+            continue;  // EINTR: transient, not a watchdog expiry
+        if ( r <= 0 )
             return -1;
     }
     const size_t hend = net_find( "\r\n\r\n", 4 ) + sock_pos_ + 4;  // guaranteed by the loop
@@ -535,7 +567,10 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
                 sock_pos_ += flush;
                 got += flush;
             }
-            if ( net_fill( kPollMs ) <= 0 )
+            const int fr = net_fill( kPollMs );
+            if ( fr == kIntr )
+                continue;  // EINTR: transient, not a watchdog expiry
+            if ( fr <= 0 )
                 return -1;
         }
     }
@@ -548,7 +583,10 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
     {
         if ( sock_pos_ >= sock_end_ )
         {
-            if ( net_fill( kPollMs ) <= 0 )
+            const int fr = net_fill( kPollMs );
+            if ( fr == kIntr )
+                continue;  // EINTR: transient, not a watchdog expiry
+            if ( fr <= 0 )
                 return -1;
             continue;
         }
@@ -621,6 +659,8 @@ int NetMjpegSource::poll_part_ready( int timeout_ms )
     while ( true )
     {
         const int r = net_fill( wait_ms );
+        if ( r == kIntr )
+            return 0;  // EINTR: not ready yet and not a timeout -- caller retries
         if ( r < 0 )
             return r;
         if ( has_buffered_header() )

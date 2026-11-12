@@ -29,9 +29,6 @@ namespace
     // existing tensor pixels; a == 255 stays an opaque write.
     void draw_boxes_cpu( uint8_t* rgb, int w, int h, int stride, const GpuBox* boxes, int n )
     {
-        auto clamp = []( int v, int hi ) {
-            return v < 0 ? 0 : ( v > hi ? hi : v );
-        };
         for ( int i = 0; i < n; ++i )
         {
             const GpuBox& b = boxes[i];
@@ -40,10 +37,10 @@ namespace
                 continue;
             if ( b.x1 - b.x0 < 1.0f || b.y1 - b.y0 < 1.0f )
                 continue;
-            const int x0 = clamp( static_cast<int>( std::floor( b.x0 ) ), w - 1 );
-            const int y0 = clamp( static_cast<int>( std::floor( b.y0 ) ), h - 1 );
-            const int x1 = std::max( x0, clamp( static_cast<int>( std::ceil( b.x1 ) ) - 1, w - 1 ) );
-            const int y1 = std::max( y0, clamp( static_cast<int>( std::ceil( b.y1 ) ) - 1, h - 1 ) );
+            const int x0 = std::clamp( static_cast<int>( std::floor( b.x0 ) ), 0, w - 1 );
+            const int y0 = std::clamp( static_cast<int>( std::floor( b.y0 ) ), 0, h - 1 );
+            const int x1 = std::max( x0, std::clamp( static_cast<int>( std::ceil( b.x1 ) ) - 1, 0, w - 1 ) );
+            const int y1 = std::max( y0, std::clamp( static_cast<int>( std::ceil( b.y1 ) ) - 1, 0, h - 1 ) );
             auto put = [&]( int x, int y ) {
                 uint8_t* px = rgb + static_cast<size_t>( y ) * stride + x * 3;
                 const unsigned a = b.a;
@@ -58,15 +55,20 @@ namespace
                 px[1] = static_cast<uint8_t>( ( b.g * a + px[1] * ( 255 - a ) + 127 ) / 255 );
                 px[2] = static_cast<uint8_t>( ( b.b * a + px[2] * ( 255 - a ) + 127 ) / 255 );
             };
+            // Each boundary pixel is painted exactly once: Porter-Duff
+            // over is not idempotent for a < 255, a double write makes
+            // the corner pixels brighter than the edges (trail dots).
             for ( int x = x0; x <= x1; ++x )
             {
                 put( x, y0 );
-                put( x, y1 );
+                if ( y1 > y0 )
+                    put( x, y1 );
             }
-            for ( int y = y0; y <= y1; ++y )
+            for ( int y = y0 + 1; y < y1; ++y )
             {
                 put( x0, y );
-                put( x1, y );
+                if ( x1 > x0 )
+                    put( x1, y );
             }
         }
     }
@@ -106,6 +108,15 @@ void OverlaySink::init( const Config& cfg,
     }
 
     init_gpu_drawer( cfg, npus );
+}
+
+// NO SIGNAL idle publish: h264 path only -- the encoder RGA-copies the
+// pre-rendered gray plate into the absent tiles. The raw NUT preview
+// keeps its live-only diagnostic role (no idle frames there).
+void OverlaySink::publish_idle( int64_t ts_us, const bool* absent, int nabs )
+{
+    if ( enc_ )
+        enc_->publish_idle( ts_us, absent, nabs );
 }
 
 void OverlaySink::init_gpu_drawer( const Config& cfg, const std::vector<RknnEngine>& npus )
@@ -177,7 +188,7 @@ double OverlaySink::draw_and_publish( Slot& sl,
     if ( enc_live )
     {
         const auto t5 = clk::now();
-        enc_->publish( sl.eng->input_fd(), sl.lb, -1, sl.ts_us, sl.src_idx );
+        enc_->publish( sl.eng->input_fd(), sl.lb, sl.ts_us, sl.src_idx );
         const auto t6 = clk::now();
         enc_ms = ms( t5, t6 );
     }

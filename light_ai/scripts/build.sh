@@ -13,11 +13,20 @@ cd "$PROJ_ROOT"
 echo "PROJ_ROOT=$PROJ_ROOT"
 echo "BUILD_DIR=$BUILD_DIR"
 
+# Pin the libav* checks to the self-built ffmpeg (same pin as CMakeLists):
+# PKG_CONFIG_PATH prepends -- distro .pc files stay visible for
+# MPP/RGA/EGL, self-built libav* win by search order. PKG_CONFIG_LIBDIR
+# (LIBDIR-replace) would hide rockchip_mpp.pc from this loop.
+if [ -f /usr/local/lib/pkgconfig/libavformat.pc ]; then
+    export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+fi
+
 echo "==> Prebuild checks:"
 [ -n "$RKNN_ROOT" ] && echo "  RKNN_ROOT=$RKNN_ROOT (explicit override)"
 for m in rockchip_mpp librga libavformat libavcodec libavutil egl glesv2; do
     v=$(pkg-config --modversion $m 2>/dev/null)
-    if [ -n "$v" ]; then echo "  $m: $v"; else echo "  $m: NOT FOUND"; fi
+    p=$(pkg-config --variable=pcfiledir $m 2>/dev/null)
+    if [ -n "$v" ]; then echo "  $m: $v (${p:-?})"; else echo "  $m: NOT FOUND"; fi
 done
 
 echo "==> CMake + build:"

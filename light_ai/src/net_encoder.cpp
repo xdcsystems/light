@@ -5,11 +5,11 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <poll.h>
 #include <unistd.h>
 #include <im2d.h>
 #include <rga.h>
 #include <libdrm/drm_fourcc.h>  // DRM_FORMAT_*
+#include <stb_easy_font.h>
 
 extern "C"
 {
@@ -198,6 +198,130 @@ namespace
             dma::cache_clean( p, mpp_buffer_get_size( mb ) );
         }
     }
+
+    // One stb_easy_font vertex: x/y/z float + color uint8[4], 16 bytes,
+    // four per quad -- the lib emits 1-px-thick axis-aligned stroke quads,
+    // so rasterization is a scaled bbox fill (smooth at any scale; the
+    // raster font8x8 stays in externals as a spare).
+    struct FontVertex
+    {
+        float x;
+        float y;
+        float z;
+        unsigned char c[ 4 ];
+    };
+
+    // The lib API is char*-based (legacy C): copy into a fixed buffer --
+    // const_cast is banned by the project gate (.clang-tidy keeps
+    // cppcoreguidelines-pro-type-const-cast on).
+    void font_txt( char* dst, int cap, const char* s )
+    {
+        const int n = static_cast<int>( std::strlen( s ) );
+        const int m = n < cap - 1 ? n : cap - 1;
+        std::memcpy( dst, s, static_cast<size_t>( m ) );
+        dst[ m ] = 0;
+    }
+
+    // Rendered text size in Y pixels, for callers that center the plate.
+    int text_width( const char* s, int scale )
+    {
+        if ( !s )
+            return 0;
+        constexpr int k_txt_cap = 64;
+        char txt[ k_txt_cap ];
+        font_txt( txt, k_txt_cap, s );
+        return stb_easy_font_width( txt ) * scale;
+    }
+
+    int text_height( const char* s, int scale )
+    {
+        if ( !s )
+            return 0;
+        constexpr int k_txt_cap = 64;
+        char txt[ k_txt_cap ];
+        font_txt( txt, k_txt_cap, s );
+        return stb_easy_font_height( txt ) * scale;
+    }
+
+    // Renders `s` at (x, y) -- the glyph-area top left -- in the Y plane
+    // `py` (row stride `stride`, plane height `max_h`), scaling every
+    // stroke quad by `scale`. `val` is the Y luminance (0..255). Characters
+    // outside the table render as blanks. The caller owns the DMA cache sync.
+    void stamp_text( uint8_t* py, int stride, int max_h, int x, int y,
+                     const char* s, int scale, uint8_t val )
+    {
+        if ( !py || scale <= 0 || !s )
+            return;
+        constexpr int k_txt_cap = 64;
+        char txt[ k_txt_cap ];
+        font_txt( txt, k_txt_cap, s );
+        stb_easy_font_spacing( 0 );  // default spacing; keeps the static referenced
+        unsigned char col[ 4 ] = { val, val, val, 255 };
+        alignas( FontVertex ) char vbuf[ 8192 ];  // 128 quads -- enough for any short label
+        const int nq = stb_easy_font_print( 0.0f, 0.0f, txt, col, vbuf,
+                                            static_cast<int>( sizeof( vbuf ) ) );
+        for ( int q = 0; q < nq; ++q )
+        {
+            const FontVertex* v = reinterpret_cast<const FontVertex*>( vbuf ) + q * 4;
+            float min_x = v[ 0 ].x;
+            float max_x = v[ 0 ].x;
+            float min_y = v[ 0 ].y;
+            float max_y = v[ 0 ].y;
+            for ( int k = 1; k < 4; ++k )
+            {
+                if ( v[ k ].x < min_x )
+                    min_x = v[ k ].x;
+                if ( v[ k ].x > max_x )
+                    max_x = v[ k ].x;
+                if ( v[ k ].y < min_y )
+                    min_y = v[ k ].y;
+                if ( v[ k ].y > max_y )
+                    max_y = v[ k ].y;
+            }
+            // Stroke quads carry integer coords, so the scaled fill is
+            // exact: [min*scale, max*scale) per axis -- no +1 rounding.
+            const int ix0 = x + static_cast<int>( min_x * scale );
+            const int iy0 = y + static_cast<int>( min_y * scale );
+            int ix1 = x + static_cast<int>( max_x * scale );
+            int iy1 = y + static_cast<int>( max_y * scale );
+            if ( ix1 > stride )
+                ix1 = stride;
+            if ( iy1 > max_h )
+                iy1 = max_h;
+            for ( int ry = iy0; ry < iy1; ++ry )
+            {
+                if ( ry < 0 )
+                    continue;
+                uint8_t* row = py + static_cast<size_t>( ry ) * stride;
+                for ( int rx = ix0; rx < ix1; ++rx )
+                    if ( rx >= 0 )
+                        row[ rx ] = val;
+            }
+        }
+    }
+
+    // NO SIGNAL plate (idle canvas): a one-time CPU raster at init -- the
+    // README zero-copy rule governs the FRAME path, and this follows the
+    // gray-letterbox memset precedent (init-time only, never per frame).
+    // stb_easy_font stroke glyphs at 3x -- the same raster will serve the
+    // box labels. Centered in every tile (single-view: once).
+    void draw_no_signal( MppBuffer mb, int w, int plane_h, int tile_w, int tile_h, int nsrc )
+    {
+        if ( !mb )
+            return;
+        const char* msg = "NO SIGNAL";
+        constexpr int k_text_scale = 3;
+        const int x0 = ( tile_w - text_width( msg, k_text_scale ) ) / 2;
+        const int y0 = ( tile_h - text_height( msg, k_text_scale ) ) / 2;
+        uint8_t* py = static_cast<uint8_t*>( mpp_buffer_get_ptr( mb ) );
+        if ( !py )
+            return;
+        dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
+        for ( int t = 0; t < nsrc; ++t )
+            stamp_text( py, w, plane_h, ( t % 2 ) * tile_w + x0, ( t / 2 ) * tile_h + y0,
+                        msg, k_text_scale, 16 );
+        dma::cache_clean( py, mpp_buffer_get_size( mb ) );
+    }
 }  // namespace
 
 NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, int port, const std::string& host, int bitrate_kbps, int nsrc )
@@ -242,10 +366,9 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
         std::cout << "enc: tensor band x=[" << band_left_ << ',' << band_left_ + band_w_ << ") y=[" << band_top_ << ',' << band_top_ + band_h_
                   << ") of " << model_w_ << 'x' << model_h_ << " -> " << w_ << 'x' << h_ << '\n';
 
-    // Three NV12 dma-bufs: a plane held by an older encode is never
-    // overwritten by RGA on the next frame; the third buffer absorbs
-    // VFR bursts where two ran out exactly at the 3-deep rkmpp task
-    // queue.
+    // Four NV12 dma-bufs: a plane held by an in-flight encode is never
+    // overwritten by RGA. The 3-deep rkmpp task queue can hold a full
+    // VFR clump, so the ring stays one slot deeper than the queue.
     // RAII sub-object: a throw below (avcodec_open2, av_frame_alloc)
     // cannot leak the pool -- the sub-object destructs on unwinding.
     // Alloc failures throw from here (fail loud, RknnEngine pattern);
@@ -257,6 +380,17 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
         avformat_network_deinit();
         throw std::runtime_error( "net encoder: " + pool_why );
     }
+
+    // Idle canvas (NO SIGNAL): a dedicated dma-buf, gray-filled by the
+    // pool alloc and stamped with the plate in every tile, once at init.
+    // publish_idle() RGA-copies from it -- the NPU tensor is never touched.
+    std::string idle_why;
+    if ( !idle_pool_.alloc( static_cast<size_t>( w_ ) * vstride_ * 3 / 2, MODULE_TAG, __FUNCTION__, &idle_why ) )
+    {
+        avformat_network_deinit();
+        throw std::runtime_error( "net encoder: idle canvas: " + idle_why );
+    }
+    draw_no_signal( idle_pool_.buf[ 0 ], w_, vstride_, tile_w_, tile_h_, nsrc_ );
 
     const AVCodec* codec = avcodec_find_encoder_by_name( "h264_rkmpp" );
     if ( !codec )
@@ -371,14 +505,6 @@ NetEncoder::~NetEncoder()
     {
         std::lock_guard<std::mutex> plk( pkt_mx_ );
         clear_pkt_queue();
-    }
-    // Defensive: close a fence fd if a future edit to publish() adds an
-    // early return between the fd hand-off and prep_frame(). Today the
-    // fd is always consumed, so this is a no-op.
-    if ( acq_fd_ >= 0 )
-    {
-        ::close( acq_fd_ );
-        acq_fd_ = -1;
     }
     if ( enc_ )
     {
@@ -511,21 +637,10 @@ bool NetEncoder::viewer_active() const
     return active_.load();
 }
 
-void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_fd, int64_t ts_us, int src_idx )
+void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int src_idx )
 {
     if ( quit_.load() || !active_.load() )
-    {
-        if ( acquire_fence_fd >= 0 )
-            ::close( acquire_fence_fd );
         return;
-    }
-
-    if ( acq_fd_ >= 0 )
-    {
-        ::close( acq_fd_ );
-        acq_fd_ = -1;
-    }
-    acq_fd_ = acquire_fence_fd;
     bool q_busy = false;
     {
         std::lock_guard<std::mutex> qlk( pkt_mx_ );
@@ -574,31 +689,106 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_f
     }
 }
 
-void NetEncoder::wait_draw_fence()
+// NO SIGNAL publish (idle): mirrors publish() -- encode/mux under mx_,
+// RGA outside it, error path wakes serve(). The caller paces idle
+// encodes at a fixed fps; updating last_enc_ts_us_ keeps live and idle
+// encodes inside one budget: a live frame right after an idle one sees
+// a fresh ts and skips the duplicate encode (multi-view do_enc window).
+// The frame counter and the timing stats never see idle frames.
+void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
 {
-    if ( acq_fd_ < 0 )
+    if ( quit_.load() || !active_.load() )
         return;
-    pollfd pf {};
-    pf.fd = acq_fd_;
-    pf.events = POLLIN;
-    // The pipeline thread is also the camera thread. A long stall
-    // here stops DQBUF and the driver drops frames. 8 ms is enough
-    // for a healthy Mali fence; on timeout the boxes may lag one
-    // frame, which is cheaper than a 200 ms capture freeze.
-    if ( ::poll( &pf, 1, 8 ) <= 0 )
-        std::cerr << "enc: draw fence wait failed, boxes may lag a frame\n";
-    ::close( acq_fd_ );
-    acq_fd_ = -1;
+    bool any = false;
+    for ( int s = 0; s < nsrc_; ++s )
+        any = any || ( !absent || s >= nabs || absent[ s ] );
+    if ( !any )
+        return;  // every tile went live since the tick was scheduled
+    {
+        std::lock_guard<std::mutex> qlk( pkt_mx_ );
+        if ( pkts_.n >= 4 )
+            return;  // encode queue full: skip this tick
+    }
+    ts_us_ = ts_us;
+    last_enc_ts_us_ = ts_us;
+    cur_ = ( cur_ + 1 ) % kBufCount;
+    if ( !prep_idle_frame( absent, nabs, pool_.buf[ cur_ ] ) )
+    {
+        error_.store( true );
+        {
+            std::lock_guard<std::mutex> nlk( pkt_mx_ );
+            pkt_cv_.notify_all();  // serve() closes and reopens the stream path
+        }
+        return;
+    }
+    std::lock_guard<std::mutex> lk( mx_ );
+    if ( !fc_ || !enc_ )
+        return;  // viewer dropped while copying: frame dropped with it
+    if ( !send_frame( st_ ) )
+    {
+        error_.store( true );
+        {
+            std::lock_guard<std::mutex> nlk( pkt_mx_ );
+            pkt_cv_.notify_all();  // serve() closes and reopens the stream path
+        }
+    }
 }
 
-// RGA prep for the current frame: wait out the GPU draw fence (this RGA
-// driver ignores input fences, so ordering is a poll) and crop the
-// letterbox band of the model tensor into the ping-pong NV12 buffer mb
-// (or into the persistent composite buffer pool_.buf[kBufCount] + DMA copy
-// when nsrc_ > 1).
+bool NetEncoder::prep_idle_frame( const bool* absent, int nabs, MppBuffer mb )
+{
+    rga_buffer_t idl = wrapbuffer_fd( mpp_buffer_get_fd( idle_pool_.buf[ 0 ] ),
+                                      w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
+    rga_buffer_t out = wrapbuffer_fd( mpp_buffer_get_fd( mb ),
+                                      w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
+    if ( nsrc_ <= 1 )
+    {
+        // Single-view: the idle canvas IS the frame; the band stamp below
+        // forces the gray refill on live resume (plate pixels must not
+        // survive around the live picture).
+        buf_bands_[ cur_ ] = LbGeom { 0, 1, 0, 1 };
+        const IM_STATUS cs = imcopy( idl, out );
+        if ( static_cast<int>( cs ) <= 0 )
+        {
+            std::cerr << "enc: RGA idle copy failed: " << imStrError( cs ) << "\n";
+            return false;
+        }
+        return true;
+    }
+    // Multi-view: stamp the plate tile into every absent cell of the
+    // persistent composite canvas; live tiles keep their last picture.
+    MppBuffer cv = pool_.buf[ kBufCount ];
+    rga_buffer_t cvs = wrapbuffer_fd( mpp_buffer_get_fd( cv ),
+                                      w_, h_, RK_FORMAT_YCbCr_420_SP, w_, vstride_ );
+    for ( int s = 0; s < nsrc_; ++s )
+    {
+        if ( absent && s < nabs && !absent[ s ] )
+            continue;
+        im_rect tile = { ( s % 2 ) * tile_w_, ( s / 2 ) * tile_h_, tile_w_, tile_h_ };
+        const IM_STATUS rs = improcess( idl, cvs, {}, tile, tile, {}, 0 );
+        if ( static_cast<int>( rs ) <= 0 )
+        {
+            std::cerr << "enc: RGA idle tile copy failed: " << imStrError( rs ) << "\n";
+            return false;
+        }
+        buf_bands_[ s ] = LbGeom { 0, 1, 0, 1 };  // forces the gray refill on live resume
+    }
+    const IM_STATUS cs = imcopy( cvs, out );
+    if ( static_cast<int>( cs ) <= 0 )
+    {
+        std::cerr << "enc: RGA idle composite copy failed: " << imStrError( cs ) << "\n";
+        return false;
+    }
+    return true;
+}
+
+// RGA prep for the current frame: crop the letterbox band of the model
+// tensor into the ping-pong NV12 buffer mb (or into the persistent
+// composite buffer pool_.buf[kBufCount] + DMA copy when nsrc_ > 1).
+// GPU draw -> RGA ordering is guaranteed by sync_cpu() in
+// OverlaySink::draw_and_publish, which runs before publish() on the
+// same pipeline thread.
 bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb )
 {
-    wait_draw_fence();
     const int sidx = ( nsrc_ > 1 && src_idx >= 0 && src_idx < nsrc_ && src_idx < kPoolCount ) ? src_idx : 0;
     const LbGeom src_b = ( band.w > 0 && band.h > 0 ) ? band : LbGeom { band_left_, band_w_, band_top_, band_h_ };
     const int tw = nsrc_ > 1 ? tile_w_ : band_w_;
@@ -744,44 +934,49 @@ bool NetEncoder::send_frame( AVStream* st )
         }
     }
 
-    int ret = avcodec_send_frame( enc_, fr );
-    if ( ret < 0 )
+    // EAGAIN from send = the rkmpp input queue is full (3-deep task
+    // queue under a VFR clump). The FFmpeg contract: pull one output
+    // packet out first, then retry the send (the dtor flush loop uses
+    // the same pattern for EOF). Was: fatal -> error_ + a full stream
+    // session restart over a transient backpressure.
+    AVPacket* pkt = pkt_;
+    int ret = 0;
+    bool submitted = false;
+    for ( int attempt = 0; attempt < 8; ++attempt )
+    {
+        ret = avcodec_send_frame( enc_, fr );
+        if ( ret == 0 )
+        {
+            submitted = true;
+            break;
+        }
+        if ( ret != AVERROR( EAGAIN ) )
+            break;
+        if ( avcodec_receive_packet( enc_, pkt ) < 0 )
+            break;  // nothing ready to drain: bounded retries exhausted
+        enqueue_pkt( pkt, st, fpts );
+    }
+    if ( ret < 0 && ret != AVERROR( EAGAIN ) )
     {
         std::cerr << "enc: send_frame: " << av_err_str( ret ) << '\n';
         return false;
     }
+    if ( !submitted )
+    {
+        // Queue still full with no output to drain: drop the frame
+        // instead of tearing the session. IDR on the next frame keeps
+        // the stream decodable; ++pts_ keeps the CFR pts monotonic,
+        // frames_sent_ stays put (the frame was never encoded).
+        std::cerr << "enc: send_frame: input queue full, frame dropped, IDR next frame\n";
+        force_idr_.store( true );
+        ++pts_;
+        return true;
+    }
 
-    AVPacket* pkt = pkt_;
     ret = avcodec_receive_packet( enc_, pkt );
     while ( ret >= 0 )  // drains the burst; EAGAIN/EOF end it
     {
-        pkt->stream_index = st->index;
-        pkt->pts = pkt->dts = fpts * frame_step_;
-        // Batch C: the pipeline thread no longer touches the network.
-        // Move the packet reference into the preallocated ring queue
-        // (av_packet_move_ref, zero per-frame heap allocs) and hand it
-        // to serve()'s drain loop.
-        {
-            std::lock_guard<std::mutex> plk( pkt_mx_ );
-            if ( pkts_.full() )
-            {
-                // Overflow = serve() stalled (slow viewer / Wi-Fi burst).
-                // Dropping one packet tears the reference chain: every later
-                // P-frame decodes into corruption until the next IDR. Flush
-                // the whole queue, re-arm the IDR gate and force an IDR on
-                // the next frame: the gap is one frame, not a full GOP.
-                const int ndrop = pkts_.n;
-                clear_pkt_queue();
-                force_idr_.store( true );
-                wait_key_ = true;
-                ++pkt_drops_;
-                std::cerr << "enc: packet queue overflow: flushed " << ndrop << " pkts (drop " << pkt_drops_ << "), IDR next frame\n";
-            }
-            AVPacket*& tail = pkts_.push_slot();  // commits n; !full() guaranteed above
-            av_packet_unref( tail );
-            av_packet_move_ref( tail, pkt );
-            pkt_cv_.notify_one();
-        }
+        enqueue_pkt( pkt, st, fpts );
         ret = avcodec_receive_packet( enc_, pkt );
     }
     if ( ret != AVERROR( EAGAIN ) && ret != AVERROR_EOF )
@@ -792,6 +987,37 @@ bool NetEncoder::send_frame( AVStream* st )
     ++pts_;
     ++frames_sent_;
     return true;
+}
+
+// One finished encoder packet -> the preallocated ring queue for
+// serve() to mux. Shared by the EAGAIN retry and the post-send drain
+// in send_frame(): the pipeline thread never touches the network
+// (av_packet_move_ref, zero per-frame heap allocs).
+void NetEncoder::enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts )
+{
+    pkt->stream_index = st->index;
+    pkt->pts = pkt->dts = fpts * frame_step_;
+    {
+        std::lock_guard<std::mutex> plk( pkt_mx_ );
+        if ( pkts_.full() )
+        {
+            // Overflow = serve() stalled (slow viewer / Wi-Fi burst).
+            // Dropping one packet tears the reference chain: every later
+            // P-frame decodes into corruption until the next IDR. Flush
+            // the whole queue, re-arm the IDR gate and force an IDR on
+            // the next frame: the gap is one frame, not a full GOP.
+            const int ndrop = pkts_.n;
+            clear_pkt_queue();
+            force_idr_.store( true );
+            wait_key_ = true;
+            ++pkt_drops_;
+            std::cerr << "enc: packet queue overflow: flushed " << ndrop << " pkts (drop " << pkt_drops_ << "), IDR next frame\n";
+        }
+        AVPacket*& tail = pkts_.push_slot();  // commits n; !full() guaranteed above
+        av_packet_unref( tail );
+        av_packet_move_ref( tail, pkt );
+        pkt_cv_.notify_one();
+    }
 }
 
 // M4 pts selection, extracted from send_frame() for readability:

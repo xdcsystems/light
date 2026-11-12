@@ -91,8 +91,11 @@ post-processing.
                otherwise numeric /dev/video* candidates are USB-filtered
                (rkcif/rkisp platform nodes rejected before any S_FMT)
                and trial-opened; the pipeline tracks each source node in `SourceSlot::node` (`srcs_`) and adopts a re-enumerated one transparently.
-               A permanent unplug exhausts the 20x1 s window and ends
-               the run with exit code 1.
+               A mid-run recoverable failure (ENODEV/EIO) flips the
+               slot to absent; probe_loop() re-attaches on its own
+               cadence (recover() for a detached slot, setup_device for
+               a fresh one). A permanent unplug no longer ends the run:
+               the remaining sources keep streaming.
                Robustness (2026-11-02, P1-5/P1-7): every setup_device
                error path after open() calls teardown() itself — a
                failed setup leaks neither fd nor mappings; the usb
@@ -241,16 +244,23 @@ post-processing.
                RGB888 -> NV12 1:1 into its own ping-pong MPP dma-bufs
                — no upscale, zero CPU pixels (the frames leave for the
                encoder as zero-copy DRM_PRIME descriptors, 2026-10-28,
-               see the enc notes below). The stream size is the
-               band's native size (640x480 for the default 1280x960 camera, 640x360 for 1280x720; 640x480 at the 1280x960 working mode since
-               2026-10-30). One viewer at a time; no encode until the
-               first viewer connects; a stalled viewer is dropped via
-               SO_SNDTIMEO (15 s). Late joiners via repeated
+               see the enc notes below). The stream canvas is canonical (2026-11-12): 640x480
+               single-view; multi-view composes 640x480 tiles into
+               1280x480 (2x1, 2 sources) or 1280x960 (2x2, 3+ sources),
+               mixed-aspect sources letterboxed per LbGeom. Absent
+               tiles stream a pre-rendered NO SIGNAL plate (stamped
+               once at init; see docs/state.md, "NO SIGNAL idle
+               stream") paced by --net-fps, excluded from --frames and
+               the timing stats. One viewer at a time; no encode until
+               the first viewer connects; a stalled viewer is dropped
+               via SO_SNDTIMEO (15 s). Late joiners via repeated
                PAT/PMT/SDT.
-               The NV12 dma-buf pool is three ring buffers deep (2026-11-02,
-               P1-4): two could run out exactly at the 3-deep rkmpp
-               task queue when VFR frames arrive in clumps after a
-               network pause; the slot index advance is modulus-based.
+               The NV12 dma-buf pool is four ring buffers deep (2026-11-02,
+               P1-4: three; 2026-11-12 audit fix: four). Three still left
+               one window: at a full 3-deep rkmpp task queue the 4th
+               frame's RGA write hits the oldest in-flight slot; the
+               ring holds one slot above the queue depth. The slot index
+               advance is modulus-based.
                In M5 multi-camera mode (nsrc > 1) a 4th NV12 buffer holds
                a persistent composite multi-view canvas (1280x480 Side-by-Side
                2x1 for 2 sources, 1280x960 Grid 2x2 for 3 sources, 640x480 per

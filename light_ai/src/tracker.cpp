@@ -1,4 +1,3 @@
-#include <iostream>
 #include <cmath>
 
 #include "tracker.hpp"
@@ -60,9 +59,10 @@ void Tracker::predict( Track& t, float dt ) const
 {
     // miss >= 2: freeze the state (the IoU gate must still find the reappearing object
     // near the last seen spot) but keep growing the covariance, so the gain 
-    // at the reappearance update matches the real length of the gap. Only confirmed tracks
-    // reach miss >= 2 (tentative ones die at kMaxTentMiss), and kMaxMiss caps the growth at 15 frames.
-    if ( t.miss >= 2 )
+    // at the reappearance update matches the real length of the gap. Tentative
+    // tracks reach miss >= 2 as well (death is time-based, kTentMaxAgeMs), and
+    // kMaxMiss caps the growth at 15 frames.
+    if ( t.miss >= kMaxTentMiss )
     {
         kf_predict_cov( t.fx, dt, static_cast<float>( kQAccel ) );
         kf_predict_cov( t.fy, dt, static_cast<float>( kQAccel ) );
@@ -145,6 +145,11 @@ void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t
     t.mwin_x[t.mwin_n % kTrailMedianN] = t.fx.x;
     t.mwin_y[t.mwin_n % kTrailMedianN] = t.fy.x;
     ++t.mwin_n;
+    // int overflow guard: past the first full window the counter only
+    // feeds the modulo index above, so folding it back by one window
+    // keeps both the index cycle and the full-window gate bit-exact.
+    if ( t.mwin_n >= 2 * kTrailMedianN )
+        t.mwin_n = kTrailMedianN;
     if ( t.mwin_n >= kTrailMedianN )
     {
         float xs[kTrailMedianN];
@@ -262,7 +267,7 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
         // position. If a person re-enters the frame while the ghost still
         // lingers there, the ghost must NOT suppress the new spawn --
         // otherwise the person stays trackless for the whole ghost
-        // lifetime (kTrailMaxAgeMs) and the dedupe log spams per frame.
+        // lifetime (kTrailMaxAgeMs).
         if ( ( t.life != TRACK_TENT && t.life != TRACK_CONF ) ||
              t.bw <= 0.0f || t.bh <= 0.0f )
             continue;
@@ -271,8 +276,8 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
 
         if ( iou * 100.0f >= static_cast<float>( kSpawnDedupeGate ) )
         {
-            std::cerr << "Dedupe: spawn suppressed by track (id=" << t.id
-                      << ", iou=" << iou * 100.0f << "%)\n";
+            // Silent drop: no console I/O in the frame path (25-50 FPS --
+            // synchronous terminal writes cost real latency per frame).
             return;
         }
 
@@ -295,6 +300,20 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
         t.fy.p = { static_cast<float>( kRMeas ), 0.0f, 0.0f, 900.0f };
         t.bw = bw;
         t.bh = bh;
+        // Slot reuse: hp and the median window belong to the previous occupant.
+        // A stale hp would anchor a small/crouched successor to the dead track's
+        // height: bh >= hp * full_r never fires, so hp never relearns (see measure);
+        // a stale mwin_n would mix old posteriors into the first trail median --
+        // the traj.empty() reset in measure() cannot fire for a fresh spawn,
+        // spawn already pushed one point into the ring (cx/cy match the
+        // KF posterior at spawn: v=0, x=cx).
+        t.hp = 0.0f;
+        t.mwin_n = 0;
+        for ( int m = 0; m < kTrailMedianN; ++m )
+        {
+            t.mwin_x[m] = cx;
+            t.mwin_y[m] = cy;
+        }
         t.ts_last_us = ts_us;
         t.hits = 1;
         t.miss = 0;

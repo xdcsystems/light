@@ -1281,3 +1281,85 @@ Six follow-up items closed on `fix/audit-p0` after the P0/P1/P2 audit:
    - `Pipeline`: added `drain_done_slots()` so finished NPU slots (`Slot::DONE`) are published immediately during source polling instead of waiting for `pub_.size() == npool_`, and stamped `ts_us` at actual frame dequeue time `t1` rather than pre-poll `t0`.
    - `GpuBoxDrawer` / `OverlaySink` / `NetEncoder`: added `glBindFramebuffer(GL_FRAMEBUFFER, 0); glFlush();` at the end of `draw_slot()`, switched `OverlaySink` to `drawer_->sync_cpu()` (`EGL_SYNC_FLUSH_COMMANDS_BIT_KHR`) and skipped draw/sync when `boxes_.n == 0` (eliminating all `draw fence wait failed` timeouts and cutting `enc=` from `1.0-1.6 ms` to `0.6-0.9 ms`); set multi-view CBR `nom_fps = 25 * nsrc_`, enforced monotonic VFR PTS (`last_pts_`), and made VFR coalescing adaptive (`4 ms` normal, `20 ms` when `pkt_count_ >= 4`).
    - Verified live over 3000 frames (`multiview_async_paced_3000.log`): `Processed 3000 frames in 60.302 s -> 49.749 FPS`, `enc = 0.6-0.9 ms`, `0` draw-fence timeouts, `0` corrupt-frame flashes, `0` packet drops, clean EOF drain.
+
+
+## NO SIGNAL idle stream (2026-11-12)
+
+Branch fix/audit-p0, commit 58d0ad6 ("net: NO SIGNAL idle stream for
+absent tiles, canonical canvas, stb_easy_font text raster").
+
+Design record:
+- Canonical stream canvas: 640x480 single-view; multi-view 1280x480
+  (2x1, 2 sources) / 1280x960 (2x2, 3+ sources), 640x480 per tile.
+  Pipeline::idle_tick paces idle encodes at the --net-fps rate (the
+  40 ms floor when net_fps == 0); idle frames share last_enc_ts_us_
+  with live ones and are excluded from --frames and the [timing]
+  stats. Idle encodes run only while a viewer is connected (the
+  active_ gate covers both paths).
+- The idle canvas is a dedicated 1-slot RkmppDrmPool (idle_pool_):
+  gray fill + the NO SIGNAL plate stamped once at init (CPU raster --
+  the init-time-only precedent, like the letterbox memset). The frame
+  path stays zero-copy: publish_idle()/prep_idle_frame() RGA-copy the
+  canvas into absent cells (whole-canvas imcopy single-view; per-tile
+  improcess into the persistent composite canvas multi-view). The
+  fictive buf_bands_ = {0,1,0,1} stamp forces the gray refill when a
+  live source returns.
+- Text raster: stb_easy_font (externals/fonts/, public domain) --
+  stroke glyphs emitted as 1-px axis-aligned quads, scaled bbox-fill
+  into the Y plane (stamp_text in net_encoder.cpp; the C API takes
+  char*, so the project's const_cast ban is honored via a fixed
+  copy buffer). The same quad geometry is the planned renderer for
+  per-box labels via GpuBoxDrawer. font8x8 remains in
+  externals/fonts as a spare.
+
+Live verification (2026-11-12):
+- Multi-view timed run (--frames 600): a ~13 s partial-absence window
+  (s1 hot-attached at frame ~415) bridged at the unchanged live rate
+  -- "Processed 600 frames in 25.316 s -> 23.701 FPS"; idle frames
+  absent from the counter and [timing] (enc 0.3-0.9 ms on live
+  windows only).
+- Single-view absent run (--device /dev/video20, the source detached
+  via sysfs uvcvideo unbind): viewer connected before any source
+  attached; the NO SIGNAL full frame seen in ffplay; the camera bound
+  back mid-run -- hot recovery ("source s0: attached (hot)"), ~20 FPS
+  steady; shutdown clean (drain, TOTAL summary, EOF reached).
+- Discovery-scan throttle: exactly one "scanning /dev/video*" per
+  30 s window in every absent run (probe attempt % 15).
+- Wall-clock cross-check: the 523.4 s single-view run holds 1817 live
+  frames (~91 s at the ~20 FPS live rate); the rest was the all-absent
+  park with zero encode work.
+
+## External audit pass 1 (2026-11-12): TcpPullServer write_packet, M5 node reservation
+
+Two external-audit findings verified against the source and patched.
+Commits: see git log (fill in on commit).
+
+1. TcpPullServer::write_packet (P0, confirmed): one ::send per call;
+   flush_buffer (libavformat/aviobuf.c) checks only < 0 and resets
+   buf_ptr unconditionally -- a partial send (n > 0, n < buf_size) drops
+   the unsent tail silently. Partial sends are REACHABLE: the accepted
+   socket is blocking with SO_SNDTIMEO 15 s, and send() returns the bytes
+   already copied into the kernel buffer when the timeout expires
+   mid-chunk (tcp_sendmsg). Fix: drain-the-chunk send loop in
+   src/tcp_pull_server.cpp (EINTR retries keep the sent offset; the errno
+   map is unchanged: EPIPE/ECONNRESET -> EPIPE, EAGAIN/EWOULDBLOCK ->
+   ETIMEDOUT, else EIO). Covers both NetEncoder (MPEG-TS) and NetPreview
+   (NUT) -- one callback each. STATUS: patched, pending the live
+   slow-viewer check (tc netem delay/loss on the viewer side).
+2. M5 node hijacking (confirmed, mechanism corrected): find_usb_capture_node
+   (also via CameraV4L2::recover) had no knowledge of the other slots'
+   nodes. The audit's "teardown() STREAMOFF on a foreign fd" mechanism is
+   refuted -- teardown() acts on the probing instance's OWN fd only;
+   uvcvideo returns EBUSY for S_FMT/REQBUFS on a node another fd is
+   streaming, so the trial on a live node is harmless (rejected, the scan
+   continues). The real window: a detached slot's node (torn down by the
+   recovery) is momentarily free; the scanning slot's trial then PASSES
+   and the node is adopted -- two slots compete for one physical camera.
+   Fix: busy-node reservation -- Pipeline::busy_v4l2_nodes(idx) (nodes of
+   the OTHER V4L2 slots, live or absent alike) is threaded through
+   MediaSource::recover into find_usb_capture_node; busy nodes are skipped
+   both in the preferred attempt and in the scan. Cross-adopted but
+   distinct nodes stay legal (the replug swap case: each camera still
+   gets a slot). Single-source runs are unaffected (the list is empty).
+   STATUS: patched, pending a live M5 disconnect drill (unplug cam1 while
+   cam0 streams; expect "trying /dev/video20" to never appear from slot 1).

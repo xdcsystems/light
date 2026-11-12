@@ -5,7 +5,6 @@
 #include <rockchip/mpp_log.h>
 
 #include "mpp_decoder.hpp"
-
 #include "jpeg_probe.hpp"
 
 
@@ -206,7 +205,7 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
             if ( want != out_fmt_ )
             {
                 out_fmt_ = want;
-                std::cerr << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( want == MPP_FMT_YUV420SP ? "0" : "2" )
+                std::cout << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( want == MPP_FMT_YUV420SP ? "0" : "2" )
                           << " -> out fmt " << ( out_fmt_ == MPP_FMT_YUV420SP ? "420SP" : "422SP" ) << '\n';
             }
         }

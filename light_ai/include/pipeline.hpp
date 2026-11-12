@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <thread>
@@ -29,6 +30,10 @@ class Pipeline
 
     struct SourceSlot
     {
+        // hot-attach (README): slot stays configured while the source is away;
+        // probe_loop() flips it after a successful bring-up (probe_source)
+        std::atomic<bool> absent = false;
+        SourceKind kind = SourceKind::V4L2;  // survives teardown for the probe path
         MediaSource src {};
         // M5: everything below is per-source. The decoder owns its
         // out_frame_/resolution and its detected 4:2:0 vs 4:2:2 format --
@@ -45,7 +50,11 @@ class Pipeline
         int h = 0;
         int frames = 0;
         int warmup_left = 0;
-        Timings::clk::time_point last_ok_tp {};
+        // Atomic: probe_source writes it on the prober thread; the pipeline
+        // thread reads and writes it in try_dequeue_round and in run()'s
+        // recovery loop -- with no common lock a plain time_point member was
+        // a data race (UB). Trivially copyable, 8 B: lock-free on aarch64.
+        std::atomic<Timings::clk::time_point> last_ok_tp {};
     };
 
 public:
@@ -65,6 +74,11 @@ private:
     void init_source();
     void init_one_source( int idx, const SourceEndpoint& ep );
     void start_source( int idx );
+    void probe_source( int idx );  // hot-attach: one (re)bring-up step, never throws
+    void probe_loop();
+    // busy-node reservation (M5): the /dev nodes of the OTHER V4L2 slots,
+    // live or absent alike -- node discovery never trials or adopts them.
+    std::vector<std::string> busy_v4l2_nodes( int self_idx ) const;
     void init_aux();
     void setup_cores();
 
@@ -75,6 +89,10 @@ private:
     void pool_discard( int src_idx );    // drop pending slots of src_idx on recovery
     int try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err );
     int dequeue_next_source( uint32_t& sz, int& cam_err, int& ok );
+
+    // NO SIGNAL idle publish: gray plate tiles for absent sources at a
+    // fixed pace; not counted in --frames or the timing stats.
+    void idle_tick();
     int handle_source_failure( int cam_err );  // 0 = recovered, -1 = fatal
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
 
@@ -97,9 +115,10 @@ private:
     // so &npus_[k] stays valid for the whole session.
     std::vector<RknnEngine> npus_;
     int npool_ = 1;
-    int src_w_ = 0;
-    int src_h_ = 0;    // MAX across sources (init_aux sizing + diagnostics);
-                       // per-source geometry is SourceSlot::w/h
+    std::atomic<int> src_w_ { 0 };
+    std::atomic<int> src_h_ { 0 };  // MAX across sources (init_aux sizing + diagnostics);
+                                    // written by probe_source on the prober thread, hence atomic
+                                    // per-source geometry is SourceSlot::w/h
     int model_w_ = 0;
     int model_h_ = 0;  // taken from the model, not from flags
     
@@ -123,5 +142,11 @@ private:
     std::vector<std::thread> workers_;   // one per pooled engine
     std::atomic<bool> quit_ { false };
     std::atomic<bool> stop_ { false };  // set by the signal handler
+    std::thread probe_th_;   // hot-attach prober: armed in run(), joined on exit
+    std::atomic<bool> probe_quit_ { false };
+    uint64_t probe_ticks_ = 0;  // prober round counter: throttles the probe log
+    long long scan_log_ms_ = 0;  // last camera-scan log stamp: throttles discovery spam (30 s)
+    std::chrono::steady_clock::time_point t0_ {};  // idle pts base (NO SIGNAL timeline)
+    int64_t last_idle_us_ = -1;  // last NO SIGNAL publish stamp (us since t0_)
     PubFifo pub_;
 };

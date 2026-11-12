@@ -28,20 +28,31 @@ namespace
     int write_packet( void* opaque, const uint8_t* buf, int buf_size )
     {
         const int fd = *static_cast<const int*>( opaque );
-        ssize_t n = 0;
-        do
+        // Drain-the-chunk send: a partial return here is silent data loss --
+        // flush_buffer (libavformat/aviobuf.c) checks only < 0 and resets
+        // buf_ptr = buf_ptr_max = buffer, the unsent tail is never retried.
+        // Partial sends are reachable: the accepted socket is blocking with
+        // SO_SNDTIMEO, and send() returns the bytes already copied into the
+        // kernel buffer when the 15 s window expires mid-chunk.
+        size_t sent = 0;
+        while ( sent < static_cast<size_t>( buf_size ) )
         {
-            n = ::send( fd, buf, static_cast<size_t>( buf_size ), MSG_NOSIGNAL );
-        } while ( n < 0 && errno == EINTR );
-        if ( n > 0 )
-            return static_cast<int>( n );
-        if ( n == 0 )
-            return AVERROR_EOF;  // errno is stale after a zero return: never read it here
-        if ( errno == EPIPE || errno == ECONNRESET )
-            return AVERROR( EPIPE );
-        if ( errno == EAGAIN || errno == EWOULDBLOCK )
-            return AVERROR( ETIMEDOUT );
-        return AVERROR( EIO );
+            const ssize_t n = ::send( fd, buf + sent, static_cast<size_t>( buf_size ) - sent, MSG_NOSIGNAL );
+            if ( n < 0 )
+            {
+                if ( errno == EINTR )
+                    continue;
+                if ( errno == EPIPE || errno == ECONNRESET )
+                    return AVERROR( EPIPE );
+                if ( errno == EAGAIN || errno == EWOULDBLOCK )
+                    return AVERROR( ETIMEDOUT );
+                return AVERROR( EIO );
+            }
+            if ( n == 0 )
+                return AVERROR_EOF;  // errno is stale after a zero return: never read it here
+            sent += static_cast<size_t>( n );
+        }
+        return static_cast<int>( sent );
     }
 }  // namespace
 

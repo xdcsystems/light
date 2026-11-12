@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // HTTP MJPEG pull source (IP Webcam / any multipart/x-mixed-replace server).
 // Media stays JPEG end to end: the MPP decoder consumes these
@@ -21,6 +22,7 @@ class NetMjpegSource
         kErrStreakMax = 4,   // corrupt/short-frame streak tolerance
         kBoundaryMax = 60,
         kPatMax = 70,
+        kIntr = -3,  // net_fill: a signal interrupted poll/recv (transient, callers retry)
     };
 
     struct Buffer
@@ -62,7 +64,9 @@ public:
 
     // One recovery-ladder step: re-open the URL. A URL never re-enumerates,
     // so new_id returns unchanged (the camera path adopts re-enumerated nodes there).
-    int recover( const std::string& id, std::string& new_id, std::string* why );
+    // busy_nodes: ignored here -- a URL never re-enumerates.
+    int recover( const std::string& id, std::string& new_id, const std::vector<std::string>& busy_nodes,
+                 std::string* why );
 
 private:
     int connect_tcp( const std::string& host, int port, std::string* why );
@@ -76,8 +80,9 @@ private:
     int read_boundary();
     int read_part_header( long* need );
     int receive_body( int slot, long need, uint32_t* size );
-    // One poll+recv into the window. >0 = bytes read, 0 = timeout/EINTR,
-    // -1 = EOF/error, -2 = window wedged full (the desync protocol).
+    // One poll+recv into the window. >0 = bytes read, 0 = timeout,
+    // kIntr = a signal interrupted poll/recv (transient), -1 = EOF/error,
+    // -2 = window wedged full (the desync protocol).
     int net_fill( int timeout_ms );
     // Offset of the first pattern match in the unconsumed window,
     // kNpos when absent. Const: it only scans.

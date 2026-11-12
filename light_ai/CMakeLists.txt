@@ -100,6 +100,7 @@ target_compile_definitions(light_ai PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)
 target_include_directories(light_ai PRIVATE
     include
     externals/inih
+    externals/fonts
     /usr/include/rockchip
     ${RKNN_API_INCLUDE_DIR}
     ${AV_INCLUDE_DIRS}
@@ -119,20 +120,21 @@ target_link_libraries(light_ai PRIVATE
 target_link_directories(light_ai PRIVATE ${AV_LIBRARY_DIRS})
 
 # --- CPU flags (RK3588: 4x Cortex-A76 cpu4-7 + 4x Cortex-A55 cpu0-3) --------
-# Both clusters expose an IDENTICAL feature set (verified on the board
-# 2026-11-03, /proc/cpuinfo, cpu0 == cpu4): fp asimd aes sha2 crc32
-# atomics (LSE) fphp asimdhp lrcpc dcpop asimddp (dotprod). A binary
-# built with +dotprod/+crypto is therefore legal on ALL eight cores —
-# pinning to A76 is unnecessary; the scheduler places hot threads
-# (pipeline main + workers) on A76 (2.3 GHz) and network/background
-# threads wherever cores are free. LSE atomics (std::atomic stop flag)
-# are valid on A55 as well.
-# Clang rejects the dotted "cortex-a76.cortex-a55" form in -mtune
-# (GCC-only big.LITTLE syntax), so the compiler branches are separate.
+#
+# Both clusters expose an IDENTICAL feature set (verified on the board 2026-11-03,
+# /proc/cpuinfo, cpu0 == cpu4): fp asimd aes sha2 crc32 atomics (LSE)
+# fphp asimdhp lrcpc dcpop asimddp (dotprod). A binary built with +dotprod/+crypto 
+# is therefore legal on ALL eight cores — pinning to A76 is unnecessary;
+# the scheduler places hot threads (pipeline main + workers) on A76 (2.3 GHz)
+# and network/background threads wherever cores are free.
+# LSE atomics (std::atomic stop flag) are valid on A55 as well.
+# Clang rejects the dotted "cortex-a76.cortex-a55" form in -mtune (GCC-only big.LITTLE syntax),
+# so the compiler branches are separate.
 # -DTARGET_CPU_FLAGS="..." from the CLI enters the cache BEFORE this
-# block, and DEFINED sees both cache and normal variables: the default
-# is set only when no override was given. Previously a plain set()
-# shadowed the cache and silently overwrote the CLI value.
+# block, and DEFINED sees both cache and normal variables: the default is set only
+# when no override was given. Previously a plain set() shadowed the cache and
+# silently overwrote the CLI value.
+
 if(NOT DEFINED TARGET_CPU_FLAGS)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         set(TARGET_CPU_FLAGS "-mcpu=cortex-a76+crypto+dotprod")

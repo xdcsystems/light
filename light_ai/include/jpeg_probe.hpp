@@ -47,6 +47,16 @@ inline bool parse_sof_segment( const uint8_t* seg, size_t seglen, JpegSofInfo& o
     out.w = fw;
     out.h = fh;
     const uint8_t ncomp = seg[7];
+    // Strict segment validation before touching component data: per the
+    // JPEG spec SOF seglen is always 8 + 3*ncomp. A shorter length with a
+    // larger ncomp used to let the loop stop after the first component,
+    // returning true with v_max == v_min from the Y record alone -- a
+    // 4:2:0 stream then misdetects as 4:2:2 (green-bottom artifacts).
+    // ncomp outside 1..4 is not a real SOF either -- reject it too.
+    if ( ncomp == 0 || ncomp > 4 )
+        return false;
+    if ( seglen < 8 + static_cast<size_t>( ncomp ) * 3 )
+        return false;
     int v_max = 1;
     int v_min = 4;
     for ( int c = 0; c < ncomp && 10 + static_cast<size_t>( c ) * 3 < seglen; ++c )

@@ -68,8 +68,9 @@ namespace
 
     // Candidate buffer on the stack: fixed capacity, no heap. The early
     // cut (obj < conf_thr) keeps the real flow to single digits; the cap
-    // is a safety net.
-    constexpr int kMaxCand = 1024;
+    // is a safety net: an overflow is counted and reported once per frame
+    // in yolo_postprocess(), never silent.
+    constexpr int kMaxCand = 4096;
 
     // Stage 2/2 of yolo_postprocess(): class-aware greedy NMS over the
     // candidates (standard yolov5 behaviour: boxes of different classes
@@ -92,11 +93,20 @@ namespace
                     sup[j] = true;
             }
             const Box& b = cand[i];
+            // Band-crop before scale: clamping d.x alone pinned the left
+            // edge to 0 while d.w kept the FULL width -- the right edge
+            // shifted right by the clipped amount and the box stretched
+            // into the scene, corrupting the IoU association downstream.
+            // The cam_w/cam_h clamps stay: with d.x >= 0 they clip the
+            // right (bottom) edge to the band boundary exactly as
+            // clamping x2 (y2) to lb_left + lb_w (lb_top + lb_h) would.
+            const float x1_c = std::max( b.x1, lb_left );
+            const float y1_c = std::max( b.y1, lb_top );
             Detection d{};
-            d.x = std::max( 0.0f, ( b.x1 - lb_left ) * sx );
-            d.y = std::max( 0.0f, ( b.y1 - lb_top ) * sy );
-            d.w = std::min( cam_w - d.x, ( b.x2 - b.x1 ) * sx );
-            d.h = std::min( cam_h - d.y, ( b.y2 - b.y1 ) * sy );
+            d.x = ( x1_c - lb_left ) * sx;
+            d.y = ( y1_c - lb_top ) * sy;
+            d.w = std::max( 0.0f, std::min( cam_w - d.x, ( b.x2 - x1_c ) * sx ) );
+            d.h = std::max( 0.0f, std::min( cam_h - d.y, ( b.y2 - y1_c ) * sy ) );
             d.cls = b.cls;
             d.conf = b.conf;
             // Degenerate-box guard: a candidate whose x1 exceeded model_w
@@ -115,7 +125,7 @@ namespace
     // k*per*cell_hw further. The obj pre-check stays before the class
     // scan - that order is the confidence shortcut.
     void collect_head( int gi, const uint16_t* data, int h, int w, int per, int stride, float lb_left, float lb_top, float lb_w, float lb_h, float conf_thr,
-            std::array<Box, kMaxCand>& cand, int& nc )
+            std::array<Box, kMaxCand>& cand, int& nc, int& dropped )
     {
         for ( int gy = 0; gy < h; ++gy )
         {
@@ -147,6 +157,12 @@ namespace
                             best = c;
                         }
                     }
+                    // Class scan gate: best_cls <= 0 means no class channel
+                    // beat zero (NaN never passes '>'), the pre-scan best
+                    // would map to an invalid class id. No evidence -> no
+                    // candidate (also kills conf==0 phantoms at thr <= 0).
+                    if ( best_cls <= 0.0f )
+                        continue;
                     const float conf = obj * best_cls;
                     if ( !( conf >= conf_thr ) )  // NaN-safe: NaN passes a plain <
                         continue;
@@ -169,6 +185,8 @@ namespace
 
                     if ( nc < kMaxCand )
                         cand[nc++] = { cx - bw_px / 2, cy - bh_px / 2, cx + bw_px / 2, cy + bh_px / 2, conf, best - 5 };
+                    else
+                        ++dropped;  // cap hit: reported once per frame in yolo_postprocess()
                 }
             }
         }
@@ -186,7 +204,7 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
     // Letterbox geometry must fit the model input: the band is rows
     // [lb_top, lb_top + lb_h) of the model frame. A violation here would
     // silently misplace every detection, so it is a hard error.
-    if ( lb_top < 0.0f || lb_top + lb_h > model_h || lb_left < 0.0f || lb_left + lb_w > model_w )
+    if ( lb_w <= 0.0f || lb_h <= 0.0f || lb_top < 0.0f || lb_top + lb_h > model_h || lb_left < 0.0f || lb_left + lb_w > model_w )
     {
         std::cerr << "yolo_postprocess: letterbox band x=[" << lb_left << ", " << lb_left + lb_w << ") y=[" << lb_top << ", "
                   << lb_top + lb_h << ") does not fit model " << model_w << 'x' << model_h << '\n';
@@ -202,6 +220,7 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
 
     std::array<Box, kMaxCand> cand{};
     int nc = 0;
+    int dropped = 0;
 
     // Axial mapping: scene = (det - band origin) * cam / band size.
     // Landscape: the band fills the tensor width (lb_left = 0, lb_w = model_w)
@@ -247,8 +266,12 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
             continue;  // not a 3-anchor yolov5 head - skip
         }
 
-        collect_head( head, data, h, w, per, stride, lb_left, lb_top, lb_w, lb_h, conf_thr, cand, nc );
+        collect_head( head, data, h, w, per, stride, lb_left, lb_top, lb_w, lb_h, conf_thr, cand, nc, dropped );
     }
+
+    if ( dropped > 0 )
+        std::cerr << "yolo: candidate cap " << kMaxCand << " reached, " << dropped
+                  << " candidates dropped (raise --conf)\n";
 
     emit_nms( cand, nc, iou_thr, sx, sy, lb_left, lb_top, cam_w, cam_h, out );
 }
