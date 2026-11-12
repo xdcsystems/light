@@ -22,6 +22,7 @@ class NetMjpegSource
         kErrStreakMax = 4,   // corrupt/short-frame streak tolerance
         kBoundaryMax = 60,
         kPatMax = 70,
+        kIntr = -3,  // net_fill: a signal interrupted poll/recv (transient, callers retry)
     };
 
     struct Buffer
@@ -79,8 +80,9 @@ private:
     int read_boundary();
     int read_part_header( long* need );
     int receive_body( int slot, long need, uint32_t* size );
-    // One poll+recv into the window. >0 = bytes read, 0 = timeout/EINTR,
-    // -1 = EOF/error, -2 = window wedged full (the desync protocol).
+    // One poll+recv into the window. >0 = bytes read, 0 = timeout,
+    // kIntr = a signal interrupted poll/recv (transient), -1 = EOF/error,
+    // -2 = window wedged full (the desync protocol).
     int net_fill( int timeout_ms );
     // Offset of the first pattern match in the unconsumed window,
     // kNpos when absent. Const: it only scans.

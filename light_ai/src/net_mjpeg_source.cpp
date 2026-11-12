@@ -361,15 +361,14 @@ int NetMjpegSource::net_fill( int timeout_ms )
     pollfd p { fd_, POLLIN, 0 };
     const int pr = ::poll( &p, 1, timeout_ms >= 0 ? timeout_ms : 0 );
     if ( pr < 0 )
-        return errno == EINTR ? 0 : -1;
+        return errno == EINTR ? kIntr : -1;
     if ( pr == 0 )
         return 0;
     const ssize_t n = ::recv( fd_, sock_ + sock_end_, static_cast<size_t>( kSockBuf ) - sock_end_, 0 );
     if ( n < 0 && errno == EINTR )
-        return 0;  // interrupted before any data (e.g. a stop signal arriving
-                   // between poll() and recv()): not a connection error, the
-                   // caller retries on the next fill -- treating it as fatal
-                   // would turn Ctrl-C shutdown into a spurious reconnect
+        return kIntr;  // interrupted before any data (e.g. a stop signal arriving
+                       // between poll() and recv()): not a connection error and
+                       // not a watchdog expiry -- callers retry the fill
     if ( n <= 0 )
         return -1;  // 0 = EOF, -1 = error: the connection is gone either way
     sock_end_ += static_cast<size_t>( n );
@@ -399,7 +398,10 @@ int NetMjpegSource::read_headers( std::string* why )
                 *why = "response headers oversized";
             return -1;
         }
-        if ( net_fill( kPollMs ) <= 0 )
+        const int r = net_fill( kPollMs );
+        if ( r == kIntr )
+            continue;  // EINTR: transient, not a watchdog expiry
+        if ( r <= 0 )
         {
             if ( why )
                 *why = "no HTTP response within the watchdog window";
@@ -502,6 +504,8 @@ int NetMjpegSource::read_boundary()
         const int r = net_fill( kPollMs );
         if ( r == -2 )
             return -2;
+        if ( r == kIntr )
+            continue;  // EINTR: transient, not a watchdog expiry
         if ( r <= 0 )
             return -1;
     }
@@ -513,7 +517,10 @@ int NetMjpegSource::read_part_header( long* need )
     {
         if ( sock_end_ - sock_pos_ >= static_cast<size_t>( kSockBuf ) )
             return -2;
-        if ( net_fill( kPollMs ) <= 0 )
+        const int r = net_fill( kPollMs );
+        if ( r == kIntr )
+            continue;  // EINTR: transient, not a watchdog expiry
+        if ( r <= 0 )
             return -1;
     }
     const size_t hend = net_find( "\r\n\r\n", 4 ) + sock_pos_ + 4;  // guaranteed by the loop
@@ -560,7 +567,10 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
                 sock_pos_ += flush;
                 got += flush;
             }
-            if ( net_fill( kPollMs ) <= 0 )
+            const int fr = net_fill( kPollMs );
+            if ( fr == kIntr )
+                continue;  // EINTR: transient, not a watchdog expiry
+            if ( fr <= 0 )
                 return -1;
         }
     }
@@ -573,7 +583,10 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
     {
         if ( sock_pos_ >= sock_end_ )
         {
-            if ( net_fill( kPollMs ) <= 0 )
+            const int fr = net_fill( kPollMs );
+            if ( fr == kIntr )
+                continue;  // EINTR: transient, not a watchdog expiry
+            if ( fr <= 0 )
                 return -1;
             continue;
         }
@@ -646,6 +659,8 @@ int NetMjpegSource::poll_part_ready( int timeout_ms )
     while ( true )
     {
         const int r = net_fill( wait_ms );
+        if ( r == kIntr )
+            return 0;  // EINTR: not ready yet and not a timeout -- caller retries
         if ( r < 0 )
             return r;
         if ( has_buffered_header() )
