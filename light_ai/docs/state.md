@@ -1328,3 +1328,38 @@ Live verification (2026-11-12):
 - Wall-clock cross-check: the 523.4 s single-view run holds 1817 live
   frames (~91 s at the ~20 FPS live rate); the rest was the all-absent
   park with zero encode work.
+
+## External audit pass 1 (2026-11-12): TcpPullServer write_packet, M5 node reservation
+
+Two external-audit findings verified against the source and patched.
+Commits: see git log (fill in on commit).
+
+1. TcpPullServer::write_packet (P0, confirmed): one ::send per call;
+   flush_buffer (libavformat/aviobuf.c) checks only < 0 and resets
+   buf_ptr unconditionally -- a partial send (n > 0, n < buf_size) drops
+   the unsent tail silently. Partial sends are REACHABLE: the accepted
+   socket is blocking with SO_SNDTIMEO 15 s, and send() returns the bytes
+   already copied into the kernel buffer when the timeout expires
+   mid-chunk (tcp_sendmsg). Fix: drain-the-chunk send loop in
+   src/tcp_pull_server.cpp (EINTR retries keep the sent offset; the errno
+   map is unchanged: EPIPE/ECONNRESET -> EPIPE, EAGAIN/EWOULDBLOCK ->
+   ETIMEDOUT, else EIO). Covers both NetEncoder (MPEG-TS) and NetPreview
+   (NUT) -- one callback each. STATUS: patched, pending the live
+   slow-viewer check (tc netem delay/loss on the viewer side).
+2. M5 node hijacking (confirmed, mechanism corrected): find_usb_capture_node
+   (also via CameraV4L2::recover) had no knowledge of the other slots'
+   nodes. The audit's "teardown() STREAMOFF on a foreign fd" mechanism is
+   refuted -- teardown() acts on the probing instance's OWN fd only;
+   uvcvideo returns EBUSY for S_FMT/REQBUFS on a node another fd is
+   streaming, so the trial on a live node is harmless (rejected, the scan
+   continues). The real window: a detached slot's node (torn down by the
+   recovery) is momentarily free; the scanning slot's trial then PASSES
+   and the node is adopted -- two slots compete for one physical camera.
+   Fix: busy-node reservation -- Pipeline::busy_v4l2_nodes(idx) (nodes of
+   the OTHER V4L2 slots, live or absent alike) is threaded through
+   MediaSource::recover into find_usb_capture_node; busy nodes are skipped
+   both in the preferred attempt and in the scan. Cross-adopted but
+   distinct nodes stay legal (the replug swap case: each camera still
+   gets a slot). Single-source runs are unaffected (the list is empty).
+   STATUS: patched, pending a live M5 disconnect drill (unplug cam1 while
+   cam0 streams; expect "trying /dev/video20" to never appear from slot 1).

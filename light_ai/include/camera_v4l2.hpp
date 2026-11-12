@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // The node is NOT part of the instance state: open/reconnect take it as
 // an argument, the class owns only the fd/buffer machinery. Identity
@@ -48,7 +49,10 @@ public:
     // node discovery (the node may have re-enumerated) + the full reconnect path.
     // A failed discovery is a failed attempt.
     // new_id: the adopted node path, unchanged when the discovery keeps id.
-    int recover( const std::string& id, std::string& new_id, std::string* why );
+    // busy_nodes: /dev nodes owned by the OTHER Pipeline slots (live or
+    // absent alike) -- discovery never trials or adopts them (M5 reservation).
+    int recover( const std::string& id, std::string& new_id, const std::vector<std::string>& busy_nodes,
+                 std::string* why );
 
     void start() const;
 
@@ -89,5 +93,7 @@ private:
 // -- the caller re-opens the winning node via reconnect().
 // Returns 0 and fills `out`; non-zero when nothing usable is found.
 
+// busy_nodes: nodes reserved by other source slots -- skipped in the
+// preferred attempt and in the scan, before any trial setup.
 int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::string& out,
-                           long long* last_scan_log_ms = nullptr );
+                           const std::vector<std::string>& busy_nodes, long long* last_scan_log_ms = nullptr );

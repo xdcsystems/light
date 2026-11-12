@@ -5,7 +5,6 @@
 #include <rockchip/mpp_log.h>
 
 #include "mpp_decoder.hpp"
-
 #include "jpeg_probe.hpp"
 
 

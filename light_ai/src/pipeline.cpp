@@ -164,7 +164,7 @@ void Pipeline::start_source( int idx )
             std::this_thread::sleep_for( std::chrono::seconds( 1 ) );
             std::string new_id;
             std::string why;
-            if ( sl.src.recover( sl.node, new_id, &why ) == 0 )
+            if ( sl.src.recover( sl.node, new_id, busy_v4l2_nodes( idx ), &why ) == 0 )
             {
                 if ( new_id != sl.node )
                 {
@@ -208,7 +208,7 @@ void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
             {
                 std::cerr << "camera: configured node " << sl.node << " not present, falling back to USB discovery\n";
                 std::string found;
-                if ( find_usb_capture_node( cam, sl.node, found, &scan_log_ms_ ) != 0 )
+                if ( find_usb_capture_node( cam, sl.node, found, busy_v4l2_nodes( idx ), &scan_log_ms_ ) != 0 )
                     { sl.absent = true; std::cerr << "camera: node " << sl.node << " absent at startup\n"; return; }
                 std::cout << "camera: discovery adopted " << found << '\n';
                 sl.node = found;
@@ -225,6 +225,24 @@ void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
     if ( sl.dec.init( sl.w, sl.h ) != 0 )
         throw std::runtime_error( "mpp decoder init failed for " + sl.node );
     std::cout << "source: geometry " << sl.w << 'x' << sl.h << '\n';
+}
+
+// Busy-node reservation (audit: multi-camera node hijacking): the /dev
+// nodes of the OTHER V4L2 slots, live or absent alike. A detached slot
+// still owns its node -- probe_loop() re-attaches it on its own cadence,
+// so a scanning slot must never trial-open or adopt that node: uvcvideo
+// accepts the trial while the node is momentarily free, and two slots
+// would then compete for one physical camera.
+std::vector<std::string> Pipeline::busy_v4l2_nodes( int self_idx ) const
+{
+    std::vector<std::string> busy;
+    for ( int k = 0; k < nsrc_; ++k )
+    {
+        if ( k == self_idx || srcs_[k].kind != SourceKind::V4L2 || srcs_[k].node.empty() )
+            continue;
+        busy.push_back( srcs_[k].node );
+    }
+    return busy;
 }
 
 
@@ -251,7 +269,7 @@ void Pipeline::probe_source( int idx )
         if ( !sl.node.empty() )
         {
             std::string found;
-            if ( find_usb_capture_node( cam, sl.node, found, &scan_log_ms_ ) != 0 )
+            if ( find_usb_capture_node( cam, sl.node, found, busy_v4l2_nodes( idx ), &scan_log_ms_ ) != 0 )
                 return;
             if ( !found.empty() && found != sl.node )
             {
@@ -270,7 +288,7 @@ void Pipeline::probe_source( int idx )
         // the decoder and its buffers stay alive across the recovery.
         std::string new_id;
         std::string why;
-        if ( sl.src.recover( sl.node, new_id, &why ) != 0 )
+        if ( sl.src.recover( sl.node, new_id, busy_v4l2_nodes( idx ), &why ) != 0 )
             return;  // still absent: device gone / stream not ready
         if ( new_id != sl.node )
         {

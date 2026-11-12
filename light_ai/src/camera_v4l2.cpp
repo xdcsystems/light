@@ -290,12 +290,14 @@ int CameraV4L2::reconnect( const std::string& dev, std::string* why )
 // The trial leaves the camera closed on every outcome — the caller re-opens
 // the winning node via reconnect().
 int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::string& out,
-                           long long* last_scan_log_ms )
+                           const std::vector<std::string>& busy_nodes, long long* last_scan_log_ms )
 {
     struct stat st
     {};
     std::string why;
-    if ( !preferred.empty() && stat( preferred.c_str(), &st ) == 0 )
+    if ( !preferred.empty()
+         && std::find( busy_nodes.begin(), busy_nodes.end(), preferred ) == busy_nodes.end()
+         && stat( preferred.c_str(), &st ) == 0 )
     {
         if ( cam.setup_device( preferred, &why ) == 0 )
         {
@@ -346,6 +348,8 @@ int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::s
     for ( int k = 0; k < nc; ++k )
     {
         const std::string node = "/dev/video" + std::to_string( cands[k] );
+        if ( std::find( busy_nodes.begin(), busy_nodes.end(), node ) != busy_nodes.end() )
+            continue;  // reserved by another source slot: never trial-open it (audit: node hijacking)
         if ( !preferred.empty() && node == preferred )
             continue;  // just failed the direct attempt above; re-runs on the next ladder step
         std::cerr << "camera: trying " << node << '\n';
@@ -479,11 +483,14 @@ void CameraV4L2::requeue( int index )  // NOLINT(readability-make-member-functio
     }
 }
 
-int CameraV4L2::recover( const std::string& id, std::string& new_id, std::string* why )
+int CameraV4L2::recover( const std::string& id, std::string& new_id, const std::vector<std::string>& busy_nodes,
+                         std::string* why )
 {
     // One ladder step = node discovery (a node may have re-enumerated)
     // + the full reconnect path. A failed discovery is a failed attempt.
-    if ( find_usb_capture_node( *this, id, new_id ) != 0 )
+    // busy_nodes come from the owning Pipeline slot: a detached slot still
+    // owns its node, and discovery must not adopt it for another slot.
+    if ( find_usb_capture_node( *this, id, new_id, busy_nodes ) != 0 )
     {
         if ( why )
             *why = "no usable USB capture node found";

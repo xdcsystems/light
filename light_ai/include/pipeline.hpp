@@ -72,6 +72,9 @@ private:
     void start_source( int idx );
     void probe_source( int idx );  // hot-attach: one (re)bring-up step, never throws
     void probe_loop();
+    // busy-node reservation (M5): the /dev nodes of the OTHER V4L2 slots,
+    // live or absent alike -- node discovery never trials or adopts them.
+    std::vector<std::string> busy_v4l2_nodes( int self_idx ) const;
     void init_aux();
     void setup_cores();
 

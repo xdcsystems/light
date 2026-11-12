@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // HTTP MJPEG pull source (IP Webcam / any multipart/x-mixed-replace server).
 // Media stays JPEG end to end: the MPP decoder consumes these
@@ -62,7 +63,9 @@ public:
 
     // One recovery-ladder step: re-open the URL. A URL never re-enumerates,
     // so new_id returns unchanged (the camera path adopts re-enumerated nodes there).
-    int recover( const std::string& id, std::string& new_id, std::string* why );
+    // busy_nodes: ignored here -- a URL never re-enumerates.
+    int recover( const std::string& id, std::string& new_id, const std::vector<std::string>& busy_nodes,
+                 std::string* why );
 
 private:
     int connect_tcp( const std::string& host, int port, std::string* why );

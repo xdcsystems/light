@@ -251,7 +251,8 @@ void NetMjpegSource::teardown()
         b.in_flight = false;
 }
 
-int NetMjpegSource::recover( const std::string& id, std::string& new_id, std::string* why )
+int NetMjpegSource::recover( const std::string& id, std::string& new_id, const std::vector<std::string>&,
+                             std::string* why )
 {
     new_id = id;  // a URL never re-enumerates
     return setup_device( id, why );
