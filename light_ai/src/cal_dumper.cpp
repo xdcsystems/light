@@ -22,7 +22,12 @@ void CalDumper::maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t
 {
     if ( !inited_ )
         return;
-    const bool cal_wanted = dump_cal_ || ( cal_frames_ > 0 && cal_saved_ < cal_frames_ );
+    // --dump-cal contract: ONE model-input frame per run. dump_cal_
+    // is never cleared, so without the cal_done_ guard cal_wanted
+    // stayed true for the whole run and the interval condition kept
+    // rewriting the file every cal_interval_ frames.
+    const bool cal_wanted = ( dump_cal_ && !cal_done_ )
+                            || ( cal_frames_ > 0 && cal_saved_ < cal_frames_ );
     const bool cal_due = !cal_done_ || ( frame_idx - last_cal_ >= cal_interval_ );
     if ( !cal_wanted || !cal_due )
         return;

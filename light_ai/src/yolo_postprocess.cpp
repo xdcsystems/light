@@ -186,7 +186,7 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
     // Letterbox geometry must fit the model input: the band is rows
     // [lb_top, lb_top + lb_h) of the model frame. A violation here would
     // silently misplace every detection, so it is a hard error.
-    if ( lb_top < 0.0f || lb_top + lb_h > model_h || lb_left < 0.0f || lb_left + lb_w > model_w )
+    if ( lb_w <= 0.0f || lb_h <= 0.0f || lb_top < 0.0f || lb_top + lb_h > model_h || lb_left < 0.0f || lb_left + lb_w > model_w )
     {
         std::cerr << "yolo_postprocess: letterbox band x=[" << lb_left << ", " << lb_left + lb_w << ") y=[" << lb_top << ", "
                   << lb_top + lb_h << ") does not fit model " << model_w << 'x' << model_h << '\n';

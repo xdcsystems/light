@@ -5,7 +5,6 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <poll.h>
 #include <unistd.h>
 #include <im2d.h>
 #include <rga.h>
@@ -245,10 +244,10 @@ namespace
     }
 
     // Renders `s` at (x, y) -- the glyph-area top left -- in the Y plane
-    // `py` (row stride `stride`), scaling every stroke quad by `scale`.
-    // `val` is the Y luminance (0..255). Characters outside the table
-    // render as blanks. The caller owns the DMA cache sync.
-    void stamp_text( uint8_t* py, int stride, int x, int y,
+    // `py` (row stride `stride`, plane height `max_h`), scaling every
+    // stroke quad by `scale`. `val` is the Y luminance (0..255). Characters
+    // outside the table render as blanks. The caller owns the DMA cache sync.
+    void stamp_text( uint8_t* py, int stride, int max_h, int x, int y,
                      const char* s, int scale, uint8_t val )
     {
         if ( !py || scale <= 0 || !s )
@@ -287,6 +286,8 @@ namespace
             int iy1 = y + static_cast<int>( max_y * scale );
             if ( ix1 > stride )
                 ix1 = stride;
+            if ( iy1 > max_h )
+                iy1 = max_h;
             for ( int ry = iy0; ry < iy1; ++ry )
             {
                 if ( ry < 0 )
@@ -304,7 +305,7 @@ namespace
     // gray-letterbox memset precedent (init-time only, never per frame).
     // stb_easy_font stroke glyphs at 3x -- the same raster will serve the
     // box labels. Centered in every tile (single-view: once).
-    void draw_no_signal( MppBuffer mb, int w, int tile_w, int tile_h, int nsrc )
+    void draw_no_signal( MppBuffer mb, int w, int plane_h, int tile_w, int tile_h, int nsrc )
     {
         if ( !mb )
             return;
@@ -317,7 +318,7 @@ namespace
             return;
         dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
         for ( int t = 0; t < nsrc; ++t )
-            stamp_text( py, w, ( t % 2 ) * tile_w + x0, ( t / 2 ) * tile_h + y0,
+            stamp_text( py, w, plane_h, ( t % 2 ) * tile_w + x0, ( t / 2 ) * tile_h + y0,
                         msg, k_text_scale, 16 );
         dma::cache_clean( py, mpp_buffer_get_size( mb ) );
     }
@@ -390,7 +391,7 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
         avformat_network_deinit();
         throw std::runtime_error( "net encoder: idle canvas: " + idle_why );
     }
-    draw_no_signal( idle_pool_.buf[ 0 ], w_, tile_w_, tile_h_, nsrc_ );
+    draw_no_signal( idle_pool_.buf[ 0 ], w_, vstride_, tile_w_, tile_h_, nsrc_ );
 
     const AVCodec* codec = avcodec_find_encoder_by_name( "h264_rkmpp" );
     if ( !codec )
@@ -505,14 +506,6 @@ NetEncoder::~NetEncoder()
     {
         std::lock_guard<std::mutex> plk( pkt_mx_ );
         clear_pkt_queue();
-    }
-    // Defensive: close a fence fd if a future edit to publish() adds an
-    // early return between the fd hand-off and prep_frame(). Today the
-    // fd is always consumed, so this is a no-op.
-    if ( acq_fd_ >= 0 )
-    {
-        ::close( acq_fd_ );
-        acq_fd_ = -1;
     }
     if ( enc_ )
     {
@@ -645,21 +638,10 @@ bool NetEncoder::viewer_active() const
     return active_.load();
 }
 
-void NetEncoder::publish( int tensor_fd, const LbGeom& band, int acquire_fence_fd, int64_t ts_us, int src_idx )
+void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int src_idx )
 {
     if ( quit_.load() || !active_.load() )
-    {
-        if ( acquire_fence_fd >= 0 )
-            ::close( acquire_fence_fd );
         return;
-    }
-
-    if ( acq_fd_ >= 0 )
-    {
-        ::close( acq_fd_ );
-        acq_fd_ = -1;
-    }
-    acq_fd_ = acquire_fence_fd;
     bool q_busy = false;
     {
         std::lock_guard<std::mutex> qlk( pkt_mx_ );
@@ -800,31 +782,14 @@ bool NetEncoder::prep_idle_frame( const bool* absent, int nabs, MppBuffer mb )
     return true;
 }
 
-void NetEncoder::wait_draw_fence()
-{
-    if ( acq_fd_ < 0 )
-        return;
-    pollfd pf {};
-    pf.fd = acq_fd_;
-    pf.events = POLLIN;
-    // The pipeline thread is also the camera thread. A long stall
-    // here stops DQBUF and the driver drops frames. 8 ms is enough
-    // for a healthy Mali fence; on timeout the boxes may lag one
-    // frame, which is cheaper than a 200 ms capture freeze.
-    if ( ::poll( &pf, 1, 8 ) <= 0 )
-        std::cerr << "enc: draw fence wait failed, boxes may lag a frame\n";
-    ::close( acq_fd_ );
-    acq_fd_ = -1;
-}
-
-// RGA prep for the current frame: wait out the GPU draw fence (this RGA
-// driver ignores input fences, so ordering is a poll) and crop the
-// letterbox band of the model tensor into the ping-pong NV12 buffer mb
-// (or into the persistent composite buffer pool_.buf[kBufCount] + DMA copy
-// when nsrc_ > 1).
+// RGA prep for the current frame: crop the letterbox band of the model
+// tensor into the ping-pong NV12 buffer mb (or into the persistent
+// composite buffer pool_.buf[kBufCount] + DMA copy when nsrc_ > 1).
+// GPU draw -> RGA ordering is guaranteed by sync_cpu() in
+// OverlaySink::draw_and_publish, which runs before publish() on the
+// same pipeline thread.
 bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb )
 {
-    wait_draw_fence();
     const int sidx = ( nsrc_ > 1 && src_idx >= 0 && src_idx < nsrc_ && src_idx < kPoolCount ) ? src_idx : 0;
     const LbGeom src_b = ( band.w > 0 && band.h > 0 ) ? band : LbGeom { band_left_, band_w_, band_top_, band_h_ };
     const int tw = nsrc_ > 1 ? tile_w_ : band_w_;

@@ -101,7 +101,7 @@ public:
     // ts_us is the dequeue timestamp in microseconds from pipeline
     // start -- the pts source in follow-source mode (--net-fps 0, VFR);
     // ignored in the fixed-fps mode.
-    void publish( int tensor_fd, const LbGeom& band, int acquire_fence_fd = -1, int64_t ts_us = -1, int src_idx = 0 );
+    void publish( int tensor_fd, const LbGeom& band, int64_t ts_us = -1, int src_idx = 0 );
 
     // NO SIGNAL publish (idle): RGA-copies the pre-rendered idle canvas
     // (gray + the plate) into the ring slot / composite canvas cells of
@@ -135,7 +135,6 @@ private:
     void clear_pkt_queue();
     int64_t packet_pts();  // pts of the next frame; may set ts_base_
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
-    void wait_draw_fence();
     bool prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb );
 
     // NO SIGNAL frame assembly (idle path): copies the idle-plate tile(s)
@@ -180,8 +179,9 @@ private:
     int pkt_drops_ = 0;
     bool wait_key_ = true;  // pkt_mx_: drain drops packets until the next IDR (see net_encoder.cpp)
     std::atomic<bool> active_ { false };  // stream path live (serve sets/clears under mx_)
-    int acq_fd_ = -1;          // draw fence fd: polled + closed in prep_frame()
-                               // (called from publish, pipeline thread; serve() never touches it)
+    // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
+    // runs before publish() on the same pipeline thread -- no fence fd
+    // crosses this boundary (retired, see docs/state.md).
     int64_t frame_step_ = 1;   // pts increment in the muxer's time base
     uint64_t pts_ = 0;
     // Follow-source (--net-fps 0): pts stamped from the real dequeue

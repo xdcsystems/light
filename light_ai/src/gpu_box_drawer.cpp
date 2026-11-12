@@ -250,7 +250,6 @@ bool GpuBoxDrawer::init()
     st_.create_sync = reinterpret_cast<P_CreateSync>( eglGetProcAddress( "eglCreateSyncKHR" ) );
     st_.destroy_sync = reinterpret_cast<P_DestroySync>( eglGetProcAddress( "eglDestroySyncKHR" ) );
     st_.client_wait = reinterpret_cast<P_ClientWaitSync>( eglGetProcAddress( "eglClientWaitSyncKHR" ) );
-    st_.dup_fence = reinterpret_cast<P_DupNativeFenceFDANDROID>( eglGetProcAddress( "eglDupNativeFenceFDANDROID" ) );
     st_.image_target_tex = reinterpret_cast<P_ImageTargetTexture2DOES>( eglGetProcAddress( "glEGLImageTargetTexture2DOES" ) );
     st_.gen_vao = reinterpret_cast<P_GenVertexArrays>( eglGetProcAddress( "glGenVertexArrays" ) );
     st_.del_vao = reinterpret_cast<P_DeleteVertexArrays>( eglGetProcAddress( "glDeleteVertexArrays" ) );
@@ -508,24 +507,6 @@ void GpuBoxDrawer::sync_cpu()
     // there is no bounded glFinish in EGL/GLES, and skipping the sync
     // would read the tensor mid-write (worse than hanging).
     glFinish();
-}
-
-int GpuBoxDrawer::export_fence()
-{
-    if ( st_.dpy == EGL_NO_DISPLAY )
-        return -1;
-    if ( !st_.native_fence || !st_.dup_fence )
-        return -1;
-    make_current();
-    EGLSyncKHR sync = st_.create_sync( st_.dpy, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr );
-    if ( sync == EGL_NO_SYNC_KHR )
-        return -1;
-    glFlush();
-    // dup'ed fd: our copy, we own it — the caller must close() it (or
-    // hand it to an RGA acquire, which consumes it the same way).
-    const int fd = st_.dup_fence( st_.dpy, sync );
-    st_.destroy_sync( st_.dpy, sync );
-    return fd;
 }
 
 void GpuBoxDrawer::release_slot( int slot )

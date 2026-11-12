@@ -108,9 +108,10 @@ private:
     // so &npus_[k] stays valid for the whole session.
     std::vector<RknnEngine> npus_;
     int npool_ = 1;
-    int src_w_ = 0;
-    int src_h_ = 0;    // MAX across sources (init_aux sizing + diagnostics);
-                       // per-source geometry is SourceSlot::w/h
+    std::atomic<int> src_w_ { 0 };
+    std::atomic<int> src_h_ { 0 };  // MAX across sources (init_aux sizing + diagnostics);
+                                    // written by probe_source on the prober thread, hence atomic
+                                    // per-source geometry is SourceSlot::w/h
     int model_w_ = 0;
     int model_h_ = 0;  // taken from the model, not from flags
     

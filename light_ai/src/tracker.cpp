@@ -145,6 +145,11 @@ void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t
     t.mwin_x[t.mwin_n % kTrailMedianN] = t.fx.x;
     t.mwin_y[t.mwin_n % kTrailMedianN] = t.fy.x;
     ++t.mwin_n;
+    // int overflow guard: past the first full window the counter only
+    // feeds the modulo index above, so folding it back by one window
+    // keeps both the index cycle and the full-window gate bit-exact.
+    if ( t.mwin_n >= 2 * kTrailMedianN )
+        t.mwin_n = kTrailMedianN;
     if ( t.mwin_n >= kTrailMedianN )
     {
         float xs[kTrailMedianN];

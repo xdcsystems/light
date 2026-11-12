@@ -31,7 +31,6 @@ class GpuBoxDrawer
     using P_CreateSync = EGLSyncKHR( EGLAPIENTRYP )( EGLDisplay, EGLenum, const EGLint * );
     using P_DestroySync = EGLBoolean( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR );
     using P_ClientWaitSync = EGLBoolean( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR, EGLint, EGLTimeKHR );
-    using P_DupNativeFenceFDANDROID = EGLint( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR );
     using P_GetPlatformDisplayEXT = EGLDisplay( EGLAPIENTRYP )( EGLenum, void *, const EGLint * );
     using P_ImageTargetTexture2DOES = void( GL_APIENTRYP )( GLenum, GLeglImageOES );
     using P_GenVertexArrays = void( GL_APIENTRYP )( GLsizei, GLuint * );
@@ -89,7 +88,6 @@ private:
         P_CreateSync create_sync = nullptr;
         P_DestroySync destroy_sync = nullptr;
         P_ClientWaitSync client_wait = nullptr;
-        P_DupNativeFenceFDANDROID dup_fence = nullptr;  // RGA handoff
         P_GetPlatformDisplayEXT get_platform_display = nullptr;
         P_ImageTargetTexture2DOES image_target_tex = nullptr;
         P_GenVertexArrays gen_vao = nullptr;
@@ -127,14 +125,9 @@ public:
     // The fence wait is bounded (100 ms cap) with a glFinish() fallback --
     // a wedged GPU must not hang the pipeline.
     void sync_cpu();
-    // Export a native fence fd covering the writes of the last draw().
-    // Ownership passes to the caller, which must close() it
-    // (or wait on it, e.g. poll() in the encoder before the RGA convert; then close() it).
-    // NOTE: this RGA driver ignores acquire fences,
-    // so fd handoff to improcess is NOT a valid use.
-    // Returns -1 when the native fence extension is unavailable --
-    // the caller must fall back to sync_cpu().
-    int export_fence();
+    // Draw -> RGA/CPU ordering is sync_cpu() only: this RGA driver
+    // ignores acquire fences, so a fence fd handoff is not a valid
+    // mechanism on this board (retired, see docs/state.md).
     bool ok() const { return ready_; }
 
 private:
