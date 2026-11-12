@@ -77,7 +77,7 @@ class NetEncoder
 
     enum
     {
-        kBufCount = 3,
+        kBufCount = 4,
         kPoolCount = kBufCount + 1,
         kPktQDepth = 32
     };
@@ -123,6 +123,9 @@ private:
     // drain_queue() owns the wait/pop loop, mux_write() writes one
     // packet with the IDR-prepend logic; hdr_/hdr_logged_ stay members.
     void drain_queue( AVFormatContext* fc );
+    // One finished encoder packet -> the preallocated ring queue for
+    // serve() to mux; shared by the EAGAIN retry and the send drain.
+    void enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts );
     void run_session( TcpPullServer& tcp, bool tcp_pull, const std::string& url );
 
     // Transport setup (accept + socket options / avio_open) and the
@@ -160,11 +163,10 @@ private:
     AVPacket* pkt_ = nullptr;
     AVPacket* mux_pkt_ = nullptr;
     AVPacket* dup_pkt_ = nullptr;
-    // Three buffers, not two. Two worked only at a steady frame pace;
-    // with --net-fps 0 (VFR) frames arrive in clumps after a network
-    // pause, and two buffers can run out exactly at the 3-deep rkmpp
-    // task queue while an older encode still holds its plane.
-    RkmppDrmPool<kPoolCount> pool_;  // 3 ring NV12 dma-bufs + 1 composite canvas (multi-view)
+    // Four buffers. The 3-deep rkmpp task queue can hold a full VFR
+    // clump: the 4th frame's RGA write would hit the slot of the oldest
+    // in-flight encode. The 4th ring slot absorbs that window.
+    RkmppDrmPool<kPoolCount> pool_;  // 4 ring NV12 dma-bufs + 1 composite canvas (multi-view)
     RkmppDrmPool<1> idle_pool_;  // pre-rendered NO SIGNAL canvas: gray + plate, stamped once at init
     uint32_t cur_ = 0;
     AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)

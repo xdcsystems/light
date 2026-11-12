@@ -356,7 +356,9 @@ void Pipeline::probe_source( int idx )
     }
     constexpr int k_warmup_frames = 3;
     sl.warmup_left = k_warmup_frames;
-    sl.last_ok_tp = clk::now();
+    // Stamp BEFORE absent.store: try_dequeue_round reads the stamp only
+    // after absent.load(), which synchronizes-with this store (seq_cst).
+    sl.last_ok_tp.store( clk::now() );
     sl.absent.store( false );
     std::cout << "source s" << idx << ( first_attach ? ": attached (hot) - geometry "
                                                      : ": re-attached - geometry " )
@@ -506,7 +508,7 @@ int Pipeline::try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err )
         if ( idx >= 0 )
         {
             cur_src_ = s;
-            srcs_[s].last_ok_tp = clk::now();
+            srcs_[s].last_ok_tp.store( clk::now() );
             return idx;
         }
         if ( cam_err != EAGAIN && cam_err != EINTR )
@@ -514,7 +516,7 @@ int Pipeline::try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err )
             cur_src_ = s;
             return -1;
         }
-        if ( ms( srcs_[s].last_ok_tp, clk::now() ) >= k_stall_ms )
+        if ( ms( srcs_[s].last_ok_tp.load(), clk::now() ) >= k_stall_ms )
         {
             std::cerr << "source s" << s << ": no frame in " << static_cast<int>( k_stall_ms )
                       << " ms - treating as recoverable stall\n";
@@ -626,7 +628,7 @@ int Pipeline::run()
     for ( int s = 0; s < nsrc_; ++s )
     {
         srcs_[s].smoother.set_log( source_box_log( cfg_.box_log, s, nsrc_ ) );
-        srcs_[s].last_ok_tp = t_start;
+        srcs_[s].last_ok_tp.store( t_start );
     }
     // frames == 0 (the default): no frame budget -- run until stop
     // (Ctrl-C); the signal path below drains and reports as usual.
@@ -646,7 +648,7 @@ int Pipeline::run()
                 return -1;
             const auto now = clk::now();
             for ( int s = 0; s < nsrc_; ++s )
-                srcs_[s].last_ok_tp = now;
+                srcs_[s].last_ok_tp.store( now );
             continue;
         }
         SourceSlot& active_src = srcs_[cur_src_];

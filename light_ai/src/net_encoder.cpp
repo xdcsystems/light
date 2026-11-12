@@ -257,7 +257,7 @@ namespace
         font_txt( txt, k_txt_cap, s );
         stb_easy_font_spacing( 0 );  // default spacing; keeps the static referenced
         unsigned char col[ 4 ] = { val, val, val, 255 };
-        char vbuf[ 8192 ];  // 128 quads -- enough for any short label
+        alignas( FontVertex ) char vbuf[ 8192 ];  // 128 quads -- enough for any short label
         const int nq = stb_easy_font_print( 0.0f, 0.0f, txt, col, vbuf,
                                             static_cast<int>( sizeof( vbuf ) ) );
         for ( int q = 0; q < nq; ++q )
@@ -366,10 +366,9 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
         std::cout << "enc: tensor band x=[" << band_left_ << ',' << band_left_ + band_w_ << ") y=[" << band_top_ << ',' << band_top_ + band_h_
                   << ") of " << model_w_ << 'x' << model_h_ << " -> " << w_ << 'x' << h_ << '\n';
 
-    // Three NV12 dma-bufs: a plane held by an older encode is never
-    // overwritten by RGA on the next frame; the third buffer absorbs
-    // VFR bursts where two ran out exactly at the 3-deep rkmpp task
-    // queue.
+    // Four NV12 dma-bufs: a plane held by an in-flight encode is never
+    // overwritten by RGA. The 3-deep rkmpp task queue can hold a full
+    // VFR clump, so the ring stays one slot deeper than the queue.
     // RAII sub-object: a throw below (avcodec_open2, av_frame_alloc)
     // cannot leak the pool -- the sub-object destructs on unwinding.
     // Alloc failures throw from here (fail loud, RknnEngine pattern);
@@ -935,44 +934,49 @@ bool NetEncoder::send_frame( AVStream* st )
         }
     }
 
-    int ret = avcodec_send_frame( enc_, fr );
-    if ( ret < 0 )
+    // EAGAIN from send = the rkmpp input queue is full (3-deep task
+    // queue under a VFR clump). The FFmpeg contract: pull one output
+    // packet out first, then retry the send (the dtor flush loop uses
+    // the same pattern for EOF). Was: fatal -> error_ + a full stream
+    // session restart over a transient backpressure.
+    AVPacket* pkt = pkt_;
+    int ret = 0;
+    bool submitted = false;
+    for ( int attempt = 0; attempt < 8; ++attempt )
+    {
+        ret = avcodec_send_frame( enc_, fr );
+        if ( ret == 0 )
+        {
+            submitted = true;
+            break;
+        }
+        if ( ret != AVERROR( EAGAIN ) )
+            break;
+        if ( avcodec_receive_packet( enc_, pkt ) < 0 )
+            break;  // nothing ready to drain: bounded retries exhausted
+        enqueue_pkt( pkt, st, fpts );
+    }
+    if ( ret < 0 && ret != AVERROR( EAGAIN ) )
     {
         std::cerr << "enc: send_frame: " << av_err_str( ret ) << '\n';
         return false;
     }
+    if ( !submitted )
+    {
+        // Queue still full with no output to drain: drop the frame
+        // instead of tearing the session. IDR on the next frame keeps
+        // the stream decodable; ++pts_ keeps the CFR pts monotonic,
+        // frames_sent_ stays put (the frame was never encoded).
+        std::cerr << "enc: send_frame: input queue full, frame dropped, IDR next frame\n";
+        force_idr_.store( true );
+        ++pts_;
+        return true;
+    }
 
-    AVPacket* pkt = pkt_;
     ret = avcodec_receive_packet( enc_, pkt );
     while ( ret >= 0 )  // drains the burst; EAGAIN/EOF end it
     {
-        pkt->stream_index = st->index;
-        pkt->pts = pkt->dts = fpts * frame_step_;
-        // Batch C: the pipeline thread no longer touches the network.
-        // Move the packet reference into the preallocated ring queue
-        // (av_packet_move_ref, zero per-frame heap allocs) and hand it
-        // to serve()'s drain loop.
-        {
-            std::lock_guard<std::mutex> plk( pkt_mx_ );
-            if ( pkts_.full() )
-            {
-                // Overflow = serve() stalled (slow viewer / Wi-Fi burst).
-                // Dropping one packet tears the reference chain: every later
-                // P-frame decodes into corruption until the next IDR. Flush
-                // the whole queue, re-arm the IDR gate and force an IDR on
-                // the next frame: the gap is one frame, not a full GOP.
-                const int ndrop = pkts_.n;
-                clear_pkt_queue();
-                force_idr_.store( true );
-                wait_key_ = true;
-                ++pkt_drops_;
-                std::cerr << "enc: packet queue overflow: flushed " << ndrop << " pkts (drop " << pkt_drops_ << "), IDR next frame\n";
-            }
-            AVPacket*& tail = pkts_.push_slot();  // commits n; !full() guaranteed above
-            av_packet_unref( tail );
-            av_packet_move_ref( tail, pkt );
-            pkt_cv_.notify_one();
-        }
+        enqueue_pkt( pkt, st, fpts );
         ret = avcodec_receive_packet( enc_, pkt );
     }
     if ( ret != AVERROR( EAGAIN ) && ret != AVERROR_EOF )
@@ -983,6 +987,37 @@ bool NetEncoder::send_frame( AVStream* st )
     ++pts_;
     ++frames_sent_;
     return true;
+}
+
+// One finished encoder packet -> the preallocated ring queue for
+// serve() to mux. Shared by the EAGAIN retry and the post-send drain
+// in send_frame(): the pipeline thread never touches the network
+// (av_packet_move_ref, zero per-frame heap allocs).
+void NetEncoder::enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts )
+{
+    pkt->stream_index = st->index;
+    pkt->pts = pkt->dts = fpts * frame_step_;
+    {
+        std::lock_guard<std::mutex> plk( pkt_mx_ );
+        if ( pkts_.full() )
+        {
+            // Overflow = serve() stalled (slow viewer / Wi-Fi burst).
+            // Dropping one packet tears the reference chain: every later
+            // P-frame decodes into corruption until the next IDR. Flush
+            // the whole queue, re-arm the IDR gate and force an IDR on
+            // the next frame: the gap is one frame, not a full GOP.
+            const int ndrop = pkts_.n;
+            clear_pkt_queue();
+            force_idr_.store( true );
+            wait_key_ = true;
+            ++pkt_drops_;
+            std::cerr << "enc: packet queue overflow: flushed " << ndrop << " pkts (drop " << pkt_drops_ << "), IDR next frame\n";
+        }
+        AVPacket*& tail = pkts_.push_slot();  // commits n; !full() guaranteed above
+        av_packet_unref( tail );
+        av_packet_move_ref( tail, pkt );
+        pkt_cv_.notify_one();
+    }
 }
 
 // M4 pts selection, extracted from send_frame() for readability:

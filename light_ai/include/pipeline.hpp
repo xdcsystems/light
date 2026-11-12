@@ -50,7 +50,11 @@ class Pipeline
         int h = 0;
         int frames = 0;
         int warmup_left = 0;
-        Timings::clk::time_point last_ok_tp {};
+        // Atomic: probe_source writes it on the prober thread; the pipeline
+        // thread reads and writes it in try_dequeue_round and in run()'s
+        // recovery loop -- with no common lock a plain time_point member was
+        // a data race (UB). Trivially copyable, 8 B: lock-free on aarch64.
+        std::atomic<Timings::clk::time_point> last_ok_tp {};
     };
 
 public:

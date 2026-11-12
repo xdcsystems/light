@@ -1,4 +1,3 @@
-#include <iostream>
 #include <cmath>
 
 #include "tracker.hpp"
@@ -268,7 +267,7 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
         // position. If a person re-enters the frame while the ghost still
         // lingers there, the ghost must NOT suppress the new spawn --
         // otherwise the person stays trackless for the whole ghost
-        // lifetime (kTrailMaxAgeMs) and the dedupe log spams per frame.
+        // lifetime (kTrailMaxAgeMs).
         if ( ( t.life != TRACK_TENT && t.life != TRACK_CONF ) ||
              t.bw <= 0.0f || t.bh <= 0.0f )
             continue;
@@ -277,8 +276,8 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
 
         if ( iou * 100.0f >= static_cast<float>( kSpawnDedupeGate ) )
         {
-            std::cerr << "Dedupe: spawn suppressed by track (id=" << t.id
-                      << ", iou=" << iou * 100.0f << "%)\n";
+            // Silent drop: no console I/O in the frame path (25-50 FPS --
+            // synchronous terminal writes cost real latency per frame).
             return;
         }
 
