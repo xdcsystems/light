@@ -114,8 +114,9 @@ namespace
     // blocks, which scanned for a terminator that may lie outside the
     // non-NUL-terminated window (read past sock_ when the value touched
     // its edge) and silently accepted partial values cut by the buffer.
-    // Strict contract: no signs, no embedded whitespace, digits must end
-    // at an in-bounds CR/LF; overflow is rejected.
+    // Strict contract: no signs, no embedded whitespace; digits may end
+    // at optional trailing OWS (RFC 7230 field-value excludes it) before
+    // an in-bounds CR/LF; overflow is rejected.
     bool parse_content_length( const uint8_t* ph, size_t phl, long* out )
     {
         const size_t clp = ci_find( ph, phl, "content-length:" );
@@ -134,6 +135,12 @@ namespace
             v = v * 10 + ( ph[p] - '0' );
             ++p;
         }
+        // RFC 7230 OWS: some camera servers emit "Content-Length: 12345 \r\n"
+        // with a trailing space; without skipping it the header fell through
+        // to the slow no-Content-Length body scan (keep-window + full-stream
+        // boundary search). Any other trailing junk still rejects.
+        while ( p < phl && ( ph[p] == ' ' || ph[p] == '\t' ) )
+            ++p;
         if ( p >= phl || ( ph[p] != '\r' && ph[p] != '\n' ) )
             return false;  // truncated mid-value or trailing junk
         *out = v;
@@ -263,7 +270,12 @@ int NetMjpegSource::connect_tcp( const std::string& host, int port, std::string*
             *why = "addr resolution failed for " + host;
         return -1;
     }
-    fd_ = ::socket( res->ai_family, res->ai_socktype, res->ai_protocol );
+    // SOCK_CLOEXEC: this fd must not leak into a fork()/exec() (this app
+    // never forks, but a library or deploy wrapper might). The flag belongs
+    // to the socket() type argument -- putting SOCK_CLOEXEC into
+    // hints.ai_socktype makes getaddrinfo fail with EAI_SOCKTYPE, killing
+    // the connection outright.
+    fd_ = ::socket( res->ai_family, res->ai_socktype | SOCK_CLOEXEC, res->ai_protocol );
     if ( fd_ < 0 )
     {
         if ( why )
@@ -417,6 +429,18 @@ int NetMjpegSource::read_headers( std::string* why )
         return -1;
     }
     size_t v = bpos + 9;
+    // RFC 7230 BWS around "=" and RFC 2046 quoted-string: many cameras
+    // emit boundary="xyz" (some with a space after the '='). Without
+    // skipping the OWS and the opening quote the loop below terminated
+    // at once with vlen == 0, so every quoted-boundary server failed
+    // with "empty multipart boundary". The closing quote is already in
+    // the terminator set, so the value is copied clean; boundary=""
+    // still rejects as empty, and an over-long quoted value still fails
+    // the kBoundaryMax check below.
+    while ( v < hl && ( h[ v ] == ' ' || h[ v ] == '\t' ) )
+        ++v;
+    if ( v < hl && h[ v ] == '"' )
+        ++v;
     size_t vlen = 0;
     while ( v + vlen < hl && h[v + vlen] != '\r' && h[v + vlen] != '\n' && h[v + vlen] != '"'
             && h[v + vlen] != ';' && vlen < static_cast<size_t>( kBoundaryMax ) )

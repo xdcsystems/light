@@ -283,7 +283,10 @@ int CameraV4L2::reconnect( const std::string& dev, std::string* why )
 
 // Node discovery. Preferred: the configured path, if it exists and its
 // full setup passes; otherwise the numeric /dev/video* candidates are
-// filtered by the USB capture check and the first one whose setup passes wins.
+// filtered by the USB capture check and the first one whose setup passes
+// wins. The preferred node itself is NOT re-tried in the scan: it just
+// failed the direct attempt above, and the reconnect ladder re-runs that
+// attempt on every step, so transient failures recover there.
 // The trial leaves the camera closed on every outcome — the caller re-opens
 // the winning node via reconnect().
 int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::string& out,
@@ -343,6 +346,8 @@ int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::s
     for ( int k = 0; k < nc; ++k )
     {
         const std::string node = "/dev/video" + std::to_string( cands[k] );
+        if ( !preferred.empty() && node == preferred )
+            continue;  // just failed the direct attempt above; re-runs on the next ladder step
         std::cerr << "camera: trying " << node << '\n';
         if ( cam.setup_device( node, &why ) == 0 )
         {

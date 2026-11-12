@@ -157,6 +157,15 @@ void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& 
                 if ( ns > 1 )
                     a = a * j / ( ns - 1 );
                 p.a = static_cast<uint8_t>( a );
+                // j == 0 lands here with a == 0 by design (the index ramp
+                // maps the oldest drawn point to zero), but pushing an
+                // invisible quad burns a VBO slot: with the 128-cap list
+                // saturated, the freshest -- and brightest -- trail points
+                // past the break are the ones that get dropped. Skip the
+                // zero-alpha quads; monotonicity along the path is kept
+                // (the next point already has a > 0).
+                if ( p.a == 0 )
+                    continue;
                 boxes.push( p );
             }
         }

@@ -294,12 +294,28 @@ void Pipeline::probe_source( int idx )
         sl.aux_fd = sl.dec.aux_fd( static_cast<size_t>( sl.w / 2 ) * ( sl.h / 2 ) * 2 );
         if ( sl.aux_fd < 0 )
         {
+            // w/h are already non-zero here: keep them and the next probe
+            // takes the detached recover() path, which never runs dec.init
+            // -- the slot would come back live with an uninitialized decoder.
+            // Roll back so the retry is a clean first_attach (dec branch below).
+            sl.w = 0;
+            sl.h = 0;
             std::cerr << "probe s" << idx << ": aux buffer alloc failed - staying absent\n";
             return;
         }
     }
     if ( first_attach && sl.dec.init( sl.w, sl.h ) != 0 )
     {
+        // init() failed AFTER sl.w/sl.h were written: without the reset the
+        // next probe computes first_attach == false and takes the detached
+        // recover() path, which never calls dec.init. A successful recover()
+        // (the camera itself is fine) then flips absent to false and frames
+        // flow into a never-initialized decoder. Reset keeps the retry on
+        // the first_attach path; dec.init self-cleans on failure, so retry
+        // is safe. lb/src_w_/src_h_ need no rollback: unused while absent,
+        // and the src maxes are monotonic diagnostics.
+        sl.w = 0;
+        sl.h = 0;
         std::cerr << "probe s" << idx << ": mpp decoder init failed - staying absent\n";
         return;
     }
