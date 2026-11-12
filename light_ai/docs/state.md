@@ -1332,7 +1332,7 @@ Live verification (2026-11-12):
 ## External audit pass 1 (2026-11-12): TcpPullServer write_packet, M5 node reservation
 
 Two external-audit findings verified against the source and patched.
-Commits: see git log (fill in on commit).
+Commits: 1fec17d.
 
 1. TcpPullServer::write_packet (P0, confirmed): one ::send per call;
    flush_buffer (libavformat/aviobuf.c) checks only < 0 and resets
@@ -1363,3 +1363,83 @@ Commits: see git log (fill in on commit).
    gets a slot). Single-source runs are unaffected (the list is empty).
    STATUS: patched, pending a live M5 disconnect drill (unplug cam1 while
    cam0 streams; expect "trying /dev/video20" to never appear from slot 1).
+
+## Audit round (2026-11-12): idiom modernization + A76 pinning -- commit 455cd08
+
+External-audit follow-up on fix/audit-p0; one commit, 13 files, +126/-78.
+The commit message carries the itemized applied/rejected lists; this
+record holds the decisions and the verification.
+
+Applied:
+- tracker: median-of-5 via the minimal 7-comparator selection network
+  (verified 120 permutations / 3125 multisets); recent_points reverse
+  -> std::reverse.
+- box_mapper band_box: one-sided clamps -> std::clamp; safe under the
+  reject gate (203k-case numeric A/B incl. NaN/inf, 0 diffs).
+- gpu_box_drawer / net_encoder: if-assign clamps -> std::min/max;
+  net_encoder keeps std::max for the two lower bounds (std::clamp
+  would change behavior there); gpu_box_drawer needs static_cast<int>
+  over the unscoped enum cap (template deduction performs no integral
+  promotion).
+- config layer: find()/normalize_key() -> std::string_view (audit 5.1
+  narrow subset). The audit's "temporary std::string at call sites"
+  claim checked against every call site: no temporary exists;
+  set_log/send_get/parse_http_url NOT converted (ofstream/concat need
+  real strings; views would add a hanging-reference hazard).
+- parse_int -> from_chars behind the strtol front-end (leading
+  whitespace and an explicit '+' preserved); overflow via
+  result_out_of_range. One documented edge: a bare "+" (strtol
+  accepted as 0) is rejected now. parse_float stays on strtof: board
+  libstdc++ is GCC 10 -- floating-point from_chars exists from GCC 11.
+- if-init in 7 sites / 5 files. The audit's flagship poll_frame
+  example is NOT applied: it requires else-after-return, which the
+  project style forbids (readability-else-after-return enabled, zero
+  such patterns in the tree).
+- A76 pinning (pipeline.cpp, best-effort sched_setaffinity, cpu 4-7):
+  NPU workers pin at worker_loop entry; pipeline main pins AFTER the
+  probe_th_ spawn so the prober keeps the scheduler default (children
+  inherit the creator's mask). Stale "pinning unnecessary" CMake note
+  rewritten; fail-soft on alien boards.
+
+A/B (pool 3, 2 sources, 1500 frames, 2026-11-12 evening): pin lines
+exact (3 workers + main, no prober pin), infer steady 26.5-27.1 ms,
+wall 49.4 FPS to the end -- no measurable effect (camera/source-bound,
+consistent with the flags and DVFS records above); kept as drift
+insurance against CFS/EAS parking a cv-woken worker on A55.
+
+Rejected on evidence (do not re-derive):
+- NEON collect_head: the obj pre-check already precedes the class scan
+  (only threshold-passing cells scan 80 classes); the tensor is
+  channel-major (stride cell_hw -- no NEON-friendly load); the fp16
+  decode is already fcvt s0,h0. The audit's "0.8-1.0 ms post" figure
+  has no source; measured post is ~0.1 ms.
+- NEON draw_boxes_cpu: put() is Porter-Duff RMW over the tensor (the
+  trail alpha 255..60 fades live) -- a vst3_u8 overwrite would kill
+  the fades; measured CPU/GPU parity (38.0 vs 38.3-38.6 ms); the path
+  is a --cpu-draw fallback only.
+- ci_find -> std::search: the audit's locale/errno/allocation
+  arguments do not apply to the pointer+length implementation; binary
+  socket window, recently hardened.
+- optimistic recv() without poll(): saves one poll per recv pair
+  (tens of syscalls against a ~40 ms frame budget); changes
+  blocked-socket timeout semantics; drains risk the bounded-window
+  overflow path in the same hardened file.
+
+Verified: build OK; tidy PASS (0 findings, 22 files); live run as
+above with one recoverable JPEG streak-1 drop (normal path). Commits:
+1fec17d (external audit pass 1 fixes) and 455cd08 (this round).
+
+Patch-scripting lessons (extends the 2026-11-08 series):
+- Anchor uniqueness is not enough: the free-function helper block was
+  spliced before worker_loop() while its first call site sat inside
+  run() ABOVE it ("not declared in this scope"). Anchors must also be
+  POSITION-checked -- insert before the first use in the TU.
+- Verbatim anchors go stale within the same session: the misplaced-
+  block removal asserted a concatenation the earlier patch had already
+  modified (the pin call inside worker_loop). Marker-based extraction
+  (find start/end, sanity-assert the block contents) is the form for
+  files edited twice in one session.
+- M6 lesson 5 regenerated live, third instance this session: an
+  anchor transcribed from the chat paste dropped the closing paren of
+  the file tail ("slot 1." vs the actual "slot 1)."). Chats/pastes are
+  NOT the file; only actual bytes anchor.
