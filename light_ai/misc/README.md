@@ -21,5 +21,12 @@
 ## Рабочие модели (остались в корне light_ai)
 
 - yolov5s_relu.rknn        — FP32-эталон точности (бейслайн M2.1)
-- yolov5s_relu_int8_v2.rknn — валидированная INT8-сборка, откат при проблемах v3
-- yolov5s_relu_int8_v3.rknn — актуальная, вечерняя калибровка от 26.10
+- yolov5s_relu_int8_v2.rknn — валидированная INT8-сборка (26.10), откат
+- yolov5s_relu_int8_mmse.rknn / yolov5s_relu_int8_mmse_v2.rknn —
+  рабочая модель 30.10 -> 01.11, вытеснена v5
+- yolov5s_relu_int8_v3.rknn — mmse, калибровка от 26.10 (записи о сборке
+  расходятся; актуальна запись M2.4: дневные кадры, шкала 1/255)
+- yolov5s_relu_int8_v4.rknn — mmse на дневном дампе 960p (dataset_day3)
+- yolov5s_relu_int8_mmse_v5.rknn — РАБОЧАЯ модель с 01.11 (mmse на
+  смешанном наборе: 30 ночных + 20 дневных кадров); она же — встроенный
+  дефолт пайплайна (Config::model, см. README, раздел Defaults)

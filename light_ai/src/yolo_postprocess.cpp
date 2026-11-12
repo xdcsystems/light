@@ -92,11 +92,20 @@ namespace
                     sup[j] = true;
             }
             const Box& b = cand[i];
+            // Band-crop before scale: clamping d.x alone pinned the left
+            // edge to 0 while d.w kept the FULL width -- the right edge
+            // shifted right by the clipped amount and the box stretched
+            // into the scene, corrupting the IoU association downstream.
+            // The cam_w/cam_h clamps stay: with d.x >= 0 they clip the
+            // right (bottom) edge to the band boundary exactly as
+            // clamping x2 (y2) to lb_left + lb_w (lb_top + lb_h) would.
+            const float x1_c = std::max( b.x1, lb_left );
+            const float y1_c = std::max( b.y1, lb_top );
             Detection d{};
-            d.x = std::max( 0.0f, ( b.x1 - lb_left ) * sx );
-            d.y = std::max( 0.0f, ( b.y1 - lb_top ) * sy );
-            d.w = std::min( cam_w - d.x, ( b.x2 - b.x1 ) * sx );
-            d.h = std::min( cam_h - d.y, ( b.y2 - b.y1 ) * sy );
+            d.x = ( x1_c - lb_left ) * sx;
+            d.y = ( y1_c - lb_top ) * sy;
+            d.w = std::max( 0.0f, std::min( cam_w - d.x, ( b.x2 - x1_c ) * sx ) );
+            d.h = std::max( 0.0f, std::min( cam_h - d.y, ( b.y2 - y1_c ) * sy ) );
             d.cls = b.cls;
             d.conf = b.conf;
             // Degenerate-box guard: a candidate whose x1 exceeded model_w

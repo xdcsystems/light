@@ -8,8 +8,9 @@
 // (visible band = columns [geom.left, geom.left + geom.w)).
 // Untouched bars keep what was there before (Pipeline memsets them to 128 once at startup).
 // Letterbox geometry of one resize -- for the detection mapping T:
-// x_scene = x_det * w_src / w_dst; y_scene = (y_det - top) * w_src / w_dst;
-// a detection with y_det < top or >= top + h sits on a bar.
+// scene = (det - band origin) * src / band size, axial (see yolo_postprocess):
+// x_scene = (x_det - left) * w_src / w; y_scene = (y_det - top) * h_src / h;
+// a detection outside [left, left + w) x [top, top + h) sits on a bar.
 // Returned BY VALUE per call: no shared mutable state --
 // with --pool 3 the old member-based lb_top_/lb_h_ was written and read across threads.
 struct LbGeom

@@ -60,9 +60,10 @@ void Tracker::predict( Track& t, float dt ) const
 {
     // miss >= 2: freeze the state (the IoU gate must still find the reappearing object
     // near the last seen spot) but keep growing the covariance, so the gain 
-    // at the reappearance update matches the real length of the gap. Only confirmed tracks
-    // reach miss >= 2 (tentative ones die at kMaxTentMiss), and kMaxMiss caps the growth at 15 frames.
-    if ( t.miss >= 2 )
+    // at the reappearance update matches the real length of the gap. Tentative
+    // tracks reach miss >= 2 as well (death is time-based, kTentMaxAgeMs), and
+    // kMaxMiss caps the growth at 15 frames.
+    if ( t.miss >= kMaxTentMiss )
     {
         kf_predict_cov( t.fx, dt, static_cast<float>( kQAccel ) );
         kf_predict_cov( t.fy, dt, static_cast<float>( kQAccel ) );
@@ -300,6 +301,20 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
         t.fy.p = { static_cast<float>( kRMeas ), 0.0f, 0.0f, 900.0f };
         t.bw = bw;
         t.bh = bh;
+        // Slot reuse: hp and the median window belong to the previous occupant.
+        // A stale hp would anchor a small/crouched successor to the dead track's
+        // height: bh >= hp * full_r never fires, so hp never relearns (see measure);
+        // a stale mwin_n would mix old posteriors into the first trail median --
+        // the traj.empty() reset in measure() cannot fire for a fresh spawn,
+        // spawn already pushed one point into the ring (cx/cy match the
+        // KF posterior at spawn: v=0, x=cx).
+        t.hp = 0.0f;
+        t.mwin_n = 0;
+        for ( int m = 0; m < kTrailMedianN; ++m )
+        {
+            t.mwin_x[m] = cx;
+            t.mwin_y[m] = cy;
+        }
         t.ts_last_us = ts_us;
         t.hits = 1;
         t.miss = 0;
