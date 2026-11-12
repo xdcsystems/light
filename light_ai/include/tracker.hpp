@@ -58,8 +58,8 @@ struct TrackState
     float vx, vy;     // filtered velocity, px/s
     float bw, bh;     // last matched box size (EMA)
     int n_pts;        // trajectory points collected so far
-                      // state may also be TRACK_DEAD: box is not drawn,
-                      // the trail is (fading)
+                      // state may also be TRACK_DEAD: no box, only
+                      // the trail keeps drawing (fading, path history)
 };
 
 using TrajList = PodList<TrackState, 8>;
@@ -72,7 +72,10 @@ class Tracker
         kMaxTracks = 8,
         kTrajPoints = 300,  // ring per track (~12 s at 25 fps)
         kConfirmHits = 3,   // consecutive matches to confirm a track
-        kMaxMiss = 15,      // confirmed track dies after this many misses
+        // Short coast: 4 misses (~0.15 s) bridge a 1-2 frame detection
+        // dropout without flicker, but a person who left the frame must
+        // not keep its box on screen for half a second.
+        kMaxMiss = 4,       // confirmed track dies after this many misses
         kMaxTentMiss = 2,   // tentative miss counter: still drives the KF
                             // freeze (miss >= 2) and velocity damping, but
                             // DEATH is time-based now (see kTentMaxAgeMs):

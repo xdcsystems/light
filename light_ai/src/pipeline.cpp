@@ -971,7 +971,14 @@ int Pipeline::publish_oldest()
         SourceSlot& ss = srcs_[sl.src_idx];
         ss.smoother.update( sl.dets, dets_ );
         ss.smoother.log_frame( sl.frame, sl.dets, dets_ );
-        ss.tracker.update( dets_, sl.ts_us, trajs_ );
+        // Anti-jitter stage 1: the Kalman tracker consumes RAW person
+        // detections. Feeding it the EMA-smoothed dets_ double-filtered
+        // the signal: the filter velocity lagged the (already damped)
+        // positions and the rendered box trailed real motion on every
+        // direction change.
+        // dets_ stays the BoxSmoother output -- it still feeds the
+        // non-person drawing below and the --box-log CSV.
+        ss.tracker.update( sl.dets, sl.ts_us, trajs_ );
 
         rep_.report( sl.frame, dets_, trajs_, sl.src_idx, nsrc_ );
         if ( sink_.enabled() )

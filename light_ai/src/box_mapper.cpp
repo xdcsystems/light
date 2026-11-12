@@ -69,6 +69,12 @@ void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& 
             b.y1 = static_cast<float>( lb.top + lb.h );
         if ( b.x1 - b.x0 < 2.0f || b.y1 - b.y0 < 2.0f )
             continue;
+        // Persons are drawn only from the Kalman posterior (the track
+        // box loop): an EMA detection box next to the track box showed
+        // two boxes per person, jitting independently of the trail
+        // (audit: double draw / box-trail mismatch).
+        if ( d.cls == 0 )
+            continue;
         det_color( d.cls, b.r, b.g, b.b );
         b.a = 255;
         boxes.push( b );
@@ -81,6 +87,38 @@ void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& 
         for ( int k = 0; k < trajs.n; ++k )
         {
             const TrackState& t = trajs.d[k];
+            // Track box from the Kalman posterior: the single drawing
+            // source for persons after the EMA person boxes were
+            // removed (anti-jitter stage 1). TENT draws too -- a new
+            // person appears at once; the confirmation gate stays a
+            // stability concept, not a visibility gate. Same transform
+            // as the det boxes. A standing track (pts=0, empty ring)
+            // keeps its box: the box no longer depends on the trail.
+            if ( t.state == TRACK_TENT || t.state == TRACK_CONF )
+            {
+                GpuBox tb{};
+                tb.x0 = ( t.cx - t.bw * 0.5f ) * sx + static_cast<float>( lb.left );
+                tb.y0 = ( t.cy - t.bh * 0.5f ) * sy + static_cast<float>( lb.top );
+                tb.x1 = ( t.cx + t.bw * 0.5f ) * sx + static_cast<float>( lb.left );
+                tb.y1 = ( t.cy + t.bh * 0.5f ) * sy + static_cast<float>( lb.top );
+                // same edge clamp as the det boxes: keep both paths
+                // on the same geometry (see the clamp block above)
+                if ( tb.x0 < static_cast<float>( lb.left ) )
+                    tb.x0 = static_cast<float>( lb.left );
+                if ( tb.y0 < static_cast<float>( lb.top ) )
+                    tb.y0 = static_cast<float>( lb.top );
+                if ( tb.x1 > static_cast<float>( lb.left + lb.w ) )
+                    tb.x1 = static_cast<float>( lb.left + lb.w );
+                if ( tb.y1 > static_cast<float>( lb.top + lb.h ) )
+                    tb.y1 = static_cast<float>( lb.top + lb.h );
+                if ( tb.x1 - tb.x0 >= 2.0f && tb.y1 - tb.y0 >= 2.0f &&
+                     boxes.n < GpuBoxList::cap )
+                {
+                    det_color( 0, tb.r, tb.g, tb.b );
+                    tb.a = 255;
+                    boxes.push( tb );
+                }
+            }
             // trail after confirmation; DEAD ghosts keep drawing too: their
             // points fade by age and the ring drains via the tracker-side
             // per-frame eviction, so a ghost trail self-terminates when its
@@ -94,6 +132,57 @@ void fill_gpu_boxes( const DetList& dets, const TrajList& trajs, const Tracker& 
             // vertices (disconnected trail) and re-randomizes the sampled
             // subset on every new push (residual swarming).
             const int ns = tracker.recent_points( t.id, 1, samp, 20 );
+            // DEAD ghost box: fades with the trail instead of cutting
+            // off at death. The age of the newest trail point proxies
+            // the death time -- pushes stop at death, so the newest
+            // point ages exactly like the box should fade. ns==0
+            // (standing person, empty ring): the trail is already
+            // invisible, the box goes with it.
+            if ( t.state == TRACK_DEAD && ns > 0 )
+            {
+                int64_t age_us = now_us - samp[ns - 1].ts_us;
+                if ( age_us < 0 )
+                    age_us = 0;
+                // Box fade is capped at kDeadBoxFadeUs: the trail is
+                // a path history (where the person moved) and may
+                // linger for kTrailMaxAgeMs, but a standing rectangle
+                // reads as "a person is here" and must go quickly
+                // once the track dies.
+                // zero: the box vanishes the frame the track dies. A standing
+                // rectangle reads as "a person is here" -- only the trail
+                // is allowed to linger as path history.
+                constexpr int64_t kDeadBoxFadeUs = 0;
+                const int64_t max_age_us =
+                    tracker.trail_max_age_us() < kDeadBoxFadeUs
+                        ? tracker.trail_max_age_us()
+                        : kDeadBoxFadeUs;
+                if ( age_us < max_age_us )
+                {
+                    GpuBox tb{};
+                    tb.x0 = ( t.cx - t.bw * 0.5f ) * sx + static_cast<float>( lb.left );
+                    tb.y0 = ( t.cy - t.bh * 0.5f ) * sy + static_cast<float>( lb.top );
+                    tb.x1 = ( t.cx + t.bw * 0.5f ) * sx + static_cast<float>( lb.left );
+                    tb.y1 = ( t.cy + t.bh * 0.5f ) * sy + static_cast<float>( lb.top );
+                    if ( tb.x0 < static_cast<float>( lb.left ) )
+                        tb.x0 = static_cast<float>( lb.left );
+                    if ( tb.y0 < static_cast<float>( lb.top ) )
+                        tb.y0 = static_cast<float>( lb.top );
+                    if ( tb.x1 > static_cast<float>( lb.left + lb.w ) )
+                        tb.x1 = static_cast<float>( lb.left + lb.w );
+                    if ( tb.y1 > static_cast<float>( lb.top + lb.h ) )
+                        tb.y1 = static_cast<float>( lb.top + lb.h );
+                    if ( tb.x1 - tb.x0 >= 2.0f && tb.y1 - tb.y0 >= 2.0f &&
+                         boxes.n < GpuBoxList::cap )
+                    {
+                        det_color( 0, tb.r, tb.g, tb.b );
+                        int a = 255 - static_cast<int>( age_us * 255 / max_age_us );
+                        if ( a < 0 )
+                            a = 0;
+                        tb.a = static_cast<uint8_t>( a );
+                        boxes.push( tb );
+                    }
+                }
+            }
             float prev_px = 0.0f;
             float prev_py = 0.0f;
             bool have_prev = false;  // spatial dedup state (per track)
