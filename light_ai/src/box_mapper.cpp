@@ -204,11 +204,7 @@ void fill_trail_points( const Tracker& tracker, const TrackState& t, int64_t now
         // one frame with alpha 0 -- do not push that quad at all
         if ( age_us >= max_age_us )
             continue;
-        int a = 255 - static_cast<int>( age_us * 255 / max_age_us );
-        if ( a < 0 )
-            a = 0;
-        if ( a > 255 )
-            a = 255;
+        int a = std::clamp( 255 - static_cast<int>( age_us * 255 / max_age_us ), 0, 255 );
         // Spatial coherence: pure chronological alpha is monotone
         // in time but not along the drawn path -- when the path
         // retraces itself, an old dim dot sits next to a fresh

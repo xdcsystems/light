@@ -182,11 +182,8 @@ void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t
     {
         float xs[kTrailMedianN];
         float ys[kTrailMedianN];
-        for ( int m = 0; m < kTrailMedianN; ++m )
-        {
-            xs[m] = t.mwin_x[m];
-            ys[m] = t.mwin_y[m];
-        }
+        std::copy( t.mwin_x, t.mwin_x + kTrailMedianN, xs );
+        std::copy( t.mwin_y, t.mwin_y + kTrailMedianN, ys );
         const float mx = median_of_5( xs );
         const float my = median_of_5( ys );
         if ( t.traj.empty() )
@@ -348,11 +345,8 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
         // KF posterior at spawn: v=0, x=cx).
         t.hp = 0.0f;
         t.mwin_n = 0;
-        for ( int m = 0; m < kTrailMedianN; ++m )
-        {
-            t.mwin_x[m] = cx;
-            t.mwin_y[m] = cy;
-        }
+        std::fill_n( t.mwin_x, kTrailMedianN, cx );
+        std::fill_n( t.mwin_y, kTrailMedianN, cy );
         t.ts_last_us = ts_us;
         t.hits = 1;
         t.miss = 0;

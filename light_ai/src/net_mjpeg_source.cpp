@@ -1,4 +1,5 @@
 #include <cctype>
+#include <algorithm>
 #include <cerrno>
 #include <climits>
 #include <chrono>
@@ -74,17 +75,13 @@ namespace
     size_t ci_find( const uint8_t* hay, size_t hay_len, const char* needle )
     {
         const size_t nlen = std::strlen( needle );
-        for ( size_t i = 0; i + nlen <= hay_len; ++i )
+        const uint8_t* const end = hay + hay_len;
+        const auto eq_ci = []( uint8_t a, char b )
         {
-            size_t k = 0;
-            while ( k < nlen
-                    && std::tolower( static_cast<unsigned char>( hay[i + k] ) )
-                           == std::tolower( static_cast<unsigned char>( needle[k] ) ) )
-                ++k;
-            if ( k == nlen )
-                return i;
-        }
-        return kNpos;
+            return std::tolower( a ) == std::tolower( static_cast<unsigned char>( b ) );
+        };
+        const uint8_t* const found = std::search( hay, end, needle, needle + nlen, eq_ci );
+        return found == end ? kNpos : static_cast<size_t>( found - hay );
     }
 
     // Structural validation via probe_jpeg_sof (jpeg_probe.hpp):

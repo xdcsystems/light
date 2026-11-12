@@ -332,9 +332,8 @@ int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::s
             const std::string n = e->d_name;
             if ( n.rfind( "video", 0 ) != 0 || n.size() == 5 )
                 continue;
-            bool digits = true;
-            for ( size_t i = 5; i < n.size() && digits; ++i )
-                digits = isdigit( static_cast<unsigned char>( n[i] ) ) != 0;
+            const bool digits =
+                    std::all_of( n.begin() + 5, n.end(), []( unsigned char ch ) { return isdigit( ch ) != 0; } );
             if ( !digits )
                 continue;
             const std::string p = "/dev/" + n;
