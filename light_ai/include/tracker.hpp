@@ -94,8 +94,19 @@ class Tracker
                                // period with margin; a tent without a
                                // single confirmation never outlives 1 s
         kIoUGate = 30,      // min IoU x100 to accept a match
+        kIoUGateWeak = 15,  // round-2 IoU gate (x100): a det unmatched in round 1
+                            // vs a round-1-unmatched coasting CONF track (stage
+                            // 3, ByteTrack-style second pass). Verified live 2026-11-12:
+                            // no phantoms at 15, weak-det survival confirmed (4 ids / 600 frames)
         kSizeMin = 40,      // det/track size ratio gate, lower x100
         kSizeMax = 200,     // det/track size ratio gate, upper x100
+        kSizeMaxWeak = 300, // round-2 det/track size-ratio gate, upper x100:
+                            // a track spawned from a partial det must still be
+                            // able to accept the full-size det of the same
+                            // person (round 2 measures the position only, so
+                            // the oversized det never enters the KF). Candidate
+                            // value verified live 2026-11-12: ids 4/6-class starvation gone,
+                            // no noise confirmed
         kDtMaxMs = 500,     // dt clamp, ms
         kQAccel = 2000,     // process noise, px/s^2 (tuning knob)
         kRMeas = 25,        // measurement noise, px^2 (tuning knob)

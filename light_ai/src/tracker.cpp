@@ -205,48 +205,78 @@ void Tracker::associate( const DetList& dets, int64_t ts_us,
                          std::array<int, 128>& det_trk,  // -1 = unmatched
                          std::array<unsigned char, kMaxTracks>& trk_taken )
 {
+    // Two association rounds over one pair buffer (stage 3, ByteTrack-style):
+    // round 1 pairs every person det with every alive track at the strong
+    // gate kIoUGate; round 2 pairs round-1-unmatched dets with
+    // round-1-unmatched CONF tracks at the weak gate kIoUGateWeak. Target
+    // case: person #2 emits conf 0.25-0.55 dets that undershoot the strong
+    // IoU gate while their track coasts on damped velocity -- the track
+    // used to die at kMaxMiss and the person re-spawned under a new id.
+    // The lower size gate is shared; the upper one relaxes in round 2
+    // (kSizeMaxWeak): a tent spawned from a partial det stays too small to
+    // accept the full-size det of the same person at kSizeMax -- observed
+    // live (2026-11-12): a sliver-born track rejected every full-size det
+    // and starved to death. Round 2 measures the position only, so the
+    // relaxed gate cannot poison the track extent. Round 2 never touches
+    // t.hits: a weak match keeps a confirmed track alive but cannot promote
+    // or confirm a TENT, so weak detector noise stays spawn-only.
     std::array<IouPair, 128 * kMaxTracks> pairs {};
-    int npairs = 0;
-    for ( int k = 0; k < dets.n; ++k )
+    const int gates[2] = { kIoUGate, kIoUGateWeak };
+    const int size_hi[2] = { kSizeMax, kSizeMaxWeak };
+    for ( int round = 0; round < 2; ++round )
     {
-        const Detection& d = dets.d[k];
-        if ( d.cls != 0 )
-            continue;
-        for ( int i = 0; i < kMaxTracks; ++i )
+        int np = 0;
+        for ( int k = 0; k < dets.n; ++k )
         {
-            const Track& t = tracks_[i];
-            if ( t.life != TRACK_TENT && t.life != TRACK_CONF )
-                continue;  // FREE: unused; DEAD: ghost must not steal a match
-                           // from a fresh detection (a re-entering person
-                           // spawns a new track instead)
-            if ( t.bw <= 0.0f || t.bh <= 0.0f )
+            const Detection& d = dets.d[k];
+            if ( det_trk[k] >= 0 || d.cls != 0 )
                 continue;
-            const float rw = d.w / t.bw * 100.0f;
-            const float rh = d.h / t.bh * 100.0f;
-            if ( rw < static_cast<float>( kSizeMin ) || rw > static_cast<float>( kSizeMax ) ||
-                 rh < static_cast<float>( kSizeMin ) || rh > static_cast<float>( kSizeMax ) )
-                continue;
-            const float v = box_iou( d.x, d.y, d.w, d.h, t.fx.x - t.bw * 0.5f, t.fy.x - t.bh * 0.5f, t.bw, t.bh );
-            if ( v * 100.0f >= static_cast<float>( kIoUGate ) )
-                pairs[npairs++] = { k, i, v };
+            for ( int i = 0; i < kMaxTracks; ++i )
+            {
+                if ( trk_taken[i] )
+                    continue;
+                const Track& t = tracks_[i];
+                // DEAD ghosts are not match candidates: a re-entering person
+                // spawns a fresh track instead of re-attaching to a frozen
+                // ghost box. TENT is a round-1 candidate only.
+                if ( t.life != TRACK_CONF && !( round == 0 && t.life == TRACK_TENT ) )
+                    continue;
+                if ( t.bw <= 0.0f || t.bh <= 0.0f )
+                    continue;
+                const float rw = d.w / t.bw * 100.0f;
+                const float rh = d.h / t.bh * 100.0f;
+                if ( rw < static_cast<float>( kSizeMin ) || rw > static_cast<float>( size_hi[round] ) ||
+                     rh < static_cast<float>( kSizeMin ) || rh > static_cast<float>( size_hi[round] ) )
+                    continue;
+                const float v = box_iou( d.x, d.y, d.w, d.h,
+                                         t.fx.x - t.bw * 0.5f, t.fy.x - t.bh * 0.5f, t.bw, t.bh );
+                if ( v * 100.0f >= static_cast<float>( gates[round] ) )
+                    pairs[np++] = { k, i, v };
+            }
+        }
+        const size_t nm = greedy_iou_match( pairs.data(), static_cast<size_t>( np ),
+                                            det_trk.data(), trk_taken.data() );
+        for ( size_t p = 0; p < nm; ++p )
+        {
+            const Detection& d = dets.d[pairs[p].det];
+            Track& t = tracks_[pairs[p].trk];
+            // A round-2 det is size-untrusted (merged blob or a squeezed
+            // partial box): feed the position only, the track keeps its own
+            // extent until a round-1 det re-sizes it.
+            measure( t, d.x + d.w * 0.5f, d.y + d.h * 0.5f,
+                     round == 0 ? d.w : t.bw, round == 0 ? d.h : t.bh, ts_us );
+            if ( round == 0 )
+            {
+                ++t.hits;
+                if ( t.life == TRACK_TENT && t.hits >= kConfirmHits )
+                    t.life = TRACK_CONF;
+            }
+            t.miss = 0;
+            t.ts_last_match_us = ts_us;
         }
     }
-    const size_t na = greedy_iou_match( pairs.data(), static_cast<size_t>( npairs ),
-                                        det_trk.data(), trk_taken.data() );
-    for ( size_t p = 0; p < na; ++p )
-    {
-        const int k = pairs[p].det;
-        const int i = pairs[p].trk;
-        const Detection& d = dets.d[k];
-        Track& t = tracks_[i];
-        measure( t, d.x + d.w * 0.5f, d.y + d.h * 0.5f, d.w, d.h, ts_us );
-        ++t.hits;
-        t.miss = 0;
-        t.ts_last_match_us = ts_us;
-        if ( t.life == TRACK_TENT && t.hits >= kConfirmHits )
-            t.life = TRACK_CONF;
-    }
 }
+
 
 void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
 {
