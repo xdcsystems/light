@@ -72,7 +72,7 @@ void Tracker::kf_update( AxisKF& k, float z ) const
     k.x += k0 * y;
     k.v += k1 * y;
     const float vmax = static_cast<float>( kVClampPxs );
-    k.v = k.v > vmax ? vmax : ( k.v < -vmax ? -vmax : k.v );
+    k.v = std::clamp( k.v, -vmax, vmax );
     const float p00 = k.p[0];
     const float p01 = k.p[1];
     const float p10 = k.p[2];
@@ -296,31 +296,31 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
     const float nx = cx - bw * 0.5f;
     const float ny = cy - bh * 0.5f;
 
-    for ( const Track& t : tracks_ )
-    {
-        // Only TENT/CONF are real owners of their spot: a DEAD ghost is a
-        // fading visual trail, its KF state is frozen at the last seen
-        // position. If a person re-enters the frame while the ghost still
-        // lingers there, the ghost must NOT suppress the new spawn --
-        // otherwise the person stays trackless for the whole ghost
-        // lifetime (kTrailMaxAgeMs).
+    // Only TENT/CONF are real owners of their spot: a DEAD ghost is a
+    // fading visual trail, its KF state is frozen at the last seen
+    // position. If a person re-enters the frame while the ghost still
+    // lingers there, the ghost must NOT suppress the new spawn --
+    // otherwise the person stays trackless for the whole ghost
+    // lifetime (kTrailMaxAgeMs).
+    const bool dup = std::any_of( tracks_.begin(), tracks_.end(),
+                                  [&]( const Track& t ) {
         if ( ( t.life != TRACK_TENT && t.life != TRACK_CONF ) ||
              t.bw <= 0.0f || t.bh <= 0.0f )
-            continue;
+            return false;
         const float iou = box_iou( nx, ny, bw, bh,
                                    t.fx.x - t.bw * 0.5f, t.fy.x - t.bh * 0.5f, t.bw, t.bh );
-
-        if ( iou * 100.0f >= static_cast<float>( kSpawnDedupeGate ) )
-        {
-            // Silent drop: no console I/O in the frame path (25-50 FPS --
-            // synchronous terminal writes cost real latency per frame).
-            return;
-        }
-
-        // Optional: a track that has already missed frames may have drifted away
-        // from a genuinely new object standing there. Uncomment to relax the gate
-        // for such tracks: if ( t.miss > 0 ) continue;  -- must come BEFORE the IoU check
+        return iou * 100.0f >= static_cast<float>( kSpawnDedupeGate );
+    } );
+    if ( dup )
+    {
+        // Silent drop: no console I/O in the frame path (25-50 FPS --
+        // synchronous terminal writes cost real latency per frame).
+        return;
     }
+
+    // Optional: a track that has already missed frames may have drifted away
+    // from a genuinely new object standing there. Uncomment to relax the gate
+    // for such tracks: return false before the IoU check when t.miss > 0.
 
     for ( Track& t : tracks_ )
     {

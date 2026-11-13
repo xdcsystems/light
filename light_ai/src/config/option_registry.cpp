@@ -4,6 +4,7 @@
 // validate through it, so both sources reject identically.
 
 #include <cerrno>
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <climits>
@@ -187,14 +188,11 @@ OptionRegistry::OptionRegistry()
 
 const OptionRegistry::Option* OptionRegistry::find( std::string_view name ) const
 {
-    for ( const auto& e : table_ )
-    {
-        // view compare, not strcmp: a string_view is not NUL-terminated
-        // in general; the table names are literals, so == is exact.
-        if ( e.name == name )
-            return &e.opt;
-    }
-    return nullptr;
+    // view compare, not strcmp: a string_view is not NUL-terminated
+    // in general; the table names are literals, so == is exact.
+    const auto *const it = std::find_if( table_.begin(), table_.end(),
+                                  [name]( const Entry& e ) { return e.name == name; } );
+    return it != table_.end() ? &it->opt : nullptr;
 }
 
 void OptionRegistry::print_usage( std::ostream& os ) const
