@@ -71,6 +71,16 @@ namespace
         return true;
     }
 
+    // Parser-layer status codes. kDesync is the resync protocol: a
+    // wedged-full socket window (net_fill) or a stream that no longer
+    // parses -- the caller drops the buffered window, counts the error
+    // streak and resyncs (read_latest_part retries once; the fetch path
+    // maps it to EAGAIN vs EIO). -1 stays numeric on purpose: in the
+    // connect/handshake code it is a generic failure, while the parsers
+    // propagate net_fill's "0 = EOF, -1 = error" collapse -- naming it
+    // would fake a distinction the protocol does not make.
+    constexpr int kDesync = -2;
+
     // Case-insensitive search in an ASCII buffer; kNpos when absent.
     size_t ci_find( const uint8_t* hay, size_t hay_len, const char* needle )
     {
@@ -354,7 +364,7 @@ int NetMjpegSource::net_fill( int timeout_ms )
         sock_pos_ = 0;
     }
     if ( sock_end_ == static_cast<size_t>( kSockBuf ) )
-        return -2;  // wedged full: the caller's desync protocol
+        return kDesync;  // wedged full: the caller's desync protocol
     pollfd p { fd_, POLLIN, 0 };
     const int pr = ::poll( &p, 1, timeout_ms >= 0 ? timeout_ms : 0 );
     if ( pr < 0 )
@@ -497,10 +507,10 @@ int NetMjpegSource::read_boundary()
             return 0;
         }
         if ( avail >= static_cast<size_t>( kSockBuf ) )
-            return -2;  // 256 KiB without a boundary: desynced stream
+            return kDesync;  // 256 KiB without a boundary: desynced stream
         const int r = net_fill( kPollMs );
-        if ( r == -2 )
-            return -2;
+        if ( r == kDesync )
+            return kDesync;
         if ( r == kIntr )
             continue;  // EINTR: transient, not a watchdog expiry
         if ( r <= 0 )
@@ -513,7 +523,7 @@ int NetMjpegSource::read_part_header( long* need )
     while ( net_find( "\r\n\r\n", 4 ) == kNpos )
     {
         if ( sock_end_ - sock_pos_ >= static_cast<size_t>( kSockBuf ) )
-            return -2;
+            return kDesync;
         const int r = net_fill( kPollMs );
         if ( r == kIntr )
             continue;  // EINTR: transient, not a watchdog expiry
@@ -548,7 +558,7 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
             if ( f != kNpos )
             {
                 if ( got + f > static_cast<size_t>( kFrameMax ) )
-                    return -2;
+                    return kDesync;
                 std::memcpy( dst + got, sock_ + sock_pos_, f );
                 sock_pos_ += f;
                 *size = static_cast<uint32_t>( got + f );
@@ -559,7 +569,7 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
             {
                 const size_t flush = avail - keep;
                 if ( got + flush > static_cast<size_t>( kFrameMax ) )
-                    return -2;
+                    return kDesync;
                 std::memcpy( dst + got, sock_ + sock_pos_, flush );
                 sock_pos_ += flush;
                 got += flush;
@@ -572,7 +582,7 @@ int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
         }
     }
     if ( static_cast<size_t>( need ) > static_cast<size_t>( kFrameMax ) )
-        return -2;  // oversized "part": desynced garbage, resync
+        return kDesync;  // oversized "part": desynced garbage, resync
     // Copy the frame body in chunks: the socket window is refilled as
     // it drains, the watchdog covers the whole frame, not one chunk.
     size_t got = 0;
@@ -674,13 +684,13 @@ bool NetMjpegSource::wait_part_ready( int timeout_ms, int* err )
     const int pr = poll_part_ready( timeout_ms );
     if ( pr > 0 )
         return true;
-    if ( pr == -2 )
+    if ( pr == kDesync )
     {
         ++err_streak_;
         sock_pos_ = sock_end_;
     }
     if ( err )
-        *err = ( pr == 0 || ( pr == -2 && err_streak_ < kErrStreakMax ) ) ? EAGAIN : EIO;
+        *err = ( pr == 0 || ( pr == kDesync && err_streak_ < kErrStreakMax ) ) ? EAGAIN : EIO;
     return false;
 }
 
@@ -723,7 +733,7 @@ int NetMjpegSource::read_latest_part( int slot, uint32_t* size )
 {
     uint32_t n = 0;
     int rc = read_part( slot, &n );
-    if ( rc == -2 )
+    if ( rc == kDesync )
     {
         // Desynced stream: drop the buffered window, count the streak,
         // one resync retry before handing over to the reconnect ladder.
@@ -754,7 +764,7 @@ int NetMjpegSource::read_latest_part( int slot, uint32_t* size )
         uint32_t next_n = 0;
         if ( const int sr = read_part( scratch, &next_n ); sr != 0 )
         {
-            if ( sr == -2 )
+            if ( sr == kDesync )
                 sock_pos_ = sock_end_;
             break;
         }
