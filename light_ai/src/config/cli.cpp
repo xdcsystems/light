@@ -48,13 +48,6 @@ namespace
             cfg.sources = std::move( ini_srcs );
         if ( cfg.sources.empty() )
             cfg.sources.push_back( { SourceKind::V4L2, "/dev/video20" } );
-
-        cfg.device.clear();
-        cfg.net_src.clear();
-        if ( cfg.sources.front().kind == SourceKind::NetMjpeg )
-            cfg.net_src = cfg.sources.front().uri;
-        else
-            cfg.device = cfg.sources.front().uri;
     }
 }  // namespace
 
@@ -65,11 +58,11 @@ int CliOptions::validate() const
 {
     // --net-h264 is a variant of the preview subsystem, not an independent
     // switch: the whole preview setup (encoder, gpu drawer, diagnostics)
-    // lives under cfg_.net, so --net-h264 without --net silently runs a
+    // lives under cfg_.stream.enabled, so --net-h264 without --net silently runs a
     // stream-less pipeline. Fail loudly instead (checked here,
     // post-parse, because --net may come after --net-h264 on the
     // command line).
-    if ( cfg_.net_h264 && !cfg_.net )
+    if ( cfg_.stream.h264 && !cfg_.stream.enabled )
     {
         std::cerr << "--net-h264: preview is off, nothing to stream.\n"
                      "  --net-h264 selects the transport of the --net "
@@ -83,7 +76,7 @@ int CliOptions::validate() const
     // --cal-dir only makes sense with the --cal series; --dump-cal always
     // writes /tmp/cal.ppm and is unaffected. Post-parse for the same
     // reason as --net-h264: order of argv is arbitrary.
-    if ( !cfg_.cal_dir.empty() && cfg_.cal_frames == 0 )
+    if ( !cfg_.cal.dir.empty() && cfg_.cal.frames == 0 )
     {
         std::cerr << "--cal-dir: no --cal series requested, nothing to write.\n"
                      "  --cal-dir sets the directory for the --cal N --cal-interval K\n"
@@ -92,7 +85,7 @@ int CliOptions::validate() const
                      "    light_ai --cal 5 --cal-interval 60 --cal-dir /tmp/calrun\n";
         return 2;
     }
-    if ( !cfg_.cal_dir.empty() && !ensure_writable_dir( cfg_.cal_dir ) )
+    if ( !cfg_.cal.dir.empty() && !ensure_writable_dir( cfg_.cal.dir ) )
         return 2;
 
     if ( cfg_.sources.size() > 3 )

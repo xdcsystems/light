@@ -59,28 +59,30 @@ void test_config( TestRun& t )
         CHECK( t, parse( cli, {} ) == Status::Run );
         const Config& c = cli.config();
         CHECK( t, c.sources.size() == 1 && c.sources[0].kind == SourceKind::V4L2 && c.sources[0].uri == "/dev/video20" );
-        CHECK( t, c.device == "/dev/video20" && c.net_src.empty() );
-        CHECK( t, c.frames == 0 && c.pool == 0 && c.core == 0 );
-        CHECK( t, !c.net && !c.net_h264 && !c.cpu_draw && !c.dump_cal );
-        CHECK( t, c.net_port == 1234 && c.net_fps == 25 && c.net_bitrate == 12000 );
-        CHECK_NEAR( t, c.conf_thr, 0.25f, 1e-6f );
-        CHECK_NEAR( t, c.iou_thr, 0.45f, 1e-6f );
+        CHECK( t, c.frames == 0 && c.infer.pool == 0 && c.infer.core == 0 );
+        CHECK( t, !c.stream.enabled && !c.stream.h264 && !c.stream.cpu_draw && !c.cal.dump_one );
+        CHECK( t, c.stream.port == 1234 && c.stream.fps == 25 && c.stream.bitrate_kbps == 12000 );
+        CHECK_NEAR( t, c.infer.conf_thr, 0.25f, 1e-6f );
+        CHECK_NEAR( t, c.infer.iou_thr, 0.45f, 1e-6f );
+        CHECK( t, c.cal.frames == 0 && c.cal.interval == 15 && c.cal.dir.empty() && c.box_log.empty() );
     }
     // Values land in their fields.
     {
         CliOptions cli;
         CHECK( t, parse( cli, { "--frames", "100", "--conf", "0.5", "--iou", "0.3", "--pool", "3", "--core", "7", "--net",
                                "--net-h264", "--net-port", "5000", "--net-fps", "0", "--net-bitrate", "8000", "--cpu-draw",
-                               "--model", "m.rknn", "--box-log", "b.csv", "--net-host", "10.0.0.1" } ) == Status::Run );
+                               "--model", "m.rknn", "--box-log", "b.csv", "--net-host", "10.0.0.1", "--dump-cal",
+                               "--cal", "20", "--cal-interval", "5" } ) == Status::Run );
         const Config& c = cli.config();
-        CHECK( t, c.frames == 100 && c.pool == 3 && c.core == 7 );
-        CHECK( t, c.net && c.net_h264 && c.cpu_draw );
-        CHECK( t, c.net_port == 5000 && c.net_fps == 0 && c.net_bitrate == 8000 );
-        CHECK( t, c.model == "m.rknn" && c.box_log == "b.csv" && c.net_host == "10.0.0.1" );
-        CHECK_NEAR( t, c.conf_thr, 0.5f, 1e-6f );
-        CHECK_NEAR( t, c.iou_thr, 0.3f, 1e-6f );
+        CHECK( t, c.frames == 100 && c.infer.pool == 3 && c.infer.core == 7 );
+        CHECK( t, c.stream.enabled && c.stream.h264 && c.stream.cpu_draw );
+        CHECK( t, c.stream.port == 5000 && c.stream.fps == 0 && c.stream.bitrate_kbps == 8000 );
+        CHECK( t, c.infer.model == "m.rknn" && c.box_log == "b.csv" && c.stream.host == "10.0.0.1" );
+        CHECK_NEAR( t, c.infer.conf_thr, 0.5f, 1e-6f );
+        CHECK_NEAR( t, c.infer.iou_thr, 0.3f, 1e-6f );
+        CHECK( t, c.cal.dump_one && c.cal.frames == 20 && c.cal.interval == 5 );
     }
-    // Repeatable sources keep the command-line order; the primary fields follow the first.
+    // Repeatable sources keep the command-line order.
     {
         CliOptions cli;
         CHECK( t, parse( cli, { "--net-src", "http://cam:8080/stream", "--device", "/dev/video1" } ) == Status::Run );
@@ -88,7 +90,6 @@ void test_config( TestRun& t )
         CHECK( t, c.sources.size() == 2 );
         CHECK( t, c.sources[0].kind == SourceKind::NetMjpeg && c.sources[0].uri == "http://cam:8080/stream" );
         CHECK( t, c.sources[1].kind == SourceKind::V4L2 && c.sources[1].uri == "/dev/video1" );
-        CHECK( t, c.net_src == "http://cam:8080/stream" && c.device.empty() );
     }
     // Integer front-end: leading whitespace and an explicit '+' are accepted.
     {
@@ -158,14 +159,14 @@ void test_config( TestRun& t )
         CliOptions cli;
         CHECK( t, parse( cli, { "--config", ini.path() } ) == Status::Run );
         const Config& c = cli.config();
-        CHECK( t, c.frames == 50 && c.net && c.net_port == 4321 );
-        CHECK_NEAR( t, c.conf_thr, 0.6f, 1e-6f );
+        CHECK( t, c.frames == 50 && c.stream.enabled && c.stream.port == 4321 );
+        CHECK_NEAR( t, c.infer.conf_thr, 0.6f, 1e-6f );
         CHECK( t, c.sources.size() == 1 && c.sources[0].uri == "/dev/video5" );
 
         // Precedence: defaults < config file < CLI; CLI sources replace the file's sources.
         CliOptions over;
         CHECK( t, parse( over, { "--frames", "7", "--config", ini.path(), "--device", "/dev/video9" } ) == Status::Run );
-        CHECK( t, over.config().frames == 7 && over.config().net_port == 4321 );
+        CHECK( t, over.config().frames == 7 && over.config().stream.port == 4321 );
         CHECK( t, over.config().sources.size() == 1 && over.config().sources[0].uri == "/dev/video9" );
     }
     {

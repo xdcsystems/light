@@ -6,13 +6,12 @@
 #include "cal_dumper.hpp"
 #include "dma_sync.hpp"
 
-void CalDumper::init( bool dump_cal, int cal_frames, int cal_interval,
-        const std::string& cal_dir, int model_w, int model_h )
+void CalDumper::init( const CalConfig& cal, int model_w, int model_h )
 {
-    dump_cal_ = dump_cal;
-    cal_frames_ = cal_frames;
-    cal_interval_ = cal_interval;
-    cal_dir_ = cal_dir;
+    dump_cal_ = cal.dump_one;
+    cal_frames_ = cal.frames;
+    cal_interval_ = cal.interval;
+    cal_dir_ = cal.dir;
     model_w_ = model_w;
     model_h_ = model_h;
     inited_ = true;

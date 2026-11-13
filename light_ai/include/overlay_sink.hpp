@@ -16,7 +16,7 @@
 #include "net_preview.hpp"
 #include "tracker.hpp"
 
-struct Config;
+struct StreamConfig;
 struct LbGeom;
 struct Slot;
 class RknnEngine;
@@ -24,7 +24,7 @@ class RknnEngine;
 class OverlaySink
 {
 public:
-    void init( const Config& cfg,
+    void init( const StreamConfig& stream,
                const std::vector<RknnEngine>& npus,
                int model_w,
                int model_h,
@@ -44,7 +44,7 @@ public:
     void publish_idle( int64_t ts_us, const bool* absent, int nabs );
 
 private:
-    void init_gpu_drawer( const Config& cfg, const std::vector<RknnEngine>& npus );
+    void init_gpu_drawer( bool cpu_draw, const std::vector<RknnEngine>& npus );
 
 private:
     std::optional<NetPreview> preview_ {};
