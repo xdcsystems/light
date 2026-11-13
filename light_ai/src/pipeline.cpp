@@ -73,11 +73,7 @@ Pipeline::Pipeline( const Config& cfg )
     // Gray letterbox bars on every pooled tensor: RGA writes only the
     // visible band (drect), so the 128-fill done here survives every frame.
     for ( auto& e : npus_ )
-    {
-        dma::DmaSync wr( e.input_fd(), true );
-        std::memset( e.input_data(), 128, e.input_size() );
-        dma::cache_clean( e.input_data(), e.input_size() );
-    }
+        dma::fill_and_flush( e.input_fd(), e.input_data(), 128, e.input_size() );
 
     model_w_ = static_cast<int>( ia.dims[ia.n_dims - 2] );
     model_h_ = static_cast<int>( ia.dims[ia.n_dims - 3] );

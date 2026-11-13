@@ -172,9 +172,7 @@ namespace
         if ( void* p = mpp_buffer_get_ptr( mb ) )
         {
             const size_t sz = mpp_buffer_get_size( mb );
-            dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
-            std::memset( p, 128, sz );
-            dma::cache_clean( p, sz );
+            dma::fill_and_flush( mpp_buffer_get_fd( mb ), p, 128, sz );
         }
     }
 

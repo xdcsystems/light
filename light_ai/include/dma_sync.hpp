@@ -5,6 +5,7 @@
 #pragma once
 #include <cstddef>  // size_t
 #include <cstdint>  // uintptr_t
+#include <cstring>  // std::memset
 #include <fcntl.h>  // dma-buf sync ioctl
 #include <sys/ioctl.h>
 #include <linux/dma-buf.h>
@@ -114,5 +115,18 @@ inline void cache_drop( const void* p, size_t len )
 #endif
 }
 
+
+// CPU fill of a dma-buf range, then flush the dirty lines to the
+// point of coherency: the canonical "CPU writes, device reads next"
+// sequence. The DmaSync bracket and the cache_clean are inseparable
+// halves of one operation -- call this instead of hand-rolling either.
+inline void fill_and_flush( int fd, void* p, unsigned char val, size_t size )
+{
+    if ( !p || size == 0 )
+        return;
+    DmaSync sync( fd, true );
+    std::memset( p, val, size );
+    cache_clean( p, size );
+}
 }  // namespace dma
 
