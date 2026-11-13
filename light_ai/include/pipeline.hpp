@@ -10,7 +10,7 @@
 #include "box_smoother.h"
 #include "cal_dumper.hpp"
 #include "camera_v4l2.hpp"
-#include "config/cli.hpp"
+#include "config/config.hpp"
 #include "console_reporter.h"
 #include "core/stop_flag.hpp"
 #include "frame_trace.h"

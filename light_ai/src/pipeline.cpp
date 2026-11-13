@@ -41,11 +41,11 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop )
     // accepts 0|1|3; anything below 3 falls back to ring of one so a
     // direct call can never create the untested 2-engine mode.
 
-    npool_ = cfg_.pool >= 3 ? 3 : 1;    
+    npool_ = cfg_.infer.pool >= 3 ? 3 : 1;    
     npus_.reserve( npool_ );
 
     for ( int k = 0; k < npool_; ++k )
-        npus_.emplace_back( cfg_.model.c_str() );
+        npus_.emplace_back( cfg_.infer.model.c_str() );
 
     // M5: source bring-up (identity, setup, per-source decoders) --
     // each SourceSlot owns its MppDecoder (its own resolution and
@@ -77,7 +77,7 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop )
 
     model_w_ = static_cast<int>( ia.dims[ia.n_dims - 2] );
     model_h_ = static_cast<int>( ia.dims[ia.n_dims - 3] );
-    cal_dumper_.init( cfg_.dump_cal, cfg_.cal_frames, cfg_.cal_interval, cfg_.cal_dir, model_w_, model_h_ );
+    cal_dumper_.init( cfg_.cal, model_w_, model_h_ );
 
     // M5: per-source letterbox geometry (the same numbers the RGA crop
     // writes); src_w_/src_h_ become the max across sources.
@@ -102,10 +102,10 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop )
     // plate (idle_tick), real bands land per-frame via prep_frame's
     // band_geom (probe refresh still fills per-slot geometry).
     const LbGeom enc_lb = band_geom( model_w_, model_h_ * 3 / 4, model_w_, model_h_ );
-    sink_.init( cfg_, npus_, model_w_, model_h_, enc_lb, nsrc_ );
+    sink_.init( cfg_.stream, npus_, model_w_, model_h_, enc_lb, nsrc_ );
     init_aux();
 
-    if ( cfg_.cal_frames > 0 && cfg_.cal_dir.empty() )
+    if ( cfg_.cal.frames > 0 && cfg_.cal.dir.empty() )
     {
         std::error_code ec;
         std::filesystem::create_directories( "dataset", ec );
@@ -388,14 +388,7 @@ void Pipeline::probe_loop()
 
 void Pipeline::init_source()
 {
-    std::vector<SourceEndpoint> eps = cfg_.sources;
-    if ( eps.empty() )
-    {
-        if ( !cfg_.net_src.empty() )
-            eps.push_back( { SourceKind::NetMjpeg, cfg_.net_src } );
-        else if ( !cfg_.device.empty() )
-            eps.push_back( { SourceKind::V4L2, cfg_.device } );
-    }
+    const std::vector<SourceEndpoint>& eps = cfg_.sources;
     if ( eps.size() > static_cast<size_t>( kMaxSources ) )
         throw std::runtime_error( "pipeline: at most 3 sources are supported (one per NPU core)" );
 
@@ -411,17 +404,17 @@ void Pipeline::init_source()
 }
 
 // M2.5/M4: core pinning.
-// Pool 1 keeps cfg_.core verbatim (AUTO by default — the A/B baseline is untouched).
+// Pool 1 keeps cfg_.infer.core verbatim (AUTO by default — the A/B baseline is untouched).
 // The pool pins its own: one engine per core, via the per-core flags 1/2/4.
 void Pipeline::setup_cores()
 {
     if ( npool_ == 1 )
     {
-        if ( cfg_.core != 0 )
+        if ( cfg_.infer.core != 0 )
         {
-            if ( npus_[0].set_core_mask( static_cast<unsigned>( cfg_.core ) ) != 0 )
+            if ( npus_[0].set_core_mask( static_cast<unsigned>( cfg_.infer.core ) ) != 0 )
                 throw std::runtime_error( "rknn set_core_mask failed" );
-            std::cout << "npu: core mask 0x" << std::hex << cfg_.core << std::dec << "\n";
+            std::cout << "npu: core mask 0x" << std::hex << cfg_.infer.core << std::dec << "\n";
         }
         return;
     }
@@ -476,7 +469,7 @@ void Pipeline::idle_tick()
         return;
     const int64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t0_ ).count();
-    const int64_t step_us = cfg_.net_fps > 0 ? 1000000LL / cfg_.net_fps : 40000;
+    const int64_t step_us = cfg_.stream.fps > 0 ? 1000000LL / cfg_.stream.fps : 40000;
     if ( last_idle_us_ >= 0 && now_us - last_idle_us_ < step_us )
         return;
     bool absent[ kMaxSources ] = {};
@@ -908,7 +901,7 @@ void Pipeline::worker_loop( int slot )
                 const auto tp0 = clk::now();
                 yolo_postprocess( *sl.eng, static_cast<float>( sl.src_w ), static_cast<float>( sl.src_h ),
                         static_cast<float>( model_w_ ), static_cast<float>( model_h_ ), sl.lb,
-                        sl.dets, cfg_.conf_thr, cfg_.iou_thr );
+                        sl.dets, cfg_.infer.conf_thr, cfg_.infer.iou_thr );
                 sl.tr.post = ms( tp0, clk::now() );
             }
         }

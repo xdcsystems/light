@@ -8,7 +8,7 @@
 
 #include "overlay_sink.hpp"
 #include "box_mapper.h"
-#include "config/cli.hpp"
+#include "config/config.hpp"  // StreamConfig
 #include "dma_sync.hpp"
 #include "rknn_engine.hpp"
 #include "slot_ring.hpp"
@@ -75,7 +75,7 @@ namespace
 
 }  // namespace
 
-void OverlaySink::init( const Config& cfg,
+void OverlaySink::init( const StreamConfig& stream,
                         const std::vector<RknnEngine>& npus,
                         int model_w,
                         int model_h,
@@ -84,30 +84,30 @@ void OverlaySink::init( const Config& cfg,
 {
     model_w_ = model_w;
     model_h_ = model_h;
-    if ( !cfg.net )
+    if ( !stream.enabled )
         return;
 
     const rknn_tensor_attr& ia = npus[0].input_attr();
     std::cout << "net: tensor stride check: size_with_stride=" << ia.size_with_stride
               << " vs " << model_w_ * model_h_ * 3 << "\n";
 
-    if ( cfg.net_h264 )
+    if ( stream.h264 )
     {
-        enc_.emplace( model_w_, model_h_, primary_band, cfg.net_fps, cfg.net_port, cfg.net_host, cfg.net_bitrate, nsrc );
-        if ( cfg.net_host.empty() )
-            std::cout << "net: h264 PULL server on port " << cfg.net_port << ", " << cfg.net_bitrate
-                      << " kbps (viewer: ffplay tcp://<board-ip>:" << cfg.net_port << ")\n";
+        enc_.emplace( model_w_, model_h_, primary_band, stream.fps, stream.port, stream.host, stream.bitrate_kbps, nsrc );
+        if ( stream.host.empty() )
+            std::cout << "net: h264 PULL server on port " << stream.port << ", " << stream.bitrate_kbps
+                      << " kbps (viewer: ffplay tcp://<board-ip>:" << stream.port << ")\n";
         else
-            std::cout << "net: h264 preview -> " << cfg.net_host << ':' << cfg.net_port
-                      << ", " << cfg.net_bitrate << " kbps\n";
+            std::cout << "net: h264 preview -> " << stream.host << ':' << stream.port
+                      << ", " << stream.bitrate_kbps << " kbps\n";
     }
     else
     {
-        preview_.emplace( model_w_, model_h_, model_w_ * 3, cfg.net_fps, cfg.net_port );
-        std::cout << "net: preview server on port " << cfg.net_port << "\n";
+        preview_.emplace( model_w_, model_h_, model_w_ * 3, stream.fps, stream.port );
+        std::cout << "net: preview server on port " << stream.port << "\n";
     }
 
-    init_gpu_drawer( cfg, npus );
+    init_gpu_drawer( stream.cpu_draw, npus );
 }
 
 // NO SIGNAL idle publish: h264 path only -- the encoder RGA-copies the
@@ -119,9 +119,9 @@ void OverlaySink::publish_idle( int64_t ts_us, const bool* absent, int nabs )
         enc_->publish_idle( ts_us, absent, nabs );
 }
 
-void OverlaySink::init_gpu_drawer( const Config& cfg, const std::vector<RknnEngine>& npus )
+void OverlaySink::init_gpu_drawer( bool cpu_draw, const std::vector<RknnEngine>& npus )
 {
-    if ( ( !preview_ && !enc_ ) || cfg.cpu_draw )
+    if ( ( !preview_ && !enc_ ) || cpu_draw )
         return;
 
     drawer_.emplace();

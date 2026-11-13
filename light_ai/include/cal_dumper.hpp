@@ -11,8 +11,10 @@
 #include <cstdint>
 #include <string>
 
+#include "config/config.hpp"  // CalConfig
+
 // No preconditions for the caller:
-// with dump_cal=false / cal_frames=0 (the defaults) init() never ran,
+// with CalConfig defaults (dump_one=false, frames=0) or before init(),
 // and maybe() is a plain no-op in that state.
 // Pipeline calls it unconditionally, once per frame.
 
@@ -20,8 +22,7 @@ class CalDumper
 {
 public:
     // Called once by Pipeline after the model geometry is known.
-    void init( bool dump_cal, int cal_frames, int cal_interval,
-               const std::string& cal_dir, int model_w, int model_h );
+    void init( const CalConfig& cal, int model_w, int model_h );
 
     // data/size are the NPU input tensor bytes.
     void maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t size );

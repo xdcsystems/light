@@ -220,6 +220,13 @@ post-processing.
                hybrid USB + HTTP MJPEG setups; CLI source flags override
                INI sources, and /dev/video20 is defaulted only when no
                sources are specified.
+               Config (config/config.hpp) is plain data grouped by
+               consumer: sources, InferConfig (model, thresholds, core,
+               pool), CalConfig, StreamConfig (preview/encoder, box
+               drawing). A component takes its own section by const
+               reference (CalDumper <- CalConfig, OverlaySink <-
+               StreamConfig); Config::sources is the single owner of
+               the source list (no primary device/url fields).
 - TcpPullServer : RAII single-viewer TCP pull transport (listener socket,
                poll-based accept, TCP_NODELAY / SO_SNDBUF / SO_SNDTIMEO,
                and custom 32 KiB AVIOContext) shared by NetEncoder and
