@@ -5,10 +5,10 @@
 #include <iostream>
 #include <mutex>
 
+#include "core/detection.hpp"  // DetList: a Slot member by value
+#include "core/geometry.hpp"   // LbGeom: a Slot member by value - the full type is required here
 #include "frame_trace.h"
 #include "pod_ring.hpp"
-#include "rga_resizer.h"  // LbGeom: a Slot member by value - the full type is required here
-#include "yolo_postprocess.hpp"
 
 class RknnEngine;
 

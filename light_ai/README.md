@@ -43,8 +43,8 @@ post-processing.
   (templates) is the sanctioned replacement where one implementation
   serves several types: PodList<T, N> (include/pod_list.hpp) — one
   fixed-capacity list, three instantiations (DetList in
-  yolo_postprocess.hpp, GpuBoxList in gpu_box_drawer.hpp, TrajList in
-  tracker.hpp), zero heap.
+  core/detection.hpp, GpuBoxList in core/gpu_box.hpp, TrajList in
+  core/track.hpp), zero heap.
 - const by default: member functions that do not mutate state are
   const; parameters are passed by const-ref unless the callee owns a
   copy. Out-parameters are plain references filled by the callee
@@ -74,6 +74,18 @@ post-processing.
   clamp silently allowed it).
   
 ## Layers
+- core/      : domain types shared across layers, free of SDK headers
+               (include/core/, src/core/): LbGeom + band_geom
+               (geometry.hpp), Detection / DetList (detection.hpp),
+               TrackLife / TrajPoint / TrackState / TrajList (track.hpp),
+               GpuBox / GpuBoxList (gpu_box.hpp). A consumer that needs
+               only the type includes the core header, not the layer
+               that produces it (rga_resizer.h, yolo_postprocess.hpp,
+               tracker.hpp, gpu_box_drawer.hpp still re-export theirs).
+               Dependency rule: core/ includes nothing but the standard
+               library and the pod containers. This is what lets the
+               pure-logic modules build without MPP/RGA/RKNN/EGL
+               (see Tests).
 - CameraV4L2 : MJPEG capture, mmap buffers, DQBUF/QBUF. At startup S_FMT
                requests the preferred 1280x960 MJPEG mode and adopts the
                dimensions reported by G_FMT; on a mid-run reconnect G_FMT
@@ -610,6 +622,8 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
   INT8 build history).
 
 ## Scripts
+- scripts/test.sh — builds and runs the host-side unit tests
+  (see Tests); also the second gate of scripts/build.sh.
 - scripts/install_rknn.sh — installs rknn-toolkit-lite2 (aarch64, Python 3.9):
   downloads the wheel from GitHub Releases (tag rknn-toolkit-lite2-v2.5.0),
   verifies SHA256 and pip-installs it. The wheel is not tracked by git.
@@ -648,6 +662,28 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
 
 ## Build
     ./scripts/build.sh
+
+Gates, in order: build, unit tests (SKIP_TESTS=1 to skip), clang-tidy
+(SKIP_TIDY=1 to skip). A failed gate rejects the build.
+
+## Tests
+    ./scripts/test.sh
+
+Host-side unit tests for the pure-logic modules (tests/, target
+light_ai_tests, built into build/tests):
+- Standalone CMake project: needs only cmake and a C++17 compiler,
+  no MPP/RGA/RKNN/ffmpeg/EGL -- runs on the board and on any PC.
+- Covered: PodList / PodRing, box_math (IoU, greedy matching),
+  band_geom, jpeg_probe, BoxSmoother, Tracker, fill_gpu_boxes,
+  CliOptions / OptionRegistry / ConfigFileLoader.
+- Not covered: everything that touches hardware or an SDK (capture,
+  decode, RGA, RKNN, yolo_postprocess, encoder, GPU drawer). Those
+  are verified by live runs only.
+- Harness: tests/check.hpp (CHECK / CHECK_NEAR, no framework, no
+  dependencies). The project rules hold in tests/ as well.
+- A module joins the suite once it compiles without SDK headers:
+  add its .cpp and a test_<module>.cpp to tests/CMakeLists.txt and
+  declare the suite in tests/suites.hpp.
 
 Target CPU flags (CMakeLists.txt TARGET_CPU_FLAGS, 2026-11-02):
 -mcpu=cortex-a76+dotprod+crypto -mtune=cortex-a76.cortex-a55. The dot form is legal

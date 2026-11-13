@@ -93,6 +93,7 @@ add_executable(light_ai
     src/config/cli.cpp
     src/config/option_registry.cpp
     src/config/config_file.cpp
+    src/core/geometry.cpp
     externals/inih/ini.c
 )
 target_compile_definitions(light_ai PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)

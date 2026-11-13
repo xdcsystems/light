@@ -1,0 +1,30 @@
+#include <iostream>
+
+#include "check.hpp"
+#include "suites.hpp"
+
+namespace
+{
+    void run_suite( TestRun& t, const char* name, void ( *suite )( TestRun& ) )
+    {
+        const int checks0 = t.checks();
+        const int fails0 = t.failures();
+        suite( t );
+        std::cout << ( t.failures() == fails0 ? "ok    " : "FAIL  " ) << name << " (" << t.checks() - checks0 << " checks)\n";
+    }
+}  // namespace
+
+int main()
+{
+    TestRun t;
+    run_suite( t, "pod_containers", &test_pod_containers );
+    run_suite( t, "box_math", &test_box_math );
+    run_suite( t, "geometry", &test_geometry );
+    run_suite( t, "jpeg_probe", &test_jpeg_probe );
+    run_suite( t, "box_smoother", &test_box_smoother );
+    run_suite( t, "tracker", &test_tracker );
+    run_suite( t, "box_mapper", &test_box_mapper );
+    run_suite( t, "config", &test_config );
+    std::cout << "light_ai_tests: " << t.checks() << " checks, " << t.failures() << " failed\n";
+    return t.failures() == 0 ? 0 : 1;
+}

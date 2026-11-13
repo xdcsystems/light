@@ -4,7 +4,7 @@
 #include <iostream>
 
 #include "yolo_postprocess.hpp"
-#include "rga_resizer.h"
+#include "core/geometry.hpp"  // LbGeom
 #include "rknn_engine.hpp"
 #include "box_math.hpp"
 
