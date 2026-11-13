@@ -49,9 +49,10 @@ namespace
         return ok;
     }
 
-    // Single poll(2) call without an internal EINTR loop: when SIGINT/SIGTERM
-    // sets stop_, poll() returns -1 (EINTR) immediately instead of restarting
-    // a new 2000 ms wait; non-stop EINTR is retried by the pipeline loop.
+    // Single poll(2) call without an internal EINTR loop: on SIGINT/SIGTERM
+    // SignalWaiter sets the stop flag and wakes this thread, so poll() returns
+    // -1 (EINTR) immediately instead of restarting a new 2000 ms wait;
+    // non-stop EINTR is retried by the pipeline loop.
     int poll_ready( int fd, int timeout_ms )
     {
         pollfd pfd {};

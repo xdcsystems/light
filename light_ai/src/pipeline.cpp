@@ -32,8 +32,8 @@ namespace
 
 }  // namespace
 
-Pipeline::Pipeline( const Config& cfg )
-  : cfg_( cfg )
+Pipeline::Pipeline( const Config& cfg, const StopFlag& stop )
+  : cfg_( cfg ), stop_( stop )
 {
     // M4: the pool is a startup-time decision; npus_ never grows after
     // this loop, so the slot pointers stay valid for the whole session.
@@ -536,7 +536,7 @@ bool Pipeline::front_slot_done()
 
 void Pipeline::drain_done_slots( int& ok )
 {
-    while ( front_slot_done() && !stop_.load() )
+    while ( front_slot_done() && !stop_.requested() )
         ok += publish_oldest();
 }
 
@@ -548,7 +548,7 @@ int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
     {
         // waiting for attach: nothing to dequeue, park until stop
         // (hot-adding sources beyond the configured set is a separate feature)
-        while ( !stop_.load() )
+        while ( !stop_.requested() )
         {
             idle_tick();
             std::this_thread::sleep_for( std::chrono::milliseconds( 40 ) );
@@ -560,7 +560,7 @@ int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
     {
         cur_src_ = 0;
         int r = -1;
-        while ( !stop_.load() )
+        while ( !stop_.requested() )
         {
             if ( srcs_[0].absent.load() )
             {
@@ -576,7 +576,7 @@ int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
         }
         return r;
     }
-    while ( !stop_.load() )
+    while ( !stop_.requested() )
     {
         drain_done_slots( ok );
         bool any_live = false;
@@ -659,7 +659,7 @@ int Pipeline::run()
     }
     // frames == 0 (the default): no frame budget -- run until stop
     // (Ctrl-C); the signal path below drains and reports as usual.
-    for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.load(); )
+    for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.requested(); )
     {
         const auto t0 = clk::now();
 
@@ -669,7 +669,7 @@ int Pipeline::run()
         const int idx = dequeue_next_source( sz, cam_err, ok );
         if ( idx < 0 )
         {
-            if ( stop_.load() )
+            if ( stop_.requested() )
                 break;
             if ( handle_source_failure( cam_err ) != 0 )
                 return -1;
@@ -744,7 +744,7 @@ int Pipeline::run()
             ok += publish_oldest();
     }
 
-    if ( stop_.load() )
+    if ( stop_.requested() )
         std::cout << "stop: signal received, draining and flushing...\n";
 
     // M4: drain the ring — publish whatever the workers already finished.
@@ -809,7 +809,7 @@ int Pipeline::acquire_slot( int& ok )
             if ( slots_[k].st == Slot::FREE )
                 return k;
         }
-        if ( stop_.load() )
+        if ( stop_.requested() )
             return -1;
         if ( !starved_warned )
         {

@@ -12,6 +12,7 @@
 #include "camera_v4l2.hpp"
 #include "config/cli.hpp"
 #include "console_reporter.h"
+#include "core/stop_flag.hpp"
 #include "frame_trace.h"
 #include "media_source.hpp"
 #include "mpp_decoder.hpp"
@@ -58,17 +59,17 @@ class Pipeline
     };
 
 public:
-    explicit Pipeline( const Config& cfg );
+    // stop: set by SignalWaiter on SIGINT/SIGTERM; outlives the Pipeline (main.cpp).
+    Pipeline( const Config& cfg, const StopFlag& stop );
     ~Pipeline();  // stops the workers before the engines die
     Pipeline( const Pipeline& ) = delete;
     Pipeline& operator=( const Pipeline& ) = delete;
     Pipeline( Pipeline&& ) = delete;
     Pipeline& operator=( Pipeline&& ) = delete;
 
+    // Exits the frame loop through the normal drain/summary path once
+    // the stop flag is set (graceful shutdown, P1-6).
     int run();
-    // Graceful shutdown (P1-6): called from the SIGINT/SIGTERM handler;
-    // run() exits the frame loop through the normal drain/summary path.
-    void request_stop() { stop_.store( true ); }
 
 private:
     void init_source();
@@ -141,7 +142,7 @@ private:
     std::array<Slot, 3> slots_ {};
     std::vector<std::thread> workers_;   // one per pooled engine
     std::atomic<bool> quit_ { false };
-    std::atomic<bool> stop_ { false };  // set by the signal handler
+    const StopFlag& stop_;  // set by SignalWaiter (SIGINT/SIGTERM), read only here
     std::thread probe_th_;   // hot-attach prober: armed in run(), joined on exit
     std::atomic<bool> probe_quit_ { false };
     uint64_t probe_ticks_ = 0;  // prober round counter: throttles the probe log
