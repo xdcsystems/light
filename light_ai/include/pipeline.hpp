@@ -12,6 +12,7 @@
 #include "camera_v4l2.hpp"
 #include "config/config.hpp"
 #include "console_reporter.h"
+#include "core/log.hpp"
 #include "core/stop_flag.hpp"
 #include "frame_trace.h"
 #include "media_source.hpp"
@@ -59,8 +60,9 @@ class Pipeline
     };
 
 public:
-    // stop: set by SignalWaiter on SIGINT/SIGTERM; outlives the Pipeline (main.cpp).
-    Pipeline( const Config& cfg, const StopFlag& stop );
+    // stop: set by SignalWaiter on SIGINT/SIGTERM; log: the process diagnostics.
+    // Both are owned by main() and outlive the Pipeline.
+    Pipeline( const Config& cfg, const StopFlag& stop, const Log& log );
     ~Pipeline();  // stops the workers before the engines die
     Pipeline( const Pipeline& ) = delete;
     Pipeline& operator=( const Pipeline& ) = delete;
@@ -143,6 +145,7 @@ private:
     std::vector<std::thread> workers_;   // one per pooled engine
     std::atomic<bool> quit_ { false };
     const StopFlag& stop_;  // set by SignalWaiter (SIGINT/SIGTERM), read only here
+    const Log& log_;        // diagnostics sink (main.cpp); safe from the worker and prober threads
     std::thread probe_th_;   // hot-attach prober: armed in run(), joined on exit
     std::atomic<bool> probe_quit_ { false };
     uint64_t probe_ticks_ = 0;  // prober round counter: throttles the probe log

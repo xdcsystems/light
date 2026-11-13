@@ -14,3 +14,4 @@ void test_tracker( TestRun& t );
 void test_box_mapper( TestRun& t );
 void test_config( TestRun& t );
 void test_signals( TestRun& t );
+void test_log( TestRun& t );

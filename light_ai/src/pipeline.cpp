@@ -32,8 +32,8 @@ namespace
 
 }  // namespace
 
-Pipeline::Pipeline( const Config& cfg, const StopFlag& stop )
-  : cfg_( cfg ), stop_( stop )
+Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
+  : cfg_( cfg ), stop_( stop ), log_( log )
 {
     // M4: the pool is a startup-time decision; npus_ never grows after
     // this loop, so the slot pointers stay valid for the whole session.
@@ -66,7 +66,7 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop )
     const rknn_tensor_attr& ia = npus_[0].input_attr();  // all engines share the model geometry
     if ( ia.n_dims < 4 )
     {
-        std::cerr << "pipeline: unexpected input tensor ndims=" << ia.n_dims << '\n';
+        log_.warn() << "pipeline: unexpected input tensor ndims=" << ia.n_dims << '\n';
         throw std::runtime_error( "rknn: input tensor is not 4-D NHWC" );
     }
 
@@ -147,11 +147,11 @@ void Pipeline::start_source( int idx )
     }
     catch ( const std::exception& e )
     {
-        std::cerr << "pipeline: source start failed: " << e.what() << '\n';
+        log_.warn() << "pipeline: source start failed: " << e.what() << '\n';
     }
     catch ( ... )
     {
-        std::cerr << "pipeline: source start failed: unknown exception\n";
+        log_.warn() << "pipeline: source start failed: unknown exception\n";
     }
     if ( !src_started )
     {
@@ -165,21 +165,21 @@ void Pipeline::start_source( int idx )
             {
                 if ( new_id != sl.node )
                 {
-                    std::cout << "source: identity adopted: " << sl.node << " -> " << new_id << '\n';
+                    log_.info() << "source: identity adopted: " << sl.node << " -> " << new_id << '\n';
                     sl.node = new_id;
                 }
                 constexpr int k_warmup_frames = 3;
                 sl.warmup_left = k_warmup_frames;
                 src_started = true;
-                std::cout << "pipeline: source started on recovery attempt " << a << '\n';
+                log_.info() << "pipeline: source started on recovery attempt " << a << '\n';
                 break;
             }
-            std::cerr << "pipeline: source start recovery attempt " << a << '/' << k_start_retries
-                      << " failed: " << why << '\n';
+            log_.warn() << "pipeline: source start recovery attempt " << a << '/' << k_start_retries
+                        << " failed: " << why << '\n';
         }
     }
     if ( !src_started )
-        std::cerr << "pipeline: source never started - run() recovery ladder takes over\n";
+        log_.warn() << "pipeline: source never started - run() recovery ladder takes over\n";
 }
 
 void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
@@ -192,7 +192,7 @@ void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
         sl.src.use_net();
         std::string why;
         if ( sl.src.setup_device( sl.node, &why ) != 0 )
-            { sl.absent = true; std::cerr << "net-src: absent at startup: " << why << "\n"; return; }
+            { sl.absent = true; log_.warn() << "net-src: absent at startup: " << why << "\n"; return; }
     }
     else
     {
@@ -203,17 +203,17 @@ void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
             struct stat st {};
             if ( stat( sl.node.c_str(), &st ) != 0 )
             {
-                std::cerr << "camera: configured node " << sl.node << " not present, falling back to USB discovery\n";
+                log_.warn() << "camera: configured node " << sl.node << " not present, falling back to USB discovery\n";
                 std::string found;
                 if ( find_usb_capture_node( cam, sl.node, found, busy_v4l2_nodes( idx ), &scan_log_ms_ ) != 0 )
-                    { sl.absent = true; std::cerr << "camera: node " << sl.node << " absent at startup\n"; return; }
-                std::cout << "camera: discovery adopted " << found << '\n';
+                    { sl.absent = true; log_.warn() << "camera: node " << sl.node << " absent at startup\n"; return; }
+                log_.info() << "camera: discovery adopted " << found << '\n';
                 sl.node = found;
             }
         }
         std::string cam_why;
         if ( cam.setup_device( sl.node, &cam_why ) != 0 )
-            { sl.absent = true; std::cerr << "camera: absent at startup: " << cam_why << "\n"; return; }
+            { sl.absent = true; log_.warn() << "camera: absent at startup: " << cam_why << "\n"; return; }
     }
     sl.w = sl.src.width();
     sl.h = sl.src.height();
@@ -221,7 +221,7 @@ void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
     // so BOTH the net and the camera branch get it.
     if ( sl.dec.init( sl.w, sl.h ) != 0 )
         throw std::runtime_error( "mpp decoder init failed for " + sl.node );
-    std::cout << "source: geometry " << sl.w << 'x' << sl.h << '\n';
+    log_.info() << "source: geometry " << sl.w << 'x' << sl.h << '\n';
 }
 
 // Busy-node reservation (audit: multi-camera node hijacking): the /dev
@@ -270,7 +270,7 @@ void Pipeline::probe_source( int idx )
                 return;
             if ( !found.empty() && found != sl.node )
             {
-                std::cout << "camera: hot-attach adopted " << sl.node << " -> " << found << '\n';
+                log_.info() << "camera: hot-attach adopted " << sl.node << " -> " << found << '\n';
                 sl.node = found;
             }
         }
@@ -289,8 +289,8 @@ void Pipeline::probe_source( int idx )
             return;  // still absent: device gone / stream not ready
         if ( new_id != sl.node )
         {
-            std::cout << "source s" << idx << ": identity adopted: " << sl.node
-                      << " -> " << new_id << '\n';
+            log_.info() << "source s" << idx << ": identity adopted: " << sl.node
+                        << " -> " << new_id << '\n';
             sl.node = new_id;
         }
     }
@@ -315,7 +315,7 @@ void Pipeline::probe_source( int idx )
             // Roll back so the retry is a clean first_attach (dec branch below).
             sl.w = 0;
             sl.h = 0;
-            std::cerr << "probe s" << idx << ": aux buffer alloc failed - staying absent\n";
+            log_.warn() << "probe s" << idx << ": aux buffer alloc failed - staying absent\n";
             return;
         }
     }
@@ -331,7 +331,7 @@ void Pipeline::probe_source( int idx )
         // and the src maxes are monotonic diagnostics.
         sl.w = 0;
         sl.h = 0;
-        std::cerr << "probe s" << idx << ": mpp decoder init failed - staying absent\n";
+        log_.warn() << "probe s" << idx << ": mpp decoder init failed - staying absent\n";
         return;
     }
     if ( first_attach )
@@ -342,12 +342,12 @@ void Pipeline::probe_source( int idx )
         }
         catch ( const std::exception& e )
         {
-            std::cerr << "probe s" << idx << ": start failed: " << e.what() << '\n';
+            log_.warn() << "probe s" << idx << ": start failed: " << e.what() << '\n';
             return;
         }
         catch ( ... )
         {
-            std::cerr << "probe s" << idx << ": start failed: unknown exception\n";
+            log_.warn() << "probe s" << idx << ": start failed: unknown exception\n";
             return;
         }
     }
@@ -357,7 +357,7 @@ void Pipeline::probe_source( int idx )
     // after absent.load(), which synchronizes-with this store (seq_cst).
     sl.last_ok_tp.store( clk::now() );
     sl.absent.store( false );
-    std::cout << "source s" << idx << ( first_attach ? ": attached (hot) - geometry "
+    log_.info() << "source s" << idx << ( first_attach ? ": attached (hot) - geometry "
                                                      : ": re-attached - geometry " )
               << sl.w << 'x' << sl.h << '\n';
 }
@@ -378,7 +378,7 @@ void Pipeline::probe_loop()
             // visibility: the 1st and every 15th attempt (~30 s) show
             // the prober is alive; the camera scan prints on its own.
             if ( probe_ticks_ == 1 || probe_ticks_ % 15 == 0 )
-                std::cout << "probe: s" << s << " absent, attempt " << probe_ticks_ << '\n';
+                log_.info() << "probe: s" << s << " absent, attempt " << probe_ticks_ << '\n';
             probe_source( s );
         }
         for ( int k = 0; k < 20 && !probe_quit_.load(); ++k )
@@ -396,7 +396,7 @@ void Pipeline::init_source()
     // an empty source list is a legitimate waiting-for-attach run (README);
     // the sleep loop itself lands with the udev patch
     if ( nsrc_ == 0 )
-        std::cout << "sources configured: none - waiting for attach\n";
+        log_.info() << "sources configured: none - waiting for attach\n";
     // M5: per-source decoders -- mixed resolutions (1280x960 USB next to
     // 1280x720 net) are now supported; the shared-resolution gate is gone.
     for ( int s = 0; s < nsrc_; ++s )
@@ -414,7 +414,7 @@ void Pipeline::setup_cores()
         {
             if ( npus_[0].set_core_mask( static_cast<unsigned>( cfg_.infer.core ) ) != 0 )
                 throw std::runtime_error( "rknn set_core_mask failed" );
-            std::cout << "npu: core mask 0x" << std::hex << cfg_.infer.core << std::dec << "\n";
+            log_.info() << "npu: core mask 0x" << std::hex << cfg_.infer.core << std::dec << "\n";
         }
         return;
     }
@@ -431,7 +431,7 @@ void Pipeline::setup_cores()
         if ( npus_[k].set_core_mask( static_cast<unsigned>( cores[k] ) ) != 0 )
             throw std::runtime_error( "rknn set_core_mask failed" );
     }
-    std::cout << "npu: pool of " << npool_ << " engines, one per core\n";
+    log_.info() << "npu: pool of " << npool_ << " engines, one per core\n";
     t_.set_pool( npool_ );
 }
 
@@ -454,8 +454,8 @@ void Pipeline::init_aux()
         any_aux = true;
     }
     if ( !any_aux )
-        std::cout << "aux not needed: max " << src_w_ << 'x' << src_h_
-                  << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
+        log_.info() << "aux not needed: max " << src_w_ << 'x' << src_h_
+                    << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
 }
 
 // NO SIGNAL idle publish: while at least one configured source is
@@ -508,8 +508,8 @@ int Pipeline::try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err )
         }
         if ( ms( srcs_[s].last_ok_tp.load(), clk::now() ) >= k_stall_ms )
         {
-            std::cerr << "source s" << s << ": no frame in " << static_cast<int>( k_stall_ms )
-                      << " ms - treating as recoverable stall\n";
+            log_.warn() << "source s" << s << ": no frame in " << static_cast<int>( k_stall_ms )
+                        << " ms - treating as recoverable stall\n";
             cur_src_ = s;
             cam_err = EIO;
             return -1;
@@ -606,7 +606,7 @@ namespace
     // creator's mask, so probe_th_ is spawned BEFORE the pipeline pin.
     enum { kBigCpuFirst = 4, kBigCpuLast = 7 };
 
-    void pin_current_big( const char* who )
+    void pin_current_big( const char* who, const Log& log )
     {
         cpu_set_t cpuset;
         CPU_ZERO( &cpuset );
@@ -614,11 +614,11 @@ namespace
             CPU_SET( c, &cpuset );
         if ( sched_setaffinity( 0, sizeof( cpuset ), &cpuset ) != 0 )
         {
-            std::cerr << "pin: " << who << " -> A76 cpu" << kBigCpuFirst << '-'
-                      << kBigCpuLast << " failed, scheduler fallback\n";
+            log.warn() << "pin: " << who << " -> A76 cpu" << kBigCpuFirst << '-'
+                        << kBigCpuLast << " failed, scheduler fallback\n";
             return;
         }
-        std::cout << "pin: " << who << " -> A76 cpu" << kBigCpuFirst << '-' << kBigCpuLast << '\n';
+        log.info() << "pin: " << who << " -> A76 cpu" << kBigCpuFirst << '-' << kBigCpuLast << '\n';
     }
 }  // namespace
 
@@ -643,7 +643,7 @@ int Pipeline::run()
         probe_th_ = std::thread( &Pipeline::probe_loop, this );
     // Spawn order: probe_th_ above was spawned BEFORE this pin, so the
     // prober keeps the scheduler default, as intended (see pin_current_big).
-    pin_current_big( "pipeline main" );
+    pin_current_big( "pipeline main", log_ );
 
     for ( int s = 0; s < nsrc_; ++s )
     {
@@ -691,7 +691,7 @@ int Pipeline::run()
         }
         else
         {
-            std::cerr << "camera: zero-size frame skipped\n";
+            log_.warn() << "camera: zero-size frame skipped\n";
         }
         
         active_src.src.requeue( idx );
@@ -714,7 +714,7 @@ int Pipeline::run()
         {
             --active_src.warmup_left;
             if ( active_src.warmup_left == 0 )
-                std::cout << "camera: warm-up done, publishing resumed\n";
+                log_.info() << "camera: warm-up done, publishing resumed\n";
             continue;
         }
 
@@ -738,7 +738,7 @@ int Pipeline::run()
     }
 
     if ( stop_.requested() )
-        std::cout << "stop: signal received, draining and flushing...\n";
+        log_.info() << "stop: signal received, draining and flushing...\n";
 
     // M4: drain the ring — publish whatever the workers already finished.
     while ( !pub_.empty() )
@@ -764,8 +764,8 @@ int Pipeline::run()
 int Pipeline::handle_source_failure( int cam_err )
 {
     const bool recoverable = ( cam_err == ENODEV || cam_err == EIO );
-    std::cerr << "source: dequeue failed: " << strerror( cam_err )
-              << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
+    log_.warn() << "source: dequeue failed: " << strerror( cam_err )
+                << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
     if ( !recoverable )
         return -1;
     // M4: frames from the dead stream are never published - drop the
@@ -776,7 +776,7 @@ int Pipeline::handle_source_failure( int cam_err )
     ++reconnects_;
     srcs_[cur_src_].absent.store( true );
     srcs_[cur_src_].warmup_left = 0;
-    std::cout << "source s" << cur_src_ << ": detached - probe_loop will re-attach\n";
+    log_.info() << "source s" << cur_src_ << ": detached - probe_loop will re-attach\n";
     return 0;
 }
 
@@ -806,7 +806,7 @@ int Pipeline::acquire_slot( int& ok )
             return -1;
         if ( !starved_warned )
         {
-            std::cerr << "pipeline: all " << npool_ << " slots in flight, waiting for a worker to release one\n";
+            log_.warn() << "pipeline: all " << npool_ << " slots in flight, waiting for a worker to release one\n";
             starved_warned = true;
         }
         if ( !pub_.empty() )
@@ -847,9 +847,9 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
     if ( !lb_warned_ && ( lg.left != ss.lb.left || lg.top != ss.lb.top || lg.w != ss.lb.w || lg.h != ss.lb.h ) )
     {
         lb_warned_ = true;
-        std::cerr << "pipeline: RGA letterbox drift (src " << cur_src_ << "): x=" << lg.left << " top=" << lg.top
-                  << " w=" << lg.w << " h=" << lg.h
-                  << " vs x=" << ss.lb.left << " top=" << ss.lb.top << " w=" << ss.lb.w << " h=" << ss.lb.h << '\n';
+        log_.warn() << "pipeline: RGA letterbox drift (src " << cur_src_ << "): x=" << lg.left << " top=" << lg.top
+                    << " w=" << lg.w << " h=" << lg.h
+                    << " vs x=" << ss.lb.left << " top=" << ss.lb.top << " w=" << ss.lb.w << " h=" << ss.lb.h << '\n';
     }
     dispatch( slot, frame_idx, ts_us, rga_ok, ss.lb, cam_ms, dec_ms, ms( t3, t3b ) );
 }
@@ -871,7 +871,7 @@ Pipeline::~Pipeline()
 
 void Pipeline::worker_loop( int slot )
 {
-    pin_current_big( "npu worker" );
+    pin_current_big( "npu worker", log_ );
     Slot& sl = slots_[slot];
     while ( !quit_.load() )  // the only exit is the quit check after the wait
     {
@@ -976,8 +976,8 @@ int Pipeline::publish_oldest()
     {
         if ( sl.st == Slot::QUEUED )
             sl.drop = true;
-        std::cerr << "pipeline: publish wait gave up on slot " << ps << " (st="
-                  << static_cast<int>( sl.st ) << "), frame " << sl.frame << " dropped\n";
+        log_.warn() << "pipeline: publish wait gave up on slot " << ps << " (st="
+                    << static_cast<int>( sl.st ) << "), frame " << sl.frame << " dropped\n";
         lk.unlock();
         pub_.pop();
         return 0;

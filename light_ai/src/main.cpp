@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "config/cli.hpp"  // CliOptions: argv + config-file reading/validation
+#include "core/log.hpp"
 #include "core/stop_flag.hpp"
 #include "pipeline.hpp"
 #include "process_env.hpp"
@@ -32,19 +33,23 @@ int main( int argc, char** argv )
             break;
     }
 
+    // Diagnostics: info -> stdout, warnings/errors -> stderr, as before.
+    // Declared outside the try block: the catch below reports through it.
+    const Log log( std::cout, std::cerr );
+
     try
     {
         const ProcessEnv env;
         StopFlag stop;
         SignalWaiter waiter( env, stop );
-        Pipeline p( cli.config(), stop );
+        Pipeline p( cli.config(), stop, log );
         const SignalWaiter::Armed armed( waiter );
         const int rc = p.run();
         return rc > 0 ? 0 : 1;
     }
     catch ( const std::exception& e )
     {
-        std::cerr << "Fatal: " << e.what() << '\n';
+        log.error() << "Fatal: " << e.what() << '\n';
         return 2;
     }
 }
