@@ -78,12 +78,20 @@ post-processing.
                SIGINT/SIGTERM -> StopFlag bridge (see Run, Graceful
                shutdown). No globals: main() owns both, the Pipeline
                holds a const StopFlag&.
+- Log        : diagnostics sink (core/log.hpp), owned by main() and
+               injected as `const Log&`: info -> stdout, warn/error ->
+               stderr, one statement = one whole line across threads,
+               a level threshold. Migration is incremental: Pipeline
+               and main.cpp log through it; every other class still
+               writes to std::cout / std::cerr directly and switches
+               when its refactoring stage touches it. New code takes a
+               Log -- no new direct stream writes.
 - core/      : domain types shared across layers, free of SDK headers
                (include/core/, src/core/): LbGeom + band_geom
                (geometry.hpp), Detection / DetList (detection.hpp),
                TrackLife / TrajPoint / TrackState / TrajList (track.hpp),
                GpuBox / GpuBoxList (gpu_box.hpp), StopFlag
-               (stop_flag.hpp). A consumer that needs
+               (stop_flag.hpp), Log (log.hpp). A consumer that needs
                only the type includes the core header, not the layer
                that produces it (rga_resizer.h, yolo_postprocess.hpp,
                tracker.hpp, gpu_box_drawer.hpp still re-export theirs).
@@ -688,7 +696,8 @@ light_ai_tests, built into build/tests):
 - Covered: PodList / PodRing, box_math (IoU, greedy matching),
   band_geom, jpeg_probe, BoxSmoother, Tracker, fill_gpu_boxes,
   CliOptions / OptionRegistry / ConfigFileLoader, ProcessEnv /
-  SignalWaiter (signal delivery, SIGPIPE, armed and unarmed modes).
+  SignalWaiter (signal delivery, SIGPIPE, armed and unarmed modes),
+  Log (routing, threshold, whole lines across threads).
 - Not covered: everything that touches hardware or an SDK (capture,
   decode, RGA, RKNN, yolo_postprocess, encoder, GPU drawer). Those
   are verified by live runs only.

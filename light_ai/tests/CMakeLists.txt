@@ -25,6 +25,7 @@ add_executable(light_ai_tests
     test_box_mapper.cpp
     test_config.cpp
     test_signals.cpp
+    test_log.cpp
     # modules under test
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp

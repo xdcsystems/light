@@ -26,6 +26,7 @@ int main()
     run_suite( t, "box_mapper", &test_box_mapper );
     run_suite( t, "config", &test_config );
     run_suite( t, "signals", &test_signals );
+    run_suite( t, "log", &test_log );
     std::cout << "light_ai_tests: " << t.checks() << " checks, " << t.failures() << " failed\n";
     return t.failures() == 0 ? 0 : 1;
 }
