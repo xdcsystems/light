@@ -10,8 +10,9 @@
 // Graceful shutdown without globals: ProcessEnv blocks SIGINT/SIGTERM
 // before any thread exists; SignalWaiter takes them on its own thread.
 // While Pipeline::run() is in progress (Armed scope) a signal sets the
-// StopFlag and run() exits through the normal path (ring drain, TOTAL
-// summary, encoder flush, camera STREAMOFF/teardown). Outside that scope
+// StopFlag, wakes this thread out of a blocking poll(), and run() exits
+// through the normal path (ring drain, TOTAL summary, encoder flush,
+// camera STREAMOFF/teardown). Outside that scope
 // -- model loading in the ctor, teardown in the dtor -- a signal keeps its
 // default action and ends the process at once.
 //
@@ -35,7 +36,7 @@ int main( int argc, char** argv )
     {
         const ProcessEnv env;
         StopFlag stop;
-        SignalWaiter waiter( stop );
+        SignalWaiter waiter( env, stop );
         Pipeline p( cli.config(), stop );
         const SignalWaiter::Armed armed( waiter );
         const int rc = p.run();

@@ -6,27 +6,34 @@
 // touch any object -- none of the async-signal-safety limits of a handler.
 //
 // Two modes, switched by the Armed scope:
-// - armed   (Pipeline::run in progress): the signal sets the StopFlag;
-//   run() leaves the frame loop through the normal drain/summary path.
+// - armed   (Pipeline::run in progress): the signal sets the StopFlag and
+//   wakes the owner thread (the one that constructed the waiter and runs
+//   the frame loop), so a poll() blocked on a stalled source returns
+//   EINTR at once; run() leaves the frame loop through the normal
+//   drain/summary path.
 // - unarmed (Pipeline ctor/dtor, before/after run): the signal terminates
 //   the process with its default action, exactly as before this class --
 //   Ctrl-C during model loading or teardown does not wait.
 //
 // Declare it after ProcessEnv and the StopFlag, before the Pipeline: it
-// must run while the Pipeline is constructed (unarmed Ctrl-C) and the flag
-// must outlive it. The destructor stops the thread within one wait tick.
+// must run while the Pipeline is constructed (unarmed Ctrl-C) and both
+// must outlive it. Construct it on the thread that will run the frame
+// loop. The destructor stops the thread within one wait tick.
 
 #pragma once
+
+#include <pthread.h>
 
 #include <atomic>
 #include <thread>
 
 #include "core/stop_flag.hpp"
+#include "process_env.hpp"
 
 class SignalWaiter
 {
 public:
-    explicit SignalWaiter( StopFlag& stop );
+    SignalWaiter( const ProcessEnv& env, StopFlag& stop );
     ~SignalWaiter();
     SignalWaiter( const SignalWaiter& ) = delete;
     SignalWaiter& operator=( const SignalWaiter& ) = delete;
@@ -53,7 +60,9 @@ private:
     void loop();
     void on_signal( int sig );
 
+    const ProcessEnv& env_;
     StopFlag& stop_;
+    const pthread_t owner_;  // the constructing thread: woken on an armed stop
     std::atomic<bool> armed_ { false };
     std::atomic<bool> quit_ { false };
     std::thread thread_;  // last: started once the flags above exist

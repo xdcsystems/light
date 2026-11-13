@@ -12,11 +12,20 @@
 // (viewer gone, FFmpeg internals) must return EPIPE, not kill the process.
 // MSG_NOSIGNAL still covers our own send() calls.
 //
-// The destructor restores the previous mask and SIGPIPE action. It runs
-// last in main() -- after the Pipeline and its sockets are gone -- so no
-// teardown path can hit a default SIGPIPE.
+// Wake signal (SIGUSR1): the stop flag alone does not end a blocking
+// poll() in the frame loop (a stalled camera waits up to 2 s). wake()
+// sends SIGUSR1 to one thread; its handler does nothing, it exists only
+// so that the blocked call returns EINTR at once -- the frame loop then
+// re-checks the stop flag. The handler is installed without SA_RESTART
+// for exactly that reason.
+//
+// The destructor restores the previous mask and actions. It runs last in
+// main() -- after the Pipeline and its sockets are gone -- so no teardown
+// path can hit a default SIGPIPE.
 
 #pragma once
+
+#include <pthread.h>
 
 #include <csignal>
 
@@ -30,7 +39,11 @@ public:
     ProcessEnv( ProcessEnv&& ) = delete;
     ProcessEnv& operator=( ProcessEnv&& ) = delete;
 
+    // Interrupts a blocking syscall in `thread` (EINTR); no other effect.
+    void wake( pthread_t thread ) const;
+
 private:
     sigset_t old_mask_ {};
     struct sigaction old_pipe_ {};
+    struct sigaction old_wake_ {};
 };

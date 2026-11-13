@@ -14,7 +14,7 @@ namespace
 
     sigset_t stop_signals()
     {
-        sigset_t set;
+        sigset_t set {};
         sigemptyset( &set );
         sigaddset( &set, SIGINT );
         sigaddset( &set, SIGTERM );
@@ -32,7 +32,7 @@ namespace
         sigemptyset( &dfl.sa_mask );
         sigaction( sig, &dfl, nullptr );
 
-        sigset_t one;
+        sigset_t one {};
         sigemptyset( &one );
         sigaddset( &one, sig );
         pthread_sigmask( SIG_UNBLOCK, &one, nullptr );
@@ -43,7 +43,10 @@ namespace
     }
 }  // namespace
 
-SignalWaiter::SignalWaiter( StopFlag& stop ) : stop_( stop ), thread_( &SignalWaiter::loop, this ) {}
+SignalWaiter::SignalWaiter( const ProcessEnv& env, StopFlag& stop )
+  : env_( env ), stop_( stop ), owner_( pthread_self() ), thread_( &SignalWaiter::loop, this )
+{
+}
 
 SignalWaiter::~SignalWaiter()
 {
@@ -70,7 +73,9 @@ void SignalWaiter::on_signal( int sig )
 {
     if ( armed_.load() )
     {
+        // Flag first, wake second: the woken loop must already see the request.
         stop_.request();
+        env_.wake( owner_ );
         return;
     }
     terminate_by( sig );

@@ -1,3 +1,4 @@
+#include <poll.h>
 #include <pthread.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -72,7 +73,7 @@ void test_signals( TestRun& t )
         const int status = in_child( [sig] {
             const ProcessEnv env;
             StopFlag stop;
-            const SignalWaiter waiter( stop );
+            const SignalWaiter waiter( env, stop );
             kill( getpid(), sig );
             std::this_thread::sleep_for( std::chrono::seconds( 2 ) );  // the child must die before this ends
         } );
@@ -83,7 +84,7 @@ void test_signals( TestRun& t )
         const int status = in_child( [] {
             const ProcessEnv env;
             StopFlag stop;
-            SignalWaiter waiter( stop );
+            SignalWaiter waiter( env, stop );
             {
                 const SignalWaiter::Armed armed( waiter );
             }
@@ -97,13 +98,42 @@ void test_signals( TestRun& t )
         const int status = in_child( [] {
             const ProcessEnv env;
             StopFlag stop;
-            SignalWaiter waiter( stop );
+            SignalWaiter waiter( env, stop );
             const SignalWaiter::Armed armed( waiter );
             kill( getpid(), SIGTERM );
             if ( !wait_for( stop ) )
                 _exit( 3 );
             kill( getpid(), SIGINT );  // a second Ctrl-C while armed is harmless too
             std::this_thread::sleep_for( std::chrono::milliseconds( 300 ) );
+        } );
+        CHECK( t, WIFEXITED( status ) && WEXITSTATUS( status ) == 0 );
+    }
+
+    // Armed stop interrupts a blocking poll() on the owner thread: without
+    // the wake it would sit out the whole 5 s timeout (a stalled source).
+    {
+        const int status = in_child( [] {
+            const ProcessEnv env;
+            StopFlag stop;
+            SignalWaiter waiter( env, stop );
+            const SignalWaiter::Armed armed( waiter );
+            int fds[2] = { -1, -1 };
+            if ( pipe( fds ) != 0 )
+                _exit( 4 );
+            std::thread sender( [] {
+                std::this_thread::sleep_for( std::chrono::milliseconds( 200 ) );
+                kill( getpid(), SIGINT );
+            } );
+            pollfd pfd {};
+            pfd.fd = fds[0];
+            pfd.events = POLLIN;
+            const auto t0 = std::chrono::steady_clock::now();
+            const int pr = poll( &pfd, 1, 5000 );
+            const int perr = errno;
+            const auto waited = std::chrono::steady_clock::now() - t0;
+            sender.join();
+            const bool ok = pr == -1 && perr == EINTR && stop.requested() && waited < std::chrono::seconds( 2 );
+            _exit( ok ? 0 : 5 );
         } );
         CHECK( t, WIFEXITED( status ) && WEXITSTATUS( status ) == 0 );
     }
@@ -126,7 +156,7 @@ void test_signals( TestRun& t )
 
         // Armed waiter in this process: SIGINT reaches the flag.
         StopFlag stop;
-        SignalWaiter waiter( stop );
+        SignalWaiter waiter( env, stop );
         const SignalWaiter::Armed armed( waiter );
         CHECK( t, !stop.requested() );
         kill( getpid(), SIGINT );
