@@ -35,6 +35,14 @@ BUILD_TYPE="${BUILD_TYPE:-Release}"
 cmake -S "$PROJ_ROOT" -B "$BUILD_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 cmake --build "$BUILD_DIR" -j"$(nproc)"
 
+if [ "${SKIP_TESTS:-0}" != "1" ]; then
+    echo "==> unit tests gate (SKIP_TESTS=1 to skip):"
+    bash "$PROJ_ROOT/scripts/test.sh" || {
+        echo "unit tests FAILED -- build rejected"
+        exit 1
+    }
+fi
+
 if [ "${SKIP_TIDY:-0}" != "1" ]; then
     echo "==> clang-tidy gate (SKIP_TIDY=1 to skip):"
     bash "$PROJ_ROOT/scripts/tidy_run.sh" 600 || {
