@@ -1,5 +1,5 @@
 # Host-side unit tests for the pure-logic modules of light_ai.
-# Standalone project: it needs only a C++17 compiler -- no MPP/RGA/RKNN/ffmpeg/EGL --
+# Standalone project: it needs only a C++17 compiler and pthreads -- no MPP/RGA/RKNN/ffmpeg/EGL --
 # so it builds on the board and on any PC:
 #   cmake -S tests -B build/tests && cmake --build build/tests && build/tests/light_ai_tests
 # (or: bash scripts/test.sh). A module belongs here once it compiles without SDK headers.
@@ -24,6 +24,7 @@ add_executable(light_ai_tests
     test_tracker.cpp
     test_box_mapper.cpp
     test_config.cpp
+    test_signals.cpp
     # modules under test
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp
@@ -32,6 +33,8 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/config/cli.cpp
     ${LIGHT_AI_ROOT}/src/config/option_registry.cpp
     ${LIGHT_AI_ROOT}/src/config/config_file.cpp
+    ${LIGHT_AI_ROOT}/src/process_env.cpp
+    ${LIGHT_AI_ROOT}/src/signal_waiter.cpp
     ${LIGHT_AI_ROOT}/externals/inih/ini.c
 )
 # Same inih switch as the main target: the config-file handler relies on it.
@@ -44,6 +47,9 @@ target_include_directories(light_ai_tests PRIVATE
 )
 
 target_compile_options(light_ai_tests PRIVATE -Wall -Wextra)
+
+find_package(Threads REQUIRED)
+target_link_libraries(light_ai_tests PRIVATE Threads::Threads)
 
 enable_testing()
 add_test(NAME light_ai_tests COMMAND light_ai_tests)

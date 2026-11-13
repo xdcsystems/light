@@ -74,11 +74,16 @@ post-processing.
   clamp silently allowed it).
   
 ## Layers
+- ProcessEnv / SignalWaiter : process-wide signal setup and the
+               SIGINT/SIGTERM -> StopFlag bridge (see Run, Graceful
+               shutdown). No globals: main() owns both, the Pipeline
+               holds a const StopFlag&.
 - core/      : domain types shared across layers, free of SDK headers
                (include/core/, src/core/): LbGeom + band_geom
                (geometry.hpp), Detection / DetList (detection.hpp),
                TrackLife / TrajPoint / TrackState / TrajList (track.hpp),
-               GpuBox / GpuBoxList (gpu_box.hpp). A consumer that needs
+               GpuBox / GpuBoxList (gpu_box.hpp), StopFlag
+               (stop_flag.hpp). A consumer that needs
                only the type includes the core header, not the layer
                that produces it (rga_resizer.h, yolo_postprocess.hpp,
                tracker.hpp, gpu_box_drawer.hpp still re-export theirs).
@@ -675,7 +680,8 @@ light_ai_tests, built into build/tests):
   no MPP/RGA/RKNN/ffmpeg/EGL -- runs on the board and on any PC.
 - Covered: PodList / PodRing, box_math (IoU, greedy matching),
   band_geom, jpeg_probe, BoxSmoother, Tracker, fill_gpu_boxes,
-  CliOptions / OptionRegistry / ConfigFileLoader.
+  CliOptions / OptionRegistry / ConfigFileLoader, ProcessEnv /
+  SignalWaiter (signal delivery, SIGPIPE, armed and unarmed modes).
 - Not covered: everything that touches hardware or an SDK (capture,
   decode, RGA, RKNN, yolo_postprocess, encoder, GPU drawer). Those
   are verified by live runs only.
@@ -798,6 +804,14 @@ with "stop: signal received, draining and flushing...", the TOTAL
 timing line, "Processed N frames ..." and a clean teardown (encoder
 flush, camera STREAMOFF). The same applies to kill <pid> (SIGTERM) —
 use it in automated tests instead of SIGKILL.
+
+Since 2026-11-14 the signals are taken without a handler or a global:
+ProcessEnv (first in main) blocks SIGINT/SIGTERM before any thread
+starts and ignores SIGPIPE; SignalWaiter waits for them on its own
+thread (sigtimedwait) and sets a StopFlag that the Pipeline reads.
+The graceful path is armed only while run() is in progress: during
+model loading (Pipeline ctor) and teardown (dtor) Ctrl-C keeps its
+default action and ends the process at once, as before.
 
 ## Viewer (mpv, legacy Windows laptop; recorded 2026-10-31, revised 2026-11-01)
 
