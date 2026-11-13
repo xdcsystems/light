@@ -34,7 +34,7 @@
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
 
-#include "rga_resizer.h"       // LbGeom: band geometry arrives as one object
+#include "core/geometry.hpp"   // LbGeom: band geometry arrives as one object
 #include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<kBufCount>: RAII pool sub-object
 #include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
 

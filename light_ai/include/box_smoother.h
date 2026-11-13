@@ -5,7 +5,7 @@
 #include <string>
 
 #include "box_math.hpp"
-#include "yolo_postprocess.hpp"
+#include "core/detection.hpp"  // Detection, DetList
 
 // EMA smoothing of detection boxes.
 // Filtering lives in Pipeline; yolo_postprocess stays a pure function.

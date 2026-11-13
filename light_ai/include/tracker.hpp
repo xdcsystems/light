@@ -3,34 +3,10 @@
 #include <array>
 #include <cstdint>
 
+#include "core/detection.hpp"  // DetList, Detection
+#include "core/track.hpp"      // TrackLife, TrajPoint, TrackState, TrajList
 #include "pod_list.hpp"
 #include "pod_ring.hpp"
-#include "yolo_postprocess.hpp"
-
-// ---- Public vocabulary of the tracker -------------------------------
-// Data contract shared with consumers, at file scope (as TrackState already was).
-// The class below is behavior only; internal structs
-// name TrajPoint/TrackLife freely -- file scope precedes the class.
-
-// Track lifecycle states (TrackState.state; consumers filter by it).
-enum TrackLife
-{
-    TRACK_FREE = 0,  // slot unused (internal)
-    TRACK_TENT = 1,  // tentative: seen < kConfirmHits times
-    TRACK_CONF = 2,  // confirmed
-    TRACK_DEAD = 3   // dead: not predicted / associated / aged, but its trail
-                     // keeps rendering until the points age out (kTrailMaxAgeMs),
-                     // then the slot returns to FREE. Without the ghost state a
-                     // track that leaves the frame kills its trail instantly --
-                     // all its points vanish in one frame instead of fading out.
-};
-
-// One trajectory point (POD, safe to expose).
-struct TrajPoint
-{
-    int64_t ts_us = 0;
-    float x = 0.0f, y = 0.0f;
-};
 
 // Person trajectory tracker: global greedy IoU association over a per-track
 // constant-velocity Kalman filter (one 2-state filter per axis),
@@ -49,20 +25,6 @@ struct TrajPoint
 //
 // out is cleared at entry (preallocated buffer contract) and carries
 // ALL alive tracks; tentative tracks are marked TRACK_TENT, the consumer filters by state.
-
-struct TrackState
-{
-    int id;           // stable track id, monotonically growing
-    TrackLife state;  // TRACK_TENT / TRACK_CONF
-    float cx, cy;     // filtered center (predicted position when unmatched)
-    float vx, vy;     // filtered velocity, px/s
-    float bw, bh;     // last matched box size (EMA)
-    int n_pts;        // trajectory points collected so far
-                      // state may also be TRACK_DEAD: no box, only
-                      // the trail keeps drawing (fading, path history)
-};
-
-using TrajList = PodList<TrackState, 8>;
 
 class Tracker
 {

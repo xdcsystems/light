@@ -6,10 +6,12 @@
 
 #pragma once
 
-#include "gpu_box_drawer.hpp"   // GpuBox, GpuBoxList
-#include "rga_resizer.h"        // LbGeom
-#include "tracker.hpp"          // TrajList, TrackState, Tracker
-#include "yolo_postprocess.hpp" // DetList, Detection
+#include <cstdint>
+
+#include "core/detection.hpp"  // DetList, Detection
+#include "core/geometry.hpp"   // LbGeom
+#include "core/gpu_box.hpp"    // GpuBox, GpuBoxList
+#include "tracker.hpp"         // TrajList, TrackState, Tracker
 
 // Detection boxes and trajectory trails -> boxes (tensor coords).
 // Trail points are sampled ring points as 3x3 px GpuBoxes,

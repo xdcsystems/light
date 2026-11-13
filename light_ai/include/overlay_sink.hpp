@@ -9,11 +9,12 @@
 #include <optional>
 #include <vector>
 
+#include "core/detection.hpp"  // DetList
+#include "core/track.hpp"      // TrajList
 #include "gpu_box_drawer.hpp"
 #include "net_encoder.h"
 #include "net_preview.hpp"
 #include "tracker.hpp"
-#include "yolo_postprocess.hpp"
 
 struct Config;
 struct LbGeom;

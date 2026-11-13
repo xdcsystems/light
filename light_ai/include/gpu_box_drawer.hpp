@@ -7,19 +7,11 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 
-#include "pod_list.hpp"
+#include "core/gpu_box.hpp"  // GpuBox, GpuBoxList
 
 // GPU-assisted box drawing straight into the NPU input tensor
 // (Mali G610 via EGL/GBM, zero CPU pixels per frame).
-// Colors are in tensor RGB888 semantics (byte0 = R);
-// the implementation swaps R/B internally -- the dma-buf reads as BGR to the GPU.
-struct GpuBox
-{
-    float x0, y0, x1, y1;  // tensor pixels, top-left origin
-    uint8_t r, g, b, a;
-};
-
-using GpuBoxList = PodList<GpuBox, 128>;
+// GpuBox / GpuBoxList live in core/gpu_box.hpp.
 
 class GpuBoxDrawer
 {

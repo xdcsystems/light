@@ -6,8 +6,8 @@
 
 #pragma once
 
-#include "tracker.hpp"           // TrajList, TrackState (checked by the patch script)
-#include "yolo_postprocess.hpp"  // DetList, Detection (checked by the patch script)
+#include "core/detection.hpp"  // DetList, Detection
+#include "core/track.hpp"      // TrajList, TrackState
 
 class ConsoleReporter
 {
