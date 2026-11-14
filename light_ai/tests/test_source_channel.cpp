@@ -99,7 +99,8 @@ void test_source_channel( TestRun& t )
         r.host.present = { "/dev/video22" };
         r.host.usb = { 22 };
         CHECK( t, r.attach( false ) == Attach::Live && r.ch.node() == "/dev/video22" );
-        CHECK( t, r.err.str().find( "camera: configured node /dev/video20 not present, falling back to USB discovery\n" ) != std::string::npos );
+        const std::string fallback = "camera: configured node /dev/video20 not present, falling back to USB discovery\n";
+        CHECK( t, r.err.str().find( fallback ) != std::string::npos );
         CHECK( t, r.out.str().find( "camera: discovery adopted /dev/video22\n" ) != std::string::npos );
     }
     // Aux buffer: requested when the source is over 8x the model input; failure keeps the state.

@@ -31,6 +31,7 @@ add_executable(light_ai_tests
     test_usb_node_locator.cpp
     test_source_channel.cpp
     test_source_threads.cpp
+    test_source_set.cpp
     test_source_prober.cpp
     # modules under test
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp

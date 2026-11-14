@@ -141,6 +141,15 @@ post-processing.
                every non-Live source once; "probe: sN absent, attempt K"
                prints on the 1st and every 15th round (~30 s); stop()
                wakes the wait between rounds at once.
+               SourceSet (source/source_set.hpp, stage 3c): owns the
+               channels and picks the next frame -- a round-robin round
+               over the Live channels from the cursor (the source of the
+               last frame); a Live source silent for 2 s is treated as a
+               recoverable stall (EIO). One source with an empty pool
+               (--pool 1) uses the blocking dequeue instead (the camera's
+               own 2 s watchdog). Pipeline::next_frame has the one park
+               block (no source Live: NO SIGNAL + 40 ms quanta) and
+               step() takes one frame from dequeue to publish.
                A permanent unplug does not end the run: the remaining
                sources keep streaming. A re-attach with another geometry
                than the decoder's is refused with a warn (the decoder is
@@ -742,9 +751,12 @@ light_ai_tests, built into build/tests):
   shutdown with frames in flight), Timings (avg/60 + whole-run TOTAL),
   UsbNodeLocator (preferred / busy / scan order / log throttle),
   SourceChannel with fakes (the attach state machine, failure at each
-  step, warm-up, empty packets, errno -> FrameStatus) and SourceProber
-  (only non-Live channels among the first n, busy-node list, log
-  throttle, start/stop, stop() within 100 ms).
+  step, warm-up, empty packets, errno -> FrameStatus), SourceSet
+  (round-robin from the cursor, non-Live skipped, errno -> FrameStatus,
+  the 2 s stall, reset_stall_clocks, blocking dequeue, absent mask,
+  busy nodes) and SourceProber (only non-Live configured channels,
+  busy nodes reach the locator, log throttle, start/stop, stop()
+  within 100 ms).
 - ThreadSanitizer: the SourceChannel hand-over (a prober thread
   attaching, the frame thread polling and detaching, 1000+ round
   trips) and the real SourceProber thread (1 ms cadence) against a

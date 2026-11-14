@@ -16,6 +16,7 @@
 #include "rga_resizer.h"
 #include "rknn_engine.hpp"
 #include "source/source_prober.hpp"
+#include "source/source_set.hpp"
 #include "source/source_types.hpp"
 #include "sources.hpp"
 #include "timings.hpp"
@@ -26,7 +27,17 @@ class Pipeline
 {
     enum { kMaxSources = 3 };
     using NpuPool = InferencePool<RknnEngine, YoloDecode>;
-    using SourceProber = BasicSourceProber<SourceChannel, kMaxSources, UsbNodeLocator>;
+    using SourceSet = BasicSourceSet<SourceChannel, kMaxSources>;
+    using SourceProber = BasicSourceProber<SourceSet, UsbNodeLocator>;
+
+    // Outcome of one frame-loop step (step()).
+    enum class Step : uint8_t
+    {
+        Dispatched,  // a frame went to the pool: counts against --frames
+        Skipped,     // nothing to count: empty packet, decode error, warm-up, a handled detach
+        Stop,        // stop requested: leave through the drain/summary path
+        Fatal        // unrecoverable source error: run() returns -1 (exit code 1)
+    };
 
     // Per-source analytics, frame thread only (publish_oldest): the
     // source itself -- device, decoder, geometry, state -- is SourceChannel.
@@ -52,14 +63,15 @@ public:
     int run();
 
 private:
-    void init_source();     // validates and configures the channels (no device is opened)
     void attach_sources();  // ctor, last: the first attach of every channel (STREAMON)
 
+    // One frame: next_frame -> decode -> dispatch -> publish (pool 1).
+    Step step( int& ok );
+    // The next encoded frame or a failure; parks (NO SIGNAL, 40 ms quanta)
+    // while no source is Live. Stopped once the stop flag is set.
+    FrameStatus next_frame( EncodedFrame& f, int& ok );
     void drain_done_slots( int& ok );
     int publish_oldest();                // collect -> analytics -> output; 1 if the frame was valid
-    // One round-robin round over the Live sources from cur_src_ + 1 (stall detector inside).
-    FrameStatus try_dequeue_round( int wait_ms, EncodedFrame& f );
-    FrameStatus dequeue_next_source( EncodedFrame& f, int& ok );
 
     // NO SIGNAL idle publish: gray plate tiles for absent sources at a
     // fixed pace; not counted in --frames or the timing stats.
@@ -74,10 +86,8 @@ private:
     Config cfg_;
     UsbHost usb_host_;
     UsbNodeLocator locator_;  // attaching thread only: the ctor, then the SourceProber of run()
-    std::array<SourceChannel, kMaxSources> srcs_;
+    SourceSet srcs_;  // the channels and the round-robin cursor
     std::array<SourceAnalytics, kMaxSources> an_ {};
-    int nsrc_ = 1;
-    int cur_src_ = 0;  // round-robin cursor: the source of the last dequeue attempt
 
     RgaResizer rga_;  // shared, stateless: writes any source into any slot tensor
     // NPU stage: the engines (one, or three with --pool 3), their slots,
@@ -109,6 +119,6 @@ private:
 
     const StopFlag& stop_;  // set by SignalWaiter (SIGINT/SIGTERM), read only here
     const Log& log_;        // diagnostics sink (main.cpp); safe from the worker and prober threads
-    std::chrono::steady_clock::time_point t0_ {};  // idle pts base (NO SIGNAL timeline)
+    std::chrono::steady_clock::time_point t0_ {};  // run() start: the pts base of live frames and NO SIGNAL
     int64_t last_idle_us_ = -1;  // last NO SIGNAL publish stamp (us since t0_)
 };
