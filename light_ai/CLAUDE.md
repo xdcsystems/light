@@ -100,7 +100,7 @@ keep "Migration plan" current when a stage changes state.
       merged (PR #16). 3b (SourceProber: own thread, RAII local of run()): merged (PR #17).
       3c (SourceSet, next_frame + step, run() in 30 lines): the PR that closes #15.
       Baselines (fix/audit-p0 @ 7ef8212): build/run_base_pool{1,3}.log, build/run_base_net.log.
-- [ ] 4 NetEncoder, one class at a time: ParamSetCache, PtsClock, BitmapFont + IdlePlate,
+- [x] 4 NetEncoder, one class at a time: ParamSetCache, PtsClock, BitmapFont + IdlePlate,
       PacketQueue, FrameComposer, MuxSession; the remainder is H264Encoder (100-200 lines each,
       trivial destructors). Check: viewer joins mid-stream, 1 and 3 sources, NO SIGNAL plate,
       exit without MPP errors.
@@ -108,12 +108,14 @@ keep "Migration plan" current when a stage changes state.
       StreamLayout, ParamSetCache, PtsClock, EncodePacer): merged (PR #20). 4b (BitmapFont +
       IdlePlate, EncoderFramePool, FrameComposer; review points 1-3 of #20): merged (PR #21).
       4c (PacketQueue with fail( epoch ), SessionGate, MuxSession; PtsClock restarted by the
-      epoch on the pipeline thread; review of #21): PR #22, in review. Ownership table: #19.
+      epoch on the pipeline thread; review of #21): merged (PR #22). Ownership table: #19.
+      4d (H264Encoder, NetworkInit, ~NetEncoder() = default: the shutdown order is the member
+      declaration order, written in net_encoder.h): the PR that closes #19.
       Baselines (fix/audit-p0 @ 2e8d17c, --net --net-h264, viewer connected):
       build/run_base_h264_pool{1,3}.log, build/run_base_h264_net.log, build/base_png*.png.
-      Open (after stage 4, separate issues): force an IDR at a UDP session (re)start too;
-      multi-view: the first frame after the FIRST viewer connects shows only the source that
-      published first (the canvas is not fed without a viewer; filled within a few frames).
+      Open, filed: #23 (force an IDR at a UDP session (re)start too), #24 (multi-view: the
+      canvas is not fed without a viewer -- the first frames of a session show gray cells for the
+      first viewer and stale cells of the previous session for every later one).
 - [ ] 5 NetMjpegSource: BufferedSocket, MultipartReader, HTTP header parsing as a pure function
       over a buffer. Check: tests on recorded streams (cut-off, broken JPEG, no Content-Length);
       live run.

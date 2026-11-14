@@ -14,9 +14,10 @@
 // lock-free readers. open() stores epoch_ before active_, so a reader that
 // sees a session active sees that session's epoch (or a later one).
 //
-// The encoder keeps no session state the serve thread writes: it detects a
-// new session by its epoch inside run() and restarts its own state (pts
-// clock, pacer budget, forced IDR) there.
+// The encoder keeps no session state the serve thread writes. It detects a
+// new session by its epoch: inside run() it restarts the pts clock and arms
+// the forced IDR (H264Encoder::encode); the pacer budget is reset earlier,
+// from the epoch snapshot publish() takes after active() (EncodePacer::admit).
 //
 // SDK-free; host + TSan tested (tests/test_session_gate.cpp).
 

@@ -13,8 +13,9 @@
 // around the new picture.
 //
 // Owns the composite canvas and the idle canvas (RAII dma-bufs: the ctor
-// allocates or throws std::runtime_error). The geometry is StreamLayout's
-// (place_tile / cell_rect, host-tested). Thread: the pipeline thread only.
+// logs the stream layout, then allocates or throws std::runtime_error).
+// The geometry is StreamLayout's (place_tile / cell_rect, host-tested).
+// Thread: the pipeline thread only.
 
 #pragma once
 
