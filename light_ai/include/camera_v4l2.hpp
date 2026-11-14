@@ -2,11 +2,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <vector>
+
+class Log;
 
 // The node is NOT part of the instance state: open/reconnect take it as
 // an argument, the class owns only the fd/buffer machinery. Identity
-// ("which node am I on") lives with the owner — Pipeline::SourceSlot::node.
+// ("which node am I on") and node discovery live with the owner --
+// SourceChannel::node() and UsbNodeLocator (source/).
 class CameraV4L2
 {
     struct Buffer
@@ -24,7 +26,7 @@ class CameraV4L2
     };
 
 public:
-    CameraV4L2() = default;
+    explicit CameraV4L2( const Log& log ) : log_( log ) {}
     ~CameraV4L2();
     CameraV4L2( const CameraV4L2& ) = delete;
     CameraV4L2& operator=( const CameraV4L2& ) = delete;
@@ -39,22 +41,10 @@ public:
     // (STREAMOFF errors are ignored on purpose).
     void teardown();
 
-    // Disconnect recovery: tear the device down and re-open the given node
-    // with the full setup path + STREAMON.
-    // Returns 0 on success, non-zero on failure (the cause is logged here).
+    // Full teardown + setup_device() + STREAMON: the only way the camera starts
+    // streaming (startup, hot attach, re-attach -- SourceChannel::attach).
+    // Returns 0 on success, non-zero with *why (the cause is logged here).
     int reconnect( const std::string& dev, std::string* why );
-
-    // One recovery-ladder step, invoked by Pipeline::handle_source_failure
-    // through the source variant:
-    // node discovery (the node may have re-enumerated) + the full reconnect path.
-    // A failed discovery is a failed attempt.
-    // new_id: the adopted node path, unchanged when the discovery keeps id.
-    // busy_nodes: /dev nodes owned by the OTHER Pipeline slots (live or
-    // absent alike) -- discovery never trials or adopts them (M5 reservation).
-    int recover( const std::string& id, std::string& new_id, const std::vector<std::string>& busy_nodes,
-                 std::string* why );
-
-    void start() const;
 
     // Returns the buffer index; size (if not null) receives the frame length.
     // On failure returns -1 and stores the errno value in *err:
@@ -71,29 +61,13 @@ public:
     int height() const { return height_; }
 
 private:
-    // Non-throwing ioctl wrapper for the (re)connect path:
-    // EINTR retry only, errno is the caller's error report.
-    // xioctl keeps the throwing contract for start().
+    // Non-throwing ioctl wrapper: EINTR retry only, errno is the caller's error report.
     int xioctl_r( unsigned long req, void* arg ) const;
-    void xioctl( unsigned long req, void* arg ) const;
 
 private:
+    const Log& log_;
     int fd_ = -1;
     int err_streak_ = 0;
     int width_ = 0, height_ = 0;
     Buffer bufs_[kBufCount];
 };
-
-// Finds a usable USB capture node.
-// Preferred: the configured path, when it exists and its full setup passes on cam;
-// otherwise numeric /dev/video* candidates are filtered by the USB capture check
-// (rkcif/rkisp platform nodes are rejected before any S_FMT is tried),
-// and the first one whose setup passes wins.
-// The trial always leaves the camera closed
-// -- the caller re-opens the winning node via reconnect().
-// Returns 0 and fills `out`; non-zero when nothing usable is found.
-
-// busy_nodes: nodes reserved by other source slots -- skipped in the
-// preferred attempt and in the scan, before any trial setup.
-int find_usb_capture_node( CameraV4L2& cam, const std::string& preferred, std::string& out,
-                           const std::vector<std::string>& busy_nodes, long long* last_scan_log_ms = nullptr );

@@ -26,7 +26,7 @@ keep "Migration plan" current when a stage changes state.
 - Never push to fix/audit-p0 directly, never force-push, never rewrite pushed history.
 - Before a PR the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
-  (CMake build + unit tests + clang-tidy gate; SKIP_TESTS=1 / SKIP_TIDY=1 to narrow it.)
+  (CMake build + unit tests + TSan suites + clang-tidy gate; SKIP_TESTS=1 / SKIP_TSAN=1 / SKIP_TIDY=1 to narrow it.)
   On a tidy failure the per-file logs are in /tmp/tidy/<file>.log.
 - Unit tests alone: bash scripts/test.sh (host-side, no SDK; see README, Tests).
 - Live run: sudo -n timeout -s INT 60 ./build/light_ai --device /dev/video20 --pool 3 --frames 600
@@ -89,6 +89,9 @@ keep "Migration plan" current when a stage changes state.
       SourceSet, SourceProber, UsbNodeLocator; merge init_one_source with the first_attach
       branch of probe_source. Pipeline loses ~9 methods; run() fits in 30 lines.
       Check: unplug/replug a USB camera and the net source; start with no sources.
+      Issue #15, split 3a/3b/3c. 3a (SourceChannel, UsbNodeLocator, one attach path, TSan suite):
+      PR open, awaiting review. Next: 3b SourceProber, 3c SourceSet + FrameStatus, run() in 30 lines.
+      Baselines (fix/audit-p0 @ 7ef8212): build/run_base_pool{1,3}.log, build/run_base_net.log.
 - [ ] 4 NetEncoder, one class at a time: ParamSetCache, PtsClock, BitmapFont + IdlePlate,
       PacketQueue, FrameComposer, MuxSession; the remainder is H264Encoder (100-200 lines each,
       trivial destructors). Check: viewer joins mid-stream, 1 and 3 sources, NO SIGNAL plate,
