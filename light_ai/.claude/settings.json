@@ -20,7 +20,9 @@
       "Bash(git checkout *)",
       "Bash(git merge *)",
       "Bash(git push -u origin refactor/*)",
-      "Bash(gh pr *)"
+      "Bash(gh pr *)",
+      "Bash(gh issue close *)",
+      "Bash(gh issue comment *)"
     ],
     "deny": [
       "Edit(~/Projects/light/light_control/**)",

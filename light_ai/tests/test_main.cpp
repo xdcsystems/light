@@ -35,6 +35,10 @@ int main()
     run_suite( t, "source_set", &test_source_set );
     run_suite( t, "source_prober", &test_source_prober );
     run_suite( t, "source_prober_threads", &test_source_prober_threads );
+    run_suite( t, "encoder_config", &test_encoder_config );
+    run_suite( t, "param_set_cache", &test_param_set_cache );
+    run_suite( t, "pts_clock", &test_pts_clock );
+    run_suite( t, "encode_pacer", &test_encode_pacer );
     std::cout << "light_ai_tests: " << t.checks() << " checks, " << t.failures() << " failed\n";
     return t.failures() == 0 ? 0 : 1;
 }

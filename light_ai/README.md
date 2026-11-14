@@ -36,7 +36,10 @@ post-processing.
   unscoped enum (camera_v4l2.hpp kBufCount); references:
   camera_v4l2.cpp / gpu_box_drawer.cpp / net_preview.cpp
   (anon-namespace helpers), box_smoother.h (plain member).
-  tools/ is exempt (disposable probes).
+  tools/ is exempt (disposable probes). Header-only libraries in
+  externals/ (stb_easy_font, ...) are exempt too: their file statics
+  are their own business, but they are included only from a .cpp
+  (src/core/bitmap_font.cpp), never from a project header.
 - No virtual functions, no inheritance hierarchies: zero vtables, zero
   dynamic polymorphism. Layer boundaries are the composition of concrete
   members (pipeline.hpp), not an interface contract. Static polymorphism

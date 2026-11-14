@@ -72,6 +72,26 @@ namespace
         }
     }
 
+    // StreamConfig -> EncoderConfig, field by field by name (core/ may not
+    // include config/config.hpp). nsrc beyond the 2x2 grid is clamped by
+    // make_stream_layout(); the warning is logged here.
+    EncoderConfig encoder_config( const StreamConfig& stream, int model_w, int model_h, const LbGeom& band, int nsrc,
+                                  const Log& log )
+    {
+        if ( nsrc > StreamLayout::kMaxTiles )
+            log.warn() << "enc: clamping source count " << nsrc << " -> " << static_cast<int>( StreamLayout::kMaxTiles )
+                       << " (2x2 grid max)\n";
+        EncoderConfig c;
+        c.layout = make_stream_layout( model_w, model_h, band, nsrc );
+        c.model_w = model_w;
+        c.model_h = model_h;
+        c.fps = stream.fps;
+        c.port = stream.port;
+        c.host = stream.host;
+        c.bitrate_kbps = stream.bitrate_kbps > 0 ? stream.bitrate_kbps : 12000;
+        return c;
+    }
+
 }  // namespace
 
 void OverlaySink::init( const StreamConfig& stream,
@@ -94,7 +114,7 @@ void OverlaySink::init( const StreamConfig& stream,
 
     if ( stream.h264 )
     {
-        enc_.emplace( model_w_, model_h_, primary_band, stream.fps, stream.port, stream.host, stream.bitrate_kbps, nsrc );
+        enc_.emplace( encoder_config( stream, model_w_, model_h_, primary_band, nsrc, log_ ), log_ );
         if ( stream.host.empty() )
             log_.info() << "net: h264 PULL server on port " << stream.port << ", " << stream.bitrate_kbps
                       << " kbps (viewer: ffplay tcp://<board-ip>:" << stream.port << ")\n";

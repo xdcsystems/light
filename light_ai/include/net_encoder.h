@@ -15,7 +15,6 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <vector>
 
 // DRM frame descriptor for the encoder zero-copy input: 
 // the ping-pong dma-bufs are wrapped as AV_PIX_FMT_DRM_PRIME frames and 
@@ -34,10 +33,15 @@
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
 
-#include "core/geometry.hpp"   // LbGeom: band geometry arrives as one object
+#include "core/encode_pacer.hpp"     // EncodePacer: which publishes are encoded
+#include "core/encoder_config.hpp"  // EncoderConfig, StreamLayout
+#include "core/geometry.hpp"        // LbGeom: band geometry arrives as one object
+#include "core/param_set_cache.hpp"  // ParamSetCache: late-join SPS/PPS repeat
+#include "core/pts_clock.hpp"        // PtsClock: CFR / VFR pts
 #include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<kBufCount>: RAII pool sub-object
 #include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
 
+class Log;
 struct AVFormatContext;
 struct AVCodecContext;
 struct AVFrame;
@@ -83,14 +87,10 @@ class NetEncoder
     };
 
 public:
-    NetEncoder( int model_w,
-                int model_h,
-                const LbGeom& band,
-                int fps,
-                int port,
-                const std::string& host,
-                int bitrate_kbps,
-                int nsrc = 1 );
+    // log: the process diagnostics, owned by main(); outlives the encoder
+    // (the serve thread logs through it too: Log is thread-safe).
+    // cfg: the stream geometry, rate and endpoint (core/encoder_config.hpp).
+    NetEncoder( const EncoderConfig& cfg, const Log& log );
 
     ~NetEncoder();
     NetEncoder( const NetEncoder& ) = delete;
@@ -107,7 +107,7 @@ public:
     // (gray + the plate) into the ring slot / composite canvas cells of
     // every absent source, then encodes one frame. Called by
     // Pipeline::idle_tick while at least one configured tile has no live
-    // source; idle encodes share the last_enc_ts_us_ budget with live
+    // source; idle encodes share the pacer budget with live
     // ones and are NOT counted in --frames or the timing stats.
     void publish_idle( int64_t ts_us, const bool* absent, int nabs );
 
@@ -121,7 +121,7 @@ private:
     bool send_frame( AVStream* st );
     // The mux side split out of serve() for readability:
     // drain_queue() owns the wait/pop loop, mux_write() writes one
-    // packet with the IDR-prepend logic; hdr_/hdr_logged_ stay members.
+    // packet with the IDR-prepend logic (params_).
     void drain_queue( AVFormatContext* fc );
     // One finished encoder packet -> the preallocated ring queue for
     // serve() to mux; shared by the EAGAIN retry and the send drain.
@@ -131,12 +131,13 @@ private:
     // Transport setup (accept + socket options / avio_open) and the
     // stream setup (new_stream + header + mpegts options).
     bool open_transport( const std::string& url, AVFormatContext* fc, Transport& t );
-    bool setup_stream( AVFormatContext* fc, AVStream** st, bool tcp_pull );
+    // frame_step: muxer ticks per codec pts, handed to pts_ under mx_ by run_session().
+    bool setup_stream( AVFormatContext* fc, AVStream** st, int64_t* frame_step, bool tcp_pull );
 
     bool init_frames();
     void free_frames();
     void clear_pkt_queue();
-    int64_t packet_pts();  // pts of the next frame; may set ts_base_
+    int queue_depth();  // packets queued for serve() (pkt_mx_)
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
     bool prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb );
 
@@ -145,8 +146,8 @@ private:
     bool prep_idle_frame( const bool* absent, int nabs, MppBuffer mb );
 
 private:
-    const int w_, h_, tile_w_, tile_h_, nsrc_, fps_, port_, bitrate_kbps_;
-    const std::string host_;
+    const Log& log_;
+    const EncoderConfig cfg_;
     std::thread thread_;
     std::atomic<bool> quit_ { false };
     std::atomic<bool> error_ { false };
@@ -184,31 +185,22 @@ private:
     // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
     // runs before publish() on the same pipeline thread -- no fence fd
     // crosses this boundary (retired, see docs/state.md).
-    int64_t frame_step_ = 1;   // pts increment in the muxer's time base
-    uint64_t pts_ = 0;
-    // Follow-source (--net-fps 0): pts stamped from the real dequeue
-    // times. ts_us_ arrives with publish(); ts_base_ is the session
-    // start (pts restart from zero when a new viewer connects).
-    // frames_sent_ gates the destructor drain in both modes
-    // (pts_ alone would be 0 in VFR and skip the flush).
-    bool vfr_ = false;
-    int64_t ts_us_ = -1;
-    int64_t ts_base_ = -1;
-    int64_t last_pts_ = -1;
-    // Atomic: written under mx_ by the serve thread on session (re)start,
-    // read/written by publish() on the pipeline thread WITHOUT mx_ (only the
-    // active_ gate in between) -- a plain int64_t was a data race (UB).
-    std::atomic<int64_t> last_enc_ts_us_ { -1 };
+    EncodePacer pacer_;  // which publishes are encoded (pipeline thread only)
+    // CFR counter / VFR dequeue-time pts and the muxer step (core/pts_clock.hpp).
+    // mx_: next() / advance() on the pipeline thread, restart() by the serve
+    // thread at session start (pts restart from zero when a new viewer connects).
+    PtsClock pts_;
+    int64_t ts_us_ = -1;  // dequeue time of the frame being encoded (publish -> send_frame)
+    // Bumped by the serve thread (under mx_) at every session start, before
+    // active_; publish() snapshots it after its active_ check and the pacer
+    // resets its budget on a new value. Replaces the cross-thread reset of
+    // the former atomic last_enc_ts_us_: the pacer is pipeline-thread only.
+    std::atomic<uint32_t> session_epoch_ { 0 };
+    // Frames encoded; gates the destructor drain in both modes (the CFR
+    // counter alone would be 0 in VFR and skip the flush).
     uint64_t frames_sent_ = 0;
-    int model_w_ = 0, model_h_ = 0;  // NPU tensor geometry (RGB888)
-    int band_left_ = 0, band_top_ = 0;  // visible letterbox band in the tensor
-    int band_w_ = 0, band_h_ = 0;       // band size (portrait: vertical strip)
-    int vstride_ = 0;  // NV12 ver stride (16-aligned h), set in the ctor
 
-    // h264 parameter-set prefix captured from the first key packet,
-    // prepended to every following IDR (late-joiner support).
-    // Plain members: function-local statics are forbidden outside tools/.
-    std::vector< uint8_t > hdr_;
-    std::vector< uint8_t > idr_buf_;
-    bool hdr_logged_ = false;
+    // Late-joiner support: the SPS/PPS prefix of the first IDR, repeated
+    // on every later IDR (serve thread only).
+    ParamSetCache params_;
 };
