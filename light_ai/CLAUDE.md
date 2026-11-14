@@ -106,8 +106,9 @@ keep "Migration plan" current when a stage changes state.
       exit without MPP errors.
       Issue #19 (plan + review in its comments), split 4a/4b/4c/4d. 4a (Log, EncoderConfig +
       StreamLayout, ParamSetCache, PtsClock, EncodePacer): merged (PR #20). 4b (BitmapFont +
-      IdlePlate, EncoderFramePool, FrameComposer; review points 1-3 of #20): PR #21, in review.
-      4c carries review point 4 of #20 (PtsClock under the gate mutex or via the epoch).
+      IdlePlate, EncoderFramePool, FrameComposer; review points 1-3 of #20): merged (PR #21).
+      4c (PacketQueue with fail( epoch ), SessionGate, MuxSession; PtsClock restarted by the
+      epoch on the pipeline thread; review of #21): PR #22, in review. Ownership table: #19.
       Baselines (fix/audit-p0 @ 2e8d17c, --net --net-h264, viewer connected):
       build/run_base_h264_pool{1,3}.log, build/run_base_h264_net.log, build/base_png*.png.
       Open (after stage 4, separate issues): force an IDR at a UDP session (re)start too;

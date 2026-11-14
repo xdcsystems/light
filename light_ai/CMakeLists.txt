@@ -103,6 +103,9 @@ add_executable(light_ai
     src/core/idle_plate.cpp
     src/net/encoder_frame_pool.cpp
     src/net/frame_composer.cpp
+    src/net/av_packet_queue.cpp
+    src/net/av_packet.cpp
+    src/net/mux_session.cpp
     src/process_env.cpp
     src/signal_waiter.cpp
     src/cpu_affinity.cpp

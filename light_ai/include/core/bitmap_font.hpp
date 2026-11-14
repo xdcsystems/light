@@ -42,5 +42,8 @@ public:
     void stamp( const Plane8& plane, int x, int y, const char* s, int scale, uint8_t val );
 
 private:
-    alignas( 16 ) char vbuf_[kVertexBytes] {};  // stb vertex output (was 8 KiB of stack per call)
+    // stb vertex output. A member, not a local of stamp(): the 8 KiB live
+    // wherever the font lives (IdlePlate is a local of the one-time plate
+    // draw at init, so there it is stack, once).
+    alignas( 16 ) char vbuf_[kVertexBytes] {};
 };

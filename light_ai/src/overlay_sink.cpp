@@ -114,13 +114,14 @@ void OverlaySink::init( const StreamConfig& stream,
 
     if ( stream.h264 )
     {
-        enc_.emplace( encoder_config( stream, model_w_, model_h_, primary_band, nsrc, log_ ), log_ );
+        const EncoderConfig ec = encoder_config( stream, model_w_, model_h_, primary_band, nsrc, log_ );
+        enc_.emplace( ec, log_ );
+        // kbps(): the rate the encoder runs at (the <= 0 fallback applied).
         if ( stream.host.empty() )
-            log_.info() << "net: h264 PULL server on port " << stream.port << ", " << stream.bitrate_kbps
-                      << " kbps (viewer: ffplay tcp://<board-ip>:" << stream.port << ")\n";
+            log_.info() << "net: h264 PULL server on port " << stream.port << ", " << ec.kbps()
+                        << " kbps (viewer: ffplay tcp://<board-ip>:" << stream.port << ")\n";
         else
-            log_.info() << "net: h264 preview -> " << stream.host << ':' << stream.port
-                      << ", " << stream.bitrate_kbps << " kbps\n";
+            log_.info() << "net: h264 preview -> " << stream.host << ':' << stream.port << ", " << ec.kbps() << " kbps\n";
     }
     else
     {
