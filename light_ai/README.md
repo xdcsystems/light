@@ -343,7 +343,25 @@ post-processing.
                frame's RGA write hits the oldest in-flight slot; the
                ring holds one slot above the queue depth. The slot index
                advance is modulus-based.
-               In M5 multi-camera mode (nsrc > 1) a 4th NV12 buffer holds
+               Structure (stage 4, issue #19): NetEncoder is a facade of
+               members in declaration order -- NetworkInit,
+               EncoderFramePool (the ring + DRM_PRIME frames),
+               FrameComposer (RGA: band -> slot / canvas cell, the NO
+               SIGNAL canvas drawn by IdlePlate + BitmapFont),
+               H264Encoder (h264_rkmpp, per-session pts / forced IDR,
+               the EOF drain in its dtor), PacketQueue (encoder ->
+               serve thread, key gate, overflow flush, fail( epoch )),
+               SessionGate (the session hand-over), MuxSession (the
+               serve thread: transport, muxer, ParamSetCache). The
+               destructor is = default: the shutdown order (serve thread,
+               queue, codec, dma-bufs, network) is the reverse
+               declaration order, written in net_encoder.h. The two
+               threads share only PacketQueue, SessionGate and the quit
+               flag. Pure parts (StreamLayout, ParamSetCache, PtsClock,
+               EncodePacer, IdlePlate, PacketQueue, SessionGate) are in
+               core/ with host tests; the queue and the gate also run
+               under TSan.
+               In M5 multi-camera mode (nsrc > 1) a separate NV12 buffer holds
                a persistent composite multi-view canvas (1280x480 Side-by-Side
                2x1 for 2 sources, 1280x960 Grid 2x2 for 3 sources, 640x480 per
                tile): RGA3 updates the active source's tile and DMA-copies the
