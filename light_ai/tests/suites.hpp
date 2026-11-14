@@ -13,6 +13,8 @@ void test_byte_window( TestRun& t );
 void test_http_url( TestRun& t );
 void test_http_head( TestRun& t );
 void test_multipart_reader( TestRun& t );
+void test_buffered_socket( TestRun& t );
+void test_mjpeg_slot_pool( TestRun& t );
 void test_box_smoother( TestRun& t );
 void test_tracker( TestRun& t );
 void test_box_mapper( TestRun& t );

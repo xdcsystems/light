@@ -26,7 +26,9 @@ public:
     // One-time kind selection (SourceChannel::configure): constructs the
     // chosen alternative in place.
     void use_camera() { src_.emplace<CameraV4L2>( log_ ); }
-    void use_net() { src_.emplace<NetMjpegSource>(); }
+    // Throws on a failed frame-pool mmap (startup only; the variant is left
+    // valueless and only destroyed).
+    void use_net() { src_.emplace<NetMjpegSource>( log_ ); }
 
     // Starts streaming from id, tearing down whatever was open:
     //   camera -- reconnect(): teardown + full setup + STREAMON;

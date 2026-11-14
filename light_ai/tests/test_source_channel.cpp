@@ -125,7 +125,7 @@ void test_source_channel( TestRun& t )
         CHECK( t, r.frame() == -1 && r.frame() == -1 );
         r.dec.decode_fd = 7;
         CHECK( t, r.frame() == -1 && r.frame() == -1 && r.frame() == -1 );
-        CHECK( t, r.out.str().find( "camera: warm-up done, publishing resumed\n" ) != std::string::npos );
+        CHECK( t, r.out.str().find( "source s1: warm-up done, publishing resumed\n" ) != std::string::npos );
         CHECK( t, r.frame() == 7 );
         CHECK( t, r.dev.requeues == 6 );  // every dequeued buffer goes back
     }
@@ -147,7 +147,7 @@ void test_source_channel( TestRun& t )
         CHECK( t, r.attach( false ) == Attach::Live );
         r.dev.dq_size = 0;
         CHECK( t, r.frame() == -1 && r.dec.decodes == 0 && r.dev.requeues == 1 );
-        CHECK( t, r.err.str().find( "camera: zero-size frame skipped\n" ) != std::string::npos );
+        CHECK( t, r.err.str().find( "source s1: zero-size frame skipped\n" ) != std::string::npos );
     }
     // poll(): errno classes map to FrameStatus; the frame carries its source index.
     {

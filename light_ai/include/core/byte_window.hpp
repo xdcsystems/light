@@ -6,8 +6,8 @@
 // needs more data is desynced (NetMjpegSource's desync protocol).
 //
 // No I/O and no allocation: the socket side (poll + recv into tail()) is
-// NetMjpegSource::net_fill; host tests drive the parsers through the same
-// window (tests/test_multipart_reader.cpp).
+// BufferedSocket::fill (source/buffered_socket.hpp); host tests drive the
+// parsers through the same window (tests/test_multipart_reader.cpp).
 
 #pragma once
 
