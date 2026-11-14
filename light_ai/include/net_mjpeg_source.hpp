@@ -14,6 +14,38 @@ class Log;
 // packets exactly like the USB camera's MJPEG buffers -- no transcode anywhere.
 // The only cost vs V4L2 is one memcpy per frame (socket -> slot);
 // V4L2 hands the dma-buf zero-copy, HTTP cannot.
+//
+// The parts (stage 5, #28): the TCP client and its receive window
+// (source/buffered_socket.hpp), the response head and the multipart framing
+// as pure parsers over that window (core/http_head.hpp,
+// core/multipart_reader.hpp), the frame slots (source/mjpeg_slot_pool.hpp).
+// This class keeps the source contract of MediaSource: connect + prime,
+// the start() drain, the latest-frame skip, the frame check
+// (jpeg_frame_check), the corrupt-frame streak and the errno ladder.
+//
+// Thread rule (the Src of SourceChannel, source/source_channel.hpp: one
+// owner at a time, the channel state is the hand-over):
+//   call                                         thread                        when
+//   ctor                                         the Pipeline ctor             SourceChannel::configure()
+//   setup_device + start (MediaSource::open),    the attaching thread: the     channel state != Live
+//     width / height, teardown after a failed      Pipeline ctor, then
+//     decoder attach                               SourceProber
+//   dequeue, requeue, buffer                     the frame thread              channel Live
+//   dtor                                         the Pipeline dtor             the prober joined
+// No field is shared: SourceChannel::attach() stores Live last (release),
+// detach() stores Detached (release), both sides load it acquire. The class
+// has no lock and no atomic of its own. The ctor throws (a failed frame-pool
+// mmap): it runs only from configure() on the startup path -- a throw on the
+// prober thread would terminate the process. detach() does not close the
+// socket: it stays open (unread) until the next open() on the attaching
+// thread tears it down.
+//
+// Slot 0 reuse in dequeue(): SourceChannel::decode() decodes synchronously
+// (MppDecoder::decode copies the JPEG into its own MPP buffer) and requeues
+// right after, on the frame thread, so at most one slot is in flight and
+// "all buffers in flight" is unreachable; if a caller ever broke the
+// contract, no decode could be reading slot 0 at that point -- the only
+// reader is the frame thread itself, inside dequeue().
 
 class NetMjpegSource
 {
@@ -21,6 +53,23 @@ class NetMjpegSource
     {
         kPollMs = 2000,     // per-fill watchdog, same window as the camera
         kErrStreakMax = 4,  // corrupt/short-frame streak tolerance
+        kSkipMax = 4,       // read_latest_part: parts skipped per dequeue at most
+        kDrainMax = 64,     // start(): parts drained at most
+    };
+    // One part read (read_part, read_latest_part).
+    enum class Read : uint8_t
+    {
+        Part,   // one part in the slot
+        Lost,   // the watchdog, EOF or a socket error: the connection is gone
+        Desync  // the stream does not parse, or the window wedged full: drop it, resync
+    };
+    // The next part (poll_part_ready).
+    enum class Ready : uint8_t
+    {
+        Yes,    // complete in the window (or the window wedged full: the read desyncs)
+        No,     // not within the wait (an EINTR included)
+        Lost,   // EOF or a socket error
+        Desync  // the window wedged full while waiting
     };
 
 public:
@@ -48,8 +97,8 @@ public:
     // ENODEV = closed by teardown, EAGAIN = no frame ready within timeout_ms.
     // Corrupt/incomplete frames are dropped with EAGAIN (or EIO once the
     // streak reaches kErrStreakMax); the streak survives across calls and
-    // resets only on a clean frame or reconnect().
-
+    // resets only on a clean frame or a successful setup_device().
+    // timeout_ms < 0: the blocking single-source mode (the 2 s watchdog).
     int dequeue( uint32_t* size, int* err, int timeout_ms = -1 );
     void requeue( int index );
     void* buffer( int index ) const { return pool_.data( index ); }
@@ -65,12 +114,17 @@ private:
     bool part_buffered() const;
     // The desync protocol: the buffered window is dropped, the reader resyncs.
     void drop_window();
-    int poll_part_ready( int timeout_ms );
+    // Fills (waiting up to timeout_ms, then without waiting) until a part is complete.
+    Ready poll_part_ready( int timeout_ms );
+    // dequeue's wait: false = *err set (EAGAIN, or EIO once the streak is full).
     bool wait_part_ready( int timeout_ms, int* err );
-    int read_latest_part( int slot, uint32_t* size );
-    // One part into slot (core/multipart_reader.hpp): 0, -1 = EOF / error /
-    // watchdog, -2 = desync (a stream that does not parse, or a wedged-full window).
-    int read_part( int slot, uint32_t* size );
+    // One part into slot, then the freshest of the parts already buffered
+    // (via a scratch slot, at most kSkipMax); a Desync gets one resync retry.
+    Read read_latest_part( int slot, uint32_t* size );
+    // One part into slot (core/multipart_reader.hpp), refilling with the
+    // kPollMs watchdog. Any result but Part resyncs the reader (the next read
+    // starts at a delimiter line); only the callers drop the window on Desync.
+    Read read_part( int slot, uint32_t* size );
 
 private:
     const Log& log_;

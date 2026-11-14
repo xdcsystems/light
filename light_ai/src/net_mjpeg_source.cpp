@@ -10,16 +10,6 @@
 
 namespace
 {
-    // Parser-layer status codes. kDesync is the resync protocol: a
-    // wedged-full socket window (net_fill) or a stream that no longer
-    // parses (MultipartReader::Event::Desync) -- the caller drops the
-    // buffered window, counts the error streak and resyncs (read_latest_part
-    // retries once; the fetch path maps it to EAGAIN vs EIO). -1 stays
-    // numeric on purpose: in the connect/handshake code it is a generic
-    // failure, while the readers propagate net_fill's "0 = EOF, -1 = error"
-    // collapse -- naming it would fake a distinction the protocol does not make.
-    constexpr int kDesync = -2;
-
     // read_headers hands the head's boundary to the reader: one cap for both.
     static_assert( static_cast<int>( HttpHead::kBoundaryMax ) == static_cast<int>( MultipartReader::kBoundaryMax ),
                    "the boundary caps must match" );
@@ -54,7 +44,7 @@ int NetMjpegSource::setup_device( const std::string& url, std::string* why )
     // Prime the first JPEG frame into slot 0 to read its SOFn geometry
     // before MppDecoder / NetEncoder / RgaResizer are initialized.
     uint32_t n = 0;
-    if ( read_part( 0, &n ) != 0 )
+    if ( read_part( 0, &n ) != Read::Part )
     {
         if ( why )
             *why = "failed to read initial JPEG frame";
@@ -146,25 +136,25 @@ void NetMjpegSource::drop_window()
     parts_.resync();
 }
 
-int NetMjpegSource::poll_part_ready( int timeout_ms )
+NetMjpegSource::Ready NetMjpegSource::poll_part_ready( int timeout_ms )
 {
     if ( part_buffered() )
-        return 1;
+        return Ready::Yes;
     int wait_ms = timeout_ms;
     while ( true )
     {
         const BufferedSocket::Fill r = sock_.fill( wait_ms );
         if ( r == BufferedSocket::Fill::Interrupted )
-            return 0;  // EINTR: not ready yet and not a timeout -- caller retries
+            return Ready::No;  // EINTR: not ready yet and not a timeout -- caller retries
         if ( r == BufferedSocket::Fill::Closed )
-            return -1;
+            return Ready::Lost;
         if ( r == BufferedSocket::Fill::Full )
-            return kDesync;
+            return Ready::Desync;
         if ( part_buffered() )
-            return 1;
+            return Ready::Yes;
         if ( r == BufferedSocket::Fill::Timeout )
-            return 0;
-        wait_ms = 0;
+            return Ready::No;
+        wait_ms = 0;  // Data: take what else is already there, without waiting
     }
 }
 
@@ -172,16 +162,16 @@ bool NetMjpegSource::wait_part_ready( int timeout_ms, int* err )
 {
     if ( timeout_ms < 0 )
         return true;
-    const int pr = poll_part_ready( timeout_ms );
-    if ( pr > 0 )
+    const Ready pr = poll_part_ready( timeout_ms );
+    if ( pr == Ready::Yes )
         return true;
-    if ( pr == kDesync )
+    if ( pr == Ready::Desync )
     {
         ++err_streak_;
         drop_window();
     }
     if ( err )
-        *err = ( pr == 0 || ( pr == kDesync && err_streak_ < kErrStreakMax ) ) ? EAGAIN : EIO;
+        *err = ( pr == Ready::No || ( pr == Ready::Desync && err_streak_ < kErrStreakMax ) ) ? EAGAIN : EIO;
     return false;
 }
 
@@ -192,10 +182,10 @@ void NetMjpegSource::start()
     // keeping only the freshest valid frame in slot 0 (primed_len_).
     // Read into slot 1 first so a failed/corrupt drain never clobbers
     // the valid primed frame already sitting in slot 0.
-    for ( int guard = 0; guard < 64 && poll_part_ready( 0 ) > 0; ++guard )
+    for ( int guard = 0; guard < kDrainMax && poll_part_ready( 0 ) == Ready::Yes; ++guard )
     {
         uint32_t n = 0;
-        if ( read_part( 1, &n ) != 0 )
+        if ( read_part( 1, &n ) != Read::Part )
             break;
         if ( frame_ok( pool_.data( 1 ), n, width_, height_ ) )
         {
@@ -205,12 +195,8 @@ void NetMjpegSource::start()
     }
 }
 
-int NetMjpegSource::read_part( int slot, uint32_t* size )
+NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
 {
-    // The reader parses what the window holds; the window is refilled
-    // until one part is complete. Any abandoned read resyncs the reader (the
-    // next read starts at a delimiter line, as before); only a desync drops
-    // the window, in the callers.
     uint8_t* const dst = pool_.data( slot );
     while ( true )
     {
@@ -219,26 +205,26 @@ int NetMjpegSource::read_part( int slot, uint32_t* size )
         if ( st.ev == MultipartReader::Event::Part )
         {
             *size = st.size;
-            return 0;
+            return Read::Part;
         }
         if ( st.ev == MultipartReader::Event::Desync )
         {
             parts_.resync();
-            return kDesync;
+            return Read::Desync;
         }
         const BufferedSocket::Fill r = sock_.fill( kPollMs );
         if ( r == BufferedSocket::Fill::Interrupted || r == BufferedSocket::Fill::Data )
             continue;  // EINTR: transient, not a watchdog expiry
         parts_.resync();  // the watchdog, EOF / error, or a wedged-full window
-        return r == BufferedSocket::Fill::Full ? kDesync : -1;
+        return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
     }
 }
 
-int NetMjpegSource::read_latest_part( int slot, uint32_t* size )
+NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size )
 {
     uint32_t n = 0;
-    int rc = read_part( slot, &n );
-    if ( rc == kDesync )
+    Read rc = read_part( slot, &n );
+    if ( rc == Read::Desync )
     {
         // Desynced stream: drop the buffered window, count the streak,
         // one resync retry before handing over to the reconnect ladder.
@@ -250,18 +236,18 @@ int NetMjpegSource::read_latest_part( int slot, uint32_t* size )
             rc = read_part( slot, &n );
         }
     }
-    if ( rc != 0 )
+    if ( rc != Read::Part )
         return rc;
     const int scratch = pool_.free_slot( slot );
     // If multiple frames queued up in the TCP buffer during a Wi-Fi burst,
     // advance to the freshest complete frame via a scratch slot so a failed
     // or corrupt skip never clobbers the frame already in `slot`.
-    for ( int skip = 0; scratch >= 0 && skip < 4 && poll_part_ready( 0 ) > 0; ++skip )
+    for ( int skip = 0; scratch >= 0 && skip < kSkipMax && poll_part_ready( 0 ) == Ready::Yes; ++skip )
     {
         uint32_t next_n = 0;
-        if ( const int sr = read_part( scratch, &next_n ); sr != 0 )
+        if ( const Read sr = read_part( scratch, &next_n ); sr != Read::Part )
         {
-            if ( sr == kDesync )
+            if ( sr == Read::Desync )
                 drop_window();
             break;
         }
@@ -272,7 +258,7 @@ int NetMjpegSource::read_latest_part( int slot, uint32_t* size )
         }
     }
     *size = n;
-    return 0;
+    return Read::Part;
 }
 
 int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
@@ -311,10 +297,10 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
         slot = 0;
     }
     uint32_t n = 0;
-    if ( const int rc = read_latest_part( slot, &n ); rc != 0 )
+    if ( read_latest_part( slot, &n ) != Read::Part )
     {
         if ( err )
-            *err = EIO;  // EOF / watchdog / recv error: recoverable
+            *err = EIO;  // EOF / watchdog / recv error, a desync past its retry: recoverable
         return -1;
     }
     if ( !frame_ok( pool_.data( slot ), n, width_, height_ ) )

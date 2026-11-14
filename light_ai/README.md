@@ -173,19 +173,30 @@ post-processing.
                the capture ring never accumulates stale-frame lag.
 - NetMjpegSource : HTTP multipart/x-mixed-replace MJPEG pull source
                (--net-src http://host:port/path; repeatable alongside
-               --device in Config::sources for M5 multi-camera). Non-blocking TCP connect + SO_RCVTIMEO
-               (5 s), structural JPEG framing into a 4x1 MiB mmap pool
-               (skips header/EXIF segments by length up to SOS, extracts
-               frame dimensions from SOFn, verifies trailing EOI); primes
-               frame 0 in setup_device() so stream geometry is known at
-               startup without --w/--h, drains init-time TCP backlog in
-               start(), buffers into a 256 KiB socket window and verifies
-               that the full multipart payload (Content-Length or closing
-               boundary) is resident before reporting ready in
-               poll_part_ready(timeout_ms), skips burst-queued stale frames
-               in read_latest_part(), and drops incomplete/corrupt JPEGs
-               with EAGAIN before decode. Reconnects through the same
-               recovery loop as CameraV4L2.
+               --device in Config::sources for M5 multi-camera). Since
+               stage 5 (#28) made of single-purpose parts:
+               BufferedSocket (source/: non-blocking TCP connect with a
+               5 s window, then blocking I/O; one poll + recv per fill
+               into a 256 KiB ByteWindow, the 2 s watchdog per fill),
+               parse_http_url / parse_http_head (core/: status 200, the
+               boundary from Content-Type, the 8 KiB head cap),
+               MultipartReader (core/: the delimiter line -- RFC
+               "--boundary", or the declared value when it already starts
+               with "--" -- the part header, the body by Content-Length or
+               up to the next delimiter; CRLF or bare LF; a pure state
+               machine over the window, part_buffered() runs the same
+               grammar) and MjpegSlotPool (source/: one 4 x 1 MiB mmap,
+               RAII, a failed mmap throws at startup). The class itself
+               primes frame 0 in setup_device() so the geometry is known
+               at startup (SOFn, jpeg_frame_check: SOI..SOS + a trailing
+               EOI), drains the init-time TCP backlog in start(), skips
+               burst-queued stale frames in read_latest_part() (at most 4
+               per dequeue), drops incomplete/corrupt JPEGs with EAGAIN
+               (EIO after 4 in a row) and treats 256 KiB without a
+               delimiter as a desync (window dropped, one retry).
+               Reconnects through the same recovery ladder as CameraV4L2
+               (SourceProber -> setup_device); host-tested end to end
+               against a loopback server (tests/test_net_mjpeg_source.cpp).
 - MppDecoder : MJPEG -> YUV422SP decode into an external dma-buf pool
                (adaptive, 2026-11-06: a 4:2:0 source decodes to
                YUV420SP instead — the format is picked from the JPEG
@@ -781,7 +792,12 @@ light_ai_tests, built into build/tests):
   the 2 s stall, reset_stall_clocks, blocking dequeue, absent mask,
   busy nodes) and SourceProber (only non-Live configured channels,
   busy nodes reach the locator, log throttle, start/stop, stop()
-  within 100 ms).
+  within 100 ms). The net source (stage 5): ByteWindow, parse_http_url,
+  parse_http_head, MultipartReader (recorded and assembled streams fed
+  whole, byte by byte and in random chunks; fixtures in tests/data/),
+  jpeg_frame_check, BufferedSocket and NetMjpegSource over a loopback
+  listener (prime, drain, latest frame, the corrupt streak, desync,
+  EOF, refused heads), MjpegSlotPool.
 - ThreadSanitizer: the SourceChannel hand-over (a prober thread
   attaching, the frame thread polling and detaching, 1000+ round
   trips) and the real SourceProber thread (1 ms cadence) against a
@@ -789,7 +805,7 @@ light_ai_tests, built into build/tests):
   light_ai_tests_tsan, built with -fsanitize=thread; scripts/test.sh
   runs it after the plain suites
   (SKIP_TSAN=1 skips it) and prints its build + run time.
-- Not covered: everything that touches hardware or an SDK (capture,
+- Not covered: everything that touches hardware or an SDK (V4L2 capture,
   decode, RGA, RKNN, yolo_postprocess, encoder, GPU drawer). Those
   are verified by live runs only.
 - Harness: tests/check.hpp (CHECK / CHECK_NEAR, no framework, no

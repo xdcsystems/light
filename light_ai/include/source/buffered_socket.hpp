@@ -45,7 +45,7 @@ public:
 
     // Closes what was open, then connects to host:port (IPv4). 0 = connected;
     // -1 = why (when non-null) has the reason: "addr resolution failed for <host>",
-    // "socket: ...", "connect: ...", "connect: timeout"; the socket is closed.
+    // "socket: ...", "connect: ...", "connect: timeout", "connect: fcntl: ..."; the socket is closed.
     int connect( const std::string& host, int port, std::string* why );
     // Sends every byte (EINTR retried). 0 = sent; -1 = why: "send: <strerror>"
     // or "send: peer closed, 0 bytes sent".
