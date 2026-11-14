@@ -18,8 +18,9 @@ anything (checkout, merge, commit, push, stash, reset).
 - Narrower: SKIP_TIDY=1 and/or SKIP_TESTS=1 in front of ./scripts/build.sh.
 - Unit tests only: bash scripts/test.sh > build/test.log 2>&1; echo rc=$?
 - Live run (the main session gives the flags; default below):
-      timeout -s INT 90 sudo -n ./build/light_ai --device /dev/video20 --pool 3 --frames 600 > build/run_<name>.log 2>&1; echo rc=$?
-  rc 0 or 124 (stopped by the timer) is normal.
+      sudo -n timeout -s INT 90 ./build/light_ai --device /dev/video20 --pool 3 --frames 600 > build/run_<name>.log 2>&1; echo rc=$?
+  timeout must run inside sudo (sudo does not relay SIGINT from its own process group).
+  rc 0 or 124 (stopped by the timer) is normal; a SIGINT test needs a timeout shorter than the run.
 - Camera unplug/replug during a run: never ask the user to pull the cable. Start the run
   in the background, then from your shell:
       sudo -n /usr/local/sbin/light-usb-replug cycle /dev/video20 5
