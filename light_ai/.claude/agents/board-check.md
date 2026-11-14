@@ -21,11 +21,24 @@ anything (checkout, merge, commit, push, stash, reset).
       sudo -n timeout -s INT 90 ./build/light_ai --device /dev/video20 --pool 3 --frames 600 > build/run_<name>.log 2>&1; echo rc=$?
   timeout must run inside sudo (sudo does not relay SIGINT from its own process group).
   rc 0 or 124 (stopped by the timer) is normal; a SIGINT test needs a timeout shorter than the run.
-- Camera unplug/replug during a run: never ask the user to pull the cable. Start the run
-  in the background, then from your shell:
-      sudo -n /usr/local/sbin/light-usb-replug cycle /dev/video20 5
+- Camera unplug/replug during a run: never ask the user to pull the cable. Run the whole
+  sequence in ONE Bash call (raise the Bash tool timeout, up to 10 min), the run as a
+  shell job, the replug from the same shell, then `wait` on the job's PID:
+      sudo -n timeout -s INT 120 ./build/light_ai ... > build/run_<name>.log 2>&1 & P=$!
+      sleep 15; sudo -n /usr/local/sbin/light-usb-replug cycle /dev/video20 5
+      wait $P; echo rc=$?
   and check the run log for the detach and the re-attach (CLAUDE.md, "USB camera tests"). One heavy job at a time: never run
   a build while a live run measures FPS (3.8 GB RAM).
+
+## Shells and processes (nothing of yours may outlive your report)
+- No polling or wait loops of any kind: no `while` / `until` loops that wait for a process,
+  a file or an output (`pgrep -f` matches its own shell and never ends; `grep -q` on
+  /dev/null never succeeds; a spinning `do :; done` burns a core). Wait only with `wait $PID`
+  on a job of the same shell, or with a plain foreground command.
+- Never use the Bash tool's run_in_background, and never wait on task output files.
+- Before the report: `ps -eo pid,etimes,args | grep -E 'light_ai|replug|sleep|timeout' | grep -v grep`.
+  Anything of yours still running: stop it (`kill <pid>`; a run under sudo: `sudo -n kill -INT <pid>`
+  if sudo allows it, otherwise give its PID) and say so in the report. A camera you switched off must be back on (`light-usb-replug list`).
 
 ## Reading logs
 Logs are long: use tail and grep, never read a whole log.
