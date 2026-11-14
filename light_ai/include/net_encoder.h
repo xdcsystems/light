@@ -8,11 +8,7 @@
 
 #pragma once
 
-#include <atomic>
 #include <cstdint>
-#include <string>
-#include <thread>
-
 
 // Same include form as mpp_decoder.hpp: <rockchip/rk_mpi.h> resolves to
 // the self-built /usr/local/include/rockchip headers. The quoted form
@@ -23,52 +19,19 @@
 #include "core/encode_pacer.hpp"     // EncodePacer: which publishes are encoded
 #include "core/encoder_config.hpp"  // EncoderConfig, StreamLayout
 #include "core/geometry.hpp"        // LbGeom: band geometry arrives as one object
-#include "core/param_set_cache.hpp"  // ParamSetCache: late-join SPS/PPS repeat
 #include "core/pts_clock.hpp"        // PtsClock: CFR / VFR pts
 #include "core/session_gate.hpp"     // SessionGate: the session hand-over
 #include "net/av_packet_queue.hpp"     // PacketQueue: encoder -> serve thread
 #include "net/encoder_frame_pool.hpp"  // EncoderFramePool: the encoder input ring
 #include "net/frame_composer.hpp"     // FrameComposer: the picture the encoder reads
-#include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
+#include "net/mux_session.hpp"        // MuxSession: the serve thread
 
 class Log;
-struct AVFormatContext;
 struct AVCodecContext;
-struct AVFrame;
 struct AVPacket;
-struct AVStream;
-struct AVIOContext;
 
 class NetEncoder
 {
-    // One viewer session's transport (TCP pull or UDP push), RAII:
-    // the destructor is the single teardown point, the early-return
-    // paths of run_session() free everything by scope exit.
-    struct Transport
-    {
-        ~Transport();
-        void close();
-
-    public:
-        TcpPullServer* tcp = nullptr;
-        AVIOContext* udp_pb = nullptr;
-        bool tcp_pull = false;
-    };
-
-    // RAII guard for the muxer context (run_session): p->pb is nulled first
-    // -- the Transport destructor owns the avio context and closes it 
-    // -- then the context is freed. Same declaration position as 
-    // Transport -> same destruction order: fc dies AFTER the Transport, as before.
-    struct FcGuard
-    {
-        ~FcGuard();
-        FcGuard( const FcGuard& ) = delete;
-        FcGuard& operator=( const FcGuard& ) = delete;
-
-    public:
-        AVFormatContext* p;
-    };
-
 public:
     // log: the process diagnostics, owned by main(); outlives the encoder
     // (the serve thread logs through it too: Log is thread-safe).
@@ -100,42 +63,16 @@ public:
     bool viewer_active() const;
 
 private:
-    void serve();
     // One encode under gate_.run(): starts the session's encoder state on a
     // new epoch (pts clock, forced IDR), sends the frame, queues the packets.
     bool send_frame( const SessionGate::Session& s );
-    // The mux side split out of serve() for readability:
-    // drain_queue() owns the wait/pop loop, mux_write() writes one
-    // packet with the IDR-prepend logic (params_).
-    // How a session's drain loop ended: quit (stop()), an encode-side
-    // failure of this session (queue fail), or a failed write of our own.
-    enum class DrainEnd : uint8_t
-    {
-        Stopped,
-        Failed,
-        WriteFailed
-    };
-    DrainEnd drain_queue( AVFormatContext* fc );
-    // One finished encoder packet -> the preallocated ring queue for
-    // serve() to mux; shared by the EAGAIN retry and the send drain.
+    // One finished encoder packet -> the queue for the serve thread;
+    // shared by the EAGAIN retry and the send drain.
     void enqueue_pkt( AVPacket* pkt, int stream_index, int64_t fpts );
-    void run_session( TcpPullServer& tcp, bool tcp_pull, const std::string& url );
-
-    // Transport setup (accept + socket options / avio_open) and the
-    // stream setup (new_stream + header + mpegts options).
-    bool open_transport( const std::string& url, AVFormatContext* fc, Transport& t );
-    // frame_step: muxer ticks per codec pts, handed to the encoder in the gate session.
-    bool setup_stream( AVFormatContext* fc, AVStream** st, int64_t* frame_step, bool tcp_pull );
-
-    bool init_packets();
-    void free_packets();
-    int mux_write( AVFormatContext* fc, AVPacket* pkt );
 
 private:
     const Log& log_;
     const EncoderConfig cfg_;
-    std::thread thread_;
-    std::atomic<bool> quit_ { false };  // dtor -> serve thread (accept poll); queue_.stop() wakes the drain
 
     // The next encode becomes an IDR (the rkmpp wrapper ignores
     // frame->key_frame, so we go via MPP). Pipeline thread only: set by a
@@ -146,8 +83,6 @@ private:
 
     AVCodecContext* enc_ = nullptr;  // h264_rkmpp
     AVPacket* pkt_ = nullptr;
-    AVPacket* mux_pkt_ = nullptr;
-    AVPacket* dup_pkt_ = nullptr;
     // The encoder's input ring: 4 NV12 dma-bufs pre-bound to DRM_PRIME
     // AVFrames (net/encoder_frame_pool.hpp). Freed after the codec (dtor body).
     EncoderFramePool ring_;
@@ -172,12 +107,12 @@ private:
     // with the session's frame_step (pts restart from zero per viewer).
     PtsClock pts_;
     int64_t ts_us_ = -1;  // dequeue time of the frame being encoded (publish -> send_frame)
-    uint32_t sessions_ = 0;  // serve thread: the last session's epoch (1, 2, ...)
     // Frames encoded; gates the destructor drain in both modes (the CFR
     // counter alone would be 0 in VFR and skip the flush).
     uint64_t frames_sent_ = 0;
 
-    // Late-joiner support: the SPS/PPS prefix of the first IDR, repeated
-    // on every later IDR (serve thread only).
-    ParamSetCache params_;
+    // The serve thread: viewer sessions, the transport, the muxer
+    // (net/mux_session.hpp). Last: it holds references to queue_ and gate_,
+    // and the dtor body stops it before the codec goes.
+    MuxSession session_;
 };
