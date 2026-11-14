@@ -186,7 +186,7 @@ bool MuxSession::open_transport( const std::string& url, AVFormatContext* fc, Tr
         if ( !t.tcp || !t.tcp->accept_client( quit_ ) )
             return false;
 
-        log_.info() << "enc: viewer connected (tcp)\n";  // its first frame: an IDR (Session::force_idr)
+        log_.info() << "enc: viewer connected (tcp)\n";  // its first frame: an IDR (H264Encoder::encode)
 
         return t.tcp->attach_avio( fc );
     }
@@ -302,14 +302,13 @@ void MuxSession::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
     // Session open order: the queue first (cleared, key gate armed, this
     // epoch's fail() accepted), then the gate (the encoder may encode into
     // the session from here on). frame_step and the stream index travel
-    // in the session; a TCP viewer's first frame is an IDR.
+    // in the session; every session's first frame is an IDR (H264Encoder).
     const uint32_t epoch = ++sessions_;
     queue_.open( epoch );
     SessionGate::Session session;
     session.stream_index = st->index;
     session.frame_step = frame_step;
     session.epoch = epoch;
-    session.force_idr = tcp_pull;
     gate_.open( session );
 
     // Batch C: drain the encoder packet queue into the muxer. The

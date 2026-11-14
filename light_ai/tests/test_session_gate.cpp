@@ -14,14 +14,12 @@ namespace
         s.stream_index = static_cast<int>( epoch % 7 );
         s.frame_step = static_cast<int64_t>( epoch ) * 3;
         s.epoch = epoch;
-        s.force_idr = ( epoch % 2 ) == 0;
         return s;
     }
 
     bool consistent( const SessionGate::Session& s )
     {
-        return s.stream_index == static_cast<int>( s.epoch % 7 ) && s.frame_step == static_cast<int64_t>( s.epoch ) * 3
-               && s.force_idr == ( ( s.epoch % 2 ) == 0 );
+        return s.stream_index == static_cast<int>( s.epoch % 7 ) && s.frame_step == static_cast<int64_t>( s.epoch ) * 3;
     }
 }  // namespace
 
@@ -42,7 +40,7 @@ void test_session_gate( TestRun& t )
         ++calls;
         seen = s;
     } ) );
-    CHECK( t, calls == 1 && seen.epoch == 4 && consistent( seen ) && seen.force_idr );
+    CHECK( t, calls == 1 && seen.epoch == 4 && consistent( seen ) );
 
     // Closed again: the epoch stays readable, run() refuses.
     g.close();
@@ -53,7 +51,7 @@ void test_session_gate( TestRun& t )
     // The next session replaces the fields.
     g.open( make( 5 ) );
     g.run( [&]( const SessionGate::Session& s ) { seen = s; } );
-    CHECK( t, seen.epoch == 5 && consistent( seen ) && !seen.force_idr );
+    CHECK( t, seen.epoch == 5 && consistent( seen ) );
 }
 
 // Threaded (also run under TSan): the serve side opens and closes 2000
