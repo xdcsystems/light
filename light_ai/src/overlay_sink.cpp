@@ -94,7 +94,7 @@ void OverlaySink::init( const StreamConfig& stream,
 
     if ( stream.h264 )
     {
-        enc_.emplace( model_w_, model_h_, primary_band, stream.fps, stream.port, stream.host, stream.bitrate_kbps, nsrc );
+        enc_.emplace( log_, model_w_, model_h_, primary_band, stream.fps, stream.port, stream.host, stream.bitrate_kbps, nsrc );
         if ( stream.host.empty() )
             log_.info() << "net: h264 PULL server on port " << stream.port << ", " << stream.bitrate_kbps
                       << " kbps (viewer: ffplay tcp://<board-ip>:" << stream.port << ")\n";

@@ -3,7 +3,6 @@
 #include <chrono>
 #include <cstring>
 #include <cstddef>  // offsetof
-#include <iostream>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -24,6 +23,7 @@ extern "C"
 #include <libavutil/dict.h>
 }
 
+#include "core/log.hpp"
 #include "muxer_teardown.hpp"
 #include "net_encoder.h"
 #include "av_common.hpp"
@@ -323,8 +323,9 @@ namespace
     }
 }  // namespace
 
-NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, int port, const std::string& host, int bitrate_kbps, int nsrc )
-  : w_( calc_stream_w( model_w, band, nsrc ) )
+NetEncoder::NetEncoder( const Log& log, int model_w, int model_h, const LbGeom& band, int fps, int port, const std::string& host, int bitrate_kbps, int nsrc )
+  : log_( log )
+  , w_( calc_stream_w( model_w, band, nsrc ) )
   , h_( calc_stream_h( model_h, band, nsrc ) )
   , tile_w_( calc_tile_w( model_w, band, nsrc ) )
   , tile_h_( calc_tile_h( model_h, band, nsrc ) )
@@ -353,13 +354,13 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
     band_w_ = std::min( band_w_, model_w_ );
     band_left_ = std::max( band_left_, 0 );
     if ( nsrc > 4 )
-        std::cerr << "enc: clamping source count " << nsrc << " -> 4 (2x2 grid max)\n";
+        log_.warn() << "enc: clamping source count " << nsrc << " -> 4 (2x2 grid max)\n";
     if ( nsrc_ > 1 )
-        std::cout << "enc: multi-view " << nsrc_ << " sources, tile " << tile_w_ << 'x' << tile_h_
-                  << " -> " << w_ << 'x' << h_ << '\n';
+        log_.info() << "enc: multi-view " << nsrc_ << " sources, tile " << tile_w_ << 'x' << tile_h_
+                    << " -> " << w_ << 'x' << h_ << '\n';
     else
-        std::cout << "enc: tensor band x=[" << band_left_ << ',' << band_left_ + band_w_ << ") y=[" << band_top_ << ',' << band_top_ + band_h_
-                  << ") of " << model_w_ << 'x' << model_h_ << " -> " << w_ << 'x' << h_ << '\n';
+        log_.info() << "enc: tensor band x=[" << band_left_ << ',' << band_left_ + band_w_ << ") y=[" << band_top_ << ',' << band_top_ + band_h_
+                    << ") of " << model_w_ << 'x' << model_h_ << " -> " << w_ << 'x' << h_ << '\n';
 
     // Four NV12 dma-bufs: a plane held by an in-flight encode is never
     // overwritten by RGA. The 3-deep rkmpp task queue can hold a full
@@ -448,17 +449,17 @@ NetEncoder::NetEncoder( int model_w, int model_h, const LbGeom& band, int fps, i
         mpp_enc_cfg_set_s32( rc_priv->mcfg, "rc:mode", MPP_ENC_RC_MODE_CBR );
         const MPP_RET rc_set = rc_priv->mapi->control( rc_priv->mctx, MPP_ENC_SET_CFG, rc_priv->mcfg );
         if ( rc_set == MPP_OK )
-            std::cout << "enc: rc mode CBR applied via MPP_ENC_SET_CFG\n";
+            log_.info() << "enc: rc mode CBR applied via MPP_ENC_SET_CFG\n";
         else
-            std::cout << "enc: rc mode CBR rejected by MPP (rc " << rc_set << "), encoder default stays\n";
+            log_.info() << "enc: rc mode CBR rejected by MPP (rc " << rc_set << "), encoder default stays\n";
     }
     else
     {
-        std::cout << "enc: rkmpp priv unavailable, encoder default rc stays\n";
+        log_.info() << "enc: rkmpp priv unavailable, encoder default rc stays\n";
     }
-    std::cout << "enc: h264_rkmpp open: " << w_ << 'x' << h_ << ", " << bitrate_kbps_ << " kbps, gop " << ctx->gop_size << '\n';
+    log_.info() << "enc: h264_rkmpp open: " << w_ << 'x' << h_ << ", " << bitrate_kbps_ << " kbps, gop " << ctx->gop_size << '\n';
     if ( vfr_ )
-        std::cout << "enc: VFR follow-source mode: time_base 1/90000, pts from dequeue times\n";
+        log_.info() << "enc: VFR follow-source mode: time_base 1/90000, pts from dequeue times\n";
 
     pkt_ = av_packet_alloc();
     if ( !pkt_ || !init_frames() )
@@ -566,14 +567,14 @@ NetEncoder::~NetEncoder()
                     std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
                     continue;
                 }
-                std::cerr << "enc: drain receive error, residual frames possible\n";
+                log_.warn() << "enc: drain receive error, residual frames possible\n";
                 break;
             }
-            std::cout << "enc: drain: " << pulled << " packet(s), "
-                      << ( eof ? "EOF reached" : "NO EOF (EAGAIN x" ) ;
+            Log::Line line = log_.info();
+            line << "enc: drain: " << pulled << " packet(s), " << ( eof ? "EOF reached" : "NO EOF (EAGAIN x" );
             if ( !eof )
-                std::cout << eagains << ")";
-            std::cout << "\n";
+                line << eagains << ")";
+            line << "\n";
         }
         avcodec_free_context( &enc_ );
     }
@@ -598,11 +599,11 @@ void NetEncoder::serve()
     {
         if ( !tcp.listen() )
         {
-            std::cerr << "enc: tcp listener bind failed on port " << port_ << '\n';
+            log_.error() << "enc: tcp listener bind failed on port " << port_ << '\n';
             error_.store( true );
             return;
         }
-        std::cout << "enc: PULL mode: listening on tcp port " << port_ << 
+        log_.info() << "enc: PULL mode: listening on tcp port " << port_ << 
                      " (viewer: ffplay -fflags nobuffer tcp://<board-ip>:" << port_ << ")\n";
     }
 
@@ -616,7 +617,7 @@ void NetEncoder::serve()
         run_session( tcp, tcp_pull, url );
         if ( !quit_.load() )
         {
-            std::cout << ( tcp_pull ? "enc: viewer gone, waiting for the next one" 
+            log_.info() << ( tcp_pull ? "enc: viewer gone, waiting for the next one" 
                                     : "enc: udp path reset, reopening in 500 ms" ) << "\n";
 
             if ( !tcp_pull )
@@ -744,7 +745,7 @@ bool NetEncoder::prep_idle_frame( const bool* absent, int nabs, MppBuffer mb )
         const IM_STATUS cs = imcopy( idl, out );
         if ( static_cast<int>( cs ) <= 0 )
         {
-            std::cerr << "enc: RGA idle copy failed: " << imStrError( cs ) << "\n";
+            log_.error() << "enc: RGA idle copy failed: " << imStrError( cs ) << "\n";
             return false;
         }
         return true;
@@ -762,7 +763,7 @@ bool NetEncoder::prep_idle_frame( const bool* absent, int nabs, MppBuffer mb )
         const IM_STATUS rs = improcess( idl, cvs, {}, tile, tile, {}, 0 );
         if ( static_cast<int>( rs ) <= 0 )
         {
-            std::cerr << "enc: RGA idle tile copy failed: " << imStrError( rs ) << "\n";
+            log_.error() << "enc: RGA idle tile copy failed: " << imStrError( rs ) << "\n";
             return false;
         }
         buf_bands_[ s ] = LbGeom { 0, 1, 0, 1 };  // forces the gray refill on live resume
@@ -770,7 +771,7 @@ bool NetEncoder::prep_idle_frame( const bool* absent, int nabs, MppBuffer mb )
     const IM_STATUS cs = imcopy( cvs, out );
     if ( static_cast<int>( cs ) <= 0 )
     {
-        std::cerr << "enc: RGA idle composite copy failed: " << imStrError( cs ) << "\n";
+        log_.error() << "enc: RGA idle composite copy failed: " << imStrError( cs ) << "\n";
         return false;
     }
     return true;
@@ -817,7 +818,7 @@ bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, Mpp
     const IM_STATUS rs = improcess( src, dst, {}, srect, drect, {}, 0 );
     if ( static_cast<int>( rs ) <= 0 )
     {
-        std::cerr << "enc: RGA convert failed: " << imStrError( rs ) << "\n";
+        log_.error() << "enc: RGA convert failed: " << imStrError( rs ) << "\n";
         return false;
     }
     if ( nsrc_ > 1 && mb != nullptr )
@@ -826,7 +827,7 @@ bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, Mpp
         const IM_STATUS cs = imcopy( dst, out );
         if ( static_cast<int>( cs ) <= 0 )
         {
-            std::cerr << "enc: RGA composite copy failed: " << imStrError( cs ) << "\n";
+            log_.error() << "enc: RGA composite copy failed: " << imStrError( cs ) << "\n";
             return false;
         }
     }
@@ -925,7 +926,7 @@ bool NetEncoder::send_frame( AVStream* st )
         {
             MPP_RET rc = priv->mapi->control( priv->mctx, MPP_ENC_SET_IDR_FRAME, nullptr );
             if ( rc != MPP_OK )
-                std::cerr << "enc: MPP_ENC_SET_IDR_FRAME failed: " << rc << char(10);
+                log_.warn() << "enc: MPP_ENC_SET_IDR_FRAME failed: " << rc << '\n';
         }
     }
 
@@ -953,7 +954,7 @@ bool NetEncoder::send_frame( AVStream* st )
     }
     if ( ret < 0 && ret != AVERROR( EAGAIN ) )
     {
-        std::cerr << "enc: send_frame: " << av_err_str( ret ) << '\n';
+        log_.error() << "enc: send_frame: " << av_err_str( ret ) << '\n';
         return false;
     }
     if ( !submitted )
@@ -962,7 +963,7 @@ bool NetEncoder::send_frame( AVStream* st )
         // instead of tearing the session. IDR on the next frame keeps
         // the stream decodable; ++pts_ keeps the CFR pts monotonic,
         // frames_sent_ stays put (the frame was never encoded).
-        std::cerr << "enc: send_frame: input queue full, frame dropped, IDR next frame\n";
+        log_.warn() << "enc: send_frame: input queue full, frame dropped, IDR next frame\n";
         force_idr_.store( true );
         ++pts_;
         return true;
@@ -976,7 +977,7 @@ bool NetEncoder::send_frame( AVStream* st )
     }
     if ( ret != AVERROR( EAGAIN ) && ret != AVERROR_EOF )
     {
-        std::cerr << "enc: receive_packet: " << av_err_str( ret ) << '\n';
+        log_.error() << "enc: receive_packet: " << av_err_str( ret ) << '\n';
         return false;
     }
     ++pts_;
@@ -1006,7 +1007,7 @@ void NetEncoder::enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts )
             force_idr_.store( true );
             wait_key_ = true;
             ++pkt_drops_;
-            std::cerr << "enc: packet queue overflow: flushed " << ndrop << " pkts (drop " << pkt_drops_ << "), IDR next frame\n";
+            log_.warn() << "enc: packet queue overflow: flushed " << ndrop << " pkts (drop " << pkt_drops_ << "), IDR next frame\n";
         }
         AVPacket*& tail = pkts_.push_slot();  // commits n; !full() guaranteed above
         av_packet_unref( tail );
@@ -1081,15 +1082,15 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
         const int r = mux_write( fc, mux_pkt_ );
         const long mw_ms = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - mw_t0 ).count();
         if ( mw_ms > 20 )
-            std::cerr << "enc: mux_write stalled " << mw_ms << " ms (queue was " << q_rem << ")\n";
+            log_.warn() << "enc: mux_write stalled " << mw_ms << " ms (queue was " << q_rem << ")\n";
         if ( r < 0 )
         {
             if ( r == AVERROR( EPIPE ) )
-                std::cout << "enc: viewer disconnected (tcp), session ends\n";
+                log_.info() << "enc: viewer disconnected (tcp), session ends\n";
             else if ( r == AVERROR( ETIMEDOUT ) )
-                std::cout << "enc: viewer stalled (send timeout), session ends\n";
+                log_.info() << "enc: viewer stalled (send timeout), session ends\n";
             else
-                std::cerr << "enc: write failed: " << av_err_str( r ) << " (packet lost)\n";
+                log_.error() << "enc: write failed: " << av_err_str( r ) << " (packet lost)\n";
             error_.store( true );
             return;
         }
@@ -1106,8 +1107,8 @@ int NetEncoder::mux_write( AVFormatContext* fc, AVPacket* pkt )
     if ( is_idr( pkt ) )
     {
         if ( hdr_.empty() && hdr_capture( pkt, hdr_ ) )
-            std::cout << "enc: h264 header captured: " << hdr_.size()
-                      << " bytes, repeating on every IDR\n";
+            log_.info() << "enc: h264 header captured: " << hdr_.size()
+                        << " bytes, repeating on every IDR\n";
         else if ( !hdr_.empty() && !has_param_sets( pkt ) )
         {
             const size_t total = hdr_.size() + static_cast<size_t>( pkt->size );
@@ -1121,7 +1122,7 @@ int NetEncoder::mux_write( AVFormatContext* fc, AVPacket* pkt )
             out = dup_pkt_;
             if ( !hdr_logged_ )
             {
-                std::cout << "enc: header repeat active\n";
+                log_.info() << "enc: header repeat active\n";
                 hdr_logged_ = true;
             }
         }
@@ -1182,7 +1183,7 @@ bool NetEncoder::open_transport( const std::string& url, AVFormatContext* fc, Tr
         if ( !t.tcp || !t.tcp->accept_client( quit_ ) )
             return false;
 
-        std::cout << "enc: viewer connected (tcp)\n";
+        log_.info() << "enc: viewer connected (tcp)\n";
         force_idr_.store( true );  // next encoded frame must be an IDR
 
         return t.tcp->attach_avio( fc );
@@ -1192,7 +1193,7 @@ bool NetEncoder::open_transport( const std::string& url, AVFormatContext* fc, Tr
     // packets are pushed regardless of whether a viewer is listening.
     if ( const int ret = avio_open( &t.udp_pb, url.c_str(), AVIO_FLAG_WRITE ); ret < 0 )
     {
-        std::cerr << "enc: udp open failed: " << av_err_str( ret ) << '\n';
+        log_.warn() << "enc: udp open failed: " << av_err_str( ret ) << '\n';
         std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
         return false;
     }
@@ -1232,7 +1233,7 @@ bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, bool tcp_
     av_dict_free( &mux_opts );
     if ( ret2 < 0 )
     {
-        std::cerr << "enc: write_header failed: " << av_err_str( ret2 ) << '\n';
+        log_.error() << "enc: write_header failed: " << av_err_str( ret2 ) << '\n';
         std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
         return false;
     }
@@ -1241,16 +1242,16 @@ bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, bool tcp_
     if ( frame_step_ < 1 )
         frame_step_ = 1;
     if ( vfr_ )
-        std::cout << "enc: stream time_base " << tb.num << '/' << tb.den << " (VFR: pts from dequeue times)\n";
+        log_.info() << "enc: stream time_base " << tb.num << '/' << tb.den << " (VFR: pts from dequeue times)\n";
     else
-        std::cout << "enc: stream time_base " << tb.num << '/' << tb.den << ", pts step " << frame_step_ << "\n";
+        log_.info() << "enc: stream time_base " << tb.num << '/' << tb.den << ", pts step " << frame_step_ << "\n";
     if ( tcp_pull )
     {
-        std::cout << "enc: tcp pull streaming " << w_ << 'x' << h_ << " h264 (mpegts) on port " << port_ << '\n';
+        log_.info() << "enc: tcp pull streaming " << w_ << 'x' << h_ << " h264 (mpegts) on port " << port_ << '\n';
     }
     else
     {
-        std::cout << "enc: udp streaming " << w_ << 'x' << h_ << " h264 (mpegts) -> " << host_ << ':' << port_ << '\n';
+        log_.info() << "enc: udp streaming " << w_ << 'x' << h_ << " h264 (mpegts) -> " << host_ << ':' << port_ << '\n';
     }
     *st_out = st;
     return true;
@@ -1267,7 +1268,7 @@ void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
     AVFormatContext* raw = nullptr;
     if ( avformat_alloc_output_context2( &raw, nullptr, "mpegts", tcp_pull ? nullptr : url.c_str() ) < 0 || !raw )
     {
-        std::cerr << "enc: avformat_alloc_output_context2 failed\n";
+        log_.error() << "enc: avformat_alloc_output_context2 failed\n";
         std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
         return;
     }

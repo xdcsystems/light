@@ -38,6 +38,7 @@
 #include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<kBufCount>: RAII pool sub-object
 #include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
 
+class Log;
 struct AVFormatContext;
 struct AVCodecContext;
 struct AVFrame;
@@ -83,7 +84,10 @@ class NetEncoder
     };
 
 public:
-    NetEncoder( int model_w,
+    // log: the process diagnostics, owned by main(); outlives the encoder
+    // (the serve thread logs through it too: Log is thread-safe).
+    NetEncoder( const Log& log,
+                int model_w,
                 int model_h,
                 const LbGeom& band,
                 int fps,
@@ -145,6 +149,7 @@ private:
     bool prep_idle_frame( const bool* absent, int nabs, MppBuffer mb );
 
 private:
+    const Log& log_;
     const int w_, h_, tile_w_, tile_h_, nsrc_, fps_, port_, bitrate_kbps_;
     const std::string host_;
     std::thread thread_;
