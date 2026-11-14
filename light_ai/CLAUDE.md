@@ -113,7 +113,8 @@ keep "Migration plan" current when a stage changes state.
       declaration order, written in net_encoder.h): the PR that closes #19.
       Baselines (fix/audit-p0 @ 2e8d17c, --net --net-h264, viewer connected):
       build/run_base_h264_pool{1,3}.log, build/run_base_h264_net.log, build/base_png*.png.
-      Open, filed: #23 (force an IDR at a UDP session (re)start too), #24 (multi-view: the
+      Done after stage 4: #23 (every session starts with an IDR, UDP reopens too; branch
+      fix/issue23-udp-idr). Open, filed: #24 (multi-view: the
       canvas is not fed without a viewer -- the first frames of a session show gray cells for the
       first viewer and stale cells of the previous session for every later one).
 - [ ] 5 NetMjpegSource: BufferedSocket, MultipartReader, HTTP header parsing as a pure function
