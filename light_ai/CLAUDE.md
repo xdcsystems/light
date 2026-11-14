@@ -118,9 +118,11 @@ keep "Migration plan" current when a stage changes state.
       Baselines (fix/audit-p0 @ 2e8d17c, --net --net-h264, viewer connected):
       build/run_base_h264_pool{1,3}.log, build/run_base_h264_net.log, build/base_png*.png.
       Done after stage 4: #23 (every session starts with an IDR, UDP reopens too; branch
-      fix/issue23-udp-idr). Open, filed: #24 (multi-view: the
-      canvas is not fed without a viewer -- the first frames of a session show gray cells for the
-      first viewer and stale cells of the previous session for every later one).
+      fix/issue23-udp-idr); #24 (a multi-view session starts on a gray canvas and holds its first
+      frame until every source cell is refreshed, <= 200 ms: SessionWarmup; the output-side rules in
+      README and "Project rules"; branch fix/issue24-session-warmup). A/B logs:
+      build/run24_{fix,fix2,fix3,base,base2}_mv.log, run24_*_{slow,grid}.log, frames build/24_*.png;
+      the driver (live24.sh, cells.py, slow_mjpeg.py) was a session scratch script, not in git.
 - [ ] 5 NetMjpegSource: BufferedSocket, MultipartReader, HTTP header parsing as a pure function
       over a buffer. Check: tests on recorded streams (cut-off, broken JPEG, no Content-Length);
       live run.
