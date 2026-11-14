@@ -105,10 +105,12 @@ keep "Migration plan" current when a stage changes state.
       trivial destructors). Check: viewer joins mid-stream, 1 and 3 sources, NO SIGNAL plate,
       exit without MPP errors.
       Issue #19 (plan + review in its comments), split 4a/4b/4c/4d. 4a (Log, EncoderConfig +
-      StreamLayout, ParamSetCache, PtsClock, EncodePacer): in progress.
+      StreamLayout, ParamSetCache, PtsClock, EncodePacer): PR open, waiting for review.
       Baselines (fix/audit-p0 @ 2e8d17c, --net --net-h264, viewer connected):
       build/run_base_h264_pool{1,3}.log, build/run_base_h264_net.log, build/base_png*.png.
-      Open (after stage 4, separate issue): force an IDR at a UDP session (re)start too.
+      Open (after stage 4, separate issues): force an IDR at a UDP session (re)start too;
+      multi-view: the first frame after the FIRST viewer connects shows only the source that
+      published first (the canvas is not fed without a viewer; filled within a few frames).
 - [ ] 5 NetMjpegSource: BufferedSocket, MultipartReader, HTTP header parsing as a pure function
       over a buffer. Check: tests on recorded streams (cut-off, broken JPEG, no Content-Length);
       live run.
