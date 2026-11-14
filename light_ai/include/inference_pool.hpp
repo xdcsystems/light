@@ -280,6 +280,7 @@ private:
         out.npu_ok = true;
     }
 
+private:
     const Decode decode_;
     const Log& log_;
     const PoolOptions opts_;

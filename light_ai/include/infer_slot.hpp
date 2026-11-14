@@ -205,6 +205,7 @@ private:
             st_ = State::Abandoned;
     }
 
+private:
     mutable std::mutex mx_;
     std::condition_variable cv_;
     State st_ = State::Free;
