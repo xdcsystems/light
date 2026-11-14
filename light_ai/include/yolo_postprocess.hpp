@@ -6,6 +6,7 @@
 // forward-declared -- the header declares only, the cpp maps the fields.
 class RknnEngine;
 struct LbGeom;
+struct InferJob;
 
 // Decodes the three yolov5 heads (fp16 NCHW, post-sigmoid) of the engine,
 // applies conf threshold + NMS, filters bar detections and maps the rest
@@ -21,3 +22,19 @@ void yolo_postprocess( const RknnEngine& npu,
                        DetList& out,
                        float conf_thr = 0.25f,
                        float iou_thr = 0.45f );
+
+// The postprocess step of the NPU pool (InferencePool<RknnEngine, YoloDecode>):
+// runs yolo_postprocess on the engine a worker just ran, with the job's
+// source geometry and band and the engine's own model input size.
+// Stateless apart from the thresholds: the three workers call one copy
+// concurrently.
+class YoloDecode
+{
+public:
+    YoloDecode( float conf_thr, float iou_thr ) : conf_thr_( conf_thr ), iou_thr_( iou_thr ) {}
+    void operator()( const RknnEngine& npu, const InferJob& job, DetList& out ) const;
+
+private:
+    float conf_thr_;
+    float iou_thr_;
+};

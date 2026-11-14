@@ -5,6 +5,7 @@
 
 #include "yolo_postprocess.hpp"
 #include "core/geometry.hpp"  // LbGeom
+#include "infer_slot.hpp"     // InferJob
 #include "rknn_engine.hpp"
 #include "box_math.hpp"
 
@@ -273,4 +274,11 @@ void yolo_postprocess( const RknnEngine& npu, float cam_w, float cam_h, float mo
                   << " candidates dropped (raise --conf)\n";
 
     emit_nms( cand, nc, iou_thr, sx, sy, lb_left, lb_top, cam_w, cam_h, out );
+}
+
+void YoloDecode::operator()( const RknnEngine& npu, const InferJob& job, DetList& out ) const
+{
+    yolo_postprocess( npu, static_cast<float>( job.src_w ), static_cast<float>( job.src_h ),
+            static_cast<float>( npu.input_width() ), static_cast<float>( npu.input_height() ), job.lb, out,
+            conf_thr_, iou_thr_ );
 }

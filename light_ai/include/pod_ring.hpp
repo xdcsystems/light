@@ -2,13 +2,13 @@
 #include <array>
 
 // Fixed-capacity ring (FIFO) on std::array: no heap by construction.
-// Generalization of the three hand-written rings (PubFifo in slot_ring.hpp,
-// Tracker::Traj in tracker.hpp, the packet queue in net_encoder.h): one
-// modular-arithmetic implementation instead of three copies of
-// (head + n) % cap. push() drops on overflow and returns false (same
-// policy as PodList::push); front/pop carry no guards -- the owning layer
-// keeps its own loud-log checks (PubFifo) or its own overflow policy
-// (NetEncoder: full-queue flush + forced IDR).
+// Generalization of the three hand-written rings (the result FIFO of
+// InferencePool, Tracker::Traj in tracker.hpp, the packet queue in
+// net_encoder.h): one modular-arithmetic implementation instead of three
+// copies of (head + n) % cap. push() drops on overflow and returns false
+// (same policy as PodList::push); front/pop carry no guards -- the owning
+// layer keeps its own loud-log checks (InferencePool::submit/collect) or
+// its own overflow policy (NetEncoder: full-queue flush + forced IDR).
 // T is POD/pointer-like by convention: plain assignment, no ctors needed.
 template <typename T, int N>
 struct PodRing

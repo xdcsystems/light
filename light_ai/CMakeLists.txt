@@ -96,6 +96,7 @@ add_executable(light_ai
     src/core/geometry.cpp
     src/process_env.cpp
     src/signal_waiter.cpp
+    src/cpu_affinity.cpp
     externals/inih/ini.c
 )
 target_compile_definitions(light_ai PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)
@@ -128,8 +129,8 @@ target_link_directories(light_ai PRIVATE ${AV_LIBRARY_DIRS})
 # /proc/cpuinfo, cpu0 == cpu4): fp asimd aes sha2 crc32 atomics (LSE)
 # fphp asimdhp lrcpc dcpop asimddp (dotprod). A binary built with +dotprod/+crypto 
 # is therefore legal on ALL eight cores. Instruction set aside, the hot
-# threads (pipeline main + NPU workers) are pinned to the A76 cluster in
-# pipeline.cpp (best-effort; 2026-11-12 audit follow-up): a bursty
+# threads (pipeline main + NPU workers) are pinned to the A76 cluster by
+# cpu_affinity.cpp (best-effort; 2026-11-12 audit follow-up): a bursty
 # cv-woken worker may drift to A55 under CFS/EAS. Network/background
 # threads stay with the scheduler.
 # LSE atomics (std::atomic stop flag) are valid on A55 as well.

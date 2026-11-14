@@ -15,13 +15,13 @@
 #include "core/log.hpp"
 #include "core/stop_flag.hpp"
 #include "frame_trace.h"
+#include "inference_pool.hpp"
 #include "media_source.hpp"
 #include "mpp_decoder.hpp"
 #include "net_mjpeg_source.hpp"
 #include "overlay_sink.hpp"
 #include "rga_resizer.h"
 #include "rknn_engine.hpp"
-#include "slot_ring.hpp"
 #include "timings.hpp"
 #include "tracker.hpp"
 #include "yolo_postprocess.hpp"
@@ -29,6 +29,7 @@
 class Pipeline
 {
     enum { kMaxSources = 3 };
+    using NpuPool = InferencePool<RknnEngine, YoloDecode>;
 
     struct SourceSlot
     {
@@ -63,7 +64,7 @@ public:
     // stop: set by SignalWaiter on SIGINT/SIGTERM; log: the process diagnostics.
     // Both are owned by main() and outlive the Pipeline.
     Pipeline( const Config& cfg, const StopFlag& stop, const Log& log );
-    ~Pipeline();  // stops the workers before the engines die
+    ~Pipeline() = default;  // pool_ joins its workers before its engines die
     Pipeline( const Pipeline& ) = delete;
     Pipeline& operator=( const Pipeline& ) = delete;
     Pipeline( Pipeline&& ) = delete;
@@ -83,13 +84,9 @@ private:
     // live or absent alike -- node discovery never trials or adopts them.
     std::vector<std::string> busy_v4l2_nodes( int self_idx ) const;
     void init_aux();
-    void setup_cores();
 
-    void worker_loop( int slot );
-    bool front_slot_done();
     void drain_done_slots( int& ok );
-    int publish_oldest();                // returns 1 if the frame was valid
-    void pool_discard( int src_idx );    // drop pending slots of src_idx on recovery
+    int publish_oldest();                // collect -> analytics -> output; 1 if the frame was valid
     int try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err );
     int dequeue_next_source( uint32_t& sz, int& cam_err, int& ok );
 
@@ -99,9 +96,7 @@ private:
     int handle_source_failure( int cam_err );  // 0 = recovered, -1 = fatal
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
 
-    void dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, const LbGeom& lb,
-                   double cam_ms, double dec_ms, double rga_ms );
-
+    // RGA into the slot's tensor, then submit to the pool.
     void frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_us,
                          double cam_ms, double dec_ms );
 
@@ -112,12 +107,13 @@ private:
     int cur_src_ = 0;
 
     RgaResizer rga_;  // shared, stateless: writes any source into any slot tensor
-    // Context pool: npus_[0] IS the pool-1 engine;
-    // --pool 3 loads the model three times, one engine per NPU core.
-    // The vector never reallocates after the ctor,
-    // so &npus_[k] stays valid for the whole session.
-    std::vector<RknnEngine> npus_;
-    int npool_ = 1;
+    // NPU stage: the engines (one, or three with --pool 3), their slots,
+    // worker threads and the in-order result FIFO. Declared before sink_:
+    // the GPU drawer imports the pool's tensors and must die first.
+    NpuPool pool_;
+    // Band last written into each pool tensor: a band change (another
+    // source, another geometry) re-grays the bars before the RGA write.
+    std::array<LbGeom, NpuPool::kMaxSlots> tensor_band_ {};
     std::atomic<int> src_w_ { 0 };
     std::atomic<int> src_h_ { 0 };  // MAX across sources (init_aux sizing + diagnostics);
                                     // written by probe_source on the prober thread, hence atomic
@@ -127,23 +123,21 @@ private:
     
     // M5: per-source letterbox geometry lives in SourceSlot::lb; the
     // RGA per-frame LbGeom is cross-checked against the owning source's
-    // at dispatch (one-time warn).
+    // in frame_dispatch (one-time warn).
     bool lb_warned_ = false;
     CalDumper cal_dumper_;
     int reconnects_ = 0;   // source disconnects recovered this run
     Timings t_;
 
-    OverlaySink sink_ {};
+    OverlaySink sink_;
     ConsoleReporter rep_;  // throttled reports + final summary
     TrajList trajs_;
 
-    // Per-frame detection buffer: preallocated member, cleared each
-    // frame -- zero heap traffic in the steady-state path.
-    DetList dets_;
+    // Per-frame buffers: preallocated members, reused each frame --
+    // zero heap traffic in the steady-state path.
+    DetList dets_;       // smoothed detections of the frame being published
+    InferResult res_;    // the pool result being published
 
-    std::array<Slot, 3> slots_ {};
-    std::vector<std::thread> workers_;   // one per pooled engine
-    std::atomic<bool> quit_ { false };
     const StopFlag& stop_;  // set by SignalWaiter (SIGINT/SIGTERM), read only here
     const Log& log_;        // diagnostics sink (main.cpp); safe from the worker and prober threads
     std::thread probe_th_;   // hot-attach prober: armed in run(), joined on exit
@@ -152,5 +146,4 @@ private:
     long long scan_log_ms_ = 0;  // last camera-scan log stamp: throttles discovery spam (30 s)
     std::chrono::steady_clock::time_point t0_ {};  // idle pts base (NO SIGNAL timeline)
     int64_t last_idle_us_ = -1;  // last NO SIGNAL publish stamp (us since t0_)
-    PubFifo pub_;
 };

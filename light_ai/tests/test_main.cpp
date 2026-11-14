@@ -27,6 +27,7 @@ int main()
     run_suite( t, "config", &test_config );
     run_suite( t, "signals", &test_signals );
     run_suite( t, "log", &test_log );
+    run_suite( t, "inference_pool", &test_inference_pool );
     std::cout << "light_ai_tests: " << t.checks() << " checks, " << t.failures() << " failed\n";
     return t.failures() == 0 ? 0 : 1;
 }
