@@ -16,6 +16,8 @@ keep "Migration plan" current when a stage changes state.
 - Models (*.rknn) are not in git: they live in light_ai/misc/.
 
 ## Workflow
+- Tasks arrive as GitHub issues ("Выполни issue #N"): read the issue, post the plan as a comment
+  on it (`gh issue comment N --body-file ...`), wait for the user's OK there, then code.
 - Shared working copy: run `git status` before any checkout or merge. Uncommitted changes
   under light_ai/ -> stop and ask the user; changes elsewhere are the user's -- leave them,
   and if git refuses the checkout because of them, ask. Never stash, reset or discard.
@@ -23,6 +25,9 @@ keep "Migration plan" current when a stage changes state.
   never `git add -A` / `git add .` from the git root / `git commit -a`.
 - Base branch: fix/audit-p0. One branch per stage: refactor/stageN-<name>; PR into fix/audit-p0
   with `gh pr create --base fix/audit-p0`. The user reviews and merges.
+- PRs into fix/audit-p0 do not auto-close issues (`Closes #N` fires only on the default branch).
+  After the user merges the LAST PR of an issue, close the issue with
+  `gh issue close N --reason completed --comment "Done in #PR..., merged into fix/audit-p0."`.
 - Never push to fix/audit-p0 directly, never force-push, never rewrite pushed history.
 - Before a PR the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
@@ -73,6 +78,8 @@ keep "Migration plan" current when a stage changes state.
   stage that touches it; new code never writes to the streams directly.
 - Header layout: in each visibility section, functions first, then a fresh label for data.
 - core/ includes only the standard library and the pod containers (keeps tests SDK-free).
+- Exception: header-only libraries in externals/ (stb_easy_font, ...) may keep their own file
+  statics; include them only from a .cpp, never from a project header.
 - Comments match the code and README; a comment about a mode/value is verified by a run.
   Max line length 140.
 
@@ -97,6 +104,11 @@ keep "Migration plan" current when a stage changes state.
       PacketQueue, FrameComposer, MuxSession; the remainder is H264Encoder (100-200 lines each,
       trivial destructors). Check: viewer joins mid-stream, 1 and 3 sources, NO SIGNAL plate,
       exit without MPP errors.
+      Issue #19 (plan + review in its comments), split 4a/4b/4c/4d. 4a (Log, EncoderConfig +
+      StreamLayout, ParamSetCache, PtsClock, EncodePacer): in progress.
+      Baselines (fix/audit-p0 @ 2e8d17c, --net --net-h264, viewer connected):
+      build/run_base_h264_pool{1,3}.log, build/run_base_h264_net.log, build/base_png*.png.
+      Open (after stage 4, separate issue): force an IDR at a UDP session (re)start too.
 - [ ] 5 NetMjpegSource: BufferedSocket, MultipartReader, HTTP header parsing as a pure function
       over a buffer. Check: tests on recorded streams (cut-off, broken JPEG, no Content-Length);
       live run.
