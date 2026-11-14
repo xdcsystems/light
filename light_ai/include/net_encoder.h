@@ -33,6 +33,7 @@
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
 
+#include "core/encode_pacer.hpp"     // EncodePacer: which publishes are encoded
 #include "core/encoder_config.hpp"  // EncoderConfig, StreamLayout
 #include "core/geometry.hpp"        // LbGeom: band geometry arrives as one object
 #include "core/param_set_cache.hpp"  // ParamSetCache: late-join SPS/PPS repeat
@@ -106,7 +107,7 @@ public:
     // (gray + the plate) into the ring slot / composite canvas cells of
     // every absent source, then encodes one frame. Called by
     // Pipeline::idle_tick while at least one configured tile has no live
-    // source; idle encodes share the last_enc_ts_us_ budget with live
+    // source; idle encodes share the pacer budget with live
     // ones and are NOT counted in --frames or the timing stats.
     void publish_idle( int64_t ts_us, const bool* absent, int nabs );
 
@@ -136,6 +137,7 @@ private:
     bool init_frames();
     void free_frames();
     void clear_pkt_queue();
+    int queue_depth();  // packets queued for serve() (pkt_mx_)
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
     bool prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb );
 
@@ -183,15 +185,17 @@ private:
     // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
     // runs before publish() on the same pipeline thread -- no fence fd
     // crosses this boundary (retired, see docs/state.md).
+    EncodePacer pacer_;  // which publishes are encoded (pipeline thread only)
     // CFR counter / VFR dequeue-time pts and the muxer step (core/pts_clock.hpp).
     // mx_: next() / advance() on the pipeline thread, restart() by the serve
     // thread at session start (pts restart from zero when a new viewer connects).
     PtsClock pts_;
     int64_t ts_us_ = -1;  // dequeue time of the frame being encoded (publish -> send_frame)
-    // Atomic: written under mx_ by the serve thread on session (re)start,
-    // read/written by publish() on the pipeline thread WITHOUT mx_ (only the
-    // active_ gate in between) -- a plain int64_t was a data race (UB).
-    std::atomic<int64_t> last_enc_ts_us_ { -1 };
+    // Bumped by the serve thread (under mx_) at every session start, before
+    // active_; publish() snapshots it after its active_ check and the pacer
+    // resets its budget on a new value. Replaces the cross-thread reset of
+    // the former atomic last_enc_ts_us_: the pacer is pipeline-thread only.
+    std::atomic<uint32_t> session_epoch_ { 0 };
     // Frames encoded; gates the destructor drain in both modes (the CFR
     // counter alone would be 0 in VFR and skip the flush).
     uint64_t frames_sent_ = 0;

@@ -26,3 +26,4 @@ void test_source_prober_threads( TestRun& t );
 void test_encoder_config( TestRun& t );
 void test_param_set_cache( TestRun& t );
 void test_pts_clock( TestRun& t );
+void test_encode_pacer( TestRun& t );

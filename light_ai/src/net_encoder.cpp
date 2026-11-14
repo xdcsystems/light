@@ -23,6 +23,7 @@ extern "C"
 #include <libavutil/dict.h>
 }
 
+#include "core/encode_pacer.hpp"
 #include "core/encoder_config.hpp"
 #include "core/log.hpp"
 #include "core/param_set_cache.hpp"
@@ -214,6 +215,7 @@ namespace
 NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
   : log_( log )
   , cfg_( cfg )
+  , pacer_( cfg.layout.nsrc, cfg.fps )
   , pts_( cfg.vfr() )
   , params_( log )
 {
@@ -502,22 +504,18 @@ bool NetEncoder::viewer_active() const
 
 void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int src_idx )
 {
-    const StreamLayout& lay = cfg_.layout;
     if ( quit_.load() || !active_.load() )
         return;
-    bool q_busy = false;
-    {
-        std::lock_guard<std::mutex> qlk( pkt_mx_ );
-        q_busy = pkts_.n >= 4;
-    }
-    const int64_t vfr_step_us = q_busy ? 20000 : 4000;
-    const int64_t min_step_us = lay.nsrc > 1 ? ( cfg_.fps > 0 ? 1000000 / cfg_.fps : vfr_step_us ) : 0;
-    const bool do_enc = ( lay.nsrc <= 1 || ts_us < 0 || last_enc_ts_us_ < 0
-                          || ( ts_us - last_enc_ts_us_ ) >= min_step_us );
+    // The session this publish belongs to: loaded after active_, so a
+    // session seen live is seen with its own epoch (run_session bumps the
+    // epoch before it stores active_).
+    const uint32_t epoch = session_epoch_.load();
+    // Multi-view: frames closer than the pacing step only update their
+    // tile in the canvas (core/encode_pacer.hpp).
+    const bool do_enc = pacer_.admit( ts_us, queue_depth(), epoch );
     if ( do_enc )
     {
         ts_us_ = ts_us;
-        last_enc_ts_us_ = ts_us;
         cur_ = ( cur_ + 1 ) % kBufCount;
     }
 
@@ -555,27 +553,24 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
 
 // NO SIGNAL publish (idle): mirrors publish() -- encode/mux under mx_,
 // RGA outside it, error path wakes serve(). The caller paces idle
-// encodes at a fixed fps; updating last_enc_ts_us_ keeps live and idle
-// encodes inside one budget: a live frame right after an idle one sees
-// a fresh ts and skips the duplicate encode (multi-view do_enc window).
+// encodes at a fixed fps; the pacer stamps them in the same budget as
+// live ones: a live frame right after an idle one sees a fresh stamp and
+// skips the duplicate encode (multi-view window).
 // The frame counter and the timing stats never see idle frames.
 void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
 {
     const StreamLayout& lay = cfg_.layout;
     if ( quit_.load() || !active_.load() )
         return;
+    const uint32_t epoch = session_epoch_.load();  // see publish()
     bool any = false;
     for ( int s = 0; s < lay.nsrc; ++s )
         any = any || ( !absent || s >= nabs || absent[ s ] );
     if ( !any )
         return;  // every tile went live since the tick was scheduled
-    {
-        std::lock_guard<std::mutex> qlk( pkt_mx_ );
-        if ( pkts_.n >= 4 )
-            return;  // encode queue full: skip this tick
-    }
+    if ( !pacer_.admit_idle( ts_us, queue_depth(), epoch ) )
+        return;  // encode queue busy: skip this tick
     ts_us_ = ts_us;
-    last_enc_ts_us_ = ts_us;
     cur_ = ( cur_ + 1 ) % kBufCount;
     if ( !prep_idle_frame( absent, nabs, pool_.buf[ cur_ ] ) )
     {
@@ -764,6 +759,12 @@ void NetEncoder::free_frames()
         av_packet_free( &mux_pkt_ );
     if ( dup_pkt_ )
         av_packet_free( &dup_pkt_ );
+}
+
+int NetEncoder::queue_depth()
+{
+    std::lock_guard<std::mutex> qlk( pkt_mx_ );
+    return pkts_.n;
 }
 
 void NetEncoder::clear_pkt_queue()
@@ -1134,7 +1135,7 @@ void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
         fc_ = fc.p;
         st_ = st;
         pts_.restart( frame_step );  // CFR counter and VFR base restart from zero per session
-        last_enc_ts_us_ = -1;
+        session_epoch_.fetch_add( 1 );  // the pacer starts the new session's budget from scratch
         active_.store( true );
     }
 
