@@ -5,8 +5,8 @@
 // encode() sends one frame and queues every packet the codec returns. It
 // runs under SessionGate::run() and owns the per-session encoder state:
 // on the first encode of a new session epoch it restarts the pts clock
-// with the session's frame_step and arms the forced IDR if the session
-// asks for one (a TCP viewer). A full rkmpp input queue drops the frame
+// with the session's frame_step and arms the forced IDR (every session,
+// TCP or UDP, starts with an IDR). A full rkmpp input queue drops the frame
 // and forces an IDR next; a packet-queue overflow forces one too.
 //
 // The destructor drains the codec (EOF, then every pending packet) while

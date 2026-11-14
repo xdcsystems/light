@@ -16,7 +16,8 @@
 //
 // The encoder keeps no session state the serve thread writes. It detects a
 // new session by its epoch: inside run() it restarts the pts clock and arms
-// the forced IDR (H264Encoder::encode); the pacer budget is reset earlier,
+// the forced IDR -- every session, TCP or UDP, starts with an IDR
+// (H264Encoder::encode); the pacer budget is reset earlier,
 // from the epoch snapshot publish() takes after active() (EncodePacer::admit).
 //
 // SDK-free; host + TSan tested (tests/test_session_gate.cpp).
@@ -35,7 +36,6 @@ public:
         int stream_index = 0;     // the muxer's stream index for the packets
         int64_t frame_step = 1;   // muxer ticks per codec pts (PtsClock::restart)
         uint32_t epoch = 0;       // 1, 2, ... per session (PacketQueue::open / fail)
-        bool force_idr = false;   // the first encoded frame of the session must be an IDR
     };
 
 public:

@@ -214,19 +214,21 @@ void H264Encoder::request_idr()
 bool H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session& s, PacketQueue& queue )
 {
     // A new session (its first encode): the pts restart from zero with
-    // the session's step, and a TCP viewer's first frame is an IDR.
+    // the session's step, and its first frame is an IDR -- a TCP viewer
+    // and a UDP (re)open alike, so a UDP receiver that stayed listening
+    // across a reopen resumes at once instead of at the next GOP boundary.
     if ( s.epoch != seen_epoch_ )
     {
         seen_epoch_ = s.epoch;
         pts_.restart( s.frame_step );
-        force_idr_ = force_idr_ || s.force_idr;
+        force_idr_ = true;
     }
     const int64_t fpts = pts_.next( ts_us, frames_sent_ );
     fr->pts = fpts;
 
-    // 7c forced-IDR: a fresh viewer session forces the next encoded frame
-    // to be an IDR, so a late join starts within a frame or two instead
-    // of waiting for the GOP boundary. The rkmpp wrapper ignores
+    // 7c forced-IDR: a fresh session forces the next encoded frame to be
+    // an IDR, so a late join (TCP) or a reopen (UDP) starts within a frame
+    // or two instead of waiting for the GOP boundary. The rkmpp wrapper ignores
     // frame->key_frame, so reach MPP through its private context
     // (RKMPPPriv above).
     if ( force_idr_ )
