@@ -128,10 +128,13 @@ keep "Migration plan" current when a stage changes state.
       live run.
       Issue #28 (plan + review in its comments), split 5a/5b/5c. 5a (ByteWindow, HttpUrl, HttpHead,
       MultipartReader, jpeg_frame_check in core/; fixtures tests/data/; bare LF, the "--" boundary, the
-      boundary from Content-Type only): PR #29. 5b: BufferedSocket, MjpegSlotPool + the mmap fix, Log,
-      recover() removed. 5c: the NetMjpegSource remainder, loopback source tests; closes #28.
+      boundary from Content-Type only): merged (PR #29). 5b (BufferedSocket, MjpegSlotPool + the mmap
+      fix, Log, recover() removed; "source s<N>:" warm-up / zero-size texts): PR #30.
+      5c: the NetMjpegSource remainder, loopback source tests; closes #28.
       Net disconnect check: iptables-legacy DROP of the phone's IP (from --net-src) for 8 s, one sudo -n sh -c,
-      then -S; driver live28.sh was a session scratch script. A/B logs: build/run28_{base,5a}_{2x1,net,drop}.log.
+      then -S; driver live28.sh was a session scratch script. A/B logs: build/run28_{base,5a}_{2x1,net,drop}.log,
+      build/run28_{base5b,5b}_{2x1,net}.log, build/run28_5b_drop.log. Open for 5c: the stale "reconnect()" in the
+      dequeue comment (review of #29, point 2).
 - [ ] 6 Complex functions: YoloDecoder and BoxMapper as classes; KalmanAxis, Associator; split
       setup_device and GpuBoxDrawer::init. Goal: no function above cognitive complexity 20.
       Check: the reference CSV matches byte for byte; tighten the clang-tidy thresholds.
