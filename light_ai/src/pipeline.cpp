@@ -744,8 +744,11 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
     // Full tensor: draws and preview reads from previous frames
     // may have left resident lines anywhere in it.
 
+    // tn.data != nullptr: the InferencePool constructor throws when setup_io()
+    // fails, so a live slot always has its tensor mapped; the check states the
+    // invariant for the analyzer, like the null guard inside cache_drop().
     const SourceSlot& ss = srcs_[cur_src_];
-    if ( band.w > 0
+    if ( tn.data != nullptr && band.w > 0
          && ( band.left != ss.lb.left || band.top != ss.lb.top || band.w != ss.lb.w || band.h != ss.lb.h ) )
     {
         dma::DmaSync wr( tn.fd, true );
