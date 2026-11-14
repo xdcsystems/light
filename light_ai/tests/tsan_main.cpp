@@ -1,4 +1,4 @@
-// light_ai_tests_tsan: the threaded suites only (test_source_prober.cpp also
+// light_ai_tests_tsan: the threaded suites only (test_source_prober.cpp and test_packet_queue.cpp also
 // holds the unthreaded test_source_prober, linked in but not run here), built with -fsanitize=thread
 // (tests/CMakeLists.txt). A data race makes TSan exit non-zero.
 
@@ -12,6 +12,7 @@ int main()
     TestRun t;
     test_source_threads( t );
     test_source_prober_threads( t );
+    test_packet_queue_threads( t );
     std::cout << "light_ai_tests_tsan: " << t.checks() << " checks, " << t.failures() << " failed\n";
     return t.failures() == 0 ? 0 : 1;
 }

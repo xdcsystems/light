@@ -9,13 +9,11 @@
 #pragma once
 
 #include <atomic>
-#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
 
-#include "pod_ring.hpp"
 
 // Same include form as mpp_decoder.hpp: <rockchip/rk_mpi.h> resolves to
 // the self-built /usr/local/include/rockchip headers. The quoted form
@@ -28,6 +26,7 @@
 #include "core/geometry.hpp"        // LbGeom: band geometry arrives as one object
 #include "core/param_set_cache.hpp"  // ParamSetCache: late-join SPS/PPS repeat
 #include "core/pts_clock.hpp"        // PtsClock: CFR / VFR pts
+#include "net/av_packet_queue.hpp"     // PacketQueue: encoder -> serve thread
 #include "net/encoder_frame_pool.hpp"  // EncoderFramePool: the encoder input ring
 #include "net/frame_composer.hpp"     // FrameComposer: the picture the encoder reads
 #include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
@@ -70,11 +69,6 @@ class NetEncoder
         AVFormatContext* p;
     };
 
-    enum
-    {
-        kPktQDepth = 32
-    };
-
 public:
     // log: the process diagnostics, owned by main(); outlives the encoder
     // (the serve thread logs through it too: Log is thread-safe).
@@ -111,7 +105,15 @@ private:
     // The mux side split out of serve() for readability:
     // drain_queue() owns the wait/pop loop, mux_write() writes one
     // packet with the IDR-prepend logic (params_).
-    void drain_queue( AVFormatContext* fc );
+    // How a session's drain loop ended: quit (stop()), an encode-side
+    // failure of this session (queue fail), or a failed write of our own.
+    enum class DrainEnd : uint8_t
+    {
+        Stopped,
+        Failed,
+        WriteFailed
+    };
+    DrainEnd drain_queue( AVFormatContext* fc );
     // One finished encoder packet -> the preallocated ring queue for
     // serve() to mux; shared by the EAGAIN retry and the send drain.
     void enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts );
@@ -125,19 +127,15 @@ private:
 
     bool init_packets();
     void free_packets();
-    void clear_pkt_queue();
-    int queue_depth();  // packets queued for serve() (pkt_mx_)
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
 
 private:
     const Log& log_;
     const EncoderConfig cfg_;
     std::thread thread_;
-    std::atomic<bool> quit_ { false };
-    std::atomic<bool> error_ { false };
+    std::atomic<bool> quit_ { false };  // dtor -> serve thread (accept poll); queue_.stop() wakes the drain
 
     std::mutex mx_;
-    std::condition_variable cv_;
     AVFormatContext* fc_ = nullptr;  // mpegts: TCP pull or UDP push
     AVStream* st_ = nullptr;
     // Set after a viewer accepts; the next encode becomes an IDR
@@ -155,13 +153,10 @@ private:
     // canvas (net/frame_composer.hpp).
     FrameComposer composer_;
 
-    // Encoder -> serve() preallocated packet ring queue. A separate mutex
-    // from mx_: network-side wakeups never touch the encode critical section.
-    std::mutex pkt_mx_;
-    std::condition_variable pkt_cv_;
-    PodRing<AVPacket*, kPktQDepth> pkts_ {};
-    int pkt_drops_ = 0;
-    bool wait_key_ = true;  // pkt_mx_: drain drops packets until the next IDR (see net_encoder.cpp)
+    // Encoder -> serve() packet queue (net/av_packet_queue.hpp): its own
+    // mutex, separate from mx_: network-side wakeups never touch the encode
+    // critical section. Overflow flush, key gate, per-session fail( epoch ).
+    PacketQueue queue_;
     std::atomic<bool> active_ { false };  // stream path live (serve sets/clears under mx_)
     // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
     // runs before publish() on the same pipeline thread -- no fence fd

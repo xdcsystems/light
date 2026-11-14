@@ -179,20 +179,12 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
 NetEncoder::~NetEncoder()
 {
     quit_.store( true );
-    {
-        std::lock_guard<std::mutex> lk( mx_ );
-        cv_.notify_all();
-    }
-    {
-        std::lock_guard<std::mutex> plk( pkt_mx_ );
-        pkt_cv_.notify_all();
-    }
+    queue_.stop();  // wakes a drain blocked in pop()
     if ( thread_.joinable() )
         thread_.join();
-    {
-        std::lock_guard<std::mutex> plk( pkt_mx_ );
-        clear_pkt_queue();
-    }
+    // Queued packets reference encoder output buffers: drop them while the
+    // codec is alive (the drain below frees it).
+    queue_.close();
     if ( enc_ )
     {
         // Drain the encoder: send EOF and collect EVERY pending packet
@@ -292,7 +284,6 @@ void NetEncoder::serve()
         if ( !tcp.listen() )
         {
             log_.error() << "enc: tcp listener bind failed on port " << cfg_.port << '\n';
-            error_.store( true );
             return;
         }
         log_.info() << "enc: PULL mode: listening on tcp port " << cfg_.port << 
@@ -301,8 +292,6 @@ void NetEncoder::serve()
 
     while ( !quit_.load() )
     {
-        error_.store( false );
-
         // Session body extracted (tidy: readability-function-size).
         // continue;/break; became return;: each failure path now falls
         // through to serve()'s trailing print + UDP backoff, same as before.
@@ -335,7 +324,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     const uint32_t epoch = session_epoch_.load();
     // Multi-view: frames closer than the pacing step only update their
     // tile in the canvas (core/encode_pacer.hpp).
-    const bool do_enc = pacer_.admit( ts_us, queue_depth(), epoch );
+    const bool do_enc = pacer_.admit( ts_us, queue_.depth(), epoch );
     if ( do_enc )
     {
         ts_us_ = ts_us;
@@ -350,11 +339,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     const int slot = ring_.current();
     if ( !composer_.compose( tensor_fd, band, src_idx, slot, do_enc ? ring_.buf( slot ) : nullptr ) )
     {
-        error_.store( true );
-        {
-            std::lock_guard<std::mutex> nlk( pkt_mx_ );
-            pkt_cv_.notify_all();  // serve() closes and reopens the stream path
-        }
+        queue_.fail( epoch );  // ends THIS session only: serve() reopens the stream path
         return;
     }
     if ( !do_enc )
@@ -367,11 +352,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
 
     if ( !send_frame( st_ ) )
     {
-        error_.store( true );
-        {
-            std::lock_guard<std::mutex> nlk( pkt_mx_ );
-            pkt_cv_.notify_all();  // serve() closes and reopens the stream path
-        }
+        queue_.fail( session_epoch_.load() );  // under mx_: the open session's epoch
     }
 }
 
@@ -392,17 +373,13 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
         any = any || ( !absent || s >= nabs || absent[ s ] );
     if ( !any )
         return;  // every tile went live since the tick was scheduled
-    if ( !pacer_.admit_idle( ts_us, queue_depth(), epoch ) )
+    if ( !pacer_.admit_idle( ts_us, queue_.depth(), epoch ) )
         return;  // encode queue busy: skip this tick
     ts_us_ = ts_us;
     const int slot = ring_.advance();
     if ( !composer_.compose_idle( absent, nabs, slot, ring_.buf( slot ) ) )
     {
-        error_.store( true );
-        {
-            std::lock_guard<std::mutex> nlk( pkt_mx_ );
-            pkt_cv_.notify_all();  // serve() closes and reopens the stream path
-        }
+        queue_.fail( epoch );  // see publish()
         return;
     }
     std::lock_guard<std::mutex> lk( mx_ );
@@ -410,11 +387,7 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
         return;  // viewer dropped while copying: frame dropped with it
     if ( !send_frame( st_ ) )
     {
-        error_.store( true );
-        {
-            std::lock_guard<std::mutex> nlk( pkt_mx_ );
-            pkt_cv_.notify_all();  // serve() closes and reopens the stream path
-        }
+        queue_.fail( session_epoch_.load() );  // see publish()
     }
 }
 
@@ -424,41 +397,15 @@ bool NetEncoder::init_packets()
     dup_pkt_ = av_packet_alloc();
     if ( !mux_pkt_ || !dup_pkt_ )
         return false;
-    for ( auto*& qp : pkts_.d )
-    {
-        qp = av_packet_alloc();
-        if ( !qp )
-            return false;
-    }
     return true;
 }
 
 void NetEncoder::free_packets()
 {
-    for ( auto*& qp : pkts_.d )
-    {
-        if ( qp )
-            av_packet_free( &qp );
-    }
     if ( mux_pkt_ )
         av_packet_free( &mux_pkt_ );
     if ( dup_pkt_ )
         av_packet_free( &dup_pkt_ );
-}
-
-int NetEncoder::queue_depth()
-{
-    std::lock_guard<std::mutex> qlk( pkt_mx_ );
-    return pkts_.n;
-}
-
-void NetEncoder::clear_pkt_queue()
-{
-    while ( !pkts_.empty() )
-    {
-        av_packet_unref( pkts_.front() );
-        pkts_.pop();
-    }
 }
 
 bool NetEncoder::send_frame( AVStream* st )
@@ -486,7 +433,7 @@ bool NetEncoder::send_frame( AVStream* st )
     // EAGAIN from send = the rkmpp input queue is full (3-deep task
     // queue under a VFR clump). The FFmpeg contract: pull one output
     // packet out first, then retry the send (the dtor flush loop uses
-    // the same pattern for EOF). Was: fatal -> error_ + a full stream
+    // the same pattern for EOF). Was: fatal -> a full stream
     // session restart over a transient backpressure.
     AVPacket* pkt = pkt_;
     int ret = 0;
@@ -546,26 +493,15 @@ void NetEncoder::enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts )
 {
     pkt->stream_index = st->index;
     pkt->pts = pkt->dts = pts_.packet_ts( fpts );
+    // Overflow = serve() stalled (slow viewer / Wi-Fi burst): the queue
+    // flushed itself and re-armed its key gate (core/packet_queue.hpp);
+    // an IDR on the next frame makes the gap one frame, not a full GOP.
+    const PacketQueue::Pushed pu = queue_.push( pkt );
+    if ( pu.flushed > 0 )
     {
-        std::lock_guard<std::mutex> plk( pkt_mx_ );
-        if ( pkts_.full() )
-        {
-            // Overflow = serve() stalled (slow viewer / Wi-Fi burst).
-            // Dropping one packet tears the reference chain: every later
-            // P-frame decodes into corruption until the next IDR. Flush
-            // the whole queue, re-arm the IDR gate and force an IDR on
-            // the next frame: the gap is one frame, not a full GOP.
-            const int ndrop = pkts_.n;
-            clear_pkt_queue();
-            force_idr_.store( true );
-            wait_key_ = true;
-            ++pkt_drops_;
-            log_.warn() << "enc: packet queue overflow: flushed " << ndrop << " pkts (drop " << pkt_drops_ << "), IDR next frame\n";
-        }
-        AVPacket*& tail = pkts_.push_slot();  // commits n; !full() guaranteed above
-        av_packet_unref( tail );
-        av_packet_move_ref( tail, pkt );
-        pkt_cv_.notify_one();
+        force_idr_.store( true );
+        log_.warn() << "enc: packet queue overflow: flushed " << pu.flushed << " pkts (drop " << pu.drops
+                    << "), IDR next frame\n";
     }
 }
 
@@ -573,40 +509,19 @@ void NetEncoder::enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts )
 // (readability-function-size). drain_queue() owns the wait/pop loop;
 // mux_write() writes one packet with the late-join IDR-prepend logic
 // (ParamSetCache; the Annex B scans are annexb:: in core/param_set_cache.hpp).
-void NetEncoder::drain_queue( AVFormatContext* fc )
+NetEncoder::DrainEnd NetEncoder::drain_queue( AVFormatContext* fc )
 {
-    // Session-start gate, shared with the overflow path in send_frame:
-    // armed here (late join mid-GOP must not decode P-frames against a
-    // missing reference), re-armed by the queue flush, cleared on the
-    // first IDR reaching the queue front. Guarded by pkt_mx_ on both
-    // sides (serve thread here, pipeline thread in send_frame).
+    // The queue's key gate was armed by open() (late join mid-GOP must
+    // not decode P-frames against a missing reference) and is re-armed by
+    // an overflow flush; pop() drops packets until the first IDR.
+    for ( ;; )
     {
-        std::lock_guard<std::mutex> plk( pkt_mx_ );
-        wait_key_ = true;
-    }
-    while ( !quit_.load() && !error_.load() )  // same predicate as the wait below
-    {
-        size_t q_rem = 0;
-        {
-            std::unique_lock<std::mutex> plk( pkt_mx_ );
-            pkt_cv_.wait( plk, [this] {
-                return quit_.load() || error_.load() || pkts_.n > 0;
-            } );
-            if ( quit_.load() || error_.load() )
-                return;
-            AVPacket* front = pkts_.front();
-            if ( wait_key_ && !annexb::is_idr( front->data, static_cast<size_t>( front->size ) ) )
-            {
-                av_packet_unref( front );
-                pkts_.pop();
-                continue;
-            }
-            wait_key_ = false;
-            av_packet_unref( mux_pkt_ );
-            av_packet_move_ref( mux_pkt_, front );
-            pkts_.pop();
-            q_rem = pkts_.n;
-        }
+        const PacketQueue::Popped got = queue_.pop( mux_pkt_ );
+        if ( got.what == PacketQueue::Pop::Stopped )
+            return DrainEnd::Stopped;
+        if ( got.what == PacketQueue::Pop::Failed )
+            return DrainEnd::Failed;
+        const int q_rem = got.left;
         // Ownership of the packet buffer moved into mux_pkt_ via
         // av_packet_move_ref; mux_write consumes and unrefs it without
         // freeing the preallocated AVPacket struct.
@@ -623,8 +538,7 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
                 log_.info() << "enc: viewer stalled (send timeout), session ends\n";
             else
                 log_.error() << "enc: write failed: " << av_err_str( r ) << " (packet lost)\n";
-            error_.store( true );
-            return;
+            return DrainEnd::WriteFailed;
         }
     }
 }
@@ -815,12 +729,16 @@ void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
     if ( !setup_stream( fc.p, &st, &frame_step, tcp_pull ) )
         return;
 
+    // Session open order: the queue first (cleared, key gate armed, this
+    // epoch's fail() accepted), then the encoder side (under mx_).
+    const uint32_t epoch = session_epoch_.load() + 1;  // the serve thread is the only writer
+    queue_.open( epoch );
     {
         std::lock_guard<std::mutex> lk( mx_ );
         fc_ = fc.p;
         st_ = st;
         pts_.restart( frame_step );  // CFR counter and VFR base restart from zero per session
-        session_epoch_.fetch_add( 1 );  // the pacer starts the new session's budget from scratch
+        session_epoch_.store( epoch );  // the pacer starts the new session's budget from scratch
         active_.store( true );
     }
 
@@ -829,19 +747,20 @@ void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
     // viewer stalls this loop, not publish(). The wait/pop loop and the
     // per-packet write with the IDR-prepend logic moved to drain_queue()
     // and mux_write() (tidy: readability-function-size).
-    drain_queue( fc.p );
+    const DrainEnd end = drain_queue( fc.p );
 
+    // Close order: the encoder side first (under mx_: waits for an encode
+    // in progress, so nothing is pushed after it), then the queue (the
+    // leftover packets are dead weight), then the trailer.
     {
         std::lock_guard<std::mutex> lk( mx_ );
         active_.store( false );
         fc_ = nullptr;
         st_ = nullptr;
     }
-    // Leftover queued packets are dead weight now: unref them.
-    {
-        std::lock_guard<std::mutex> plk( pkt_mx_ );
-        clear_pkt_queue();
-    }
-    if ( !error_.load() )
-        av_write_trailer( fc.p );  // best effort on a healthy socket
+    queue_.close();
+    // Best effort on a healthy socket: only when the session ended by quit,
+    // as before (not after an encode-side failure or a failed write).
+    if ( end == DrainEnd::Stopped )
+        av_write_trailer( fc.p );
 }

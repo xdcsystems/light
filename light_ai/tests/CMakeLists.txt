@@ -38,6 +38,7 @@ add_executable(light_ai_tests
     test_pts_clock.cpp
     test_encode_pacer.cpp
     test_idle_plate.cpp
+    test_packet_queue.cpp
     # modules under test
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
     ${LIGHT_AI_ROOT}/src/core/encoder_config.cpp
@@ -81,6 +82,7 @@ add_executable(light_ai_tests_tsan EXCLUDE_FROM_ALL
     tsan_main.cpp
     test_source_threads.cpp
     test_source_prober.cpp
+    test_packet_queue.cpp
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
 )
 target_include_directories(light_ai_tests_tsan PRIVATE
