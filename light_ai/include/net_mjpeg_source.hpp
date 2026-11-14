@@ -2,10 +2,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <vector>
 
-#include "core/byte_window.hpp"
 #include "core/multipart_reader.hpp"
+#include "source/buffered_socket.hpp"
+#include "source/mjpeg_slot_pool.hpp"
+
+class Log;
 
 // HTTP MJPEG pull source (IP Webcam / any multipart/x-mixed-replace server).
 // Media stays JPEG end to end: the MPP decoder consumes these
@@ -17,26 +19,19 @@ class NetMjpegSource
 {
     enum
     {
-        kBufCount = 4,
-        kFrameMax = 1 << 20,  // 1 MiB per JPEG frame cap (cast to size_t at use sites)
-        kSockBuf = 256 * 1024,  // the receive window: also the desync limit (no delimiter in it)
-        kPollMs = 2000,      // per-fill watchdog, same window as the camera
-        kErrStreakMax = 4,   // corrupt/short-frame streak tolerance
-        kIntr = -3,  // net_fill: a signal interrupted poll/recv (transient, callers retry)
-    };
-
-    struct Buffer
-    {
-        void* start = nullptr;
-        size_t length = 0;
-        bool in_flight = false;
+        kPollMs = 2000,     // per-fill watchdog, same window as the camera
+        kErrStreakMax = 4,  // corrupt/short-frame streak tolerance
     };
 
 public:
-    NetMjpegSource();
-    ~NetMjpegSource();
+    // Throws when the frame pool cannot be mapped (MjpegSlotPool): the
+    // startup path only (MediaSource::use_net <- SourceChannel::configure).
+    explicit NetMjpegSource( const Log& log ) : log_( log ) {}
+    ~NetMjpegSource() = default;  // the socket closes, the pool unmaps
     NetMjpegSource( const NetMjpegSource& ) = delete;
     NetMjpegSource& operator=( const NetMjpegSource& ) = delete;
+    NetMjpegSource( NetMjpegSource&& ) = delete;
+    NetMjpegSource& operator=( NetMjpegSource&& ) = delete;
 
     // Full connect path for an http://host[:port]/path URL. Non-throwing:
     // 0 on success, non-zero fills *why.
@@ -57,19 +52,12 @@ public:
 
     int dequeue( uint32_t* size, int* err, int timeout_ms = -1 );
     void requeue( int index );
-    void* buffer( int index ) const { return bufs_[index].start; }
-    size_t buffer_size( int index ) const { return bufs_[index].length; }
+    void* buffer( int index ) const { return pool_.data( index ); }
+    size_t buffer_size( int ) const { return pool_.capacity(); }
     int width() const { return width_; }
     int height() const { return height_; }
 
-    // One recovery-ladder step: re-open the URL. A URL never re-enumerates,
-    // so new_id returns unchanged (the camera path adopts re-enumerated nodes there).
-    // busy_nodes: ignored here -- a URL never re-enumerates.
-    int recover( const std::string& id, std::string& new_id, const std::vector<std::string>& busy_nodes,
-                 std::string* why );
-
 private:
-    int connect_tcp( const std::string& host, int port, std::string* why );
     int send_get( const std::string& host, int port, const std::string& path, std::string* why ) const;
     // Response head (core/http_head.hpp) -> the reader's boundary.
     int read_headers( std::string* why );
@@ -81,21 +69,15 @@ private:
     bool wait_part_ready( int timeout_ms, int* err );
     int read_latest_part( int slot, uint32_t* size );
     // One part into slot (core/multipart_reader.hpp): 0, -1 = EOF / error /
-    // watchdog, -2 = desync.
+    // watchdog, -2 = desync (a stream that does not parse, or a wedged-full window).
     int read_part( int slot, uint32_t* size );
-    // One poll+recv into the window. >0 = bytes read, 0 = timeout,
-    // kIntr = a signal interrupted poll/recv (transient), -1 = EOF/error,
-    // -2 = window wedged full (the desync protocol).
-    int net_fill( int timeout_ms );
 
 private:
-    int fd_ = -1;
+    const Log& log_;
+    MjpegSlotPool pool_;  // first: a failed mmap throws before anything else exists
+    BufferedSocket sock_;
+    MultipartReader parts_ { static_cast<size_t>( MjpegSlotPool::kSlotBytes ) };  // the boundary is set per connect
     int err_streak_ = 0;
     int width_ = 0, height_ = 0;
     uint32_t primed_len_ = 0;  // first frame read during setup_device to extract SOF dims
-    void* pool_ = nullptr;     // one mmap block: kBufCount x kFrameMax, init-time
-
-    Buffer bufs_[kBufCount] = {};
-    ByteWindow<kSockBuf> win_;
-    MultipartReader parts_ { static_cast<size_t>( kFrameMax ) };  // the boundary is set per connect
 };
