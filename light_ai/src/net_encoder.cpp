@@ -311,17 +311,17 @@ void NetEncoder::serve()
 // pipeline.cpp).
 bool NetEncoder::viewer_active() const
 {
-    return active_.load();
+    return gate_.active();
 }
 
 void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int src_idx )
 {
-    if ( quit_.load() || !active_.load() )
+    if ( !gate_.active() )
         return;
-    // The session this publish belongs to: loaded after active_, so a
-    // session seen live is seen with its own epoch (run_session bumps the
-    // epoch before it stores active_).
-    const uint32_t epoch = session_epoch_.load();
+    // The session this publish belongs to: loaded after active(), so a
+    // session seen live is seen with its own epoch (SessionGate::open
+    // stores the epoch first). The pacer and a fail() use it.
+    const uint32_t epoch = gate_.epoch();
     // Multi-view: frames closer than the pacing step only update their
     // tile in the canvas (core/encode_pacer.hpp).
     const bool do_enc = pacer_.admit( ts_us, queue_.depth(), epoch );
@@ -345,18 +345,15 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     if ( !do_enc )
         return;
 
-    std::lock_guard<std::mutex> lk( mx_ );
-
-    if ( !fc_ || !enc_ )
-        return;  // viewer dropped while cropping: frame dropped with it
-
-    if ( !send_frame( st_ ) )
-    {
-        queue_.fail( session_epoch_.load() );  // under mx_: the open session's epoch
-    }
+    // No session any more (viewer dropped while cropping): the frame is
+    // dropped with it. A send failure ends the session it was sent into.
+    gate_.run( [this]( const SessionGate::Session& s ) {
+        if ( !send_frame( s ) )
+            queue_.fail( s.epoch );
+    } );
 }
 
-// NO SIGNAL publish (idle): mirrors publish() -- encode/mux under mx_,
+// NO SIGNAL publish (idle): mirrors publish() -- encode under the gate,
 // RGA outside it, error path wakes serve(). The caller paces idle
 // encodes at a fixed fps; the pacer stamps them in the same budget as
 // live ones: a live frame right after an idle one sees a fresh stamp and
@@ -365,9 +362,9 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
 void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
 {
     const StreamLayout& lay = cfg_.layout;
-    if ( quit_.load() || !active_.load() )
+    if ( !gate_.active() )
         return;
-    const uint32_t epoch = session_epoch_.load();  // see publish()
+    const uint32_t epoch = gate_.epoch();  // see publish()
     bool any = false;
     for ( int s = 0; s < lay.nsrc; ++s )
         any = any || ( !absent || s >= nabs || absent[ s ] );
@@ -382,13 +379,10 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
         queue_.fail( epoch );  // see publish()
         return;
     }
-    std::lock_guard<std::mutex> lk( mx_ );
-    if ( !fc_ || !enc_ )
-        return;  // viewer dropped while copying: frame dropped with it
-    if ( !send_frame( st_ ) )
-    {
-        queue_.fail( session_epoch_.load() );  // see publish()
-    }
+    gate_.run( [this]( const SessionGate::Session& s ) {  // see publish()
+        if ( !send_frame( s ) )
+            queue_.fail( s.epoch );
+    } );
 }
 
 bool NetEncoder::init_packets()
@@ -408,8 +402,16 @@ void NetEncoder::free_packets()
         av_packet_free( &dup_pkt_ );
 }
 
-bool NetEncoder::send_frame( AVStream* st )
+bool NetEncoder::send_frame( const SessionGate::Session& s )
 {
+    // A new session (its first encode): the pts restart from zero with
+    // the session's step, and a TCP viewer's first frame is an IDR.
+    if ( s.epoch != seen_epoch_ )
+    {
+        seen_epoch_ = s.epoch;
+        pts_.restart( s.frame_step );
+        force_idr_ = force_idr_ || s.force_idr;
+    }
     AVFrame* fr = ring_.frame( ring_.current() );
     const int64_t fpts = pts_.next( ts_us_, frames_sent_ );
     fr->pts = fpts;
@@ -419,8 +421,9 @@ bool NetEncoder::send_frame( AVStream* st )
     // of waiting for the GOP boundary. The rkmpp wrapper ignores
     // frame->key_frame, so reach MPP through its private context
     // (RKMPPPriv above).
-    if ( force_idr_.exchange( false ) )
+    if ( force_idr_ )
     {
+        force_idr_ = false;
         RKMPPPriv* priv = static_cast< RKMPPPriv* >( enc_->priv_data );
         if ( priv && priv->mctx && priv->mapi )
         {
@@ -450,7 +453,7 @@ bool NetEncoder::send_frame( AVStream* st )
             break;
         if ( avcodec_receive_packet( enc_, pkt ) < 0 )
             break;  // nothing ready to drain: bounded retries exhausted
-        enqueue_pkt( pkt, st, fpts );
+        enqueue_pkt( pkt, s.stream_index, fpts );
     }
     if ( ret < 0 && ret != AVERROR( EAGAIN ) )
     {
@@ -464,7 +467,7 @@ bool NetEncoder::send_frame( AVStream* st )
         // the stream decodable; advance() keeps the CFR pts monotonic,
         // frames_sent_ stays put (the frame was never encoded).
         log_.warn() << "enc: send_frame: input queue full, frame dropped, IDR next frame\n";
-        force_idr_.store( true );
+        force_idr_ = true;
         pts_.advance();
         return true;
     }
@@ -472,7 +475,7 @@ bool NetEncoder::send_frame( AVStream* st )
     ret = avcodec_receive_packet( enc_, pkt );
     while ( ret >= 0 )  // drains the burst; EAGAIN/EOF end it
     {
-        enqueue_pkt( pkt, st, fpts );
+        enqueue_pkt( pkt, s.stream_index, fpts );
         ret = avcodec_receive_packet( enc_, pkt );
     }
     if ( ret != AVERROR( EAGAIN ) && ret != AVERROR_EOF )
@@ -489,9 +492,9 @@ bool NetEncoder::send_frame( AVStream* st )
 // serve() to mux. Shared by the EAGAIN retry and the post-send drain
 // in send_frame(): the pipeline thread never touches the network
 // (av_packet_move_ref, zero per-frame heap allocs).
-void NetEncoder::enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts )
+void NetEncoder::enqueue_pkt( AVPacket* pkt, int stream_index, int64_t fpts )
 {
-    pkt->stream_index = st->index;
+    pkt->stream_index = stream_index;
     pkt->pts = pkt->dts = pts_.packet_ts( fpts );
     // Overflow = serve() stalled (slow viewer / Wi-Fi burst): the queue
     // flushed itself and re-armed its key gate (core/packet_queue.hpp);
@@ -499,7 +502,7 @@ void NetEncoder::enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts )
     const PacketQueue::Pushed pu = queue_.push( pkt );
     if ( pu.flushed > 0 )
     {
-        force_idr_.store( true );
+        force_idr_ = true;
         log_.warn() << "enc: packet queue overflow: flushed " << pu.flushed << " pkts (drop " << pu.drops
                     << "), IDR next frame\n";
     }
@@ -615,8 +618,7 @@ bool NetEncoder::open_transport( const std::string& url, AVFormatContext* fc, Tr
         if ( !t.tcp || !t.tcp->accept_client( quit_ ) )
             return false;
 
-        log_.info() << "enc: viewer connected (tcp)\n";
-        force_idr_.store( true );  // next encoded frame must be an IDR
+        log_.info() << "enc: viewer connected (tcp)\n";  // its first frame: an IDR (Session::force_idr)
 
         return t.tcp->attach_avio( fc );
     }
@@ -730,17 +732,17 @@ void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
         return;
 
     // Session open order: the queue first (cleared, key gate armed, this
-    // epoch's fail() accepted), then the encoder side (under mx_).
-    const uint32_t epoch = session_epoch_.load() + 1;  // the serve thread is the only writer
+    // epoch's fail() accepted), then the gate (the encoder may encode into
+    // the session from here on). frame_step and the stream index travel
+    // in the session; a TCP viewer's first frame is an IDR.
+    const uint32_t epoch = ++sessions_;
     queue_.open( epoch );
-    {
-        std::lock_guard<std::mutex> lk( mx_ );
-        fc_ = fc.p;
-        st_ = st;
-        pts_.restart( frame_step );  // CFR counter and VFR base restart from zero per session
-        session_epoch_.store( epoch );  // the pacer starts the new session's budget from scratch
-        active_.store( true );
-    }
+    SessionGate::Session session;
+    session.stream_index = st->index;
+    session.frame_step = frame_step;
+    session.epoch = epoch;
+    session.force_idr = tcp_pull;
+    gate_.open( session );
 
     // Batch C: drain the encoder packet queue into the muxer. The
     // pipeline thread never blocks on the network from here on: a slow
@@ -749,15 +751,10 @@ void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
     // and mux_write() (tidy: readability-function-size).
     const DrainEnd end = drain_queue( fc.p );
 
-    // Close order: the encoder side first (under mx_: waits for an encode
-    // in progress, so nothing is pushed after it), then the queue (the
-    // leftover packets are dead weight), then the trailer.
-    {
-        std::lock_guard<std::mutex> lk( mx_ );
-        active_.store( false );
-        fc_ = nullptr;
-        st_ = nullptr;
-    }
+    // Close order: the gate first (waits for an encode in progress, so
+    // nothing is pushed after it), then the queue (the leftover packets
+    // are dead weight), then the trailer.
+    gate_.close();
     queue_.close();
     // Best effort on a healthy socket: only when the session ended by quit,
     // as before (not after an encode-side failure or a failed write).

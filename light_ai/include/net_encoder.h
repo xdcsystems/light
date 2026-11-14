@@ -10,7 +10,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <mutex>
 #include <string>
 #include <thread>
 
@@ -26,6 +25,7 @@
 #include "core/geometry.hpp"        // LbGeom: band geometry arrives as one object
 #include "core/param_set_cache.hpp"  // ParamSetCache: late-join SPS/PPS repeat
 #include "core/pts_clock.hpp"        // PtsClock: CFR / VFR pts
+#include "core/session_gate.hpp"     // SessionGate: the session hand-over
 #include "net/av_packet_queue.hpp"     // PacketQueue: encoder -> serve thread
 #include "net/encoder_frame_pool.hpp"  // EncoderFramePool: the encoder input ring
 #include "net/frame_composer.hpp"     // FrameComposer: the picture the encoder reads
@@ -101,7 +101,9 @@ public:
 
 private:
     void serve();
-    bool send_frame( AVStream* st );
+    // One encode under gate_.run(): starts the session's encoder state on a
+    // new epoch (pts clock, forced IDR), sends the frame, queues the packets.
+    bool send_frame( const SessionGate::Session& s );
     // The mux side split out of serve() for readability:
     // drain_queue() owns the wait/pop loop, mux_write() writes one
     // packet with the IDR-prepend logic (params_).
@@ -116,13 +118,13 @@ private:
     DrainEnd drain_queue( AVFormatContext* fc );
     // One finished encoder packet -> the preallocated ring queue for
     // serve() to mux; shared by the EAGAIN retry and the send drain.
-    void enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts );
+    void enqueue_pkt( AVPacket* pkt, int stream_index, int64_t fpts );
     void run_session( TcpPullServer& tcp, bool tcp_pull, const std::string& url );
 
     // Transport setup (accept + socket options / avio_open) and the
     // stream setup (new_stream + header + mpegts options).
     bool open_transport( const std::string& url, AVFormatContext* fc, Transport& t );
-    // frame_step: muxer ticks per codec pts, handed to pts_ under mx_ by run_session().
+    // frame_step: muxer ticks per codec pts, handed to the encoder in the gate session.
     bool setup_stream( AVFormatContext* fc, AVStream** st, int64_t* frame_step, bool tcp_pull );
 
     bool init_packets();
@@ -135,12 +137,12 @@ private:
     std::thread thread_;
     std::atomic<bool> quit_ { false };  // dtor -> serve thread (accept poll); queue_.stop() wakes the drain
 
-    std::mutex mx_;
-    AVFormatContext* fc_ = nullptr;  // mpegts: TCP pull or UDP push
-    AVStream* st_ = nullptr;
-    // Set after a viewer accepts; the next encode becomes an IDR
-    // (the rkmpp wrapper ignores frame->key_frame, so we go via MPP).
-    std::atomic< bool > force_idr_ { false };
+    // The next encode becomes an IDR (the rkmpp wrapper ignores
+    // frame->key_frame, so we go via MPP). Pipeline thread only: set by a
+    // TCP session's start (Session::force_idr, seen on its new epoch), a
+    // dropped frame and a queue overflow.
+    bool force_idr_ = false;
+    uint32_t seen_epoch_ = 0;  // the session the encoder state belongs to (pipeline thread)
 
     AVCodecContext* enc_ = nullptr;  // h264_rkmpp
     AVPacket* pkt_ = nullptr;
@@ -154,24 +156,23 @@ private:
     FrameComposer composer_;
 
     // Encoder -> serve() packet queue (net/av_packet_queue.hpp): its own
-    // mutex, separate from mx_: network-side wakeups never touch the encode
-    // critical section. Overflow flush, key gate, per-session fail( epoch ).
+    // mutex, separate from the gate's: network-side wakeups never touch the
+    // encode critical section. Overflow flush, key gate, per-session fail( epoch ).
     PacketQueue queue_;
-    std::atomic<bool> active_ { false };  // stream path live (serve sets/clears under mx_)
+    // The session hand-over (core/session_gate.hpp): the serve thread opens
+    // and closes it, every encode runs under it. With queue_ the only state
+    // the two threads share.
+    SessionGate gate_;
     // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
     // runs before publish() on the same pipeline thread -- no fence fd
     // crosses this boundary (retired, see docs/state.md).
     EncodePacer pacer_;  // which publishes are encoded (pipeline thread only)
     // CFR counter / VFR dequeue-time pts and the muxer step (core/pts_clock.hpp).
-    // mx_: next() / advance() on the pipeline thread, restart() by the serve
-    // thread at session start (pts restart from zero when a new viewer connects).
+    // Pipeline thread only: restarted by send_frame() on a new session epoch
+    // with the session's frame_step (pts restart from zero per viewer).
     PtsClock pts_;
     int64_t ts_us_ = -1;  // dequeue time of the frame being encoded (publish -> send_frame)
-    // Bumped by the serve thread (under mx_) at every session start, before
-    // active_; publish() snapshots it after its active_ check and the pacer
-    // resets its budget on a new value. Replaces the cross-thread reset of
-    // the former atomic last_enc_ts_us_: the pacer is pipeline-thread only.
-    std::atomic<uint32_t> session_epoch_ { 0 };
+    uint32_t sessions_ = 0;  // serve thread: the last session's epoch (1, 2, ...)
     // Frames encoded; gates the destructor drain in both modes (the CFR
     // counter alone would be 0 in VFR and skip the flush).
     uint64_t frames_sent_ = 0;

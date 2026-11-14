@@ -30,3 +30,5 @@ void test_encode_pacer( TestRun& t );
 void test_idle_plate( TestRun& t );
 void test_packet_queue( TestRun& t );
 void test_packet_queue_threads( TestRun& t );
+void test_session_gate( TestRun& t );
+void test_session_gate_threads( TestRun& t );
