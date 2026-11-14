@@ -44,7 +44,13 @@ int BufferedSocket::connect( const std::string& host, int port, std::string* why
     }
     // Non-blocking connect with a kConnectMs window, then back to blocking I/O.
     const int fl = ::fcntl( fd_, F_GETFL, 0 );
-    ::fcntl( fd_, F_SETFL, fl | O_NONBLOCK );
+    if ( fl < 0 || ::fcntl( fd_, F_SETFL, fl | O_NONBLOCK ) != 0 )
+    {
+        const int e = errno;
+        freeaddrinfo( res );
+        close();
+        return fail( why, std::string( "connect: fcntl: " ) + strerror( e ) );
+    }
     const int cr = ::connect( fd_, res->ai_addr, res->ai_addrlen );
     const int ce = errno;
     freeaddrinfo( res );
@@ -65,7 +71,12 @@ int BufferedSocket::connect( const std::string& host, int port, std::string* why
             return fail( why, pr <= 0 ? std::string( "connect: timeout" ) : std::string( "connect: " ) + strerror( so_err ) );
         }
     }
-    ::fcntl( fd_, F_SETFL, fl );
+    if ( ::fcntl( fd_, F_SETFL, fl ) != 0 )  // a socket left non-blocking would break the poll + recv contract
+    {
+        const int e = errno;
+        close();
+        return fail( why, std::string( "connect: fcntl: " ) + strerror( e ) );
+    }
     int nd = 1;
     ::setsockopt( fd_, IPPROTO_TCP, TCP_NODELAY, &nd, sizeof( nd ) );
     return 0;
