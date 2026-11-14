@@ -19,6 +19,7 @@
 #include "net/frame_composer.hpp"      // FrameComposer: the picture the encoder reads
 #include "net/h264_encoder.hpp"        // H264Encoder: the codec
 #include "net/mux_session.hpp"         // MuxSession: the serve thread
+#include "net/network_init.hpp"        // NetworkInit: avformat_network_init RAII
 
 class Log;
 
@@ -30,7 +31,9 @@ public:
     // cfg: the stream geometry, rate and endpoint (core/encoder_config.hpp).
     NetEncoder( const EncoderConfig& cfg, const Log& log );
 
-    ~NetEncoder();
+    // Trivial: every member releases its own resources, in reverse
+    // declaration order (see the member block below).
+    ~NetEncoder() = default;
     NetEncoder( const NetEncoder& ) = delete;
     NetEncoder& operator=( const NetEncoder& ) = delete;
 
@@ -64,10 +67,11 @@ private:
     //   3. codec_    -- the EOF drain, then the codec is freed: MPP lets go
     //                   of the dma-bufs before they go.
     //   4. composer_, ring_ -- the canvases, the input ring and its frames.
-    // The dtor body stops session_ and closes queue_ first (until the
-    // network layer becomes a member too).
-    const Log& log_;
+    //   5. net_      -- avformat_network_deinit, after everything above.
+    // Construction runs top-down: net_ first, session_ last (its thread is
+    // started by the ctor body once every member exists).
     const EncoderConfig cfg_;
+    NetworkInit net_;
     // The encoder's input ring: 4 NV12 dma-bufs pre-bound to DRM_PRIME
     // AVFrames (net/encoder_frame_pool.hpp).
     EncoderFramePool ring_;

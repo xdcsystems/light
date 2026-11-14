@@ -1,45 +1,24 @@
 #include <cstdint>
 
-extern "C"
-{
-#include <libavformat/avformat.h>  // avformat_network_init / deinit
-}
-
 #include "core/encode_pacer.hpp"
 #include "core/encoder_config.hpp"
 #include "core/log.hpp"
 #include "net_encoder.h"
 
-// Members in declaration order (net_encoder.h): the frame ring, the composer (logs the stream layout), the codec (opens and
+// Members in declaration order (net_encoder.h): the network layer, the
+// frame ring, the composer (logs the stream layout), the codec (opens and
 // logs), the queue, the gate, the serve session. The body starts the serve
 // thread last, once everything it reaches is built; a throw anywhere
 // before unwinds the members that exist, in reverse order.
 NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
-  : log_( log )
-  , cfg_( cfg )
+  : cfg_( cfg )
   , ring_( cfg.layout )
   , composer_( cfg, log )
   , codec_( cfg, log )
   , pacer_( cfg.layout.nsrc, cfg.fps )
   , session_( cfg, queue_, gate_, log )
 {
-    avformat_network_init();
-    try
-    {
-        session_.start();
-    }
-    catch ( ... )
-    {
-        avformat_network_deinit();
-        throw;
-    }
-}
-
-NetEncoder::~NetEncoder()
-{
-    session_.stop();  // the serve thread ends first: quit, queue stop, join
-    queue_.close();   // queued packets reference codec buffers: drop them before codec_ goes
-    avformat_network_deinit();
+    session_.start();
 }
 
 // Batch C: the pipeline gates GPU box drawing on this (one call site:
