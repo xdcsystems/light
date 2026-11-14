@@ -1,0 +1,2 @@
+# Fixtures are byte streams (CRLF recorded from a server): no EOL conversion, no diff as text.
+* -text -diff

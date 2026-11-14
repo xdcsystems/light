@@ -4,6 +4,9 @@
 #include <string>
 #include <vector>
 
+#include "core/byte_window.hpp"
+#include "core/multipart_reader.hpp"
+
 // HTTP MJPEG pull source (IP Webcam / any multipart/x-mixed-replace server).
 // Media stays JPEG end to end: the MPP decoder consumes these
 // packets exactly like the USB camera's MJPEG buffers -- no transcode anywhere.
@@ -16,12 +19,9 @@ class NetMjpegSource
     {
         kBufCount = 4,
         kFrameMax = 1 << 20,  // 1 MiB per JPEG frame cap (cast to size_t at use sites)
-        kSockBuf = 256 * 1024,
-        kHdrMax = 8 * 1024,
+        kSockBuf = 256 * 1024,  // the receive window: also the desync limit (no delimiter in it)
         kPollMs = 2000,      // per-fill watchdog, same window as the camera
         kErrStreakMax = 4,   // corrupt/short-frame streak tolerance
-        kBoundaryMax = 60,
-        kPatMax = 70,
         kIntr = -3,  // net_fill: a signal interrupted poll/recv (transient, callers retry)
     };
 
@@ -71,22 +71,22 @@ public:
 private:
     int connect_tcp( const std::string& host, int port, std::string* why );
     int send_get( const std::string& host, int port, const std::string& path, std::string* why ) const;
+    // Response head (core/http_head.hpp) -> the reader's boundary.
     int read_headers( std::string* why );
-    bool has_buffered_header() const;
+    // One complete part (or a wedged-full window) is buffered: no fill needed.
+    bool part_buffered() const;
+    // The desync protocol: the buffered window is dropped, the reader resyncs.
+    void drop_window();
     int poll_part_ready( int timeout_ms );
     bool wait_part_ready( int timeout_ms, int* err );
     int read_latest_part( int slot, uint32_t* size );
+    // One part into slot (core/multipart_reader.hpp): 0, -1 = EOF / error /
+    // watchdog, -2 = desync.
     int read_part( int slot, uint32_t* size );
-    int read_boundary();
-    int read_part_header( long* need );
-    int receive_body( int slot, long need, uint32_t* size );
     // One poll+recv into the window. >0 = bytes read, 0 = timeout,
     // kIntr = a signal interrupted poll/recv (transient), -1 = EOF/error,
     // -2 = window wedged full (the desync protocol).
     int net_fill( int timeout_ms );
-    // Offset of the first pattern match in the unconsumed window,
-    // kNpos when absent. Const: it only scans.
-    size_t net_find( const char* pat, size_t plen ) const;
 
 private:
     int fd_ = -1;
@@ -94,13 +94,8 @@ private:
     int width_ = 0, height_ = 0;
     uint32_t primed_len_ = 0;  // first frame read during setup_device to extract SOF dims
     void* pool_ = nullptr;     // one mmap block: kBufCount x kFrameMax, init-time
-    
+
     Buffer bufs_[kBufCount] = {};
-    uint8_t sock_[kSockBuf] = {};
-    size_t sock_pos_ = 0;
-    size_t sock_end_ = 0;
-    char boundary_[kBoundaryMax + 1] = {};
-    int boundary_len_ = 0;
-    char bpat_[kPatMax] = {};  // "\r\n--" + boundary + "\r\n", rebuilt per connect
-    int bpat_len_ = 0;
+    ByteWindow<kSockBuf> win_;
+    MultipartReader parts_ { static_cast<size_t>( kFrameMax ) };  // the boundary is set per connect
 };

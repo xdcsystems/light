@@ -135,4 +135,34 @@ void test_jpeg_probe( TestRun& t )
         const uint8_t short_buf[3] = { 0xFF, 0xD8, 0xFF };
         CHECK( t, !probe_jpeg_sof( short_buf, sizeof( short_buf ), info ) );
     }
+    // jpeg_frame_check: the probe plus a trailing EOI; the trailing HTTP
+    // CR/LF/space is trimmed in place.
+    {
+        Bytes f;
+        put_soi( f );
+        put_sof( f, 64, 32, 0x22 );
+        put_sos( f );
+        f.insert( f.end(), { 0x12, 0x34, 0xFF, 0xD9 } );
+        const auto clean = static_cast<uint32_t>( f.size() );
+        f.insert( f.end(), { '\r', '\n', ' ' } );
+        uint32_t n = static_cast<uint32_t>( f.size() );
+        JpegSofInfo info;
+        CHECK( t, jpeg_frame_check( f.data(), n, info ) );
+        CHECK( t, n == clean && info.w == 64 && info.h == 32 );
+
+        Bytes no_eoi( f.begin(), f.begin() + clean - 2 );
+        n = static_cast<uint32_t>( no_eoi.size() );
+        CHECK( t, !jpeg_frame_check( no_eoi.data(), n, info ) );
+
+        Bytes no_sof;
+        put_soi( no_sof );
+        put_sos( no_sof );
+        no_sof.insert( no_sof.end(), { 0x12, 0xFF, 0xD9 } );
+        n = static_cast<uint32_t>( no_sof.size() );
+        CHECK( t, !jpeg_frame_check( no_sof.data(), n, info ) );
+
+        const uint8_t not_jpeg[] = { 'H', 'T', 'T', 'P', 0xFF, 0xD9 };
+        n = sizeof( not_jpeg );
+        CHECK( t, !jpeg_frame_check( not_jpeg, n, info ) );
+    }
 }

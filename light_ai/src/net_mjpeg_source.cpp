@@ -1,9 +1,4 @@
-#include <cctype>
-#include <algorithm>
 #include <cerrno>
-#include <climits>
-#include <chrono>
-#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -17,141 +12,27 @@
 
 #include "net_mjpeg_source.hpp"
 
+#include "core/http_head.hpp"
+#include "core/http_url.hpp"
 #include "jpeg_probe.hpp"
 
 namespace
 {
-    constexpr size_t kNpos = static_cast<size_t>( -1 );
-
-    bool parse_http_url( const std::string& url, std::string& host, int& port, std::string& path, std::string* why )
-    {
-        // No named constant here on purpose: a function-local static
-        // constexpr needs the s_ prefix (naming), a plain constexpr needs
-        // lower_case (naming), and dropping static trips
-        // static-definition-in-anonymous-namespace. No named form passes
-        // all three; magic-number checks are disabled project-wide.
-        if ( url.compare( 0, 7, "http://" ) != 0 )
-        {
-            if ( why )
-                *why = "url must start with http://";
-            return false;
-        }
-        const std::string body = url.substr( 7 );
-        const size_t slash = body.find( '/' );
-        const std::string hp = ( slash == std::string::npos ) ? body : body.substr( 0, slash );
-        path = ( slash == std::string::npos ) ? std::string( "/" ) : body.substr( slash );
-        const size_t colon = hp.rfind( ':' );
-        if ( colon == std::string::npos )
-        {
-            host = hp;
-            port = 80;
-        }
-        else
-        {
-            host = hp.substr( 0, colon );
-            // strtol with a full parse check (cert-err34-c): no atoi.
-            const char* ps = hp.c_str() + colon + 1;
-            errno = 0;
-            char* end = nullptr;
-            const long pv = std::strtol( ps, &end, 10 );
-            if ( errno != 0 || end == ps || *end != '\0' || pv < 1 || pv > 65535 )
-            {
-                if ( why )
-                    *why = "bad port in url";
-                return false;
-            }
-            port = static_cast<int>( pv );
-        }
-        if ( host.empty() )
-        {
-            if ( why )
-                *why = "empty host in url";
-            return false;
-        }
-        return true;
-    }
-
     // Parser-layer status codes. kDesync is the resync protocol: a
     // wedged-full socket window (net_fill) or a stream that no longer
-    // parses -- the caller drops the buffered window, counts the error
-    // streak and resyncs (read_latest_part retries once; the fetch path
-    // maps it to EAGAIN vs EIO). -1 stays numeric on purpose: in the
-    // connect/handshake code it is a generic failure, while the parsers
-    // propagate net_fill's "0 = EOF, -1 = error" collapse -- naming it
-    // would fake a distinction the protocol does not make.
+    // parses (MultipartReader::Event::Desync) -- the caller drops the
+    // buffered window, counts the error streak and resyncs (read_latest_part
+    // retries once; the fetch path maps it to EAGAIN vs EIO). -1 stays
+    // numeric on purpose: in the connect/handshake code it is a generic
+    // failure, while the readers propagate net_fill's "0 = EOF, -1 = error"
+    // collapse -- naming it would fake a distinction the protocol does not make.
     constexpr int kDesync = -2;
 
-    // Case-insensitive search in an ASCII buffer; kNpos when absent.
-    size_t ci_find( const uint8_t* hay, size_t hay_len, const char* needle )
+    // jpeg_frame_check plus the geometry of the stream.
+    bool frame_ok( const uint8_t* data, uint32_t& size, int w, int h )
     {
-        const size_t nlen = std::strlen( needle );
-        const uint8_t* const end = hay + hay_len;
-        const auto eq_ci = []( uint8_t a, char b )
-        {
-            return std::tolower( a ) == std::tolower( static_cast<unsigned char>( b ) );
-        };
-        const uint8_t* const found = std::search( hay, end, needle, needle + nlen, eq_ci );
-        return found == end ? kNpos : static_cast<size_t>( found - hay );
-    }
-
-    // Structural validation via probe_jpeg_sof (jpeg_probe.hpp):
-    // SOI -> markers -> SOF (dims/sampling) -> SOS, plus a trailing EOI.
-    // The contract is unchanged: *inout_size is trimmed of trailing
-    // HTTP CRLF/space IN PLACE (both call sites rely on the trimmed
-    // length), and any structural doubt returns false (the corrupt streak).
-    bool jpeg_frame_complete( const uint8_t* data, uint32_t* inout_size, int* out_w, int* out_h )
-    {
-        uint32_t sz = *inout_size;
-        while ( sz > 2 && ( data[sz - 1] == '\r' || data[sz - 1] == '\n' || data[sz - 1] == ' ' ) )
-            --sz;
-        *inout_size = sz;
-        if ( sz < 4 || data[0] != 0xFF || data[1] != 0xD8 )
-            return false;
         JpegSofInfo info {};
-        if ( !probe_jpeg_sof( data, sz, info ) )
-            return false;
-        if ( out_w )
-            *out_w = info.w;
-        if ( out_h )
-            *out_h = info.h;
-        return data[sz - 2] == 0xFF && data[sz - 1] == 0xD9;
-    }
-    // In-bounds Content-Length parser shared by read_part_header() and
-    // has_buffered_header(): replaces the copy-pasted ci_find + strtol
-    // blocks, which scanned for a terminator that may lie outside the
-    // non-NUL-terminated window (read past sock_ when the value touched
-    // its edge) and silently accepted partial values cut by the buffer.
-    // Strict contract: no signs, no embedded whitespace; digits may end
-    // at optional trailing OWS (RFC 7230 field-value excludes it) before
-    // an in-bounds CR/LF; overflow is rejected.
-    bool parse_content_length( const uint8_t* ph, size_t phl, long* out )
-    {
-        const size_t clp = ci_find( ph, phl, "content-length:" );
-        if ( clp == kNpos )
-            return false;
-        size_t p = clp + 15;  // past "content-length:"
-        while ( p < phl && ( ph[p] == ' ' || ph[p] == '\t' ) )
-            ++p;
-        if ( p >= phl || ph[p] < '0' || ph[p] > '9' )
-            return false;
-        long v = 0;
-        while ( p < phl && ph[p] >= '0' && ph[p] <= '9' )
-        {
-            if ( v > ( LONG_MAX - ( ph[p] - '0' ) ) / 10 )
-                return false;  // overflow: not a sane Content-Length
-            v = v * 10 + ( ph[p] - '0' );
-            ++p;
-        }
-        // RFC 7230 OWS: some camera servers emit "Content-Length: 12345 \r\n"
-        // with a trailing space; without skipping it the header fell through
-        // to the slow no-Content-Length body scan (keep-window + full-stream
-        // boundary search). Any other trailing junk still rejects.
-        while ( p < phl && ( ph[p] == ' ' || ph[p] == '\t' ) )
-            ++p;
-        if ( p >= phl || ( ph[p] != '\r' && ph[p] != '\n' ) )
-            return false;  // truncated mid-value or trailing junk
-        *out = v;
-        return true;
+        return jpeg_frame_check( data, size, info ) && info.w == w && info.h == h;
     }
 }  // namespace
 
@@ -189,18 +70,13 @@ int NetMjpegSource::setup_device( const std::string& url, std::string* why )
         return -1;
     }
     teardown();
-    sock_pos_ = sock_end_ = 0;
-    boundary_len_ = 0;
-    bpat_len_ = 0;
 
-    std::string host;
-    std::string path;
-    int port = 0;
-    if ( !parse_http_url( url, host, port, path, why ) )
+    HttpUrl u;
+    if ( !parse_http_url( url, u, why ) )
         return -1;
-    if ( connect_tcp( host, port, why ) != 0 )
+    if ( connect_tcp( u.host, u.port, why ) != 0 )
         return -1;
-    if ( send_get( host, port, path, why ) != 0 )
+    if ( send_get( u.host, u.port, u.path, why ) != 0 )
     {
         teardown();
         return -1;
@@ -220,27 +96,25 @@ int NetMjpegSource::setup_device( const std::string& url, std::string* why )
         teardown();
         return -1;
     }
-    int fw = 0;
-    int fh = 0;
-    const auto* p = static_cast<const uint8_t*>( bufs_[0].start );
-    if ( !jpeg_frame_complete( p, &n, &fw, &fh ) )
+    JpegSofInfo info {};
+    if ( !jpeg_frame_check( static_cast<const uint8_t*>( bufs_[0].start ), n, info ) )
     {
         if ( why )
             *why = "initial JPEG frame is incomplete or missing SOFn";
         teardown();
         return -1;
     }
-    if ( width_ > 0 && height_ > 0 && ( fw != width_ || fh != height_ ) )
+    if ( width_ > 0 && height_ > 0 && ( info.w != width_ || info.h != height_ ) )
     {
         if ( why )
             *why = "stream resolution changed on reconnect";
         teardown();
         return -1;
     }
-    width_ = fw;
-    height_ = fh;
+    width_ = info.w;
+    height_ = info.h;
     primed_len_ = n;
-    std::cout << "net-src: connected " << url << " (" << width_ << 'x' << height_ << "), boundary " << boundary_ << "\n";
+    std::cout << "net-src: connected " << url << " (" << width_ << 'x' << height_ << "), boundary " << parts_.boundary() << "\n";
     err_streak_ = 0;
     return 0;
 }
@@ -252,7 +126,7 @@ void NetMjpegSource::teardown()
         ::close( fd_ );
         fd_ = -1;
     }
-    sock_pos_ = sock_end_ = 0;
+    win_.clear();
     primed_len_ = 0;
     for ( auto& b : bufs_ )
         b.in_flight = false;
@@ -357,13 +231,8 @@ int NetMjpegSource::net_fill( int timeout_ms )
 {
     if ( fd_ < 0 )
         return -1;
-    if ( sock_pos_ > 0 )
-    {
-        std::memmove( sock_, sock_ + sock_pos_, sock_end_ - sock_pos_ );
-        sock_end_ -= sock_pos_;
-        sock_pos_ = 0;
-    }
-    if ( sock_end_ == static_cast<size_t>( kSockBuf ) )
+    uint8_t* const dst = win_.tail();  // compacts the unconsumed bytes to the front
+    if ( win_.room() == 0 )
         return kDesync;  // wedged full: the caller's desync protocol
     pollfd p { fd_, POLLIN, 0 };
     const int pr = ::poll( &p, 1, timeout_ms >= 0 ? timeout_ms : 0 );
@@ -371,38 +240,34 @@ int NetMjpegSource::net_fill( int timeout_ms )
         return errno == EINTR ? kIntr : -1;
     if ( pr == 0 )
         return 0;
-    const ssize_t n = ::recv( fd_, sock_ + sock_end_, static_cast<size_t>( kSockBuf ) - sock_end_, 0 );
+    const ssize_t n = ::recv( fd_, dst, win_.room(), 0 );
     if ( n < 0 && errno == EINTR )
         return kIntr;  // interrupted before any data (e.g. a stop signal arriving
                        // between poll() and recv()): not a connection error and
                        // not a watchdog expiry -- callers retry the fill
     if ( n <= 0 )
         return -1;  // 0 = EOF, -1 = error: the connection is gone either way
-    sock_end_ += static_cast<size_t>( n );
+    win_.commit( static_cast<size_t>( n ) );
     return static_cast<int>( n );
-}
-
-size_t NetMjpegSource::net_find( const char* pat, size_t plen ) const
-{
-    const size_t avail = sock_end_ - sock_pos_;
-    for ( size_t p = 0; p + plen <= avail; ++p )
-    {
-        if ( std::memcmp( sock_ + sock_pos_ + p, pat, plen ) == 0 )
-            return p;
-    }
-    return kNpos;
 }
 
 int NetMjpegSource::read_headers( std::string* why )
 {
-    // Bounded by kHdrMax: a server that drips headers forever is a
-    // data-volume cap, not a wall-clock one.
-    while ( net_find( "\r\n\r\n", 4 ) == kNpos )
+    // parse_http_head owns the grammar and the kHeadMax cap (a server that
+    // drips headers forever is a data-volume cap, not a wall-clock one).
+    while ( true )
     {
-        if ( sock_end_ - sock_pos_ >= static_cast<size_t>( kHdrMax ) )
+        const HttpHead h = parse_http_head( win_.data(), win_.size() );
+        if ( h.status == HttpHead::Status::Ok )
+        {
+            parts_.reset( h.boundary, h.boundary_len );  // fits: both caps are 60
+            win_.consume( h.len );
+            return 0;
+        }
+        if ( h.status == HttpHead::Status::Error )
         {
             if ( why )
-                *why = "response headers oversized";
+                *why = h.why;
             return -1;
         }
         const int r = net_fill( kPollMs );
@@ -415,251 +280,23 @@ int NetMjpegSource::read_headers( std::string* why )
             return -1;
         }
     }
-    const size_t hdr_end = net_find( "\r\n\r\n", 4 ) + sock_pos_ + 4;  // guaranteed by the loop
-    const size_t hl = hdr_end - 4 - sock_pos_;
-    const uint8_t* h = sock_ + sock_pos_;
-
-    // Status line: bounded by the first CRLF; require HTTP 200.
-    size_t line_end = 0;
-    while ( line_end + 1 < hl && !( h[line_end] == '\r' && h[line_end + 1] == '\n' ) )
-        ++line_end;
-    if ( ci_find( h, line_end, " 200 " ) == kNpos )
-    {
-        if ( why )
-            *why = "server did not answer 200";
-        return -1;
-    }
-
-    // The boundary is mandatory: without it there is no framing at all.
-    const size_t bpos = ci_find( h, hl, "boundary=" );
-    if ( bpos == kNpos )
-    {
-        if ( why )
-            *why = "no multipart boundary in Content-Type";
-        return -1;
-    }
-    size_t v = bpos + 9;
-    // RFC 7230 BWS around "=" and RFC 2046 quoted-string: many cameras
-    // emit boundary="xyz" (some with a space after the '='). Without
-    // skipping the OWS and the opening quote the loop below terminated
-    // at once with vlen == 0, so every quoted-boundary server failed
-    // with "empty multipart boundary". The closing quote is already in
-    // the terminator set, so the value is copied clean; boundary=""
-    // still rejects as empty, and an over-long quoted value still fails
-    // the kBoundaryMax check below.
-    while ( v < hl && ( h[ v ] == ' ' || h[ v ] == '\t' ) )
-        ++v;
-    if ( v < hl && h[ v ] == '"' )
-        ++v;
-    size_t vlen = 0;
-    while ( v + vlen < hl && h[v + vlen] != '\r' && h[v + vlen] != '\n' && h[v + vlen] != '"'
-            && h[v + vlen] != ';' && vlen < static_cast<size_t>( kBoundaryMax ) )
-        ++vlen;
-    // Fail loud on an over-long boundary instead of a silent snprintf
-    // truncation: a truncated pattern would desync the whole stream.
-    if ( vlen == static_cast<size_t>( kBoundaryMax ) && v + vlen < hl && h[v + vlen] != '\r' && h[v + vlen] != '\n'
-         && h[v + vlen] != '"' && h[v + vlen] != ';' )
-    {
-        if ( why )
-            *why = "multipart boundary too long";
-        return -1;
-    }
-    if ( vlen == 0 )
-    {
-        if ( why )
-            *why = "empty multipart boundary";
-        return -1;
-    }
-    std::memcpy( boundary_, h + v, vlen );
-    boundary_[vlen] = '\0';
-    boundary_len_ = static_cast<int>( vlen );
-    // "\r\n--" + boundary + "\r\n", built with plain copies (rule 2).
-    // The kBoundaryMax cap above guarantees the fit: 4 + 60 + 2 = 66.
-    std::memcpy( bpat_, "\r\n--", 4 );
-    std::memcpy( bpat_ + 4, boundary_, vlen );
-    std::memcpy( bpat_ + 4 + vlen, "\r\n", 2 );
-    bpat_len_ = static_cast<int>( 4 + vlen + 2 );
-
-    sock_pos_ = hdr_end;
-    return 0;
 }
 
-int NetMjpegSource::read_boundary()
+bool NetMjpegSource::part_buffered() const
 {
-    // Shape B (IP Webcam style): the first part may follow the response
-    // headers without a leading CRLF — accept "--boundary\r\n" at the
-    // window start.
-    if ( bpat_len_ < 6 )
-        return -1;
-    const size_t bare_len = static_cast<size_t>( bpat_len_ ) - 2;
-    while ( true )
-    {
-        const size_t avail = sock_end_ - sock_pos_;
-        if ( avail >= bare_len && std::memcmp( sock_ + sock_pos_, bpat_ + 2, bare_len ) == 0 )
-        {
-            sock_pos_ += bare_len;
-            return 0;
-        }
-        const size_t f = net_find( bpat_, static_cast<size_t>( bpat_len_ ) );
-        if ( f != kNpos )
-        {
-            sock_pos_ += f + static_cast<size_t>( bpat_len_ );
-            return 0;
-        }
-        if ( avail >= static_cast<size_t>( kSockBuf ) )
-            return kDesync;  // 256 KiB without a boundary: desynced stream
-        const int r = net_fill( kPollMs );
-        if ( r == kDesync )
-            return kDesync;
-        if ( r == kIntr )
-            continue;  // EINTR: transient, not a watchdog expiry
-        if ( r <= 0 )
-            return -1;
-    }
+    // A wedged-full window counts as ready: the read that follows desyncs.
+    return win_.full() || parts_.part_buffered( win_.data(), win_.size() );
 }
 
-int NetMjpegSource::read_part_header( long* need )
+void NetMjpegSource::drop_window()
 {
-    while ( net_find( "\r\n\r\n", 4 ) == kNpos )
-    {
-        if ( sock_end_ - sock_pos_ >= static_cast<size_t>( kSockBuf ) )
-            return kDesync;
-        const int r = net_fill( kPollMs );
-        if ( r == kIntr )
-            continue;  // EINTR: transient, not a watchdog expiry
-        if ( r <= 0 )
-            return -1;
-    }
-    const size_t hend = net_find( "\r\n\r\n", 4 ) + sock_pos_ + 4;  // guaranteed by the loop
-    const uint8_t* ph = sock_ + sock_pos_;
-    const size_t phl = hend - 4 - sock_pos_;
-    *need = -1;
-    parse_content_length( ph, phl, need );
-    sock_pos_ = hend;
-    return 0;
-}
-
-int NetMjpegSource::receive_body( int slot, long need, uint32_t* size )
-{
-    auto* dst = static_cast<uint8_t*>( bufs_[slot].start );
-    if ( need < 0 )
-    {
-        // No Content-Length: copy the body to the slot while scanning
-        // for the closing boundary — keep the last (bpat_len_ - 1) bytes
-        // in sock_ on each refill so a boundary split across two recv()
-        // calls is never cut in half, and leave bpat_ unconsumed for the
-        // next frame's read_boundary().
-        const size_t pat_len = static_cast<size_t>( bpat_len_ );
-        const size_t keep = pat_len > 1 ? pat_len - 1 : 0;
-        size_t got = 0;
-        while ( true )
-        {
-            const size_t f = net_find( bpat_, pat_len );
-            if ( f != kNpos )
-            {
-                if ( got + f > static_cast<size_t>( kFrameMax ) )
-                    return kDesync;
-                std::memcpy( dst + got, sock_ + sock_pos_, f );
-                sock_pos_ += f;
-                *size = static_cast<uint32_t>( got + f );
-                return 0;
-            }
-            const size_t avail = sock_end_ - sock_pos_;
-            if ( avail > keep )
-            {
-                const size_t flush = avail - keep;
-                if ( got + flush > static_cast<size_t>( kFrameMax ) )
-                    return kDesync;
-                std::memcpy( dst + got, sock_ + sock_pos_, flush );
-                sock_pos_ += flush;
-                got += flush;
-            }
-            const int fr = net_fill( kPollMs );
-            if ( fr == kIntr )
-                continue;  // EINTR: transient, not a watchdog expiry
-            if ( fr <= 0 )
-                return -1;
-        }
-    }
-    if ( static_cast<size_t>( need ) > static_cast<size_t>( kFrameMax ) )
-        return kDesync;  // oversized "part": desynced garbage, resync
-    // Copy the frame body in chunks: the socket window is refilled as
-    // it drains, the watchdog covers the whole frame, not one chunk.
-    size_t got = 0;
-    while ( got < static_cast<size_t>( need ) )
-    {
-        if ( sock_pos_ >= sock_end_ )
-        {
-            const int fr = net_fill( kPollMs );
-            if ( fr == kIntr )
-                continue;  // EINTR: transient, not a watchdog expiry
-            if ( fr <= 0 )
-                return -1;
-            continue;
-        }
-        const size_t avail = sock_end_ - sock_pos_;
-        const size_t want = static_cast<size_t>( need ) - got;
-        const size_t take = avail < want ? avail : want;
-        std::memcpy( dst + got, sock_ + sock_pos_, take );
-        sock_pos_ += take;
-        got += take;
-    }
-    *size = static_cast<uint32_t>( need );
-    return 0;
-}
-
-bool NetMjpegSource::has_buffered_header() const
-{
-    if ( bpat_len_ < 6 )
-        return false;
-    const size_t avail = sock_end_ - sock_pos_;
-    if ( avail >= static_cast<size_t>( kSockBuf ) )
-        return true;
-    const size_t bare_len = static_cast<size_t>( bpat_len_ ) - 2;
-    size_t b_end = kNpos;
-    if ( avail >= bare_len && std::memcmp( sock_ + sock_pos_, bpat_ + 2, bare_len ) == 0 )
-    {
-        b_end = bare_len;
-    }
-    else
-    {
-        if ( const size_t f = net_find( bpat_, static_cast<size_t>( bpat_len_ ) ); f != kNpos )
-            b_end = f + static_cast<size_t>( bpat_len_ );
-    }
-    if ( b_end == kNpos || avail < b_end + 4 )
-        return false;
-    size_t h_end = kNpos;
-    for ( size_t p = b_end; p + 4 <= avail; ++p )
-    {
-        if ( std::memcmp( sock_ + sock_pos_ + p, "\r\n\r\n", 4 ) == 0 )
-        {
-            h_end = p + 4;
-            break;
-        }
-    }
-    if ( h_end == kNpos )
-        return false;
-    const uint8_t* ph = sock_ + sock_pos_ + b_end;
-    const size_t phl = h_end - 4 - b_end;
-    long cl = 0;
-    if ( parse_content_length( ph, phl, &cl ) )
-    {
-        if ( cl > kFrameMax )
-            return true;
-        return ( avail - h_end ) >= static_cast<size_t>( cl );
-    }
-    const size_t pat_len = static_cast<size_t>( bpat_len_ );
-    for ( size_t p = h_end; p + pat_len <= avail; ++p )
-    {
-        if ( std::memcmp( sock_ + sock_pos_ + p, bpat_, pat_len ) == 0 )
-            return true;
-    }
-    return false;
+    win_.clear();
+    parts_.resync();
 }
 
 int NetMjpegSource::poll_part_ready( int timeout_ms )
 {
-    if ( has_buffered_header() )
+    if ( part_buffered() )
         return 1;
     int wait_ms = timeout_ms;
     while ( true )
@@ -669,7 +306,7 @@ int NetMjpegSource::poll_part_ready( int timeout_ms )
             return 0;  // EINTR: not ready yet and not a timeout -- caller retries
         if ( r < 0 )
             return r;
-        if ( has_buffered_header() )
+        if ( part_buffered() )
             return 1;
         if ( r == 0 )
             return 0;
@@ -687,7 +324,7 @@ bool NetMjpegSource::wait_part_ready( int timeout_ms, int* err )
     if ( pr == kDesync )
     {
         ++err_streak_;
-        sock_pos_ = sock_end_;
+        drop_window();
     }
     if ( err )
         *err = ( pr == 0 || ( pr == kDesync && err_streak_ < kErrStreakMax ) ) ? EAGAIN : EIO;
@@ -706,10 +343,7 @@ void NetMjpegSource::start()
         uint32_t n = 0;
         if ( read_part( 1, &n ) != 0 )
             break;
-        int fw = 0;
-        int fh = 0;
-        const auto* p = static_cast<const uint8_t*>( bufs_[1].start );
-        if ( jpeg_frame_complete( p, &n, &fw, &fh ) && fw == width_ && fh == height_ )
+        if ( frame_ok( static_cast<const uint8_t*>( bufs_[1].start ), n, width_, height_ ) )
         {
             std::swap( bufs_[0].start, bufs_[1].start );
             primed_len_ = n;
@@ -719,14 +353,34 @@ void NetMjpegSource::start()
 
 int NetMjpegSource::read_part( int slot, uint32_t* size )
 {
-    long need = 0;
-    int rc = read_boundary();
-    if ( rc != 0 )
-        return rc;
-    rc = read_part_header( &need );
-    if ( rc != 0 )
-        return rc;
-    return receive_body( slot, need, size );
+    // The reader parses what the window holds; the window is refilled
+    // until one part is complete. Any abandoned read resyncs the reader (the
+    // next read starts at a delimiter line, as before); only a desync drops
+    // the window, in the callers.
+    auto* const dst = static_cast<uint8_t*>( bufs_[slot].start );
+    while ( true )
+    {
+        const MultipartReader::Step st = parts_.feed( win_.data(), win_.size(), dst );
+        win_.consume( st.consumed );
+        if ( st.ev == MultipartReader::Event::Part )
+        {
+            *size = st.size;
+            return 0;
+        }
+        if ( st.ev == MultipartReader::Event::Desync )
+        {
+            parts_.resync();
+            return kDesync;
+        }
+        const int r = net_fill( kPollMs );
+        if ( r == kIntr )
+            continue;  // EINTR: transient, not a watchdog expiry
+        if ( r <= 0 )  // 0 = watchdog, -1 = EOF / error, kDesync = wedged-full window
+        {
+            parts_.resync();
+            return r == kDesync ? kDesync : -1;
+        }
+    }
 }
 
 int NetMjpegSource::read_latest_part( int slot, uint32_t* size )
@@ -738,7 +392,7 @@ int NetMjpegSource::read_latest_part( int slot, uint32_t* size )
         // Desynced stream: drop the buffered window, count the streak,
         // one resync retry before handing over to the reconnect ladder.
         ++err_streak_;
-        sock_pos_ = sock_end_;
+        drop_window();
         if ( err_streak_ < kErrStreakMax )
         {
             n = 0;
@@ -765,13 +419,10 @@ int NetMjpegSource::read_latest_part( int slot, uint32_t* size )
         if ( const int sr = read_part( scratch, &next_n ); sr != 0 )
         {
             if ( sr == kDesync )
-                sock_pos_ = sock_end_;
+                drop_window();
             break;
         }
-        int fw = 0;
-        int fh = 0;
-        const auto* p = static_cast<const uint8_t*>( bufs_[scratch].start );
-        if ( jpeg_frame_complete( p, &next_n, &fw, &fh ) && fw == width_ && fh == height_ )
+        if ( frame_ok( static_cast<const uint8_t*>( bufs_[scratch].start ), next_n, width_, height_ ) )
         {
             std::swap( bufs_[slot].start, bufs_[scratch].start );
             n = next_n;
@@ -831,10 +482,7 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
             *err = EIO;  // EOF / watchdog / recv error: recoverable
         return -1;
     }
-    const uint8_t* p = static_cast<const uint8_t*>( bufs_[slot].start );
-    int fw = 0;
-    int fh = 0;
-    if ( !jpeg_frame_complete( p, &n, &fw, &fh ) || fw != width_ || fh != height_ )
+    if ( !frame_ok( static_cast<const uint8_t*>( bufs_[slot].start ), n, width_, height_ ) )
     {
         ++err_streak_;
         std::cerr << "net-src: corrupt/incomplete JPEG frame (" << n
