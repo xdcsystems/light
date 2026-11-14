@@ -21,6 +21,7 @@ add_executable(light_ai_tests
     test_geometry.cpp
     test_jpeg_probe.cpp
     test_byte_window.cpp
+    test_http_url.cpp
     test_box_smoother.cpp
     test_tracker.cpp
     test_box_mapper.cpp
@@ -51,6 +52,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/session_warmup.cpp
     ${LIGHT_AI_ROOT}/src/core/bitmap_font.cpp
     ${LIGHT_AI_ROOT}/src/core/idle_plate.cpp
+    ${LIGHT_AI_ROOT}/src/core/http_url.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp
     ${LIGHT_AI_ROOT}/src/tracker.cpp
     ${LIGHT_AI_ROOT}/src/box_mapper.cpp
