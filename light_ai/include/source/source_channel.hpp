@@ -175,7 +175,7 @@ public:
         if ( f.size > 0 )
             fd = dec_.decode( static_cast<const uint8_t*>( src_.buffer( f.buf ) ), f.size );
         else
-            log_.warn() << "camera: zero-size frame skipped\n";
+            log_.warn() << "source s" << idx_ << ": zero-size frame skipped\n";
         src_.requeue( f.buf );
         if ( fd < 0 )
             return -1;
@@ -183,7 +183,7 @@ public:
         {
             --warmup_left_;
             if ( warmup_left_ == 0 )
-                log_.info() << "camera: warm-up done, publishing resumed\n";
+                log_.info() << "source s" << idx_ << ": warm-up done, publishing resumed\n";
             return -1;
         }
         return fd;
