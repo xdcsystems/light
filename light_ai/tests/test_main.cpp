@@ -26,6 +26,7 @@ int main()
     run_suite( t, "http_head", &test_http_head );
     run_suite( t, "multipart_reader", &test_multipart_reader );
     run_suite( t, "buffered_socket", &test_buffered_socket );
+    run_suite( t, "mjpeg_slot_pool", &test_mjpeg_slot_pool );
     run_suite( t, "box_smoother", &test_box_smoother );
     run_suite( t, "tracker", &test_tracker );
     run_suite( t, "box_mapper", &test_box_mapper );
