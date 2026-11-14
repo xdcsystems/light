@@ -23,6 +23,7 @@ int main()
     run_suite( t, "jpeg_probe", &test_jpeg_probe );
     run_suite( t, "byte_window", &test_byte_window );
     run_suite( t, "http_url", &test_http_url );
+    run_suite( t, "http_head", &test_http_head );
     run_suite( t, "multipart_reader", &test_multipart_reader );
     run_suite( t, "box_smoother", &test_box_smoother );
     run_suite( t, "tracker", &test_tracker );

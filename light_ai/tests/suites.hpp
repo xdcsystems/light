@@ -11,6 +11,7 @@ void test_geometry( TestRun& t );
 void test_jpeg_probe( TestRun& t );
 void test_byte_window( TestRun& t );
 void test_http_url( TestRun& t );
+void test_http_head( TestRun& t );
 void test_multipart_reader( TestRun& t );
 void test_box_smoother( TestRun& t );
 void test_tracker( TestRun& t );

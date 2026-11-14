@@ -103,6 +103,7 @@ add_executable(light_ai
     src/core/bitmap_font.cpp
     src/core/idle_plate.cpp
     src/core/http_url.cpp
+    src/core/http_head.cpp
     src/core/multipart_reader.cpp
     src/net/encoder_frame_pool.cpp
     src/net/frame_composer.cpp
