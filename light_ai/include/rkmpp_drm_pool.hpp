@@ -3,8 +3,9 @@
 // constructed sub-object is destroyed even when the owner's
 // constructor throws, so a partial allocation cannot leak the pool.
 // Non-copyable: the group handle is process-wide MPP state.
-// A template: kBufCount is a NetEncoder class constant, invisible
-// to a plain file-scope struct.
+// A template over the buffer count: EncoderFramePool holds the
+// encoder ring (RkmppDrmPool<EncoderFramePool::kSlots>), FrameComposer
+// its two canvases (RkmppDrmPool<1> each).
 
 #pragma once
 

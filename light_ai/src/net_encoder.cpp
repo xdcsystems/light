@@ -272,8 +272,9 @@ NetEncoder::~NetEncoder()
     free_packets();
     if ( pkt_ )
         av_packet_free( &pkt_ );
-    // The DRM pool releases itself: pool_ is a member sub-object, its
-    // destructor runs right after this body and covers the
+    // The dma-bufs release themselves: composer_ (the canvases) and ring_
+    // (the input ring + its AVFrames) are members, destroyed right after
+    // this body -- after the codec that references them -- and on the
     // constructor-throw path too.
     avformat_network_deinit();
 }

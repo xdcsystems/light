@@ -55,7 +55,7 @@ EncoderFramePool::EncoderFramePool( const StreamLayout& layout )
         if ( !fr || !fr->buf[0] )
         {
             release();  // the dtor does not run for a throwing ctor; ring_ frees itself
-            throw std::runtime_error( "net encoder: av_frame_alloc failed" );
+            throw std::runtime_error( "net encoder: av_frame_alloc / av_buffer_create failed" );
         }
     }
 }
