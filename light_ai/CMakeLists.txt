@@ -99,6 +99,7 @@ add_executable(light_ai
     src/core/param_set_cache.cpp
     src/core/pts_clock.cpp
     src/core/encode_pacer.cpp
+    src/core/session_warmup.cpp
     src/core/bitmap_font.cpp
     src/core/idle_plate.cpp
     src/net/encoder_frame_pool.cpp

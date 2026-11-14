@@ -131,7 +131,8 @@ void Pipeline::attach_sources()
 }
 
 // NO SIGNAL idle publish: while at least one configured source is
-// absent, absent tiles show the gray NO SIGNAL plate in the stream.
+// absent, absent tiles show the gray NO SIGNAL plate in the stream --
+// with a viewer only: without one NetEncoder::publish_idle returns at once.
 // Paced like --net-fps (25 FPS in follow-source mode); idle encodes
 // are NOT counted in --frames or the timing stats and never touch
 // the NPU. A fully live composition skips the work entirely.

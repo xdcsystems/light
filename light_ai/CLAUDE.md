@@ -80,6 +80,10 @@ keep "Migration plan" current when a stage changes state.
 - core/ includes only the standard library and the pod containers (keeps tests SDK-free).
 - Exception: header-only libraries in externals/ (stb_easy_font, ...) may keep their own file
   statics; include them only from a .cpp, never from a project header.
+- Output side vs recognition (README, Run, "Output side and recognition"): no viewer -- the output
+  side sleeps completely (no draw, no RGA compose, no NO SIGNAL frames, no encode); recognition
+  (capture, decode, NPU, tracker) never sleeps; with a viewer, an online source gets the full path,
+  an absent one the NO SIGNAL plate. Nothing on the output side runs before a session opens.
 - Comments match the code and README; a comment about a mode/value is verified by a run.
   Max line length 140.
 

@@ -11,10 +11,12 @@
 // A frame without a timestamp (ts_us < 0) is always encoded.
 //
 // Session epochs: a new viewer session starts the budget from scratch, so
-// its first live frame is always encoded. The caller passes the epoch of
-// the session it is publishing into (a snapshot taken at the top of the
+// the first frame it admits is always encoded. The caller passes the epoch
+// of the session it is publishing into (a snapshot taken at the top of the
 // publish); a new epoch drops the stamp of the previous session before
-// the frame is judged.
+// the frame is judged. NetEncoder consults the pacer only once the session
+// warmup has released the session (core/session_warmup.hpp): held
+// publishes never stamp it.
 //
 // SDK-free, host-tested (tests/test_encode_pacer.cpp). Thread: the
 // pipeline thread only.

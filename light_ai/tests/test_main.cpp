@@ -39,6 +39,7 @@ int main()
     run_suite( t, "param_set_cache", &test_param_set_cache );
     run_suite( t, "pts_clock", &test_pts_clock );
     run_suite( t, "encode_pacer", &test_encode_pacer );
+    run_suite( t, "session_warmup", &test_session_warmup );
     run_suite( t, "idle_plate", &test_idle_plate );
     run_suite( t, "packet_queue", &test_packet_queue );
     run_suite( t, "packet_queue_threads", &test_packet_queue_threads );

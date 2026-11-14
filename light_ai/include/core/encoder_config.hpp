@@ -53,6 +53,10 @@ struct TilePlacement
 // The band is scaled into its cell with band_geom() unless it already fits exactly.
 TilePlacement place_tile( const StreamLayout& layout, const LbGeom& band, int src_idx );
 
+// The NO SIGNAL mask of an idle publish: tile s is absent when absent[s] is
+// set; absent == nullptr or s >= nabs counts as absent too.
+bool tile_absent( const bool* absent, int nabs, int s );
+
 struct EncoderConfig
 {
     bool vfr() const { return fps <= 0; }  // --net-fps 0: follow the source, pts from dequeue times

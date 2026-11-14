@@ -17,8 +17,9 @@
 // The encoder keeps no session state the serve thread writes. It detects a
 // new session by its epoch: inside run() it restarts the pts clock and arms
 // the forced IDR -- every session, TCP or UDP, starts with an IDR
-// (H264Encoder::encode); the pacer budget is reset earlier,
-// from the epoch snapshot publish() takes after active() (EncodePacer::admit).
+// (H264Encoder::encode); the warmup (canvas reset + the hold of the first
+// encode, SessionWarmup::enter) and the pacer budget (EncodePacer::admit)
+// start earlier, from the epoch snapshot publish() takes after active().
 //
 // SDK-free; host + TSan tested (tests/test_session_gate.cpp).
 

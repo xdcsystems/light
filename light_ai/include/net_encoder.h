@@ -14,6 +14,7 @@
 #include "core/encoder_config.hpp"     // EncoderConfig, StreamLayout
 #include "core/geometry.hpp"           // LbGeom: band geometry arrives as one object
 #include "core/session_gate.hpp"       // SessionGate: the session hand-over
+#include "core/session_warmup.hpp"     // SessionWarmup: when a session's first frame is encoded
 #include "net/av_packet_queue.hpp"     // PacketQueue: encoder -> serve thread
 #include "net/encoder_frame_pool.hpp"  // EncoderFramePool: the encoder input ring
 #include "net/frame_composer.hpp"      // FrameComposer: the picture the encoder reads
@@ -42,19 +43,25 @@ public:
     // ts_us is the dequeue timestamp in microseconds from pipeline
     // start -- the pts source in follow-source mode (--net-fps 0, VFR);
     // ignored in the fixed-fps mode.
+    // No session: returns at once (no viewer, no output work). The first
+    // publish of a session resets the multi-view canvas gray; the session's
+    // first frame is encoded once every source cell has a picture of this
+    // session, or 200 ms after its start (core/session_warmup.hpp).
     void publish( int tensor_fd, const LbGeom& band, int64_t ts_us = -1, int src_idx = 0 );
 
     // NO SIGNAL publish (idle): RGA-copies the pre-rendered idle canvas
     // (gray + the plate) into the ring slot / composite canvas cells of
-    // every absent source, then encodes one frame. Called by
-    // Pipeline::idle_tick while at least one configured tile has no live
-    // source; idle encodes share the pacer budget with live
+    // every absent source, then encodes one frame (while a session is
+    // held: canvas only, no encode). Called by Pipeline::idle_tick while
+    // at least one configured tile has no live source; returns at once
+    // without a session. Idle encodes share the pacer budget with live
     // ones and are NOT counted in --frames or the timing stats.
     void publish_idle( int64_t ts_us, const bool* absent, int nabs );
 
     // True while the stream path is live (viewer connected in PULL
     // mode / UDP path open). The pipeline gates GPU box drawing on it:
-    // recognition runs continuously, output does not.
+    // recognition never sleeps, the output side sleeps without a viewer
+    // (README, "Output side and recognition").
     bool viewer_active() const;
 
 private:
@@ -82,11 +89,13 @@ private:
     // forced IDR, frames sent (net/h264_encoder.hpp).
     H264Encoder codec_;
     // Pipeline-thread state of publish(): which publishes are encoded
-    // (core/encode_pacer.hpp) and the dequeue time handed to the codec.
+    // (core/encode_pacer.hpp), when a new session may encode its first
+    // frame (core/session_warmup.hpp) and the dequeue time handed to the codec.
     // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
     // runs before publish() on the same pipeline thread -- no fence fd
     // crosses this boundary (retired, see docs/state.md).
     EncodePacer pacer_;
+    SessionWarmup warmup_;
     int64_t ts_us_ = -1;
     // Encoder -> serve thread packet queue (net/av_packet_queue.hpp): its
     // own mutex, separate from the gate's: network-side wakeups never touch
