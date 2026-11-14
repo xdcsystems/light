@@ -193,7 +193,7 @@ void test_packet_queue( TestRun& t )
 }
 
 // Threaded (also run under TSan): a producer pushes and fails, a consumer
-// runs 300 short sessions (open / pop / close), a third thread reads the
+// runs 2000 short sessions (open / pop / close), a third thread reads the
 // depth; at the end stop() wakes a consumer blocked on an empty queue.
 void test_packet_queue_threads( TestRun& t )
 {
@@ -203,9 +203,17 @@ void test_packet_queue_threads( TestRun& t )
     std::atomic<bool> done { false };
     std::atomic<int> first_not_key { 0 };
     std::atomic<int> sessions_failed { 0 };
-    constexpr int k_sessions = 300;
+    std::atomic<int> ready { 0 };
+    constexpr int k_sessions = 2000;
+    // Start latch: the three threads run their loops at the same time.
+    const auto latch = [&ready] {
+        ready.fetch_add( 1 );
+        while ( ready.load() < 3 )
+            std::this_thread::yield();
+    };
 
     std::thread consumer( [&] {
+        latch();
         FakePkt out;
         for ( uint32_t s = 1; s <= k_sessions; ++s )
         {
@@ -230,6 +238,7 @@ void test_packet_queue_threads( TestRun& t )
     } );
 
     std::thread producer( [&] {
+        latch();
         int seq = 0;
         while ( !done.load() )
         {
@@ -245,20 +254,23 @@ void test_packet_queue_threads( TestRun& t )
         }
     } );
 
+    std::atomic<int> depth_out_of_range { 0 };
     std::thread reader( [&] {
-        int sum = 0;
+        latch();
         while ( !done.load() )
         {
-            sum += q.depth();
+            const int d = q.depth();
+            if ( d < 0 || d > 8 )
+                depth_out_of_range.fetch_add( 1 );
             std::this_thread::yield();
         }
-        ( void ) sum;
     } );
 
     consumer.join();
     producer.join();
     reader.join();
     CHECK( t, first_not_key.load() == 0 );   // every session starts at a key frame
+    CHECK( t, depth_out_of_range.load() == 0 );
     CHECK( t, sessions_failed.load() < k_sessions / 2 );  // stale fails never end sessions
 
     // stop() wakes a consumer blocked on an empty open queue.
