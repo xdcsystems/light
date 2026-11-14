@@ -112,17 +112,30 @@ post-processing.
                ENODEV/EIO from dequeue() are recoverable, other errnos
                are fatal (exit 1 — silent exit 0 on camera death is
                gone); each attempt re-runs the full open+verify path,
-               nothing is trusted blindly across a disappearance. Node
-               discovery lives outside the class (find_usb_capture_node
-               in camera_v4l2.cpp): the configured path is preferred,
-               otherwise numeric /dev/video* candidates are USB-filtered
-               (rkcif/rkisp platform nodes rejected before any S_FMT)
-               and trial-opened; the pipeline tracks each source node in `SourceSlot::node` (`srcs_`) and adopts a re-enumerated one transparently.
-               A mid-run recoverable failure (ENODEV/EIO) flips the
-               slot to absent; probe_loop() re-attaches on its own
-               cadence (recover() for a detached slot, setup_device for
-               a fresh one). A permanent unplug no longer ends the run:
-               the remaining sources keep streaming.
+               nothing is trusted blindly across a disappearance.
+               reconnect(dev) (teardown + setup + STREAMON) is the only
+               way the camera starts streaming. Diagnostics go through
+               Log (since stage 3a).
+- SourceChannel / UsbNodeLocator (include/source/, stage 3a):
+               one source from attach to decoded frame -- MediaSource,
+               MppDecoder, geometry, warm-up and an explicit State
+               (NeverAttached / Detached / Live). One attach path for
+               startup, hot attach and re-attach: node lookup (camera)
+               -> MediaSource::open -> decoder init (once) -> aux ->
+               letterbox -> Live, stored last (the thread rule is in
+               source_channel.hpp). UsbNodeLocator: the configured node
+               first, otherwise numeric /dev/video* candidates are
+               USB-filtered (rkcif/rkisp platform nodes rejected before
+               any S_FMT) and trial-opened; nodes of the other V4L2
+               sources are never trialed; the scan line prints at most
+               every 30 s. A mid-run recoverable failure (ENODEV/EIO)
+               detaches the channel; probe_loop() re-attaches it on its
+               2 s cadence. A source missing at startup logs "not
+               started at startup (<reason>)" and the prober takes it.
+               A permanent unplug does not end the run: the remaining
+               sources keep streaming. A re-attach with another geometry
+               than the decoder's is refused with a warn (the decoder is
+               sized once).
                Robustness (2026-11-02, P1-5/P1-7): every setup_device
                error path after open() calls teardown() itself — a
                failed setup leaks neither fd nor mappings; the usb
@@ -717,7 +730,15 @@ light_ai_tests, built into build/tests):
   InferencePool / InferSlot with a fake engine (pool modes, core
   masks, result order, NPU skip/failure, wedged engine: bounded
   wait + abandon + the worker frees the slot, per-source discard,
-  shutdown with frames in flight).
+  shutdown with frames in flight), Timings (avg/60 + whole-run TOTAL),
+  UsbNodeLocator (preferred / busy / scan order / log throttle) and
+  SourceChannel with fakes (the attach state machine, failure at each
+  step, warm-up, empty packets, errno -> FrameStatus).
+- ThreadSanitizer: the SourceChannel hand-over (a prober thread
+  attaching, the frame thread polling and detaching, 1000+ round
+  trips) also runs in light_ai_tests_tsan, built with
+  -fsanitize=thread; scripts/test.sh runs it after the plain suites
+  (SKIP_TSAN=1 skips it) and prints its build + run time.
 - Not covered: everything that touches hardware or an SDK (capture,
   decode, RGA, RKNN, yolo_postprocess, encoder, GPU drawer). Those
   are verified by live runs only.
@@ -773,9 +794,10 @@ model per docs/state.md; --model overrides). M5 standard run:
 --pool 3 (NPU context pool) + --net-fps 0 (VFR follow-source pts);
 --core is ignored with pool > 1 (the pool pins its own masks).
 A missing
-configured node (ENOENT) is not fatal: the pipeline falls back to
-find_usb_capture_node() and adopts the winner (startup fallback, M3.8);
-non-ENOENT open errors (EBUSY/EACCES) stay fatal. Options:
+configured node is not fatal: UsbNodeLocator scans for another USB
+camera and adopts it (startup fallback, M3.8); a camera that is there
+but cannot be opened (EBUSY/EACCES) stays absent at startup and the
+prober retries it. Options:
 --help/-h prints the option list (generated from the parser table).
 --config <path> loads an INI config file (flat key = value; applied
 before CLI flags so CLI always overrides).

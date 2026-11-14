@@ -29,6 +29,9 @@ int main()
     run_suite( t, "log", &test_log );
     run_suite( t, "inference_pool", &test_inference_pool );
     run_suite( t, "timings", &test_timings );
+    run_suite( t, "usb_node_locator", &test_usb_node_locator );
+    run_suite( t, "source_channel", &test_source_channel );
+    run_suite( t, "source_threads", &test_source_threads );
     std::cout << "light_ai_tests: " << t.checks() << " checks, " << t.failures() << " failed\n";
     return t.failures() == 0 ? 0 : 1;
 }

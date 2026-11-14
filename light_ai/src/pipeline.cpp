@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <string>
 #include <stdexcept>
-#include <sys/stat.h>  // stat(): startup node fallback
 #include <thread>
 
 #include "core/frame_view.hpp"
@@ -32,10 +32,19 @@ namespace
         return dot == std::string::npos ? path + suf : path.substr( 0, dot ) + suf + path.substr( dot );
     }
 
+    // Monotonic max (diagnostics): written by the ctor and the prober.
+    void raise_max( std::atomic<int>& m, int v )
+    {
+        if ( v > m.load() )
+            m.store( v );
+    }
+
 }  // namespace
 
 Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
   : cfg_( cfg )
+  , locator_( usb_host_, log )
+  , srcs_ { { SourceChannel( log ), SourceChannel( log ), SourceChannel( log ) } }
   , pool_( cfg_.infer, YoloDecode( cfg_.infer.conf_thr, cfg_.infer.iou_thr ), log, PoolOptions {},
           cfg_.infer.model.c_str() )
   , t_( log )
@@ -43,17 +52,12 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
   , stop_( stop )
   , log_( log )
 {
+    static_assert( kMaxSources == 3, "srcs_ initializer lists one SourceChannel per source" );
     // pool_ is up by now: the engines are loaded, their I/O is set up,
     // they are pinned to NPU cores and the workers wait for frames. If
     // anything below throws, pool_'s destructor joins the workers -- the
     // ctor can no longer leave joinable threads behind.
     t_.set_pool( pool_.size() );
-
-    // M5: source bring-up (identity, setup, per-source decoders) --
-    // each SourceSlot owns its MppDecoder (its own resolution and
-    // detected 4:2:0/4:2:2 format). Runs BEFORE the per-source
-    // letterbox pass below, which needs the source geometry.
-    init_source();
 
     // Single source of truth for the model geometry: the model file itself
     // (RknnEngine::input_width/height). All engines share the model.
@@ -76,31 +80,16 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
     model_h_ = pool_.engine( 0 ).input_height();
     cal_dumper_.init( cfg_.cal, model_w_, model_h_ );
 
-    // M5: per-source letterbox geometry (the same numbers the RGA crop
-    // writes); src_w_/src_h_ become the max across sources.
-    src_w_ = 0;
-    src_h_ = 0;
-    for ( int s = 0; s < nsrc_; ++s )
-    {
-        // absent at startup: zero geometry, and band_geom divides by
-        // it (sdiv-by-0 returns 0 on aarch64 -- silently). probe_source
-        // computes the lb on the real attach.
-        if ( srcs_[s].w == 0 || srcs_[s].h == 0 )
-            continue;
-        srcs_[s].lb = band_geom( srcs_[s].w, srcs_[s].h, model_w_, model_h_ );
-        if ( srcs_[s].w > src_w_ )
-            src_w_ = srcs_[s].w;
-        if ( srcs_[s].h > src_h_ )
-            src_h_ = srcs_[s].h;
-    }
+    // Channels know their kind, node and the model geometry; no device is
+    // opened yet (attach_sources, last).
+    init_source();
 
     // Canonical letterbox band: 4:3 of the model input. The canvas is
-    // source-independent now -- absent slots show the NO SIGNAL idle
+    // source-independent -- absent sources show the NO SIGNAL idle
     // plate (idle_tick), real bands land per-frame via prep_frame's
-    // band_geom (probe refresh still fills per-slot geometry).
+    // band_geom.
     const LbGeom enc_lb = band_geom( model_w_, model_h_ * 3 / 4, model_w_, model_h_ );
     sink_.init( cfg_.stream, pool_.tensors(), model_w_, model_h_, enc_lb, nsrc_ );
-    init_aux();
 
     if ( cfg_.cal.frames > 0 && cfg_.cal.dir.empty() )
     {
@@ -110,262 +99,9 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
             throw std::runtime_error( "pipeline: cannot create dataset/: " + ec.message() );
     }
 
-    // start_source() never throws: a failed STREAMON is caught and retried,
-    // and the run() recovery ladder takes over if the retries run out.
-    for ( int s = 0; s < nsrc_; ++s )
-        start_source( s );
-}
-
-void Pipeline::start_source( int idx )
-{
-    if ( srcs_[idx].absent )
-        return;
-    SourceSlot& sl = srcs_[idx];
-    bool src_started = false;
-    try
-    {
-        sl.src.start();  // no-op for the net source
-        src_started = true;
-    }
-    catch ( const std::exception& e )
-    {
-        log_.warn() << "pipeline: source start failed: " << e.what() << '\n';
-    }
-    catch ( ... )
-    {
-        log_.warn() << "pipeline: source start failed: unknown exception\n";
-    }
-    if ( !src_started )
-    {
-        constexpr int k_start_retries = 5;
-        for ( int a = 1; a <= k_start_retries; ++a )
-        {
-            std::this_thread::sleep_for( std::chrono::seconds( 1 ) );
-            std::string new_id;
-            std::string why;
-            if ( sl.src.recover( sl.node, new_id, busy_v4l2_nodes( idx ), &why ) == 0 )
-            {
-                if ( new_id != sl.node )
-                {
-                    log_.info() << "source: identity adopted: " << sl.node << " -> " << new_id << '\n';
-                    sl.node = new_id;
-                }
-                constexpr int k_warmup_frames = 3;
-                sl.warmup_left = k_warmup_frames;
-                src_started = true;
-                log_.info() << "pipeline: source started on recovery attempt " << a << '\n';
-                break;
-            }
-            log_.warn() << "pipeline: source start recovery attempt " << a << '/' << k_start_retries
-                        << " failed: " << why << '\n';
-        }
-    }
-    if ( !src_started )
-        log_.warn() << "pipeline: source never started - run() recovery ladder takes over\n";
-}
-
-void Pipeline::init_one_source( int idx, const SourceEndpoint& ep )
-{
-    SourceSlot& sl = srcs_[idx];
-    sl.node = ep.uri;
-    sl.kind = ep.kind;
-    if ( ep.kind == SourceKind::NetMjpeg )
-    {
-        sl.src.use_net();
-        std::string why;
-        if ( sl.src.setup_device( sl.node, &why ) != 0 )
-            { sl.absent = true; log_.warn() << "net-src: absent at startup: " << why << "\n"; return; }
-    }
-    else
-    {
-        sl.src.use_camera();
-        auto& cam = sl.src.camera();  // init-path only: USB node discovery
-        if ( !sl.node.empty() )
-        {
-            struct stat st {};
-            if ( stat( sl.node.c_str(), &st ) != 0 )
-            {
-                log_.warn() << "camera: configured node " << sl.node << " not present, falling back to USB discovery\n";
-                std::string found;
-                if ( find_usb_capture_node( cam, sl.node, found, busy_v4l2_nodes( idx ), &scan_log_ms_ ) != 0 )
-                    { sl.absent = true; log_.warn() << "camera: node " << sl.node << " absent at startup\n"; return; }
-                log_.info() << "camera: discovery adopted " << found << '\n';
-                sl.node = found;
-            }
-        }
-        std::string cam_why;
-        if ( cam.setup_device( sl.node, &cam_why ) != 0 )
-            { sl.absent = true; log_.warn() << "camera: absent at startup: " << cam_why << "\n"; return; }
-    }
-    sl.w = sl.src.width();
-    sl.h = sl.src.height();
-    // M5: per-source decoder init -- sits after the if/else by design,
-    // so BOTH the net and the camera branch get it.
-    if ( sl.dec.init( sl.w, sl.h ) != 0 )
-        throw std::runtime_error( "mpp decoder init failed for " + sl.node );
-    log_.info() << "source: geometry " << sl.w << 'x' << sl.h << '\n';
-}
-
-// Busy-node reservation (audit: multi-camera node hijacking): the /dev
-// nodes of the OTHER V4L2 slots, live or absent alike. A detached slot
-// still owns its node -- probe_loop() re-attaches it on its own cadence,
-// so a scanning slot must never trial-open or adopt that node: uvcvideo
-// accepts the trial while the node is momentarily free, and two slots
-// would then compete for one physical camera.
-std::vector<std::string> Pipeline::busy_v4l2_nodes( int self_idx ) const
-{
-    std::vector<std::string> busy;
-    for ( int k = 0; k < nsrc_; ++k )
-    {
-        if ( k == self_idx || srcs_[k].kind != SourceKind::V4L2 || srcs_[k].node.empty() )
-            continue;
-        busy.push_back( srcs_[k].node );
-    }
-    return busy;
-}
-
-
-// Hot-attach probe (one step): (re)bring-up of one absent slot. Never
-// throws: any failure keeps the slot absent, the next probe retries.
-// Two paths: never-attached (w/h == 0) goes setup_device + start like
-// at init; detached keeps the decoder alive and re-runs recover() --
-// the same one-step mechanism the old inline ladder used, now off the
-// frame loop. MppDecoder::init self-cleans on failure, so a decoder
-// retry is safe; a setup_device failure self-teardowns (README).
-void Pipeline::probe_source( int idx )
-{
-    SourceSlot& sl = srcs_[idx];
-    const bool first_attach = ( sl.w == 0 || sl.h == 0 );
-    if ( first_attach && sl.kind == SourceKind::NetMjpeg )
-    {
-        std::string why;
-        if ( sl.src.setup_device( sl.node, &why ) != 0 )
-            return;  // still absent: connect refused / stream not ready yet
-    }
-    else if ( first_attach )
-    {
-        auto& cam = sl.src.camera();  // init-path only: USB node discovery
-        if ( !sl.node.empty() )
-        {
-            std::string found;
-            if ( find_usb_capture_node( cam, sl.node, found, busy_v4l2_nodes( idx ), &scan_log_ms_ ) != 0 )
-                return;
-            if ( !found.empty() && found != sl.node )
-            {
-                log_.info() << "camera: hot-attach adopted " << sl.node << " -> " << found << '\n';
-                sl.node = found;
-            }
-        }
-        std::string cam_why;
-        if ( cam.setup_device( sl.node, &cam_why ) != 0 )
-            return;
-    }
-    if ( !first_attach )
-    {
-        // detached: recover() re-runs the full open+verify path for the
-        // camera (STREAMON included) and reconnects for the net source;
-        // the decoder and its buffers stay alive across the recovery.
-        std::string new_id;
-        std::string why;
-        if ( sl.src.recover( sl.node, new_id, busy_v4l2_nodes( idx ), &why ) != 0 )
-            return;  // still absent: device gone / stream not ready
-        if ( new_id != sl.node )
-        {
-            log_.info() << "source s" << idx << ": identity adopted: " << sl.node
-                        << " -> " << new_id << '\n';
-            sl.node = new_id;
-        }
-    }
-    sl.w = sl.src.width();
-    sl.h = sl.src.height();
-    // refresh what init_source() derived from the geometry while the slot
-    // was absent (letterbox, max sizes, aux). absent flips last, so no
-    // concurrent dispatcher sees a half-updated slot.
-    sl.lb = band_geom( sl.w, sl.h, model_w_, model_h_ );
-    if ( sl.w > src_w_ )
-        src_w_ = sl.w;
-    if ( sl.h > src_h_ )
-        src_h_ = sl.h;
-    if ( ( sl.w > 8 * model_w_ || sl.h > 8 * model_h_ ) && sl.aux_fd < 0 )
-    {
-        sl.aux_fd = sl.dec.aux_fd( static_cast<size_t>( sl.w / 2 ) * ( sl.h / 2 ) * 2 );
-        if ( sl.aux_fd < 0 )
-        {
-            // w/h are already non-zero here: keep them and the next probe
-            // takes the detached recover() path, which never runs dec.init
-            // -- the slot would come back live with an uninitialized decoder.
-            // Roll back so the retry is a clean first_attach (dec branch below).
-            sl.w = 0;
-            sl.h = 0;
-            log_.warn() << "probe s" << idx << ": aux buffer alloc failed - staying absent\n";
-            return;
-        }
-    }
-    if ( first_attach && sl.dec.init( sl.w, sl.h ) != 0 )
-    {
-        // init() failed AFTER sl.w/sl.h were written: without the reset the
-        // next probe computes first_attach == false and takes the detached
-        // recover() path, which never calls dec.init. A successful recover()
-        // (the camera itself is fine) then flips absent to false and frames
-        // flow into a never-initialized decoder. Reset keeps the retry on
-        // the first_attach path; dec.init self-cleans on failure, so retry
-        // is safe. lb/src_w_/src_h_ need no rollback: unused while absent,
-        // and the src maxes are monotonic diagnostics.
-        sl.w = 0;
-        sl.h = 0;
-        log_.warn() << "probe s" << idx << ": mpp decoder init failed - staying absent\n";
-        return;
-    }
-    if ( first_attach )
-    {
-        try
-        {
-            sl.src.start();  // STREAMON for the camera, no-op for the net source
-        }
-        catch ( const std::exception& e )
-        {
-            log_.warn() << "probe s" << idx << ": start failed: " << e.what() << '\n';
-            return;
-        }
-        catch ( ... )
-        {
-            log_.warn() << "probe s" << idx << ": start failed: unknown exception\n";
-            return;
-        }
-    }
-    constexpr int k_warmup_frames = 3;
-    sl.warmup_left = k_warmup_frames;
-    // Stamp BEFORE absent.store: try_dequeue_round reads the stamp only
-    // after absent.load(), which synchronizes-with this store (seq_cst).
-    sl.last_ok_tp.store( clk::now() );
-    sl.absent.store( false );
-    log_.info() << "source s" << idx << ( first_attach ? ": attached (hot) - geometry "
-                                                     : ": re-attached - geometry " )
-              << sl.w << 'x' << sl.h << '\n';
-}
-
-// The prober thread: polls absent slots on a 2 s cadence. One thread for
-// all sources: a net probe may block for the connect timeout (5 s) -- it
-// must not stall the live path, hence a dedicated thread instead of
-// probing from the frame loop. V4L2 attach latency <= ~2 s, net <= ~7 s.
-void Pipeline::probe_loop()
-{
-    while ( !probe_quit_.load() )
-    {
-        ++probe_ticks_;
-        for ( int s = 0; s < nsrc_; ++s )
-        {
-            if ( probe_quit_.load() || !srcs_[s].absent.load() )
-                continue;
-            // visibility: the 1st and every 15th attempt (~30 s) show
-            // the prober is alive; the camera scan prints on its own.
-            if ( probe_ticks_ == 1 || probe_ticks_ % 15 == 0 )
-                log_.info() << "probe: s" << s << " absent, attempt " << probe_ticks_ << '\n';
-            probe_source( s );
-        }
-        for ( int k = 0; k < 20 && !probe_quit_.load(); ++k )
-            std::this_thread::sleep_for( std::chrono::milliseconds( 100 ) );
-    }
+    // Last, so run() starts at the live edge: the camera STREAMON and the net
+    // socket drain happen after the encoder and the GPU drawer are up.
+    attach_sources();
 }
 
 void Pipeline::init_source()
@@ -380,32 +116,95 @@ void Pipeline::init_source()
     if ( nsrc_ == 0 )
         log_.info() << "sources configured: none - waiting for attach\n";
     // M5: per-source decoders -- mixed resolutions (1280x960 USB next to
-    // 1280x720 net) are now supported; the shared-resolution gate is gone.
+    // 1280x720 net) are supported.
     for ( int s = 0; s < nsrc_; ++s )
-        init_one_source( s, eps[s] );
+        srcs_[s].configure( s, eps[static_cast<size_t>( s )], model_w_, model_h_ );
 }
 
-// Aux buffer only for the two-pass path (source over 8x the model input).
-// 1280x720 -> 224 is 5.7x — single pass, aux not allocated, no DRM pool split.
-// 1920x1080 still needs the 960x540 intermediate.
-void Pipeline::init_aux()
+// The first attach of every channel, through the same SourceChannel::attach
+// as the prober's. A source that is not there stays non-Live and the prober
+// takes it (2 s cadence); a decoder or aux failure is fatal at startup, as
+// before. No retry ladder here: retries are the prober's.
+void Pipeline::attach_sources()
 {
-    // M5: aux is per-source (lives in the owning decoder's DRM pool):
-    // one source may need the two-pass path while others do not.
+    using Attach = SourceChannel::Attach;
     bool any_aux = false;
     for ( int s = 0; s < nsrc_; ++s )
     {
-        SourceSlot& ss = srcs_[s];
-        if ( ss.w <= 8 * model_w_ && ss.h <= 8 * model_h_ )
+        SourceChannel& ch = srcs_[s];
+        std::string why;
+        const Attach a = ch.attach( busy_v4l2_nodes( s ), locator_, false, why );
+        if ( a == Attach::DecoderFailed )
+            throw std::runtime_error( "mpp decoder init failed for " + ch.node() );
+        if ( a == Attach::AuxFailed )
+            throw std::runtime_error( "pipeline: aux buffer alloc failed for source " + ch.node() );
+        if ( a != Attach::Live )
+        {
+            log_.warn() << "source s" << s << ": not started at startup (" << why << ") - prober retries every 2 s\n";
             continue;
-        ss.aux_fd = ss.dec.aux_fd( static_cast<size_t>( ss.w / 2 ) * ( ss.h / 2 ) * 2 );
-        if ( ss.aux_fd < 0 )
-            throw std::runtime_error( "pipeline: aux buffer alloc failed for source " + ss.node );
-        any_aux = true;
+        }
+        raise_max( src_w_, ch.geom().w );
+        raise_max( src_h_, ch.geom().h );
+        any_aux = any_aux || ch.geom().aux_fd >= 0;
     }
     if ( !any_aux )
         log_.info() << "aux not needed: max " << src_w_ << 'x' << src_h_
                     << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
+}
+
+// Busy-node reservation (audit: multi-camera node hijacking): the /dev
+// nodes of the OTHER V4L2 sources, live or absent alike. A detached source
+// still owns its node -- probe_loop() re-attaches it on its own cadence,
+// so a scanning source must never trial-open or adopt that node: uvcvideo
+// accepts the trial while the node is momentarily free, and two sources
+// would then compete for one physical camera.
+// Attaching thread only (SourceChannel::node()).
+NodeList Pipeline::busy_v4l2_nodes( int self_idx ) const
+{
+    NodeList busy;
+    for ( int k = 0; k < nsrc_; ++k )
+    {
+        if ( k == self_idx || srcs_[k].kind() != SourceKind::V4L2 || srcs_[k].node().empty() )
+            continue;
+        busy.push_back( srcs_[k].node() );
+    }
+    return busy;
+}
+
+// Hot-attach probe (one step) of one non-Live source. Never throws: any
+// failure keeps the source absent, the next probe retries the same path
+// (SourceChannel::attach: never-attached and detached sources alike).
+void Pipeline::probe_source( int idx )
+{
+    std::string why;
+    if ( srcs_[idx].attach( busy_v4l2_nodes( idx ), locator_, true, why ) != SourceChannel::Attach::Live )
+        return;
+    raise_max( src_w_, srcs_[idx].geom().w );
+    raise_max( src_h_, srcs_[idx].geom().h );
+}
+
+// The prober thread: polls absent sources on a 2 s cadence. One thread for
+// all sources: a net probe may block for the connect timeout (5 s) -- it
+// must not stall the live path, hence a dedicated thread instead of
+// probing from the frame loop. V4L2 attach latency <= ~2 s, net <= ~7 s.
+void Pipeline::probe_loop()
+{
+    while ( !probe_quit_.load() )
+    {
+        ++probe_ticks_;
+        for ( int s = 0; s < nsrc_; ++s )
+        {
+            if ( probe_quit_.load() || srcs_[s].live() )
+                continue;
+            // visibility: the 1st and every 15th attempt (~30 s) show
+            // the prober is alive; the camera scan prints on its own.
+            if ( probe_ticks_ == 1 || probe_ticks_ % 15 == 0 )
+                log_.info() << "probe: s" << s << " absent, attempt " << probe_ticks_ << '\n';
+            probe_source( s );
+        }
+        for ( int k = 0; k < 20 && !probe_quit_.load(); ++k )
+            std::this_thread::sleep_for( std::chrono::milliseconds( 100 ) );
+    }
 }
 
 // NO SIGNAL idle publish: while at least one configured source is
@@ -426,7 +225,7 @@ void Pipeline::idle_tick()
     bool any_absent = nsrc_ == 0;  // no configured sources: one gray canvas
     for ( int s = 0; s < nsrc_; ++s )
     {
-        absent[ s ] = srcs_[ s ].absent.load();
+        absent[ s ] = !srcs_[ s ].live();
         any_absent = any_absent || absent[ s ];
     }
     if ( !any_absent )
@@ -435,37 +234,32 @@ void Pipeline::idle_tick()
     sink_.publish_idle( now_us, absent, nsrc_ );
 }
 
-int Pipeline::try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err )
+FrameStatus Pipeline::try_dequeue_round( int wait_ms, EncodedFrame& f )
 {
     constexpr double k_stall_ms = 2000.0;
     idle_tick();  // mixed state: absent tiles keep publishing NO SIGNAL
     for ( int k = 0; k < nsrc_; ++k )
     {
         const int s = ( cur_src_ + 1 + k ) % nsrc_;
-        if ( srcs_[s].absent )
+        SourceChannel& ch = srcs_[s];
+        if ( !ch.live() )
             continue;
-        const int idx = srcs_[s].src.dequeue( &sz, &cam_err, wait_ms );
-        if ( idx >= 0 )
+        const FrameStatus st = ch.poll( wait_ms, f );
+        if ( st != FrameStatus::NotReady )
         {
             cur_src_ = s;
-            srcs_[s].last_ok_tp.store( clk::now() );
-            return idx;
+            return st;
         }
-        if ( cam_err != EAGAIN && cam_err != EINTR )
-        {
-            cur_src_ = s;
-            return -1;
-        }
-        if ( ms( srcs_[s].last_ok_tp.load(), clk::now() ) >= k_stall_ms )
+        if ( ms( ch.last_ok(), clk::now() ) >= k_stall_ms )
         {
             log_.warn() << "source s" << s << ": no frame in " << static_cast<int>( k_stall_ms )
                         << " ms - treating as recoverable stall\n";
             cur_src_ = s;
-            cam_err = EIO;
-            return -1;
+            f.err = EIO;
+            return FrameStatus::Detached;
         }
     }
-    return -2;
+    return FrameStatus::NotReady;
 }
 
 // Publishes every result that is already finished, in order; never waits.
@@ -475,7 +269,7 @@ void Pipeline::drain_done_slots( int& ok )
         ok += publish_oldest();
 }
 
-int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
+FrameStatus Pipeline::dequeue_next_source( EncodedFrame& f, int& ok )
 {
     drain_done_slots( ok );
     idle_tick();
@@ -488,53 +282,50 @@ int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
             idle_tick();
             std::this_thread::sleep_for( std::chrono::milliseconds( 40 ) );
         }
-        cam_err = EINTR;
-        return -1;
+        return FrameStatus::Stopped;
     }
     if ( nsrc_ <= 1 && pool_.empty() )
     {
         cur_src_ = 0;
-        int r = -1;
         while ( !stop_.requested() )
         {
-            if ( srcs_[0].absent.load() )
+            if ( !srcs_[0].live() )
             {
                 // all-absent park: NO SIGNAL idle publish + 40 ms quanta;
-                // probe_loop() flips the flag
+                // probe_loop() attaches the source
                 idle_tick();
                 std::this_thread::sleep_for( std::chrono::milliseconds( 40 ) );
                 continue;
             }
-            r = srcs_[0].src.dequeue( &sz, &cam_err );
-            if ( r >= 0 || ( cam_err != EAGAIN && cam_err != EINTR ) )
-                break;
+            const FrameStatus st = srcs_[0].poll( -1, f );
+            if ( st != FrameStatus::NotReady )
+                return st;
         }
-        return r;
+        return FrameStatus::Stopped;
     }
     while ( !stop_.requested() )
     {
         drain_done_slots( ok );
         bool any_live = false;
         for ( int s = 0; s < nsrc_; ++s )
-            any_live = any_live || !srcs_[s].absent.load();
+            any_live = any_live || srcs_[s].live();
         if ( !any_live )
         {
             // all-absent park: NO SIGNAL idle publish + 40 ms quanta;
-            // probe_loop() flips the flags
+            // probe_loop() attaches the sources
             idle_tick();
             std::this_thread::sleep_for( std::chrono::milliseconds( 40 ) );
             continue;
         }
-        int r = try_dequeue_round( 0, sz, cam_err );
-        if ( r != -2 )
-            return r;
+        FrameStatus st = try_dequeue_round( 0, f );
+        if ( st != FrameStatus::NotReady )
+            return st;
         drain_done_slots( ok );
-        r = try_dequeue_round( 1, sz, cam_err );
-        if ( r != -2 )
-            return r;
+        st = try_dequeue_round( 1, f );
+        if ( st != FrameStatus::NotReady )
+            return st;
     }
-    cam_err = EINTR;
-    return -1;
+    return FrameStatus::Stopped;
 }
 
 int Pipeline::run()
@@ -562,8 +353,8 @@ int Pipeline::run()
 
     for ( int s = 0; s < nsrc_; ++s )
     {
-        srcs_[s].smoother.set_log( source_box_log( cfg_.box_log, s, nsrc_ ) );
-        srcs_[s].last_ok_tp.store( t_start );
+        an_[s].smoother.set_log( source_box_log( cfg_.box_log, s, nsrc_ ) );
+        srcs_[s].stamp_ok( t_start );
     }
     // frames == 0 (the default): no frame budget -- run until stop
     // (Ctrl-C); the signal path below drains and reports as usual.
@@ -571,67 +362,30 @@ int Pipeline::run()
     {
         const auto t0 = clk::now();
 
-        uint32_t sz = 0;
-        int cam_err = 0;
-
-        const int idx = dequeue_next_source( sz, cam_err, ok );
-        if ( idx < 0 )
+        EncodedFrame f {};
+        const FrameStatus st = dequeue_next_source( f, ok );
+        if ( st != FrameStatus::Frame )
         {
-            if ( stop_.requested() )
+            if ( st == FrameStatus::Stopped || stop_.requested() )
                 break;
-            if ( handle_source_failure( cam_err ) != 0 )
+            if ( handle_source_failure( f ) != 0 )
                 return -1;
             const auto now = clk::now();
             for ( int s = 0; s < nsrc_; ++s )
-                srcs_[s].last_ok_tp.store( now );
+                srcs_[s].stamp_ok( now );
             continue;
         }
-        SourceSlot& active_src = srcs_[cur_src_];
+        SourceChannel& ch = srcs_[f.src];
         const auto t1 = clk::now();
 
-        // Zero-size packet guard: a dying/reconnecting camera can hand
-        // out a buffer with bytesused == 0. Feeding it to the decoder
-        // produces "BAD INPUT ok=1 ... size=0" — MPP reports success on
-        // an EMPTY packet, and the buffer behind the returned fd is
-        // stale/uninitialized memory. RGA then stretches that garbage
-        // into the NPU tensor, YOLO hallucinates on it and the stream
-        // shows phantom boxes (observed right after a replug). Skip the
-        // decode, keep the buffer cycle intact (requeue still runs).
-
-        int fd_src = -1;
-        if ( sz > 0 )
-        {
-            fd_src = active_src.dec.decode(
-                    static_cast<const uint8_t*>( active_src.src.buffer( idx ) ), sz );
-        }
-        else
-        {
-            log_.warn() << "camera: zero-size frame skipped\n";
-        }
-        
-        active_src.src.requeue( idx );
-
+        // Decode + requeue + warm-up (SourceChannel::decode): -1 for an
+        // empty packet, a decode error or a warm-up frame. Such a frame
+        // contributes neither to ok nor to the timing statistics -- otherwise
+        // rare errors would silently skew averages.
+        const int fd_src = ch.decode( f );
         const auto t2 = clk::now();
-
-        // A frame that failed to decode contributes neither to ok nor to the
-        // timing statistics — otherwise rare errors would silently skew averages.
         if ( fd_src < 0 )
             continue;
-
-        // Warm-up discard: even non-empty first packets after STREAMON
-        // start mid-stream, so the first decoded frame(s) after a
-        // reconnect can be partial garbage. They ARE decoded (flushing
-        // the decoder is the point) but never inferred or published —
-        // a two-frame gap beats phantoms on a live stream. The counter
-        // counts VALID decodes only: garbage frames (fd < 0) do not
-        // consume it, so publishing resumes on real data.
-        if ( active_src.warmup_left > 0 )
-        {
-            --active_src.warmup_left;
-            if ( active_src.warmup_left == 0 )
-                log_.info() << "camera: warm-up done, publishing resumed\n";
-            continue;
-        }
 
         // ---- unified path: every frame goes through the InferencePool ----
         // pool 1 == ring of one: dispatch, then publish immediately --
@@ -647,7 +401,7 @@ int Pipeline::run()
         if ( slot < 0 )
             break;  // stop requested with every slot in flight: leave through the normal path
         const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( t1 - t_start ).count();
-        frame_dispatch( slot, active_src.frames++, fd_src, ts_us, cam_ms, dec_ms );
+        frame_dispatch( slot, f.src, an_[f.src].frames++, fd_src, ts_us, cam_ms, dec_ms );
         ++i;
         if ( pool_.size() == 1 )
             ok += publish_oldest();
@@ -667,20 +421,19 @@ int Pipeline::run()
 }
 
 // Disconnect policy: ENODEV/EIO mean the source is gone (unplug, USB
-// hiccup, Wi-Fi drop) - the slot flips to absent and probe_loop() owns
-// the re-attach on its 2 s cadence (recover() for a detached slot,
-// setup_device/start for one that never attached). Any other errno is
-// a hard error and ends the run with exit code 1 (run() returns -1,
-// main() maps it to 1). The net source reports only these two classes
-// by contract. The recovery MECHANISM is one recover() step inside
-// the source; the POLICY (cadence) is the prober's. The old inline
-// 20x1 s ladder is gone: it froze the frame loop and starved any
-// other live source for up to 20 s.
+// hiccup, Wi-Fi drop) - the channel is detached and probe_loop() owns
+// the re-attach on its 2 s cadence (SourceChannel::attach, the same
+// path as at startup). Any other errno is a hard error and ends the run
+// with exit code 1 (run() returns -1, main() maps it to 1). The net
+// source reports only these two classes by contract. The recovery
+// MECHANISM is the channel's attach(); the POLICY (cadence) is the
+// prober's. The old inline 20x1 s ladder is gone: it froze the frame
+// loop and starved any other live source for up to 20 s.
 
-int Pipeline::handle_source_failure( int cam_err )
+int Pipeline::handle_source_failure( const EncodedFrame& f )
 {
-    const bool recoverable = ( cam_err == ENODEV || cam_err == EIO );
-    log_.warn() << "source: dequeue failed: " << strerror( cam_err )
+    const bool recoverable = ( f.err == ENODEV || f.err == EIO );
+    log_.warn() << "source: dequeue failed: " << strerror( f.err )
                 << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
     if ( !recoverable )
         return -1;
@@ -688,14 +441,10 @@ int Pipeline::handle_source_failure( int cam_err )
     // pending slots (their infer may still be in flight; the pool waits
     // for it, then frees without publishing). A no-op with one engine:
     // its single frame was published before the next dequeue.
-    pool_.discard( cur_src_ );
+    pool_.discard( f.src );
     ++reconnects_;
-    // warmup_left first: once absent is set, the prober may take the slot
-    // and write warmup_left itself (probe_source). The seq_cst store below
-    // publishes this write to it; the old order was a data race.
-    srcs_[cur_src_].warmup_left = 0;
-    srcs_[cur_src_].absent.store( true );
-    log_.info() << "source s" << cur_src_ << ": detached - probe_loop will re-attach\n";
+    srcs_[f.src].detach();  // the prober owns the channel from here (SourceChannel thread rule)
+    log_.info() << "source s" << f.src << ": detached - probe_loop will re-attach\n";
     return 0;
 }
 
@@ -735,7 +484,7 @@ int Pipeline::acquire_slot( int& ok )
 // cross-check of the RGA letterbox geometry against the single-owner
 // one, then the job goes to the pool.
 
-void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms )
+void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms )
 {
     const TensorRef tn = pool_.tensor( slot );
     LbGeom& band = tensor_band_[static_cast<size_t>( slot )];
@@ -748,7 +497,8 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
     // tn.data != nullptr: the InferencePool constructor throws when setup_io()
     // fails, so a live slot always has its tensor mapped; the check states the
     // invariant for the analyzer, like the null guard inside cache_drop().
-    const SourceSlot& ss = srcs_[cur_src_];
+    const SourceChannel& ch = srcs_[src];
+    const SourceGeom& ss = ch.geom();  // Live: the frame thread owns it
     if ( tn.data != nullptr && band.w > 0
          && ( band.left != ss.lb.left || band.top != ss.lb.top || band.w != ss.lb.w || band.h != ss.lb.h ) )
     {
@@ -759,20 +509,20 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
     LbGeom lg {};
     const bool rga_ok =
             rga_.resize( fd_src, ss.w, ss.h, tn.fd, model_w_, model_h_, ss.aux_fd, ss.w / 2, ss.h / 2, &lg,
-                    ss.dec.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
+                    ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
     cal_dumper_.maybe( frame_idx, tn.fd, static_cast<const uint8_t*>( tn.data ), tn.size );
     const auto t3b = clk::now();
     // Cross-check RGA geometry against the owning source's (warn once).
     if ( !lb_warned_ && ( lg.left != ss.lb.left || lg.top != ss.lb.top || lg.w != ss.lb.w || lg.h != ss.lb.h ) )
     {
         lb_warned_ = true;
-        log_.warn() << "pipeline: RGA letterbox drift (src " << cur_src_ << "): x=" << lg.left << " top=" << lg.top
+        log_.warn() << "pipeline: RGA letterbox drift (src " << src << "): x=" << lg.left << " top=" << lg.top
                     << " w=" << lg.w << " h=" << lg.h
                     << " vs x=" << ss.lb.left << " top=" << ss.lb.top << " w=" << ss.lb.w << " h=" << ss.lb.h << '\n';
     }
 
     InferJob job {};
-    job.src_idx = cur_src_;
+    job.src_idx = src;
     job.src_w = ss.w;
     job.src_h = ss.h;
     job.frame = frame_idx;
@@ -801,7 +551,7 @@ int Pipeline::publish_oldest()
         // M3.10: EMA smoothing on scene-coord boxes; the raw list is kept
         // only for the --box-log jitter A/B CSV.
 
-        SourceSlot& ss = srcs_[res_.job.src_idx];
+        SourceAnalytics& ss = an_[res_.job.src_idx];
         ss.smoother.update( res_.dets, dets_ );
         ss.smoother.log_frame( res_.job.frame, res_.dets, dets_ );
         // Anti-jitter stage 1: the Kalman tracker consumes RAW person
