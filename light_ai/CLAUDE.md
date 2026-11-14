@@ -19,7 +19,8 @@ keep "Migration plan" current when a stage changes state.
 - Shared working copy: run `git status` before any checkout or merge. Uncommitted changes
   under light_ai/ -> stop and ask the user; changes elsewhere are the user's -- leave them,
   and if git refuses the checkout because of them, ask. Never stash, reset or discard.
-- Stage paths explicitly (`git add light_ai/...`), never `git add -A` / `git commit -a`.
+- Stage explicit paths inside light_ai/ (paths are relative to this directory: `git add src/x.cpp`),
+  never `git add -A` / `git add .` from the git root / `git commit -a`.
 - Base branch: fix/audit-p0. One branch per stage: refactor/stageN-<name>; PR into fix/audit-p0
   with `gh pr create --base fix/audit-p0`. The user reviews and merges.
 - Never push to fix/audit-p0 directly, never force-push, never rewrite pushed history.
