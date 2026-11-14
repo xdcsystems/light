@@ -26,6 +26,7 @@ add_executable(light_ai_tests
     test_multipart_reader.cpp
     test_buffered_socket.cpp
     test_mjpeg_slot_pool.cpp
+    test_net_mjpeg_source.cpp
     test_box_smoother.cpp
     test_tracker.cpp
     test_box_mapper.cpp
@@ -61,6 +62,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/multipart_reader.cpp
     ${LIGHT_AI_ROOT}/src/source/buffered_socket.cpp
     ${LIGHT_AI_ROOT}/src/source/mjpeg_slot_pool.cpp
+    ${LIGHT_AI_ROOT}/src/net_mjpeg_source.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp
     ${LIGHT_AI_ROOT}/src/tracker.cpp
     ${LIGHT_AI_ROOT}/src/box_mapper.cpp
