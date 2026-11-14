@@ -97,6 +97,16 @@ namespace
         CHECK( t, place_tile( l, kBand43, -1 ).cell == 0 );
     }
 
+    void absent_mask( TestRun& t )
+    {
+        const bool m[2] = { false, true };
+        CHECK( t, !tile_absent( m, 2, 0 ) );
+        CHECK( t, tile_absent( m, 2, 1 ) );
+        CHECK( t, tile_absent( m, 2, 2 ) );  // beyond the mask: absent
+        CHECK( t, tile_absent( m, 1, 1 ) );
+        CHECK( t, tile_absent( nullptr, 0, 0 ) );  // no mask: every tile absent
+    }
+
     void rates( TestRun& t )
     {
         EncoderConfig c;
@@ -126,5 +136,6 @@ void test_encoder_config( TestRun& t )
     cells( t );
     placement_single( t );
     placement_multi( t );
+    absent_mask( t );
     rates( t );
 }

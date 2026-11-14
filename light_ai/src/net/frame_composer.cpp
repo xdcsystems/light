@@ -126,10 +126,9 @@ FrameComposer::FrameComposer( const EncoderConfig& cfg, const Log& log )
 // GPU draw -> RGA ordering is guaranteed by sync_cpu() in
 // OverlaySink::draw_and_publish, which runs before publish() on the
 // same pipeline thread.
-bool FrameComposer::compose( int tensor_fd, const LbGeom& band, int src_idx, int slot, MppBuffer out )
+bool FrameComposer::compose( int tensor_fd, const TilePlacement& tp, int slot, MppBuffer out )
 {
     const bool multi = lay_.nsrc > 1;
-    const TilePlacement tp = place_tile( lay_, band, src_idx );
 
     MppBuffer target = multi ? canvas_.buf[0] : out;
     LbGeom& prev = bands_[multi ? tp.cell : slot];
@@ -154,24 +153,41 @@ bool FrameComposer::compose( int tensor_fd, const LbGeom& band, int src_idx, int
 bool FrameComposer::compose_idle( const bool* absent, int nabs, int slot, MppBuffer out )
 {
     rga_buffer_t idl = nv12( idle_.buf[0], lay_ );
-    rga_buffer_t dst = nv12( out, lay_ );
     if ( lay_.nsrc <= 1 )
     {
         // Single view: the idle canvas IS the frame.
+        if ( out == nullptr )
+            return true;
         bands_[slot] = plate_band();
-        return rga_ok( imcopy( idl, dst ), log_, "RGA idle copy" );
+        return rga_ok( imcopy( idl, nv12( out, lay_ ) ), log_, "RGA idle copy" );
     }
     // Multi-view: the plate tile into every absent cell of the persistent
-    // canvas; live cells keep their last picture.
+    // canvas that does not hold it already (only compose() and
+    // reset_canvas() write a cell besides this copy); live cells keep
+    // their last picture.
     rga_buffer_t cvs = nv12( canvas_.buf[0], lay_ );
     for ( int s = 0; s < lay_.nsrc; ++s )
     {
-        if ( absent && s < nabs && !absent[s] )
+        if ( !tile_absent( absent, nabs, s ) || same( bands_[s], plate_band() ) )
             continue;
         const im_rect tile = rect( cell_rect( lay_, s ) );
         if ( !rga_ok( improcess( idl, cvs, {}, tile, tile, {}, 0 ), log_, "RGA idle tile copy" ) )
             return false;
         bands_[s] = plate_band();
     }
-    return rga_ok( imcopy( cvs, dst ), log_, "RGA idle composite copy" );
+    if ( out == nullptr )
+        return true;
+    return rga_ok( imcopy( cvs, nv12( out, lay_ ) ), log_, "RGA idle composite copy" );
+}
+
+// One CPU fill of the canvas per viewer session (0.9 / 1.8 MB for 2x1 /
+// 2x2), the same path as the single-view slot refill. The canvas is only
+// written and read by synchronous RGA calls on this thread: nothing is in
+// flight on it here.
+void FrameComposer::reset_canvas()
+{
+    if ( lay_.nsrc <= 1 )
+        return;
+    fill_nv12_gray( canvas_.buf[0] );
+    bands_.fill( LbGeom {} );
 }

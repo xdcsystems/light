@@ -7,7 +7,10 @@
 //     canvas into the ring slot, a frame closer than the pacing step only
 //     updates its cell (out == nullptr);
 //   idle: the NO SIGNAL canvas (gray + IdlePlate, drawn once at init) is
-//     copied into the slot (single view) or into the absent cells.
+//     copied into the slot (single view) or into the absent cells that do
+//     not hold the plate already (multi-view; out == nullptr: canvas only);
+//   session start (multi-view): reset_canvas() fills the whole canvas gray,
+//     so no picture of a previous session reaches the new one (#24).
 // Before a band lands in a slot / cell whose last band differs, the
 // slot / cell is refilled gray: plate or old-band pixels must not survive
 // around the new picture.
@@ -45,15 +48,21 @@ public:
     FrameComposer( const FrameComposer& ) = delete;
     FrameComposer& operator=( const FrameComposer& ) = delete;
 
-    // Live frame of source src_idx: the band of tensor_fd into ring slot
-    // `slot` (buffer `out`); multi-view: into the canvas cell, then the
-    // canvas into `out` unless out == nullptr. false on an RGA failure.
-    bool compose( int tensor_fd, const LbGeom& band, int src_idx, int slot, MppBuffer out );
+    // Live frame: the band of tensor_fd, placed by tp (place_tile: the
+    // caller needs tp.cell too), into ring slot `slot` (buffer `out`);
+    // multi-view: into the canvas cell tp.cell, then the canvas into `out`
+    // unless out == nullptr. false on an RGA failure.
+    bool compose( int tensor_fd, const TilePlacement& tp, int slot, MppBuffer out );
 
-    // NO SIGNAL frame: absent[s] (s < nabs; absent == nullptr or s >= nabs
-    // counts as absent) selects the cells that get the plate. false on an
-    // RGA failure.
+    // NO SIGNAL frame: tile_absent( absent, nabs, s ) selects the cells that
+    // get the plate. Multi-view: out == nullptr updates the canvas only.
+    // Single view: out is required (the idle canvas is the frame). false on
+    // an RGA failure.
     bool compose_idle( const bool* absent, int nabs, int slot, MppBuffer out );
+
+    // Session start (multi-view; single view: no-op): the whole composite
+    // canvas gray, no cell remembers a band or the plate.
+    void reset_canvas();
 
 private:
     const Log& log_;

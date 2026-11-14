@@ -50,3 +50,8 @@ TilePlacement place_tile( const StreamLayout& layout, const LbGeom& band, int sr
     p.dst = dst;
     return p;
 }
+
+bool tile_absent( const bool* absent, int nabs, int s )
+{
+    return absent == nullptr || s >= nabs || absent[s];
+}

@@ -37,6 +37,7 @@ add_executable(light_ai_tests
     test_param_set_cache.cpp
     test_pts_clock.cpp
     test_encode_pacer.cpp
+    test_session_warmup.cpp
     test_idle_plate.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
@@ -46,6 +47,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/param_set_cache.cpp
     ${LIGHT_AI_ROOT}/src/core/pts_clock.cpp
     ${LIGHT_AI_ROOT}/src/core/encode_pacer.cpp
+    ${LIGHT_AI_ROOT}/src/core/session_warmup.cpp
     ${LIGHT_AI_ROOT}/src/core/bitmap_font.cpp
     ${LIGHT_AI_ROOT}/src/core/idle_plate.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp

@@ -334,7 +334,11 @@ post-processing.
                once at init; see docs/state.md, "NO SIGNAL idle
                stream") paced by --net-fps, excluded from --frames and
                the timing stats. One viewer at a time; no encode until
-               the first viewer connects; a stalled viewer is dropped
+               the first viewer connects (the output side sleeps
+               without a viewer: Run, "Output side and recognition");
+               a multi-view session starts on a gray canvas and holds
+               its first frame until every source cell is refreshed
+               (<= 200 ms, SessionWarmup); a stalled viewer is dropped
                via SO_SNDTIMEO (15 s). Late joiners via repeated
                PAT/PMT/SDT.
                The NV12 dma-buf pool is four ring buffers deep (2026-11-02,
@@ -358,7 +362,7 @@ post-processing.
                declaration order, written in net_encoder.h. The two
                threads share only PacketQueue, SessionGate and the quit
                flag. Pure parts (StreamLayout, ParamSetCache, PtsClock,
-               EncodePacer, IdlePlate, PacketQueue, SessionGate) are in
+               EncodePacer, SessionWarmup, IdlePlate, PacketQueue, SessionGate) are in
                core/ with host tests; the queue and the gate also run
                under TSan.
                In M5 multi-camera mode (nsrc > 1) a separate NV12 buffer holds
@@ -895,6 +899,31 @@ nobuffer -flags low_delay -framedrop -probesize 32
 udp://0.0.0.0:1234 — an explicit IPv4 bind is required on Windows
 hosts (udp://@:1234 binds :: / IPv6 and silently receives no IPv4
 packets; verified with Get-NetUDPEndpoint).
+
+Output side and recognition (the stated behavior; #24). "Viewer" is
+a connected TCP pull client, or the open UDP push path:
+1. No viewer: the output side sleeps completely. Nothing is drawn,
+   composed, encoded or sent: no box drawing, no RGA compose (not even
+   the persistent multi-view canvas), no NO SIGNAL frames, no encode.
+   What remains (the viewer_active() / session-gate early returns, the
+   40 ms idle tick) costs nothing worth measuring; enc reads 0.0 in
+   [timing].
+2. Recognition never sleeps. Capture, decode, NPU inference and the
+   tracker run whether or not anybody watches: other modules react to
+   the recognized objects with no viewer attached. Only the output side
+   is gated on the viewer.
+3. With a viewer, per configured source: online -- the full path for
+   that source (frames, recognition, boxes / trails, compose, encode,
+   send); absent -- its tile is the gray NO SIGNAL plate (no frames
+   from it, so nothing to recognize or draw for it).
+A viewer session starts clean (multi-view): its first publish resets
+the composite canvas gray, and the first frame (the session's IDR) is
+encoded once every source cell holds a picture of this session -- a
+live band or the plate -- or 200 ms after the session start. A source
+that delivered nothing by then is gray in frame 0, never a picture of
+an earlier session; the empty 4th cell of 2x2 with 3 sources stays
+gray.
+
 On the legacy Windows laptop the maintained viewer is mpv (software
 decode + gpu-next/d3d11 render, auto-reconnect loop — see the Viewer
 section, revised 2026-11-01; the 2026-10-31 dxva2-copy combo stays as
