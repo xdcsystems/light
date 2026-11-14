@@ -5,13 +5,16 @@ clang-tidy and live runs are local commands. This file is the handoff between se
 keep "Migration plan" current when a stage changes state.
 
 ## Where things are
-- This checkout: /mnt/nvme_data/work/light-claude (NVMe). The user's own working copy
-  ~/Projects/light is on eMMC: do not touch it.
-- Home (/userdata/home/linaro) and /tmp are on eMMC (15 GB): keep builds, logs and
-  scratch files under this checkout (build/ is git-ignored) or $TMPDIR (NVMe).
-- Models (*.rknn) are not in git: light_ai/misc/*.rknn are symlinks set up by the user.
+- This checkout: ~/Projects/light (physical path /userdata/home/linaro/Projects/light, eMMC).
+  It is also the user's own working copy: datasets (dataset*/), venv/, artifacts/ and
+  build-tidy/ belong to the user -- never delete or rewrite them.
+- Home and /tmp are on eMMC (15 GB): keep scratch files in $TMPDIR (NVMe,
+  /mnt/nvme_data/claude/tmp); build logs go to build/ (git-ignored).
+- Models (*.rknn) are not in git: they live in light_ai/misc/ of this checkout.
 
 ## Workflow
+- Shared working copy: run `git status` before any checkout or merge. If there are
+  uncommitted changes, stop and ask the user -- never stash, reset or discard them yourself.
 - Base branch: fix/audit-p0. One branch per stage: refactor/stageN-<name>; PR into fix/audit-p0
   with `gh pr create --base fix/audit-p0`. The user reviews and merges.
 - Never push to fix/audit-p0 directly, never force-push, never rewrite pushed history.
