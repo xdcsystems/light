@@ -32,6 +32,9 @@ keep "Migration plan" current when a stage changes state.
 - Live run: timeout -s INT 60 sudo -n ./build/light_ai --device /dev/video20 --pool 3 --frames 600
   SIGINT exercises the graceful-shutdown path; exit 124 = stopped by the timer (normal).
   Redirect to build/run.log and read it with tail/grep.
+- Permissions: .claude/settings.json (tracked) pre-approves the gate, test, run and git/gh
+  commands above and denies edits in light_control/ and light_sensor/, history rewrites,
+  `git add -A` / `commit -a` and `git stash`. Personal overrides: .claude/settings.local.json.
 - Logs are long: read tails and grep for errors, not whole files.
 - Only one heavy job at a time (3.8 GB RAM): no build while a live run is measuring FPS.
 

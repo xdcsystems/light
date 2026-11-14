@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./scripts/build.sh *)",
+      "Bash(bash scripts/test.sh)",
+      "Bash(bash scripts/tidy_run.sh *)",
+      "Bash(sudo -n ./build/light_ai *)",
+      "Bash(tail *)",
+      "Bash(grep *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git fetch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(git push -u origin refactor/*)",
+      "Bash(gh pr *)"
+    ],
+    "deny": [
+      "Edit(~/Projects/light/light_control/**)",
+      "Edit(~/Projects/light/light_sensor/**)",
+      "Bash(git add -A *)",
+      "Bash(git add --all *)",
+      "Bash(git add .)",
+      "Bash(git commit -a *)",
+      "Bash(git commit -am *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard *)",
+      "Bash(git stash *)"
+    ]
+  }
+}
