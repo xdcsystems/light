@@ -38,6 +38,17 @@ keep "Migration plan" current when a stage changes state.
 - Logs are long: read tails and grep for errors, not whole files.
 - Only one heavy job at a time (3.8 GB RAM): no build while a live run is measuring FPS.
 
+## Model and delegation
+- This main session runs Opus at high effort (.claude/settings.json: model, effortLevel):
+  it owns design, refactoring, threading and ownership decisions, commits and PRs.
+- Delegate routine work to the subagents in .claude/agents/ (Sonnet, medium effort):
+  - board-check: every build / unit-test / tidy gate and every live run. It reports
+    verdicts, first errors and FPS/TOTAL figures; it never edits code or touches git.
+  - gate-fixer: mechanical gate failures (includes, naming, const, casts) with an
+    obvious local fix. Anything touching logic, threads or interfaces stays here.
+- Branch switching for A/B runs stays in this session: check out, then ask board-check
+  to measure; keep baseline logs (build/run_*.log) to avoid re-measuring.
+
 ## Project rules (full text: README, "Rules of the project" and "Comment style")
 - C++17. No virtuals or inheritance hierarchies; templates for static polymorphism.
 - No manual heap (new/delete, unique_ptr/shared_ptr), no statics of any kind, no globals.
