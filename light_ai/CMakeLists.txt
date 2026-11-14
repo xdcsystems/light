@@ -96,6 +96,7 @@ add_executable(light_ai
     src/config/config_file.cpp
     src/core/geometry.cpp
     src/core/encoder_config.cpp
+    src/core/param_set_cache.cpp
     src/process_env.cpp
     src/signal_waiter.cpp
     src/cpu_affinity.cpp

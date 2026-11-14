@@ -15,7 +15,6 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <vector>
 
 // DRM frame descriptor for the encoder zero-copy input: 
 // the ping-pong dma-bufs are wrapped as AV_PIX_FMT_DRM_PRIME frames and 
@@ -36,6 +35,7 @@
 
 #include "core/encoder_config.hpp"  // EncoderConfig, StreamLayout
 #include "core/geometry.hpp"        // LbGeom: band geometry arrives as one object
+#include "core/param_set_cache.hpp"  // ParamSetCache: late-join SPS/PPS repeat
 #include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<kBufCount>: RAII pool sub-object
 #include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
 
@@ -119,7 +119,7 @@ private:
     bool send_frame( AVStream* st );
     // The mux side split out of serve() for readability:
     // drain_queue() owns the wait/pop loop, mux_write() writes one
-    // packet with the IDR-prepend logic; hdr_/hdr_logged_ stay members.
+    // packet with the IDR-prepend logic (params_).
     void drain_queue( AVFormatContext* fc );
     // One finished encoder packet -> the preallocated ring queue for
     // serve() to mux; shared by the EAGAIN retry and the send drain.
@@ -198,10 +198,7 @@ private:
     std::atomic<int64_t> last_enc_ts_us_ { -1 };
     uint64_t frames_sent_ = 0;
 
-    // h264 parameter-set prefix captured from the first key packet,
-    // prepended to every following IDR (late-joiner support).
-    // Plain members: function-local statics are forbidden outside tools/.
-    std::vector< uint8_t > hdr_;
-    std::vector< uint8_t > idr_buf_;
-    bool hdr_logged_ = false;
+    // Late-joiner support: the SPS/PPS prefix of the first IDR, repeated
+    // on every later IDR (serve thread only).
+    ParamSetCache params_;
 };

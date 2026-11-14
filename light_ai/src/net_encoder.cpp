@@ -25,6 +25,7 @@ extern "C"
 
 #include "core/encoder_config.hpp"
 #include "core/log.hpp"
+#include "core/param_set_cache.hpp"
 #include "muxer_teardown.hpp"
 #include "net_encoder.h"
 #include "av_common.hpp"
@@ -53,99 +54,6 @@ static_assert( offsetof( RKMPPPriv, mcfg ) == 40, "rkmpp priv layout drift" );
 
 namespace
 {
-    bool is_idr( const AVPacket* q )
-    {
-        for ( size_t i = 0; i + 4 <= static_cast<size_t>( q->size ); ++i )
-            if ( q->data[i] == 0 && q->data[i+1] == 0 && q->data[i+2] == 1 )
-            {
-                const uint8_t t = q->data[i+3] & 0x1F;
-                if ( t == 5 ) return true;
-                if ( t == 6 || t == 7 || t == 8 || t == 9 ) continue;
-                return false;
-            }
-        return false;
-    }
-
-    // Start-code detector shared by hdr_capture() and has_param_sets():
-    // a code begins at its FIRST zero, both 3-byte (00 00 01) and
-    // 4-byte (00 00 00 01) prefixes. Inside a NAL payload 00 00 01
-    // cannot occur (emulation prevention), and 00 00 00 continues with
-    // 01 only as a longer code, so there are no false positives. A
-    // one-byte-at-a-time scan lands on the true NAL boundary; the old
-    // 3-byte-only scan stopped on the SECOND zero of a 4-byte code and
-    // let a stray 00 leak into the header tail (00 00 00 00 01 glued
-    // before the IDR start code downstream).
-    bool is_code_at( const AVPacket* q, size_t p, size_t n )
-    {
-        return p + 3 <= n && q->data[p] == 0 && q->data[p+1] == 0
-               && ( q->data[p+2] == 1
-                    || ( p + 4 <= n && q->data[p+2] == 0 && q->data[p+3] == 1 ) );
-    }
-
-    bool hdr_capture( const AVPacket* q, std::vector< uint8_t >& out )
-    {
-        const size_t n = static_cast<size_t>( q->size );
-        size_t i = 0;
-        while ( i < n && !is_code_at( q, i, n ) )
-            ++i;
-        if ( i >= n )
-            return false;
-        bool saw_sps = false;
-        while ( is_code_at( q, i, n ) )
-        {
-            const size_t code_len = ( q->data[i+2] == 1 ) ? 3 : 4;
-            if ( i + code_len >= n )
-                break;  // truncated NAL type byte: nothing sane past it
-            const uint8_t t = q->data[i+code_len] & 0x1F;
-            if ( t == 7 ) saw_sps = true;
-            if ( t == 5 || t == 1 || t == 10 ) break;  // slice/EoS NAL: header ends here
-            size_t j = i + code_len;
-            while ( j < n && !is_code_at( q, j, n ) )
-                ++j;
-            if ( j >= n )
-            {
-                i = n;  // no further start code: header runs to the packet end
-                break;
-            }
-            i = j;
-        }
-        if ( saw_sps && i > 0 )
-        {
-            out.assign( q->data, q->data + i );
-            return true;
-        }
-        return false;
-    }
-
-    // True when the packet already carries SPS/PPS NAL units of its
-    // own: prepending hdr_ to such a packet would duplicate the
-    // parameter sets. Replaces the old prefix-memcmp check, which
-    // missed IDR packets where an SEI (or any non-parameter NAL with a
-    // different start-code length) precedes the slice.
-    bool has_param_sets( const AVPacket* q )
-    {
-        const size_t n = static_cast<size_t>( q->size );
-        size_t i = 0;
-        while ( i < n && !is_code_at( q, i, n ) )
-            ++i;
-        while ( i < n && is_code_at( q, i, n ) )
-        {
-            const size_t code_len = ( q->data[i+2] == 1 ) ? 3 : 4;
-            if ( i + code_len >= n )
-                return false;  // truncated NAL type byte
-            const uint8_t t = q->data[i+code_len] & 0x1F;
-            if ( t == 7 || t == 8 )  // SPS or PPS already in the packet
-                return true;
-            if ( t == 5 || t == 1 || t == 10 )
-                break;  // slice/EoS NAL reached without SPS/PPS
-            size_t j = i + code_len;
-            while ( j < n && !is_code_at( q, j, n ) )
-                ++j;
-            i = j;
-        }
-        return false;
-    }
-
     void fill_nv12_gray( MppBuffer mb )
     {
         if ( void* p = mpp_buffer_get_ptr( mb ) )
@@ -305,6 +213,7 @@ namespace
 NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
   : log_( log )
   , cfg_( cfg )
+  , params_( log )
 {
     avformat_network_init();
 
@@ -828,7 +737,6 @@ bool NetEncoder::init_frames()
     dup_pkt_ = av_packet_alloc();
     if ( !mux_pkt_ || !dup_pkt_ )
         return false;
-    idr_buf_.reserve( 256 * 1024 );
     for ( auto*& qp : pkts_.d )
     {
         qp = av_packet_alloc();
@@ -995,9 +903,8 @@ int64_t NetEncoder::packet_pts()
 
 // Batch C follow-up: the mux side of serve(), split out for tidy
 // (readability-function-size). drain_queue() owns the wait/pop loop;
-// mux_write() writes one packet with the late-join IDR-prepend logic.
-// hdr_/hdr_logged_ stay members; is_idr/hdr_capture/has_param_sets are the
-// file-local helpers above.
+// mux_write() writes one packet with the late-join IDR-prepend logic
+// (ParamSetCache; the Annex B scans are annexb:: in core/param_set_cache.hpp).
 void NetEncoder::drain_queue( AVFormatContext* fc )
 {
     // Session-start gate, shared with the overflow path in send_frame:
@@ -1020,7 +927,7 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
             if ( quit_.load() || error_.load() )
                 return;
             AVPacket* front = pkts_.front();
-            if ( wait_key_ && !is_idr( front ) )
+            if ( wait_key_ && !annexb::is_idr( front->data, static_cast<size_t>( front->size ) ) )
             {
                 av_packet_unref( front );
                 pkts_.pop();
@@ -1056,33 +963,19 @@ void NetEncoder::drain_queue( AVFormatContext* fc )
 
 int NetEncoder::mux_write( AVFormatContext* fc, AVPacket* pkt )
 {
-    // Late-join support (moved from send_frame): capture the
-    // parameter-set prefix from the first key packet and prepend it to
-    // every following IDR that does not already carry SPS/PPS of its
-    // own; the TS muxer tolerates the duplicate.
+    // Late-join support: ParamSetCache captures the SPS/PPS prefix of the
+    // first IDR and prepends it to every later IDR that does not carry
+    // parameter sets of its own (core/param_set_cache.hpp); the prepended
+    // copy goes out through dup_pkt_. The TS muxer tolerates the duplicate.
     AVPacket* out = pkt;
-    if ( is_idr( pkt ) )
+    const ByteSpan b = params_.prepare( pkt->data, static_cast<size_t>( pkt->size ) );
+    if ( b.data != pkt->data )
     {
-        if ( hdr_.empty() && hdr_capture( pkt, hdr_ ) )
-            log_.info() << "enc: h264 header captured: " << hdr_.size()
-                        << " bytes, repeating on every IDR\n";
-        else if ( !hdr_.empty() && !has_param_sets( pkt ) )
-        {
-            const size_t total = hdr_.size() + static_cast<size_t>( pkt->size );
-            idr_buf_.resize( total );
-            std::memcpy( idr_buf_.data(), hdr_.data(), hdr_.size() );
-            std::memcpy( idr_buf_.data() + hdr_.size(), pkt->data, static_cast<size_t>( pkt->size ) );
-            av_packet_copy_props( dup_pkt_, pkt );
-            dup_pkt_->buf = nullptr;
-            dup_pkt_->data = idr_buf_.data();
-            dup_pkt_->size = static_cast<int>( total );
-            out = dup_pkt_;
-            if ( !hdr_logged_ )
-            {
-                log_.info() << "enc: header repeat active\n";
-                hdr_logged_ = true;
-            }
-        }
+        av_packet_copy_props( dup_pkt_, pkt );
+        dup_pkt_->buf = nullptr;
+        dup_pkt_->data = b.data;
+        dup_pkt_->size = static_cast<int>( b.size );
+        out = dup_pkt_;
     }
     const int r = av_write_frame( fc, out );
     dup_pkt_->data = nullptr;
