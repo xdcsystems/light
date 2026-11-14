@@ -291,7 +291,7 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
     // dries to ~83 kbps). EncoderConfig::nominal_fps(): 25, 25 per source
     // in multi-view, for rate control only; pts stay VFR from dequeue times.
     ctx->framerate = AVRational { cfg_.nominal_fps(), 1 };
-    ctx->bit_rate = static_cast<int64_t>( cfg_.bitrate_kbps ) * 1000;
+    ctx->bit_rate = cfg_.bit_rate();
     // gop_size reaches MPP as rc:gop (rkmpp_set_enc_cfg):
     // a captured stream shows I-frames every 26 for GOP 25.
     ctx->gop_size = cfg_.gop();  // 1 s: a late joiner waits at most one GOP
@@ -325,7 +325,7 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
     {
         log_.info() << "enc: rkmpp priv unavailable, encoder default rc stays\n";
     }
-    log_.info() << "enc: h264_rkmpp open: " << lay.w << 'x' << lay.h << ", " << cfg_.bitrate_kbps << " kbps, gop "
+    log_.info() << "enc: h264_rkmpp open: " << lay.w << 'x' << lay.h << ", " << cfg_.kbps() << " kbps, gop "
                 << ctx->gop_size << '\n';
     if ( cfg_.vfr() )
         log_.info() << "enc: VFR follow-source mode: time_base 1/90000, pts from dequeue times\n";
@@ -1053,7 +1053,7 @@ bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, int64_t* 
     st->codecpar->format = AV_PIX_FMT_NV12;
     st->codecpar->width = lay.w;
     st->codecpar->height = lay.h;
-    st->codecpar->bit_rate = enc_->bit_rate;
+    st->codecpar->bit_rate = cfg_.bit_rate();  // the codec context belongs to the pipeline thread
     st->time_base = cfg_.vfr() ? AVRational { 1, 90000 } : AVRational { 1, cfg_.fps };
     st->avg_frame_rate = cfg_.vfr() ? AVRational { 0, 1 } : AVRational { cfg_.fps, 1 };
 

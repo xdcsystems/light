@@ -60,6 +60,10 @@ struct EncoderConfig
     // CBR per-frame budget collapses): nominal 25, 25 per source in multi-view.
     int nominal_fps() const { return vfr() ? ( layout.nsrc > 1 ? 25 * layout.nsrc : 25 ) : fps; }
     int gop() const { return vfr() ? nominal_fps() : fps; }  // 1 s: a late joiner waits at most one GOP
+    // The bitrate the encoder and the stream header use: bitrate_kbps <= 0
+    // (not validated by the caller) falls back to 12000 kbps, never 0 to MPP.
+    int kbps() const { return bitrate_kbps > 0 ? bitrate_kbps : 12000; }
+    int64_t bit_rate() const { return static_cast<int64_t>( kbps() ) * 1000; }  // bits/s
 
 public:
     StreamLayout layout {};
@@ -68,5 +72,5 @@ public:
     int fps = 25;            // stream fps; <= 0 = VFR
     int port = 1234;         // TCP pull listen port / UDP destination port
     std::string host;        // UDP push destination; empty = TCP pull
-    int bitrate_kbps = 12000;
+    int bitrate_kbps = 12000;  // as configured; read it through kbps() / bit_rate()
 };
