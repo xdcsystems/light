@@ -22,6 +22,7 @@ add_executable(light_ai_tests
     test_jpeg_probe.cpp
     test_byte_window.cpp
     test_http_url.cpp
+    test_multipart_reader.cpp
     test_box_smoother.cpp
     test_tracker.cpp
     test_box_mapper.cpp
@@ -53,6 +54,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/bitmap_font.cpp
     ${LIGHT_AI_ROOT}/src/core/idle_plate.cpp
     ${LIGHT_AI_ROOT}/src/core/http_url.cpp
+    ${LIGHT_AI_ROOT}/src/core/multipart_reader.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp
     ${LIGHT_AI_ROOT}/src/tracker.cpp
     ${LIGHT_AI_ROOT}/src/box_mapper.cpp
@@ -67,6 +69,8 @@ add_executable(light_ai_tests
 )
 # Same inih switch as the main target: the config-file handler relies on it.
 target_compile_definitions(light_ai_tests PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)
+# The MJPEG fixtures (tests/data/, see its README): read at run time from the source tree.
+target_compile_definitions(light_ai_tests PRIVATE LIGHT_AI_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
 target_include_directories(light_ai_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
