@@ -26,3 +26,6 @@ misc/boxlog_*.csv
 
 # clangd index cache
 .cache/
+
+# Claude Code: personal settings stay local (project settings: .claude/settings.json)
+.claude/settings.local.json
