@@ -90,7 +90,8 @@ keep "Migration plan" current when a stage changes state.
       branch of probe_source. Pipeline loses ~9 methods; run() fits in 30 lines.
       Check: unplug/replug a USB camera and the net source; start with no sources.
       Issue #15, split 3a/3b/3c. 3a (SourceChannel, UsbNodeLocator, one attach path, TSan suite):
-      PR open, awaiting review. Next: 3b SourceProber, 3c SourceSet + FrameStatus, run() in 30 lines.
+      merged (PR #16). 3b (SourceProber: own thread, RAII local of run()): PR open, awaiting review.
+      Next: 3c SourceSet + FrameStatus, run() in 30 lines (closes #15).
       Baselines (fix/audit-p0 @ 7ef8212): build/run_base_pool{1,3}.log, build/run_base_net.log.
 - [ ] 4 NetEncoder, one class at a time: ParamSetCache, PtsClock, BitmapFont + IdlePlate,
       PacketQueue, FrameComposer, MuxSession; the remainder is H264Encoder (100-200 lines each,

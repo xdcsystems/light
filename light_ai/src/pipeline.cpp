@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
@@ -30,13 +31,6 @@ namespace
         const size_t dot = path.rfind( '.' );
         const std::string suf = "_s" + std::to_string( idx );
         return dot == std::string::npos ? path + suf : path.substr( 0, dot ) + suf + path.substr( dot );
-    }
-
-    // Monotonic max (diagnostics): written by the ctor and the prober.
-    void raise_max( std::atomic<int>& m, int v )
-    {
-        if ( v > m.load() )
-            m.store( v );
     }
 
 }  // namespace
@@ -129,11 +123,13 @@ void Pipeline::attach_sources()
 {
     using Attach = SourceChannel::Attach;
     bool any_aux = false;
+    int max_w = 0;
+    int max_h = 0;  // MAX across the started sources: the "aux not needed" line only
     for ( int s = 0; s < nsrc_; ++s )
     {
         SourceChannel& ch = srcs_[s];
         std::string why;
-        const Attach a = ch.attach( busy_v4l2_nodes( s ), locator_, false, why );
+        const Attach a = ch.attach( busy_v4l2_nodes( srcs_, nsrc_, s ), locator_, false, why );
         if ( a == Attach::DecoderFailed )
             throw std::runtime_error( "mpp decoder init failed for " + ch.node() );
         if ( a == Attach::AuxFailed )
@@ -143,68 +139,13 @@ void Pipeline::attach_sources()
             log_.warn() << "source s" << s << ": not started at startup (" << why << ") - prober retries every 2 s\n";
             continue;
         }
-        raise_max( src_w_, ch.geom().w );
-        raise_max( src_h_, ch.geom().h );
+        max_w = std::max( max_w, ch.geom().w );
+        max_h = std::max( max_h, ch.geom().h );
         any_aux = any_aux || ch.geom().aux_fd >= 0;
     }
     if ( !any_aux )
-        log_.info() << "aux not needed: max " << src_w_ << 'x' << src_h_
+        log_.info() << "aux not needed: max " << max_w << 'x' << max_h
                     << " fits single-pass into " << model_w_ << 'x' << model_h_ << '\n';
-}
-
-// Busy-node reservation (audit: multi-camera node hijacking): the /dev
-// nodes of the OTHER V4L2 sources, live or absent alike. A detached source
-// still owns its node -- probe_loop() re-attaches it on its own cadence,
-// so a scanning source must never trial-open or adopt that node: uvcvideo
-// accepts the trial while the node is momentarily free, and two sources
-// would then compete for one physical camera.
-// Attaching thread only (SourceChannel::node()).
-NodeList Pipeline::busy_v4l2_nodes( int self_idx ) const
-{
-    NodeList busy;
-    for ( int k = 0; k < nsrc_; ++k )
-    {
-        if ( k == self_idx || srcs_[k].kind() != SourceKind::V4L2 || srcs_[k].node().empty() )
-            continue;
-        busy.push_back( srcs_[k].node() );
-    }
-    return busy;
-}
-
-// Hot-attach probe (one step) of one non-Live source. Never throws: any
-// failure keeps the source absent, the next probe retries the same path
-// (SourceChannel::attach: never-attached and detached sources alike).
-void Pipeline::probe_source( int idx )
-{
-    std::string why;
-    if ( srcs_[idx].attach( busy_v4l2_nodes( idx ), locator_, true, why ) != SourceChannel::Attach::Live )
-        return;
-    raise_max( src_w_, srcs_[idx].geom().w );
-    raise_max( src_h_, srcs_[idx].geom().h );
-}
-
-// The prober thread: polls absent sources on a 2 s cadence. One thread for
-// all sources: a net probe may block for the connect timeout (5 s) -- it
-// must not stall the live path, hence a dedicated thread instead of
-// probing from the frame loop. V4L2 attach latency <= ~2 s, net <= ~7 s.
-void Pipeline::probe_loop()
-{
-    while ( !probe_quit_.load() )
-    {
-        ++probe_ticks_;
-        for ( int s = 0; s < nsrc_; ++s )
-        {
-            if ( probe_quit_.load() || srcs_[s].live() )
-                continue;
-            // visibility: the 1st and every 15th attempt (~30 s) show
-            // the prober is alive; the camera scan prints on its own.
-            if ( probe_ticks_ == 1 || probe_ticks_ % 15 == 0 )
-                log_.info() << "probe: s" << s << " absent, attempt " << probe_ticks_ << '\n';
-            probe_source( s );
-        }
-        for ( int k = 0; k < 20 && !probe_quit_.load(); ++k )
-            std::this_thread::sleep_for( std::chrono::milliseconds( 100 ) );
-    }
 }
 
 // NO SIGNAL idle publish: while at least one configured source is
@@ -292,7 +233,7 @@ FrameStatus Pipeline::dequeue_next_source( EncodedFrame& f, int& ok )
             if ( !srcs_[0].live() )
             {
                 // all-absent park: NO SIGNAL idle publish + 40 ms quanta;
-                // probe_loop() attaches the source
+                // the SourceProber attaches the source
                 idle_tick();
                 std::this_thread::sleep_for( std::chrono::milliseconds( 40 ) );
                 continue;
@@ -312,7 +253,7 @@ FrameStatus Pipeline::dequeue_next_source( EncodedFrame& f, int& ok )
         if ( !any_live )
         {
             // all-absent park: NO SIGNAL idle publish + 40 ms quanta;
-            // probe_loop() attaches the sources
+            // the SourceProber attaches the sources
             idle_tick();
             std::this_thread::sleep_for( std::chrono::milliseconds( 40 ) );
             continue;
@@ -333,22 +274,12 @@ int Pipeline::run()
     int ok = 0;
     const auto t_start = clk::now();
     t0_ = std::chrono::steady_clock::now();  // idle pts base: same timeline as live ts_us
-    // hot-attach prober (README): armed for the whole run(); the local
-    // guard joins it on ANY exit -- drain, fatal error, exception unwind
-    struct ProbeStop
-    {
-        Pipeline* p;
-        ~ProbeStop()
-        {
-            p->probe_quit_.store( true );
-            if ( p->probe_th_.joinable() )
-                p->probe_th_.join();
-        }
-    } probe_stop { this };
-    if ( nsrc_ > 0 )
-        probe_th_ = std::thread( &Pipeline::probe_loop, this );
-    // Spawn order: probe_th_ above was spawned BEFORE this pin, so the
-    // prober keeps the scheduler default, as intended (cpu_affinity.hpp).
+    // Hot-attach prober (README): a local, so its destructor stops and joins
+    // it on ANY exit of run() -- drain, fatal error, exception unwind.
+    SourceProber prober( srcs_, nsrc_, locator_, log_ );
+    prober.start();
+    // Spawn order: the prober was spawned BEFORE this pin, so it keeps the
+    // scheduler default, as intended (cpu_affinity.hpp).
     pin_current_thread_to_big_cores( "pipeline main", log_ );
 
     for ( int s = 0; s < nsrc_; ++s )
@@ -421,7 +352,7 @@ int Pipeline::run()
 }
 
 // Disconnect policy: ENODEV/EIO mean the source is gone (unplug, USB
-// hiccup, Wi-Fi drop) - the channel is detached and probe_loop() owns
+// hiccup, Wi-Fi drop) - the channel is detached and the SourceProber owns
 // the re-attach on its 2 s cadence (SourceChannel::attach, the same
 // path as at startup). Any other errno is a hard error and ends the run
 // with exit code 1 (run() returns -1, main() maps it to 1). The net
