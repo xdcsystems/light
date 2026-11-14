@@ -232,7 +232,8 @@ post-processing.
                (--dump-cal single frame, --cal N --cal-interval K
                series under --cal-dir, DMA-synced CPU read),
                throttled detection/track console + CSV reporter, and
-               per-stage FrameTrace accumulator.
+               per-stage FrameTrace accumulator (avg/60 every 60
+               frames; TOTAL at exit averages the whole run).
 - CliOptions / OptionRegistry / ConfigFileLoader (config/): fixed
                21-entry std::array option registry with table-driven
                setter callbacks (OptionRegistry::apply), shared by the

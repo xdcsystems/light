@@ -127,7 +127,7 @@ private:
     bool lb_warned_ = false;
     CalDumper cal_dumper_;
     int reconnects_ = 0;   // source disconnects recovered this run
-    Timings t_;
+    Timings t_;            // avg/60 + whole-run TOTAL; logs through log_
 
     OverlaySink sink_;
     ConsoleReporter rep_;  // throttled reports + final summary
