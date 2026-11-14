@@ -22,6 +22,7 @@ artifacts/
 # misc: untracked artifacts, the only exception is README
 misc/preds_*.csv
 misc/boxlog_*.csv
+misc/*.mjpeg
 !misc/README.md
 
 # clangd index cache
