@@ -39,6 +39,7 @@ int main()
     run_suite( t, "param_set_cache", &test_param_set_cache );
     run_suite( t, "pts_clock", &test_pts_clock );
     run_suite( t, "encode_pacer", &test_encode_pacer );
+    run_suite( t, "idle_plate", &test_idle_plate );
     std::cout << "light_ai_tests: " << t.checks() << " checks, " << t.failures() << " failed\n";
     return t.failures() == 0 ? 0 : 1;
 }

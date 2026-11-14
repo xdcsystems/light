@@ -37,12 +37,15 @@ add_executable(light_ai_tests
     test_param_set_cache.cpp
     test_pts_clock.cpp
     test_encode_pacer.cpp
+    test_idle_plate.cpp
     # modules under test
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
     ${LIGHT_AI_ROOT}/src/core/encoder_config.cpp
     ${LIGHT_AI_ROOT}/src/core/param_set_cache.cpp
     ${LIGHT_AI_ROOT}/src/core/pts_clock.cpp
     ${LIGHT_AI_ROOT}/src/core/encode_pacer.cpp
+    ${LIGHT_AI_ROOT}/src/core/bitmap_font.cpp
+    ${LIGHT_AI_ROOT}/src/core/idle_plate.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp
     ${LIGHT_AI_ROOT}/src/tracker.cpp
     ${LIGHT_AI_ROOT}/src/box_mapper.cpp
@@ -62,6 +65,7 @@ target_include_directories(light_ai_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${LIGHT_AI_ROOT}/include
     ${LIGHT_AI_ROOT}/externals/inih
+    ${LIGHT_AI_ROOT}/externals/fonts  # stb_easy_font (header-only), for src/core/bitmap_font.cpp
 )
 
 target_compile_options(light_ai_tests PRIVATE -Wall -Wextra)

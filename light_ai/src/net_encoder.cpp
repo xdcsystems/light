@@ -9,7 +9,6 @@
 #include <im2d.h>
 #include <rga.h>
 #include <libdrm/drm_fourcc.h>  // DRM_FORMAT_*
-#include <stb_easy_font.h>
 
 extern "C"
 {
@@ -25,6 +24,7 @@ extern "C"
 
 #include "core/encode_pacer.hpp"
 #include "core/encoder_config.hpp"
+#include "core/idle_plate.hpp"
 #include "core/log.hpp"
 #include "core/param_set_cache.hpp"
 #include "core/pts_clock.hpp"
@@ -87,127 +87,18 @@ namespace
         }
     }
 
-    // One stb_easy_font vertex: x/y/z float + color uint8[4], 16 bytes,
-    // four per quad -- the lib emits 1-px-thick axis-aligned stroke quads,
-    // so rasterization is a scaled bbox fill (smooth at any scale; the
-    // raster font8x8 stays in externals as a spare).
-    struct FontVertex
-    {
-        float x;
-        float y;
-        float z;
-        unsigned char c[ 4 ];
-    };
-
-    // The lib API is char*-based (legacy C): copy into a fixed buffer --
-    // const_cast is banned by the project gate (.clang-tidy keeps
-    // cppcoreguidelines-pro-type-const-cast on).
-    void font_txt( char* dst, int cap, const char* s )
-    {
-        const int n = static_cast<int>( std::strlen( s ) );
-        const int m = n < cap - 1 ? n : cap - 1;
-        std::memcpy( dst, s, static_cast<size_t>( m ) );
-        dst[ m ] = 0;
-    }
-
-    // Rendered text size in Y pixels, for callers that center the plate.
-    int text_width( const char* s, int scale )
-    {
-        if ( !s )
-            return 0;
-        constexpr int k_txt_cap = 64;
-        char txt[ k_txt_cap ];
-        font_txt( txt, k_txt_cap, s );
-        return stb_easy_font_width( txt ) * scale;
-    }
-
-    int text_height( const char* s, int scale )
-    {
-        if ( !s )
-            return 0;
-        constexpr int k_txt_cap = 64;
-        char txt[ k_txt_cap ];
-        font_txt( txt, k_txt_cap, s );
-        return stb_easy_font_height( txt ) * scale;
-    }
-
-    // Renders `s` at (x, y) -- the glyph-area top left -- in the Y plane
-    // `py` (row stride `stride`, plane height `max_h`), scaling every
-    // stroke quad by `scale`. `val` is the Y luminance (0..255). Characters
-    // outside the table render as blanks. The caller owns the DMA cache sync.
-    void stamp_text( uint8_t* py, int stride, int max_h, int x, int y,
-                     const char* s, int scale, uint8_t val )
-    {
-        if ( !py || scale <= 0 || !s )
-            return;
-        constexpr int k_txt_cap = 64;
-        char txt[ k_txt_cap ];
-        font_txt( txt, k_txt_cap, s );
-        stb_easy_font_spacing( 0 );  // default spacing; keeps the static referenced
-        unsigned char col[ 4 ] = { val, val, val, 255 };
-        alignas( FontVertex ) char vbuf[ 8192 ];  // 128 quads -- enough for any short label
-        const int nq = stb_easy_font_print( 0.0f, 0.0f, txt, col, vbuf,
-                                            static_cast<int>( sizeof( vbuf ) ) );
-        for ( int q = 0; q < nq; ++q )
-        {
-            const FontVertex* v = reinterpret_cast<const FontVertex*>( vbuf ) + q * 4;
-            float min_x = v[ 0 ].x;
-            float max_x = v[ 0 ].x;
-            float min_y = v[ 0 ].y;
-            float max_y = v[ 0 ].y;
-            for ( int k = 1; k < 4; ++k )
-            {
-                if ( v[ k ].x < min_x )
-                    min_x = v[ k ].x;
-                if ( v[ k ].x > max_x )
-                    max_x = v[ k ].x;
-                if ( v[ k ].y < min_y )
-                    min_y = v[ k ].y;
-                if ( v[ k ].y > max_y )
-                    max_y = v[ k ].y;
-            }
-            // Stroke quads carry integer coords, so the scaled fill is
-            // exact: [min*scale, max*scale) per axis -- no +1 rounding.
-            const int ix0 = x + static_cast<int>( min_x * scale );
-            const int iy0 = y + static_cast<int>( min_y * scale );
-            int ix1 = x + static_cast<int>( max_x * scale );
-            int iy1 = y + static_cast<int>( max_y * scale );
-            if ( ix1 > stride )
-                ix1 = stride;
-            if ( iy1 > max_h )
-                iy1 = max_h;
-            for ( int ry = iy0; ry < iy1; ++ry )
-            {
-                if ( ry < 0 )
-                    continue;
-                uint8_t* row = py + static_cast<size_t>( ry ) * stride;
-                for ( int rx = ix0; rx < ix1; ++rx )
-                    if ( rx >= 0 )
-                        row[ rx ] = val;
-            }
-        }
-    }
-
-    // NO SIGNAL plate (idle canvas): a one-time CPU raster at init -- the
-    // README zero-copy rule governs the FRAME path, and this follows the
-    // gray-letterbox memset precedent (init-time only, never per frame).
-    // stb_easy_font stroke glyphs at 3x -- the same raster will serve the
-    // box labels. Centered in every tile (single-view: once).
-    void draw_no_signal( MppBuffer mb, int w, int plane_h, int tile_w, int tile_h, int nsrc )
+    // NO SIGNAL plate (idle canvas): IdlePlate rasterizes the label into
+    // the Y plane once at init (core/idle_plate.hpp); the DMA sync is here.
+    void draw_no_signal( MppBuffer mb, const StreamLayout& lay )
     {
         if ( !mb )
             return;
-        const char* msg = "NO SIGNAL";
-        constexpr int k_text_scale = 3;
-        const int x0 = ( tile_w - text_width( msg, k_text_scale ) ) / 2;
-        const int y0 = ( tile_h - text_height( msg, k_text_scale ) ) / 2;
         uint8_t* py = static_cast<uint8_t*>( mpp_buffer_get_ptr( mb ) );
         if ( !py )
             return;
         dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
-        for ( int t = 0; t < nsrc; ++t )
-            stamp_text( py, w, plane_h, ( t % 2 ) * tile_w + x0, ( t / 2 ) * tile_h + y0,
-                        msg, k_text_scale, 16 );
+        IdlePlate plate;
+        plate.draw( Plane8 { py, lay.w, lay.vstride }, lay );
         dma::cache_clean( py, mpp_buffer_get_size( mb ) );
     }
 }  // namespace
@@ -255,7 +146,7 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
         avformat_network_deinit();
         throw std::runtime_error( "net encoder: idle canvas: " + idle_why );
     }
-    draw_no_signal( idle_pool_.buf[ 0 ], lay.w, lay.vstride, lay.tile_w, lay.tile_h, lay.nsrc );
+    draw_no_signal( idle_pool_.buf[ 0 ], lay );
 
     const AVCodec* codec = avcodec_find_encoder_by_name( "h264_rkmpp" );
     if ( !codec )
