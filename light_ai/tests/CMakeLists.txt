@@ -20,6 +20,7 @@ add_executable(light_ai_tests
     test_box_math.cpp
     test_geometry.cpp
     test_jpeg_probe.cpp
+    test_byte_window.cpp
     test_box_smoother.cpp
     test_tracker.cpp
     test_box_mapper.cpp

@@ -21,6 +21,7 @@ int main()
     run_suite( t, "box_math", &test_box_math );
     run_suite( t, "geometry", &test_geometry );
     run_suite( t, "jpeg_probe", &test_jpeg_probe );
+    run_suite( t, "byte_window", &test_byte_window );
     run_suite( t, "box_smoother", &test_box_smoother );
     run_suite( t, "tracker", &test_tracker );
     run_suite( t, "box_mapper", &test_box_mapper );
