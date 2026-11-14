@@ -5,16 +5,21 @@ clang-tidy and live runs are local commands. This file is the handoff between se
 keep "Migration plan" current when a stage changes state.
 
 ## Where things are
-- This checkout: ~/Projects/light (physical path /userdata/home/linaro/Projects/light, eMMC).
-  It is also the user's own working copy: datasets (dataset*/), venv/, artifacts/ and
-  build-tidy/ belong to the user -- never delete or rewrite them.
+- Work directory: ~/Projects/light/light_ai (start `claude` here). The git root is
+  ~/Projects/light: the repo also holds light_control/ and light_sensor/ -- other projects,
+  out of scope: never read for the task, edit, stage or commit anything outside light_ai/.
+- Physical path: /userdata/home/linaro/Projects/light (eMMC). This is also the user's own
+  working copy: dataset*/, venv/, artifacts/, build-tidy/ belong to the user -- never delete
+  or rewrite them.
 - Home and /tmp are on eMMC (15 GB): keep scratch files in $TMPDIR (NVMe,
   /mnt/nvme_data/claude/tmp); build logs go to build/ (git-ignored).
-- Models (*.rknn) are not in git: they live in light_ai/misc/ of this checkout.
+- Models (*.rknn) are not in git: they live in light_ai/misc/.
 
 ## Workflow
-- Shared working copy: run `git status` before any checkout or merge. If there are
-  uncommitted changes, stop and ask the user -- never stash, reset or discard them yourself.
+- Shared working copy: run `git status` before any checkout or merge. Uncommitted changes
+  under light_ai/ -> stop and ask the user; changes elsewhere are the user's -- leave them,
+  and if git refuses the checkout because of them, ask. Never stash, reset or discard.
+- Stage paths explicitly (`git add light_ai/...`), never `git add -A` / `git commit -a`.
 - Base branch: fix/audit-p0. One branch per stage: refactor/stageN-<name>; PR into fix/audit-p0
   with `gh pr create --base fix/audit-p0`. The user reviews and merges.
 - Never push to fix/audit-p0 directly, never force-push, never rewrite pushed history.
