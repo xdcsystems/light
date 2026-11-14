@@ -35,6 +35,18 @@ keep "Migration plan" current when a stage changes state.
 - Permissions: .claude/settings.json (tracked) pre-approves the gate, test, run and git/gh
   commands above and denies edits in light_control/ and light_sensor/, history rewrites,
   `git add -A` / `commit -a` and `git stash`. Personal overrides: .claude/settings.local.json.
+- USB camera tests (unplug / replug, hot attach, start without a camera): NEVER ask the user
+  to pull the connector -- repeated physical re-plugging wears the board's USB port. Unplug in
+  software (sysfs `authorized`, a logical disconnect: the /dev/videoN node disappears and
+  comes back, possibly under another number):
+      sudo -n /usr/local/sbin/light-usb-replug list                       # nodes and busids
+      sudo -n /usr/local/sbin/light-usb-replug cycle /dev/video20 5       # off 5 s, then on
+      sudo -n /usr/local/sbin/light-usb-replug off /dev/video20           # prints the busid
+      sudo -n /usr/local/sbin/light-usb-replug on <busid>
+  Run the cycle from a second shell while a live run is going (the run under timeout in the
+  background, its log in build/). It is a root-owned copy of scripts/usb_replug.sh, installed
+  once by the user; after changing the script, ask the user to reinstall it. A physical
+  re-plug only when the user explicitly asks for one.
 - Logs are long: read tails and grep for errors, not whole files.
 - Only one heavy job at a time (3.8 GB RAM): no build while a live run is measuring FPS.
 

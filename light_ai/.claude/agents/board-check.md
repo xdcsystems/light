@@ -19,7 +19,11 @@ anything (checkout, merge, commit, push, stash, reset).
 - Unit tests only: bash scripts/test.sh > build/test.log 2>&1; echo rc=$?
 - Live run (the main session gives the flags; default below):
       timeout -s INT 90 sudo -n ./build/light_ai --device /dev/video20 --pool 3 --frames 600 > build/run_<name>.log 2>&1; echo rc=$?
-  rc 0 or 124 (stopped by the timer) is normal. One heavy job at a time: never run
+  rc 0 or 124 (stopped by the timer) is normal.
+- Camera unplug/replug during a run: never ask the user to pull the cable. Start the run
+  in the background, then from your shell:
+      sudo -n /usr/local/sbin/light-usb-replug cycle /dev/video20 5
+  and check the run log for the detach and the re-attach (CLAUDE.md, "USB camera tests"). One heavy job at a time: never run
   a build while a live run measures FPS (3.8 GB RAM).
 
 ## Reading logs

@@ -7,6 +7,7 @@
       "Bash(bash scripts/test.sh)",
       "Bash(bash scripts/tidy_run.sh *)",
       "Bash(sudo -n ./build/light_ai *)",
+      "Bash(sudo -n /usr/local/sbin/light-usb-replug *)",
       "Bash(tail *)",
       "Bash(grep *)",
       "Bash(git status *)",
