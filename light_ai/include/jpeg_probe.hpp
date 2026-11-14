@@ -111,3 +111,20 @@ inline bool probe_jpeg_sof( const uint8_t* data, size_t len, JpegSofInfo& out )
     }
     return false;  // ran out of data before SOS
 }
+
+// One received MJPEG frame: structural validation via probe_jpeg_sof plus a
+// trailing EOI. size is trimmed of trailing HTTP CR/LF/space IN PLACE (the
+// callers hand the trimmed length on); any structural doubt returns false
+// (the caller's corrupt-frame streak). info: the SOF geometry when true.
+inline bool jpeg_frame_check( const uint8_t* data, uint32_t& size, JpegSofInfo& info )
+{
+    uint32_t sz = size;
+    while ( sz > 2 && ( data[sz - 1] == '\r' || data[sz - 1] == '\n' || data[sz - 1] == ' ' ) )
+        --sz;
+    size = sz;
+    if ( sz < 4 || data[0] != 0xFF || data[1] != 0xD8 )
+        return false;
+    if ( !probe_jpeg_sof( data, sz, info ) )
+        return false;
+    return data[sz - 2] == 0xFF && data[sz - 1] == 0xD9;
+}
