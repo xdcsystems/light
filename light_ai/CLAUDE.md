@@ -89,7 +89,9 @@ keep "Migration plan" current when a stage changes state.
 
 ## Migration plan (audit doc: "light_ai: архитектурный аудит и план переработки")
 - [x] 0 Safety net: domain types to core/, host unit tests (PR #6).
-      Open: record a reference detection CSV on a fixed MJPEG file -- stage 6 compares against it.
+      Reference detections (issue #32, reference/README.md): clip misc/ref_evening.mjpeg (1063 frames,
+      sha256 in the README); layer A reference/ref_evening.csv (--box-log of a drop-free replay,
+      --pool 1 = --pool 3, cmp-identical); layer B tests/test_reference_chain.cpp (golden, in the gate).
 - [x] 1 Global state: SignalWaiter/ProcessEnv (no g_pipe), Config grouped by consumer, Log (PRs #7-#9).
       Open: ~170 direct std::cout/cerr writes migrate per stage; no CLI option for the log level yet.
 - [x] 2 InferencePool: slots, workers, FIFO, core masks out of Pipeline; InferSlot with private
@@ -139,7 +141,11 @@ keep "Migration plan" current when a stage changes state.
       build/run28_5c_drop.log.
 - [ ] 6 Complex functions: YoloDecoder and BoxMapper as classes; KalmanAxis, Associator; split
       setup_device and GpuBoxDrawer::init. Goal: no function above cognitive complexity 20.
-      Check: the reference CSV matches byte for byte; tighten the clang-tidy thresholds.
+      Check: layer A -- bash tools/ref_replay.sh misc/ref_evening.mjpeg build/ref_p3.csv 3 reference/ref_evening.csv,
+      and the same with pool 1 (~107 s each): PASS = cmp-identical, i.e. equal to 6 significant digits (the
+      --box-log precision; a last digit flipped at a rounding boundary is explained, not a behavior change);
+      layer B -- reference_chain in scripts/test.sh (tolerances in tests/data/README; never regenerate the
+      golden in stage 6). Tighten the clang-tidy thresholds.
 - [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
       Check: runs with a wrong model, a busy port, a missing camera.
 Out of scope: light_control, light_sensor, tools/, scripts/.

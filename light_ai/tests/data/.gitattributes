@@ -1,2 +1,7 @@
 # Fixtures are byte streams (CRLF recorded from a server): no EOL conversion, no diff as text.
 * -text -diff
+# Text fixtures stay reviewable as diffs (still no EOL conversion): the README and the
+# reference-chain fixture and golden (a regeneration must show what changed).
+README diff
+ref_evening_* diff
+.gitattributes diff

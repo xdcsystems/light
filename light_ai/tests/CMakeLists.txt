@@ -30,6 +30,7 @@ add_executable(light_ai_tests
     test_box_smoother.cpp
     test_tracker.cpp
     test_box_mapper.cpp
+    test_reference_chain.cpp
     test_config.cpp
     test_signals.cpp
     test_log.cpp
