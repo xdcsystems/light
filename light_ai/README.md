@@ -741,6 +741,12 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
   frame (per-head box/obj/cls ranges, hot-cell counts). Feeds the model a
   4-dim input (img[None]).
 - tools/save_board_csv.py   — RKNNLite predictions dump (misc/board_preds.csv).
+- tools/mjpeg_replay.py + tools/ref_replay.sh — the drop-free replay of a
+  recorded MJPEG clip through the net source (loopback HTTP, paced, one
+  connection), layer A of the reference detections (reference/README.md):
+  bash tools/ref_replay.sh misc/ref_evening.mjpeg build/ref_p3.csv 3
+  reference/ref_evening.csv -> PASS/FAIL (exit code); mjpeg_replay.py CLIP
+  --count checks a clip and prints its frame count.
 - tools/oracle_check.py — inference parity check: C++ detections (--box-log
   "raw" lines) vs an independent RKNNLite oracle over --dump-cal PPM dumps.
   Feed recipe: raw uint8 + img[None], no data_format kwarg (the
@@ -797,7 +803,12 @@ light_ai_tests, built into build/tests):
   whole, byte by byte and in random chunks; fixtures in tests/data/),
   jpeg_frame_check, BufferedSocket and NetMjpegSource over a loopback
   listener (prime, drain, latest frame, the corrupt streak, desync,
-  EOF, refused heads), MjpegSlotPool.
+  EOF, refused heads), MjpegSlotPool. The reference chain (issue #32,
+  reference/README.md, layer B): recorded raw detections of the
+  reference clip with fixed timestamps through BoxSmoother + Tracker +
+  fill_gpu_boxes against a golden file (tests/data/README: the fixture,
+  the tolerances, LIGHT_AI_WRITE_GOLDEN=1), with its own coverage
+  asserts (a dt clamp, a tentative death, a ghost, a trail eviction).
 - ThreadSanitizer: the SourceChannel hand-over (a prober thread
   attaching, the frame thread polling and detaching, 1000+ round
   trips) and the real SourceProber thread (1 ms cadence) against a
