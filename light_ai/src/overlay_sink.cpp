@@ -3,15 +3,14 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <iostream>
 #include <unistd.h>
 
 #include "overlay_sink.hpp"
 #include "box_mapper.h"
 #include "config/config.hpp"  // StreamConfig
+#include "core/frame_view.hpp"
+#include "core/log.hpp"
 #include "dma_sync.hpp"
-#include "rknn_engine.hpp"
-#include "slot_ring.hpp"
 #include "timings.hpp"
 
 namespace
@@ -76,7 +75,7 @@ namespace
 }  // namespace
 
 void OverlaySink::init( const StreamConfig& stream,
-                        const std::vector<RknnEngine>& npus,
+                        const TensorSet& tensors,
                         int model_w,
                         int model_h,
                         const LbGeom& primary_band,
@@ -87,27 +86,29 @@ void OverlaySink::init( const StreamConfig& stream,
     if ( !stream.enabled )
         return;
 
-    const rknn_tensor_attr& ia = npus[0].input_attr();
-    std::cout << "net: tensor stride check: size_with_stride=" << ia.size_with_stride
-              << " vs " << model_w_ * model_h_ * 3 << "\n";
+    // The input tensor is allocated with size_with_stride bytes when the
+    // runtime reports one, else size (rknn_engine.cpp): a mismatch with the
+    // packed RGB888 size means padded rows.
+    log_.info() << "net: tensor stride check: input mem=" << tensors.d[0].size
+                << " vs " << model_w_ * model_h_ * 3 << "\n";
 
     if ( stream.h264 )
     {
         enc_.emplace( model_w_, model_h_, primary_band, stream.fps, stream.port, stream.host, stream.bitrate_kbps, nsrc );
         if ( stream.host.empty() )
-            std::cout << "net: h264 PULL server on port " << stream.port << ", " << stream.bitrate_kbps
+            log_.info() << "net: h264 PULL server on port " << stream.port << ", " << stream.bitrate_kbps
                       << " kbps (viewer: ffplay tcp://<board-ip>:" << stream.port << ")\n";
         else
-            std::cout << "net: h264 preview -> " << stream.host << ':' << stream.port
+            log_.info() << "net: h264 preview -> " << stream.host << ':' << stream.port
                       << ", " << stream.bitrate_kbps << " kbps\n";
     }
     else
     {
         preview_.emplace( model_w_, model_h_, model_w_ * 3, stream.fps, stream.port );
-        std::cout << "net: preview server on port " << stream.port << "\n";
+        log_.info() << "net: preview server on port " << stream.port << "\n";
     }
 
-    init_gpu_drawer( stream.cpu_draw, npus );
+    init_gpu_drawer( stream.cpu_draw, tensors );
 }
 
 // NO SIGNAL idle publish: h264 path only -- the encoder RGA-copies the
@@ -119,7 +120,7 @@ void OverlaySink::publish_idle( int64_t ts_us, const bool* absent, int nabs )
         enc_->publish_idle( ts_us, absent, nabs );
 }
 
-void OverlaySink::init_gpu_drawer( bool cpu_draw, const std::vector<RknnEngine>& npus )
+void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
 {
     if ( ( !preview_ && !enc_ ) || cpu_draw )
         return;
@@ -127,24 +128,22 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const std::vector<RknnEngine>&
     drawer_.emplace();
 
     bool drew_ok = drawer_->init();
-    const int npool = static_cast<int>( npus.size() );
-    for ( int k = 0; drew_ok && k < npool; ++k )
-        drew_ok = drawer_->attach_slot( k, npus[k].input_fd(), model_w_, model_h_,
+    for ( int k = 0; drew_ok && k < tensors.n; ++k )
+        drew_ok = drawer_->attach_slot( k, tensors.d[k].fd, model_w_, model_h_,
                 static_cast<uint32_t>( model_w_ ) * 3 );
 
     if ( !drew_ok )
     {
-        std::cerr << "pipeline: gpu drawer unavailable, CPU fallback\n";
+        log_.warn() << "pipeline: gpu drawer unavailable, CPU fallback\n";
         drawer_.reset();
     }
     else
     {
-        std::cout << "net: gpu box drawing active (Mali G610, EGL/GBM)\n";
+        log_.info() << "net: gpu box drawing active (Mali G610, EGL/GBM)\n";
     }
 }
 
-double OverlaySink::draw_and_publish( Slot& sl,
-                                      int ps,
+double OverlaySink::draw_and_publish( const FrameView& frame,
                                       const DetList& dets,
                                       const TrajList& trajs,
                                       const Tracker& tracker )
@@ -155,40 +154,41 @@ double OverlaySink::draw_and_publish( Slot& sl,
     if ( !enc_live && !prev_live )
         return enc_ms;
 
-    const float sx = sl.lb.w / static_cast<float>( sl.src_w );
-    const float sy = sl.lb.h / static_cast<float>( sl.src_h );
+    const TensorRef& tn = frame.tensor;
+    const float sx = frame.lb.w / static_cast<float>( frame.src_w );
+    const float sy = frame.lb.h / static_cast<float>( frame.src_h );
     boxes_.clear();
-    fill_gpu_boxes( dets, trajs, tracker, boxes_, sl.lb, sx, sy, sl.ts_us );
+    fill_gpu_boxes( dets, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
     if ( boxes_.n > 0 )
     {
         if ( drawer_ )
         {
-            drawer_->draw_slot( ps, boxes_.d.data(), boxes_.n );
+            drawer_->draw_slot( frame.tensor_idx, boxes_.d.data(), boxes_.n );
             drawer_->sync_cpu();
         }
         else
         {
-            dma::DmaSync wr( sl.eng->input_fd(), true );
-            dma::cache_drop( sl.eng->input_data(), sl.eng->input_size() );
-            draw_boxes_cpu( static_cast<uint8_t*>( sl.eng->input_data() ),
+            dma::DmaSync wr( tn.fd, true );
+            dma::cache_drop( tn.data, tn.size );
+            draw_boxes_cpu( static_cast<uint8_t*>( tn.data ),
                             model_w_, model_h_, model_w_ * 3, boxes_.d.data(), boxes_.n );
-            dma::cache_clean( sl.eng->input_data(), sl.eng->input_size() );
+            dma::cache_clean( tn.data, tn.size );
         }
     }
 
     if ( prev_live )
     {
         const auto t5 = clk::now();
-        dma::DmaSync rd( sl.eng->input_fd(), false );
+        dma::DmaSync rd( tn.fd, false );
         if ( drawer_ )
-            dma::cache_drop( sl.eng->input_data(), sl.eng->input_size() );
-        preview_->publish( static_cast<const uint8_t*>( sl.eng->input_data() ) );
+            dma::cache_drop( tn.data, tn.size );
+        preview_->publish( static_cast<const uint8_t*>( tn.data ) );
         enc_ms += ms( t5, clk::now() );
     }
     if ( enc_live )
     {
         const auto t5 = clk::now();
-        enc_->publish( sl.eng->input_fd(), sl.lb, sl.ts_us, sl.src_idx );
+        enc_->publish( tn.fd, frame.lb, frame.ts_us, frame.src_idx );
         const auto t6 = clk::now();
         enc_ms = ms( t5, t6 );
     }

@@ -1,16 +1,18 @@
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
-#include <iostream>
-#include <mutex>
 #include <stdexcept>
 #include <sys/stat.h>  // stat(): startup node fallback
 #include <thread>
-#include <sched.h>
 
+#include "core/frame_view.hpp"
+#include "core/log.hpp"
+#include "cpu_affinity.hpp"
 #include "dma_sync.hpp"
+#include "inference_pool.hpp"
 #include "pipeline.hpp"
 #include "timings.hpp"
 #include "yolo_postprocess.hpp"
@@ -33,37 +35,28 @@ namespace
 }  // namespace
 
 Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
-  : cfg_( cfg ), stop_( stop ), log_( log )
+  : cfg_( cfg )
+  , pool_( cfg_.infer, YoloDecode( cfg_.infer.conf_thr, cfg_.infer.iou_thr ), log, PoolOptions {},
+          cfg_.infer.model.c_str() )
+  , sink_( log )
+  , stop_( stop )
+  , log_( log )
 {
-    // M4: the pool is a startup-time decision; npus_ never grows after
-    // this loop, so the slot pointers stay valid for the whole session.
-    // Only two modes exist: ring of one and the 3-engine pool. The CLI
-    // accepts 0|1|3; anything below 3 falls back to ring of one so a
-    // direct call can never create the untested 2-engine mode.
-
-    npool_ = cfg_.infer.pool >= 3 ? 3 : 1;    
-    npus_.reserve( npool_ );
-
-    for ( int k = 0; k < npool_; ++k )
-        npus_.emplace_back( cfg_.infer.model.c_str() );
+    // pool_ is up by now: the engines are loaded, their I/O is set up,
+    // they are pinned to NPU cores and the workers wait for frames. If
+    // anything below throws, pool_'s destructor joins the workers -- the
+    // ctor can no longer leave joinable threads behind.
+    t_.set_pool( pool_.size() );
 
     // M5: source bring-up (identity, setup, per-source decoders) --
     // each SourceSlot owns its MppDecoder (its own resolution and
-    // detected 4:2:0/4:2:2 format). Runs BEFORE the model dims are read:
-    // the per-source letterbox pass below needs model_w_/model_h_.
+    // detected 4:2:0/4:2:2 format). Runs BEFORE the per-source
+    // letterbox pass below, which needs the source geometry.
     init_source();
 
-    for ( auto& e : npus_ )
-    {
-        if ( e.setup_io() != 0 )
-            throw std::runtime_error( "rknn setup_io failed" );
-    }
-
-    setup_cores();
-
-    // Single source of truth for the model geometry: the model file itself.
-    // NHWC layout: dims = {N, H, W, C}, so W is dims[n-2] and H is dims[n-3].
-    const rknn_tensor_attr& ia = npus_[0].input_attr();  // all engines share the model geometry
+    // Single source of truth for the model geometry: the model file itself
+    // (RknnEngine::input_width/height). All engines share the model.
+    const rknn_tensor_attr& ia = pool_.engine( 0 ).input_attr();
     if ( ia.n_dims < 4 )
     {
         log_.warn() << "pipeline: unexpected input tensor ndims=" << ia.n_dims << '\n';
@@ -72,11 +65,14 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
 
     // Gray letterbox bars on every pooled tensor: RGA writes only the
     // visible band (drect), so the 128-fill done here survives every frame.
-    for ( auto& e : npus_ )
-        dma::fill_and_flush( e.input_fd(), e.input_data(), 128, e.input_size() );
+    for ( int k = 0; k < pool_.size(); ++k )
+    {
+        const TensorRef tn = pool_.tensor( k );
+        dma::fill_and_flush( tn.fd, tn.data, 128, tn.size );
+    }
 
-    model_w_ = static_cast<int>( ia.dims[ia.n_dims - 2] );
-    model_h_ = static_cast<int>( ia.dims[ia.n_dims - 3] );
+    model_w_ = pool_.engine( 0 ).input_width();
+    model_h_ = pool_.engine( 0 ).input_height();
     cal_dumper_.init( cfg_.cal, model_w_, model_h_ );
 
     // M5: per-source letterbox geometry (the same numbers the RGA crop
@@ -102,7 +98,7 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
     // plate (idle_tick), real bands land per-frame via prep_frame's
     // band_geom (probe refresh still fills per-slot geometry).
     const LbGeom enc_lb = band_geom( model_w_, model_h_ * 3 / 4, model_w_, model_h_ );
-    sink_.init( cfg_.stream, npus_, model_w_, model_h_, enc_lb, nsrc_ );
+    sink_.init( cfg_.stream, pool_.tensors(), model_w_, model_h_, enc_lb, nsrc_ );
     init_aux();
 
     if ( cfg_.cal.frames > 0 && cfg_.cal.dir.empty() )
@@ -113,23 +109,8 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
             throw std::runtime_error( "pipeline: cannot create dataset/: " + ec.message() );
     }
 
-    // bind slots to engines, then start the worker threads — the unified
-    // path routes every frame through the slot ring; with pool 1 the single
-    // worker is woken by dispatch and publish waits on it.
-    for ( int k = 0; k < npool_; ++k )
-        slots_[k].eng = &npus_[k];
-
-    // No throwing steps below this line: once workers_ are started, the
-    // dtor takes over shutdown (quit_ -> notify -> join) and the ctor
-    // must not leave the object half-initialized after them.
-    // The source start below used to violate this: it throws on a failed STREAMON,
-    // and unwinding past started workers_ would destroy the joinable
-    // threads (std::terminate).
-    // Guarded: the exception is caught, the source retries the full reconnect
-    // path, and nothing propagates past this point.
-    for ( int k = 0; k < npool_; ++k )
-        workers_.emplace_back( [this, k] { worker_loop( k ); } );
-
+    // start_source() never throws: a failed STREAMON is caught and retried,
+    // and the run() recovery ladder takes over if the retries run out.
     for ( int s = 0; s < nsrc_; ++s )
         start_source( s );
 }
@@ -403,38 +384,6 @@ void Pipeline::init_source()
         init_one_source( s, eps[s] );
 }
 
-// M2.5/M4: core pinning.
-// Pool 1 keeps cfg_.infer.core verbatim (AUTO by default — the A/B baseline is untouched).
-// The pool pins its own: one engine per core, via the per-core flags 1/2/4.
-void Pipeline::setup_cores()
-{
-    if ( npool_ == 1 )
-    {
-        if ( cfg_.infer.core != 0 )
-        {
-            if ( npus_[0].set_core_mask( static_cast<unsigned>( cfg_.infer.core ) ) != 0 )
-                throw std::runtime_error( "rknn set_core_mask failed" );
-            log_.info() << "npu: core mask 0x" << std::hex << cfg_.infer.core << std::dec << "\n";
-        }
-        return;
-    }
-
-    constexpr int cores[] = { 1, 2, 4 };
-    if ( npool_ > static_cast<int>( std::size( cores ) ) )
-        throw std::runtime_error( "npu pool size > 3 is not supported" );
-
-    for ( int k = 0; k < npool_; ++k )
-    {
-        // clang 11 analyzer cannot fold std::size() into a constant and misses the
-        // guard above; reading cores[k] is safe because k < npool_ <= std::size(cores).
-        // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage)
-        if ( npus_[k].set_core_mask( static_cast<unsigned>( cores[k] ) ) != 0 )
-            throw std::runtime_error( "rknn set_core_mask failed" );
-    }
-    log_.info() << "npu: pool of " << npool_ << " engines, one per core\n";
-    t_.set_pool( npool_ );
-}
-
 // Aux buffer only for the two-pass path (source over 8x the model input).
 // 1280x720 -> 224 is 5.7x — single pass, aux not allocated, no DRM pool split.
 // 1920x1080 still needs the 960x540 intermediate.
@@ -518,18 +467,10 @@ int Pipeline::try_dequeue_round( int wait_ms, uint32_t& sz, int& cam_err )
     return -2;
 }
 
-bool Pipeline::front_slot_done()
-{
-    if ( pub_.empty() )
-        return false;
-    Slot& sl = slots_[pub_.front()];
-    std::lock_guard<std::mutex> lk( sl.mx );
-    return sl.st == Slot::DONE;
-}
-
+// Publishes every result that is already finished, in order; never waits.
 void Pipeline::drain_done_slots( int& ok )
 {
-    while ( front_slot_done() && !stop_.requested() )
+    while ( pool_.front_done() && !stop_.requested() )
         ok += publish_oldest();
 }
 
@@ -549,7 +490,7 @@ int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
         cam_err = EINTR;
         return -1;
     }
-    if ( nsrc_ <= 1 && pub_.empty() )
+    if ( nsrc_ <= 1 && pool_.empty() )
     {
         cur_src_ = 0;
         int r = -1;
@@ -595,33 +536,6 @@ int Pipeline::dequeue_next_source( uint32_t& sz, int& cam_err, int& ok )
     return -1;
 }
 
-namespace
-{
-    // Affinity pinning (2026-11-12 audit follow-up; supersedes the old
-    // "the scheduler places hot threads on A76" note in CMakeLists):
-    // a bursty cv-woken worker is not guaranteed to stay on the big
-    // cluster under CFS/EAS. RK3588 stock DT: A76 = cpu 4-7. Best-effort:
-    // any error keeps the scheduler default -- a run on an alien board
-    // must not die here. Spawn order matters: a child inherits the
-    // creator's mask, so probe_th_ is spawned BEFORE the pipeline pin.
-    enum { kBigCpuFirst = 4, kBigCpuLast = 7 };
-
-    void pin_current_big( const char* who, const Log& log )
-    {
-        cpu_set_t cpuset;
-        CPU_ZERO( &cpuset );
-        for ( int c = kBigCpuFirst; c <= kBigCpuLast; ++c )
-            CPU_SET( c, &cpuset );
-        if ( sched_setaffinity( 0, sizeof( cpuset ), &cpuset ) != 0 )
-        {
-            log.warn() << "pin: " << who << " -> A76 cpu" << kBigCpuFirst << '-'
-                        << kBigCpuLast << " failed, scheduler fallback\n";
-            return;
-        }
-        log.info() << "pin: " << who << " -> A76 cpu" << kBigCpuFirst << '-' << kBigCpuLast << '\n';
-    }
-}  // namespace
-
 int Pipeline::run()
 {
     int ok = 0;
@@ -642,8 +556,8 @@ int Pipeline::run()
     if ( nsrc_ > 0 )
         probe_th_ = std::thread( &Pipeline::probe_loop, this );
     // Spawn order: probe_th_ above was spawned BEFORE this pin, so the
-    // prober keeps the scheduler default, as intended (see pin_current_big).
-    pin_current_big( "pipeline main", log_ );
+    // prober keeps the scheduler default, as intended (cpu_affinity.hpp).
+    pin_current_thread_to_big_cores( "pipeline main", log_ );
 
     for ( int s = 0; s < nsrc_; ++s )
     {
@@ -718,14 +632,15 @@ int Pipeline::run()
             continue;
         }
 
-        // ---- unified path: every frame goes through the slot ring ----
-        // pool 1 == ring of one: dispatch, then publish immediately —
-        // the pipeline thread blocks on the worker's DONE, exactly the
-        // legacy synchronous semantics. pool 3 keeps publish-before-reuse.
+        // ---- unified path: every frame goes through the InferencePool ----
+        // pool 1 == ring of one: dispatch, then publish immediately --
+        // the pipeline thread blocks until the worker is done, exactly the
+        // legacy synchronous semantics. pool 3 keeps publish-before-reuse:
+        // with the FIFO full, the oldest frame is published first.
         const double cam_ms = ms( t0, t1 );
         const double dec_ms = ms( t1, t2 );
         drain_done_slots( ok );
-        if ( pub_.size() == npool_ )
+        if ( pool_.full() )
             ok += publish_oldest();
         const int slot = acquire_slot( ok );
         if ( slot < 0 )
@@ -733,15 +648,15 @@ int Pipeline::run()
         const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( t1 - t_start ).count();
         frame_dispatch( slot, active_src.frames++, fd_src, ts_us, cam_ms, dec_ms );
         ++i;
-        if ( npool_ == 1 )
+        if ( pool_.size() == 1 )
             ok += publish_oldest();
     }
 
     if ( stop_.requested() )
         log_.info() << "stop: signal received, draining and flushing...\n";
 
-    // M4: drain the ring — publish whatever the workers already finished.
-    while ( !pub_.empty() )
+    // M4: drain the ring -- publish whatever the workers already finished.
+    while ( !pool_.empty() )
         ok += publish_oldest();
 
     const double wall = std::chrono::duration<double>( clk::now() - t_start ).count();
@@ -769,60 +684,60 @@ int Pipeline::handle_source_failure( int cam_err )
     if ( !recoverable )
         return -1;
     // M4: frames from the dead stream are never published - drop the
-    // pending slots (their infer may still be in flight; wait for
-    // DONE, then free without publishing).
-    if ( npool_ > 1 )
-        pool_discard( cur_src_ );
+    // pending slots (their infer may still be in flight; the pool waits
+    // for it, then frees without publishing). A no-op with one engine:
+    // its single frame was published before the next dequeue.
+    pool_.discard( cur_src_ );
     ++reconnects_;
-    srcs_[cur_src_].absent.store( true );
+    // warmup_left first: once absent is set, the prober may take the slot
+    // and write warmup_left itself (probe_source). The seq_cst store below
+    // publishes this write to it; the old order was a data race.
     srcs_[cur_src_].warmup_left = 0;
+    srcs_[cur_src_].absent.store( true );
     log_.info() << "source s" << cur_src_ << ": detached - probe_loop will re-attach\n";
     return 0;
 }
 
-// Claim-or-drain: a FREE slot is NOT guaranteed here. On the 5 s
-// publish timeout the dropped slot stays in flight until its own
-// worker finishes the in-flight rknn_run — only that worker may
-// free it (freeing here would race the NPU tensor read). So: scan
-// for FREE; if every slot is in flight, drain the publish queue
-// when it has entries, otherwise sleep briefly and rescan (a
-// rknn_run away from finishing, ~30 ms). The stop_ check keeps
-// Ctrl-C from parking here forever on a wedged NPU. Returns the
-// claimed slot index, or -1 when stop was requested with every
-// slot in flight.
+// Claim-or-drain: a Free slot is NOT guaranteed here. After a give-up
+// on a wedged NPU the abandoned slot stays in flight until its own
+// worker finishes the rknn_run -- only that worker may free it (freeing
+// here would race the NPU tensor read; InferSlot). So: ask the pool for
+// a Free slot; if every slot is in flight, publish the oldest pending
+// result when there is one, otherwise sleep briefly and ask again (a
+// rknn_run away from finishing, ~30 ms). The stop_ check keeps Ctrl-C
+// from parking here forever on a wedged NPU. Returns the claimed slot
+// index, or -1 when stop was requested with every slot in flight.
 
 int Pipeline::acquire_slot( int& ok )
 {
     bool starved_warned = false;
     while ( true )
     {
-        for ( int k = 0; k < npool_; ++k )
-        {
-            std::lock_guard<std::mutex> lk( slots_[k].mx );
-            if ( slots_[k].st == Slot::FREE )
-                return k;
-        }
+        const int k = pool_.try_acquire();
+        if ( k >= 0 )
+            return k;
         if ( stop_.requested() )
             return -1;
         if ( !starved_warned )
         {
-            log_.warn() << "pipeline: all " << npool_ << " slots in flight, waiting for a worker to release one\n";
+            log_.warn() << "pipeline: all " << pool_.size() << " slots in flight, waiting for a worker to release one\n";
             starved_warned = true;
         }
-        if ( !pub_.empty() )
+        if ( !pool_.empty() )
             ok += publish_oldest();
         else
             std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
     }
 }
 
-// RGA resize into the slot tensor, optional cal dump, one-time
+// RGA resize into the slot's tensor, optional cal dump, one-time
 // cross-check of the RGA letterbox geometry against the single-owner
-// one, then dispatch. Verbatim move out of run().
+// one, then the job goes to the pool.
 
 void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms )
 {
-    Slot& sl = slots_[slot];
+    const TensorRef tn = pool_.tensor( slot );
+    LbGeom& band = tensor_band_[static_cast<size_t>( slot )];
     const auto t3 = clk::now();
 
     // Stale-line drop before the RGA rewrite: see cache_drop().
@@ -830,18 +745,18 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
     // may have left resident lines anywhere in it.
 
     const SourceSlot& ss = srcs_[cur_src_];
-    if ( sl.lb.w > 0
-         && ( sl.lb.left != ss.lb.left || sl.lb.top != ss.lb.top || sl.lb.w != ss.lb.w || sl.lb.h != ss.lb.h ) )
+    if ( band.w > 0
+         && ( band.left != ss.lb.left || band.top != ss.lb.top || band.w != ss.lb.w || band.h != ss.lb.h ) )
     {
-        dma::DmaSync wr( sl.eng->input_fd(), true );
-        std::memset( sl.eng->input_data(), 128, sl.eng->input_size() );
+        dma::DmaSync wr( tn.fd, true );
+        std::memset( tn.data, 128, tn.size );
     }
-    dma::cache_drop( sl.eng->input_data(), sl.eng->input_size() );
+    dma::cache_drop( tn.data, tn.size );
     LbGeom lg {};
     const bool rga_ok =
-            rga_.resize( fd_src, ss.w, ss.h, sl.eng->input_fd(), model_w_, model_h_, ss.aux_fd, ss.w / 2, ss.h / 2, &lg,
+            rga_.resize( fd_src, ss.w, ss.h, tn.fd, model_w_, model_h_, ss.aux_fd, ss.w / 2, ss.h / 2, &lg,
                     ss.dec.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
-    cal_dumper_.maybe( frame_idx, sl.eng->input_fd(), static_cast<const uint8_t*>( sl.eng->input_data() ), sl.eng->input_size() );
+    cal_dumper_.maybe( frame_idx, tn.fd, static_cast<const uint8_t*>( tn.data ), tn.size );
     const auto t3b = clk::now();
     // Cross-check RGA geometry against the owning source's (warn once).
     if ( !lb_warned_ && ( lg.left != ss.lb.left || lg.top != ss.lb.top || lg.w != ss.lb.w || lg.h != ss.lb.h ) )
@@ -851,147 +766,40 @@ void Pipeline::frame_dispatch( int slot, int frame_idx, int fd_src, int64_t ts_u
                     << " w=" << lg.w << " h=" << lg.h
                     << " vs x=" << ss.lb.left << " top=" << ss.lb.top << " w=" << ss.lb.w << " h=" << ss.lb.h << '\n';
     }
-    dispatch( slot, frame_idx, ts_us, rga_ok, ss.lb, cam_ms, dec_ms, ms( t3, t3b ) );
+
+    InferJob job {};
+    job.src_idx = cur_src_;
+    job.src_w = ss.w;
+    job.src_h = ss.h;
+    job.frame = frame_idx;
+    job.ts_us = ts_us;
+    job.rga_ok = rga_ok;
+    job.lb = ss.lb;
+    job.tr.cam = cam_ms;
+    job.tr.dec = dec_ms;
+    job.tr.rga = ms( t3, t3b );
+    band = ss.lb;
+    static_cast<void>( pool_.submit( slot, job ) );  // false: logged by the pool, frame dropped
 }
 
-// --- M4: context-pool machinery --------------------------------------------
-
-Pipeline::~Pipeline()
-{
-    quit_.store( true );
-    for ( auto& sl : slots_ )
-    {
-        std::lock_guard<std::mutex> lk( sl.mx );
-        sl.cv.notify_all();
-    }
-    for ( auto& t : workers_ )
-        if ( t.joinable() )
-            t.join();
-}
-
-void Pipeline::worker_loop( int slot )
-{
-    pin_current_big( "npu worker", log_ );
-    Slot& sl = slots_[slot];
-    while ( !quit_.load() )  // the only exit is the quit check after the wait
-    {
-        {
-            std::unique_lock<std::mutex> lk( sl.mx );
-            sl.cv.wait( lk, [this, slot] {
-                return quit_.load() || slots_[slot].st == Slot::QUEUED;
-            } );
-            if ( quit_.load() )
-                return;
-        }
-
-        // Infer WITHOUT holding the slot mutex: the claim scan on the main
-        // thread must not block on a running rknn_run. Plain writes below
-        // are published to the main thread by the lock acquire/release of
-        // the DONE transition.
-
-        const auto ti0 = clk::now();
-        const bool rga_ok = sl.rga_ok;
-        bool okr = false;
-        if ( rga_ok )
-        {
-            okr = ( sl.eng->run() == 0 );
-            sl.tr.infer = ms( ti0, clk::now() );
-            if ( okr )
-            {
-                const auto tp0 = clk::now();
-                yolo_postprocess( *sl.eng, static_cast<float>( sl.src_w ), static_cast<float>( sl.src_h ),
-                        static_cast<float>( model_w_ ), static_cast<float>( model_h_ ), sl.lb,
-                        sl.dets, cfg_.infer.conf_thr, cfg_.infer.iou_thr );
-                sl.tr.post = ms( tp0, clk::now() );
-            }
-        }
-        else
-        {
-            sl.tr.infer = 0.0;  // legacy: run() is short-circuited on a failed RGA
-            sl.tr.post = 0.0;
-        }
-        sl.npu_ok = rga_ok && okr;
-        {
-            std::lock_guard<std::mutex> lk( sl.mx );
-            sl.st = Slot::DONE;
-        
-            // Publish may have given up waiting (bounded wait): free
-            // the slot here -- it is already out of the publish FIFO.
-        
-            if ( sl.drop )
-            {
-                sl.st = Slot::FREE;
-                sl.frame = -1;
-                sl.drop = false;
-            }
-        }
-        sl.cv.notify_all();
-    }
-}
-
-void Pipeline::dispatch( int slot, int frame_idx, int64_t ts_us, bool rga_ok, const LbGeom& lb, double cam_ms, double dec_ms, double rga_ms )
-{
-    const SourceSlot& ss = srcs_[cur_src_];
-    Slot& sl = slots_[slot];
-    {
-        std::lock_guard<std::mutex> lk( sl.mx );
-        sl.src_idx = cur_src_;
-        sl.src_w = ss.w;
-        sl.src_h = ss.h;
-        sl.frame = frame_idx;
-        sl.ts_us = ts_us;
-        sl.rga_ok = rga_ok;
-        sl.npu_ok = false;
-        sl.drop = false;
-        sl.tr.cam = cam_ms;
-        sl.tr.dec = dec_ms;
-        sl.tr.rga = rga_ms;
-        sl.lb = lb;
-        sl.st = Slot::QUEUED;
-    }
-    pub_.push( slot );
-    sl.cv.notify_one();
-}
-
+// collect -> analytics -> output. The result is copied out of the pool and
+// its slot is Free again before the overlay touches the tensor: that is
+// safe because only this thread refills a tensor (frame_dispatch), and it
+// does so only after this frame is fully drawn and published.
 int Pipeline::publish_oldest()
 {
-    const int ps = pub_.front();
-    Slot& sl = slots_[ps];
-    std::unique_lock<std::mutex> lk( sl.mx );
-
-    // Bounded wait (P0-2): 
-    // rknn_run normally always completes; 
-    // a timeout means a wedged NPU/runtime -- drop the frame instead of
-    // hanging the whole pipeline (and Ctrl-C) forever. 
-    // quit_ releases the wait on shutdown as well.
-    // The slot is NOT freed here: 
-    // the worker may still be mid-infer on this tensor, handing it back
-    // to RGA would overwrite memory the NPU is reading. The worker
-    // sees Slot::drop at its DONE transition and frees the slot.
-
-    const bool done = sl.cv.wait_for( lk, std::chrono::seconds( 5 ), [this, &sl] {
-        return sl.st == Slot::DONE || quit_.load();
-    } );
-    if ( !done || sl.st != Slot::DONE )
-    {
-        if ( sl.st == Slot::QUEUED )
-            sl.drop = true;
-        log_.warn() << "pipeline: publish wait gave up on slot " << ps << " (st="
-                    << static_cast<int>( sl.st ) << "), frame " << sl.frame << " dropped\n";
-        lk.unlock();
-        pub_.pop();
-        return 0;
-    }
+    if ( !pool_.collect( res_ ) )
+        return 0;  // gave up on a wedged NPU (logged by the pool): frame dropped
 
     double enc_ms = 0.0;
-    if ( sl.npu_ok )
+    if ( res_.npu_ok )
     {
         // M3.10: EMA smoothing on scene-coord boxes; the raw list is kept
         // only for the --box-log jitter A/B CSV.
 
-        SourceSlot& ss = srcs_[sl.src_idx];
-        ss.smoother.update( sl.dets, dets_ );
-        ss.smoother.log_frame( sl.frame, sl.dets, dets_ );
+        SourceSlot& ss = srcs_[res_.job.src_idx];
+        ss.smoother.update( res_.dets, dets_ );
+        ss.smoother.log_frame( res_.job.frame, res_.dets, dets_ );
         // Anti-jitter stage 1: the Kalman tracker consumes RAW person
         // detections. Feeding it the EMA-smoothed dets_ double-filtered
         // the signal: the filter velocity lagged the (already damped)
@@ -999,61 +807,24 @@ int Pipeline::publish_oldest()
         // direction change.
         // dets_ stays the BoxSmoother output -- it still feeds the
         // non-person drawing below and the --box-log CSV.
-        ss.tracker.update( sl.dets, sl.ts_us, trajs_ );
+        ss.tracker.update( res_.dets, res_.job.ts_us, trajs_ );
 
-        rep_.report( sl.frame, dets_, trajs_, sl.src_idx, nsrc_ );
+        rep_.report( res_.job.frame, dets_, trajs_, res_.job.src_idx, nsrc_ );
         if ( sink_.enabled() )
-            enc_ms = sink_.draw_and_publish( sl, ps, dets_, trajs_, ss.tracker );
-    }
-
-    sl.tr.enc = enc_ms;
-    t_.add( sl.tr );
-    const bool npu_ok = sl.npu_ok;  // read under the lock: after unlock
-                                    // the worker may already be refilling
-    sl.st = Slot::FREE;
-    sl.frame = -1;
-    lk.unlock();
-    pub_.pop();
-    return npu_ok ? 1 : 0;
-}
-
-void Pipeline::pool_discard( int src_idx )
-{
-    const int n = pub_.size();
-    for ( int i = 0; i < n; ++i )
-    {
-        const int s = pub_.front();
-        pub_.pop();
-        Slot& sl = slots_[s];
-        std::unique_lock<std::mutex> lk( sl.mx );
-        if ( sl.src_idx != src_idx )
         {
-            lk.unlock();
-            pub_.push( s );
-            continue;
-        }
-
-        // Bounded wait (same 5 s cap as the publish wait, P0-2 class of
-        // risk): rknn_run normally completes. quit_ in the predicate
-        // means a wedged NPU during source recovery can no longer block
-        // shutdown -- Ctrl-C releases this wait just like publish_oldest.
-        // On timeout or quit the slot is NOT freed here: the NPU may
-        // still be reading its tensor. It is marked drop instead, so the
-        // worker frees it at its DONE transition -- the same contract
-        // publish_oldest() uses on its own timeout path.
-
-        sl.cv.wait_for( lk, std::chrono::seconds( 5 ), [this, &sl] {
-            return quit_.load() || sl.st != Slot::QUEUED;
-        } );
-        if ( sl.st == Slot::QUEUED )
-        {
-            if ( !sl.drop )
-                sl.drop = true;  // worker frees at DONE
-        }
-        else
-        {
-            sl.st = Slot::FREE;
-            sl.frame = -1;
+            FrameView view {};
+            view.tensor_idx = res_.slot;
+            view.tensor = pool_.tensor( res_.slot );
+            view.lb = res_.job.lb;
+            view.src_idx = res_.job.src_idx;
+            view.src_w = res_.job.src_w;
+            view.src_h = res_.job.src_h;
+            view.ts_us = res_.job.ts_us;
+            enc_ms = sink_.draw_and_publish( view, dets_, trajs_, ss.tracker );
         }
     }
+
+    res_.job.tr.enc = enc_ms;
+    t_.add( res_.job.tr );
+    return res_.npu_ok ? 1 : 0;
 }

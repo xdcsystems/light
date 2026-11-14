@@ -81,17 +81,19 @@ post-processing.
 - Log        : diagnostics sink (core/log.hpp), owned by main() and
                injected as `const Log&`: info -> stdout, warn/error ->
                stderr, one statement = one whole line across threads,
-               a level threshold. Migration is incremental: Pipeline
-               and main.cpp log through it; every other class still
-               writes to std::cout / std::cerr directly and switches
-               when its refactoring stage touches it. New code takes a
-               Log -- no new direct stream writes.
+               a level threshold. Migration is incremental: Pipeline,
+               InferencePool, OverlaySink and main.cpp log through it;
+               every other class still writes to std::cout / std::cerr
+               directly and switches when its refactoring stage touches
+               it. New code takes a Log -- no new direct stream writes.
 - core/      : domain types shared across layers, free of SDK headers
                (include/core/, src/core/): LbGeom + band_geom
                (geometry.hpp), Detection / DetList (detection.hpp),
                TrackLife / TrajPoint / TrackState / TrajList (track.hpp),
                GpuBox / GpuBoxList (gpu_box.hpp), StopFlag
-               (stop_flag.hpp), Log (log.hpp). A consumer that needs
+               (stop_flag.hpp), Log (log.hpp), TensorRef / TensorSet /
+               FrameView (frame_view.hpp: what the output stage sees of
+               an inferred frame). A consumer that needs
                only the type includes the core header, not the layer
                that produces it (rga_resizer.h, yolo_postprocess.hpp,
                tracker.hpp, gpu_box_drawer.hpp still re-export theirs).
@@ -169,7 +171,7 @@ post-processing.
                guarded against aux_fd < 0. All jobs are pinned to RGA3 core0
                via imconfig at startup.
                Letterbox geometry is a per-call LbGeom value carried
-               through dispatch into the pipeline slot (2026-11-02,
+               in the InferJob of the frame (2026-11-02,
                P1-1) — the shared mutable members are gone; under
                --pool 3 they were a cross-thread race.
 - RknnEngine : init/query failures throw (fail loudly like CameraV4L2) —
@@ -192,14 +194,27 @@ post-processing.
                --mw/--mh are abolished). Aux allocation happens after
                model geometry is known (constructor-order bug fixed; a
                one-line "aux not needed" log confirms the single-pass path).
-               Concurrency & shutdown (2026-11-02): publish_oldest()
-               waits at most 5 s with quit_ in the predicate — on
-               timeout the slot is marked drop and freed by its
-               worker after the in-flight rknn_run completes (never
-               while the NPU reads the tensor). SIGINT/SIGTERM set a
+               NPU scheduling lives in InferencePool (below); Pipeline
+               only decides when to submit and when to publish.
+               SIGINT/SIGTERM set a
                stop flag: run() exits through the normal path (ring
                drain, TOTAL summary, encoder flush, camera
                teardown) instead of being killed outright.
+- InferencePool (inference_pool.hpp, stage 2): the NPU stage --
+               one RknnEngine per slot (1, or 3 with --pool 3, one per
+               NPU core), one worker thread per slot (pinned to A76),
+               and a FIFO that returns results strictly in submit
+               order. Owns the engines and their core masks; the
+               destructor joins the workers before the engines die.
+               InferSlot (infer_slot.hpp) is the handoff cell:
+               Free -> Queued -> Done -> Free, with every transition
+               under its mutex. A result wait is bounded (5 s, P0-2):
+               on timeout the frame is dropped and the slot becomes
+               Abandoned -- only its worker frees it, after the
+               in-flight rknn_run completes (never while the NPU
+               reads the tensor). A template over the engine and the
+               postprocess step (YoloDecode), so the unit tests run it
+               with a fake engine: a wedged NPU, discard, ordering.
 - BoxSmoother (M3.10): 32-slot class-aware greedy IoU (> 0.30) + EMA
                (alpha = 0.5) box stabilizer; decays unmatched tracks
                after 2 misses; optional raw-vs-smoothed CSV via
@@ -399,7 +414,7 @@ rate control a nominal fps (25) while pts stay per-dequeue
   1280x960 -> 640x640: s = 1/2,  lb_h = 480, lb_top = 80.
   Detection mapping T (band-based, axial): x_scene = (x_det - lb_left) *
   cam_w / lb_w, y_scene = (y_det - lb_top) * cam_h / lb_h, where
-  (lb_left, lb_top, lb_w, lb_h) is the letterbox band geometry — a per-frame `LbGeom` returned by `RgaResizer::resize`, carried in `Slot::lb` and shared by the RGA crop,
+  (lb_left, lb_top, lb_w, lb_h) is the letterbox band geometry — a per-frame `LbGeom` returned by `RgaResizer::resize`, carried in `InferJob::lb` and shared by the RGA crop,
   the encoder crop and this scale. Detections on the bars (outside the
   band) are filtered. (The pre-M3.11 note "x_det * cam_w / model_w"
   described only the landscape band, where lb_left = 0 and
@@ -697,7 +712,11 @@ light_ai_tests, built into build/tests):
   band_geom, jpeg_probe, BoxSmoother, Tracker, fill_gpu_boxes,
   CliOptions / OptionRegistry / ConfigFileLoader, ProcessEnv /
   SignalWaiter (signal delivery, SIGPIPE, armed and unarmed modes),
-  Log (routing, threshold, whole lines across threads).
+  Log (routing, threshold, whole lines across threads),
+  InferencePool / InferSlot with a fake engine (pool modes, core
+  masks, result order, NPU skip/failure, wedged engine: bounded
+  wait + abandon + the worker frees the slot, per-source discard,
+  shutdown with frames in flight).
 - Not covered: everything that touches hardware or an SDK (capture,
   decode, RGA, RKNN, yolo_postprocess, encoder, GPU drawer). Those
   are verified by live runs only.
