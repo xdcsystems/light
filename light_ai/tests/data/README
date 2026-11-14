@@ -19,15 +19,24 @@ ref_evening_raw.csv -- layer B of the reference detections (issue #32, reference
     awk -F, '/^[0-9]/{f=$1} ((f>=440 && f<=566) || (f>=700 && f<=800)) && !/^sm,/' \
         reference/ref_evening.csv > tests/data/ref_evening_raw.csv
 
-ref_evening_golden.txt -- the output of test_reference_chain.cpp on that fixture
-    (smoothed boxes, track states, GpuBoxes per frame), written once on the board by
-    fix/audit-p0 @ f3c5a7f:
+ref_evening_golden.txt -- the output of test_reference_chain.cpp: the clip segment on that
+    fixture, then two synthetic segments generated in the test code ("crossing": two
+    persons walk through each other, one occluded for 3 frames; "weak": a merged blob
+    only round 2 of the association accepts). Smoothed boxes, track states, GpuBoxes
+    per frame; an "h <segment>" line opens each segment. Written on the board by the
+    tracker / smoother / box mapper code of fix/audit-p0 @ f3c5a7f (unchanged in #33):
+    first with the clip segment only, then regenerated once when the synthetic segments
+    and the conf column (6 decimals) were added (review of #33); the clip segment
+    stayed the same. Regenerate with:
     cmake -S tests -B build/tests && cmake --build build/tests --target light_ai_tests
     cd build/tests && LIGHT_AI_WRITE_GOLDEN=1 ./light_ai_tests
     Rewrite it only for a deliberate behavior change of BoxSmoother, Tracker or the
     box mapper -- never in a refactoring (stage 6 must pass against this file).
     Tolerances (test_reference_chain.cpp): 1e-2 px for positions / sizes, 1e-1 px/s
-    for velocities; ids, states, counts, classes, colors, alpha exact. Measured
-    spread (2026-11-15, the board): the same code built with -ffp-contract=off (no
-    fused multiply-add, as on an x86 host) deviates by at most 1e-4 px and 4e-4 px/s;
-    the Tracker kQAccel nudged 2000 -> 2100 deviates by 11.4 px and 6.6 px/s and fails.
+    for velocities, 1e-4 for confidences; ids, states, counts, classes, colors, alpha
+    exact. Measured (2026-11-15): the same code built with -ffp-contract=off (no fused
+    multiply-add, as on an x86 host; GCC 13.3 x86_64 gives the same) deviates by at
+    most 1e-4 px and 4e-4 px/s. Each of these local edits fails the test: the Tracker
+    kQAccel 2000 -> 2100 (11.4 px, 6.6 px/s), round 2 of Tracker::associate switched
+    off (the "weak" scenario: the track dies, a new id spawns), greedy_iou_match
+    worst-first (the "crossing" segment, 30.5 px, 62.7 px/s).

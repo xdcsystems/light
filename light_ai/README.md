@@ -808,7 +808,9 @@ light_ai_tests, built into build/tests):
   reference clip with fixed timestamps through BoxSmoother + Tracker +
   fill_gpu_boxes against a golden file (tests/data/README: the fixture,
   the tolerances, LIGHT_AI_WRITE_GOLDEN=1), with its own coverage
-  asserts (a dt clamp, a tentative death, a ghost, a trail eviction).
+  asserts (a dt clamp, a tentative death, a ghost, a trail eviction),
+  plus two synthetic segments for the association: two persons
+  crossing (ids kept) and a merged blob only round 2 accepts.
 - ThreadSanitizer: the SourceChannel hand-over (a prober thread
   attaching, the frame thread polling and detaching, 1000+ round
   trips) and the real SourceProber thread (1 ms cadence) against a
