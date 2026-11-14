@@ -31,6 +31,7 @@ add_executable(light_ai_tests
     test_usb_node_locator.cpp
     test_source_channel.cpp
     test_source_threads.cpp
+    test_source_prober.cpp
     # modules under test
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp
@@ -59,12 +60,14 @@ target_compile_options(light_ai_tests PRIVATE -Wall -Wextra)
 find_package(Threads REQUIRED)
 target_link_libraries(light_ai_tests PRIVATE Threads::Threads)
 
-# Threaded suites under ThreadSanitizer (the SourceChannel hand-over): a data
+# Threaded suites under ThreadSanitizer (the SourceChannel hand-over, the
+# SourceProber thread against a detaching frame thread): a data
 # race fails the run. Separate binary: TSan slows everything ~5-15x and must
 # not mix with the plain build. Built and run by scripts/test.sh unless SKIP_TSAN=1.
 add_executable(light_ai_tests_tsan EXCLUDE_FROM_ALL
     tsan_main.cpp
     test_source_threads.cpp
+    test_source_prober.cpp
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
 )
 target_include_directories(light_ai_tests_tsan PRIVATE

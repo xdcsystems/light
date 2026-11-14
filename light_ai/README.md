@@ -129,9 +129,18 @@ post-processing.
                any S_FMT) and trial-opened; nodes of the other V4L2
                sources are never trialed; the scan line prints at most
                every 30 s. A mid-run recoverable failure (ENODEV/EIO)
-               detaches the channel; probe_loop() re-attaches it on its
-               2 s cadence. A source missing at startup logs "not
+               detaches the channel; the SourceProber re-attaches it on
+               its 2 s cadence. A source missing at startup logs "not
                started at startup (<reason>)" and the prober takes it.
+               SourceProber (source/source_prober.hpp, stage 3b): one
+               thread for all sources (a net connect may block 5 s, so
+               never on the frame thread), a local of Pipeline::run()
+               -- its destructor stops and joins it on every exit --
+               spawned before the main thread pins itself to the A76
+               cores (it keeps the scheduler default). Each round tries
+               every non-Live source once; "probe: sN absent, attempt K"
+               prints on the 1st and every 15th round (~30 s); stop()
+               wakes the wait between rounds at once.
                A permanent unplug does not end the run: the remaining
                sources keep streaming. A re-attach with another geometry
                than the decoder's is refused with a warn (the decoder is
@@ -731,13 +740,17 @@ light_ai_tests, built into build/tests):
   masks, result order, NPU skip/failure, wedged engine: bounded
   wait + abandon + the worker frees the slot, per-source discard,
   shutdown with frames in flight), Timings (avg/60 + whole-run TOTAL),
-  UsbNodeLocator (preferred / busy / scan order / log throttle) and
+  UsbNodeLocator (preferred / busy / scan order / log throttle),
   SourceChannel with fakes (the attach state machine, failure at each
-  step, warm-up, empty packets, errno -> FrameStatus).
+  step, warm-up, empty packets, errno -> FrameStatus) and SourceProber
+  (only non-Live channels among the first n, busy-node list, log
+  throttle, start/stop, stop() within 100 ms).
 - ThreadSanitizer: the SourceChannel hand-over (a prober thread
   attaching, the frame thread polling and detaching, 1000+ round
-  trips) also runs in light_ai_tests_tsan, built with
-  -fsanitize=thread; scripts/test.sh runs it after the plain suites
+  trips) and the real SourceProber thread (1 ms cadence) against a
+  detaching frame thread (1000+ round trips) also run in
+  light_ai_tests_tsan, built with -fsanitize=thread; scripts/test.sh
+  runs it after the plain suites
   (SKIP_TSAN=1 skips it) and prints its build + run time.
 - Not covered: everything that touches hardware or an SDK (capture,
   decode, RGA, RKNN, yolo_postprocess, encoder, GPU drawer). Those

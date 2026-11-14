@@ -32,6 +32,8 @@ int main()
     run_suite( t, "usb_node_locator", &test_usb_node_locator );
     run_suite( t, "source_channel", &test_source_channel );
     run_suite( t, "source_threads", &test_source_threads );
+    run_suite( t, "source_prober", &test_source_prober );
+    run_suite( t, "source_prober_threads", &test_source_prober_threads );
     std::cout << "light_ai_tests: " << t.checks() << " checks, " << t.failures() << " failed\n";
     return t.failures() == 0 ? 0 : 1;
 }

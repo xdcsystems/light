@@ -1,10 +1,8 @@
 #pragma once
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <string>
-#include <thread>
 
 #include "box_smoother.h"
 #include "cal_dumper.hpp"
@@ -17,6 +15,7 @@
 #include "overlay_sink.hpp"
 #include "rga_resizer.h"
 #include "rknn_engine.hpp"
+#include "source/source_prober.hpp"
 #include "source/source_types.hpp"
 #include "sources.hpp"
 #include "timings.hpp"
@@ -27,6 +26,7 @@ class Pipeline
 {
     enum { kMaxSources = 3 };
     using NpuPool = InferencePool<RknnEngine, YoloDecode>;
+    using SourceProber = BasicSourceProber<SourceChannel, kMaxSources, UsbNodeLocator>;
 
     // Per-source analytics, frame thread only (publish_oldest): the
     // source itself -- device, decoder, geometry, state -- is SourceChannel.
@@ -54,11 +54,6 @@ public:
 private:
     void init_source();     // validates and configures the channels (no device is opened)
     void attach_sources();  // ctor, last: the first attach of every channel (STREAMON)
-    void probe_source( int idx );  // hot-attach: one (re)attach step, never throws
-    void probe_loop();
-    // busy-node reservation (M5): the /dev nodes of the OTHER V4L2 sources,
-    // live or absent alike -- node discovery never trials or adopts them.
-    NodeList busy_v4l2_nodes( int self_idx ) const;
 
     void drain_done_slots( int& ok );
     int publish_oldest();                // collect -> analytics -> output; 1 if the frame was valid
@@ -78,7 +73,7 @@ private:
 private:
     Config cfg_;
     UsbHost usb_host_;
-    UsbNodeLocator locator_;  // attaching thread only: the ctor, then probe_loop
+    UsbNodeLocator locator_;  // attaching thread only: the ctor, then the SourceProber of run()
     std::array<SourceChannel, kMaxSources> srcs_;
     std::array<SourceAnalytics, kMaxSources> an_ {};
     int nsrc_ = 1;
@@ -92,10 +87,6 @@ private:
     // Band last written into each pool tensor: a band change (another
     // source, another geometry) re-grays the bars before the RGA write.
     std::array<LbGeom, NpuPool::kMaxSlots> tensor_band_ {};
-    std::atomic<int> src_w_ { 0 };
-    std::atomic<int> src_h_ { 0 };  // MAX across sources (diagnostics);
-                                    // written by probe_source on the prober thread, hence atomic;
-                                    // per-source geometry is SourceChannel::geom()
     int model_w_ = 0;
     int model_h_ = 0;  // taken from the model, not from flags
     
@@ -118,9 +109,6 @@ private:
 
     const StopFlag& stop_;  // set by SignalWaiter (SIGINT/SIGTERM), read only here
     const Log& log_;        // diagnostics sink (main.cpp); safe from the worker and prober threads
-    std::thread probe_th_;   // hot-attach prober: armed in run(), joined on exit
-    std::atomic<bool> probe_quit_ { false };
-    uint64_t probe_ticks_ = 0;  // prober round counter: throttles the probe log
     std::chrono::steady_clock::time_point t0_ {};  // idle pts base (NO SIGNAL timeline)
     int64_t last_idle_us_ = -1;  // last NO SIGNAL publish stamp (us since t0_)
 };
