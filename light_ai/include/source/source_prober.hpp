@@ -1,7 +1,8 @@
 // SourceProber: attaches the non-Live sources on its own thread, on a 2 s
 // cadence, with a throttled "absent" log line. Stage 3b: replaces
-// Pipeline::probe_loop, probe_source, busy_v4l2_nodes, the ProbeStop guard and
-// the probe_th_ / probe_quit_ / probe_ticks_ members.
+// Pipeline::probe_loop, probe_source, the ProbeStop guard and the probe_th_ /
+// probe_quit_ / probe_ticks_ members; since stage 3c it takes the SourceSet
+// (the busy-node list moved there).
 //
 // One thread for all sources: a net attach may block for the connect timeout
 // (5 s) -- it must not stall the frame loop, hence a dedicated thread instead
@@ -19,50 +20,28 @@
 // it is the only user of the locator. stop() may be called from any thread.
 //
 // Template parameters (static polymorphism; tests/test_source_prober.cpp
-// instantiates it with SourceChannel over the fakes, pipeline.hpp with the real one):
-//   Chan: the SourceChannel contract (source/source_channel.hpp):
-//     bool live() const; SourceKind kind() const; const std::string& node() const;
-//     template <class Loc> Attach attach( const NodeList& busy, Loc&, bool hot, std::string& why );
-//   N: the channel array size; only the first n (ctor) channels are probed.
+// instantiates it with a SourceSet of SourceChannels over the fakes,
+// pipeline.hpp with the real one):
+//   Set: the SourceSet contract (source/source_set.hpp):
+//     int size() const;                    // fixed before start()
+//     Chan& operator[]( int s );           // Chan: the SourceChannel contract --
+//                                          //   bool live() const; template <class Loc>
+//                                          //   Attach attach( const NodeList& busy, Loc&, bool hot, std::string& why );
+//     NodeList busy_nodes( int self ) const;
 //   Locator: passed through to Chan::attach (source/usb_node_locator.hpp).
 
 #pragma once
 
-#include <array>
 #include <chrono>
 #include <condition_variable>
-#include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
 
-#include "config/config.hpp"  // SourceKind
 #include "core/log.hpp"
-#include "source/source_types.hpp"
 
-// Busy-node reservation (audit: multi-camera node hijacking): the /dev nodes
-// of the V4L2 channels other than self among the first n, Live or not alike.
-// A detached source still owns its node -- the prober re-attaches it on its
-// own cadence -- so a scanning source must never trial-open or adopt that
-// node: uvcvideo accepts the trial while the node is momentarily free, and two
-// sources would then compete for one physical camera.
-// Attaching thread only (Chan::node()).
-template <class Chan, std::size_t N>
-NodeList busy_v4l2_nodes( const std::array<Chan, N>& chans, int n, int self )
-{
-    NodeList busy;
-    for ( int k = 0; k < n; ++k )
-    {
-        const Chan& c = chans[static_cast<std::size_t>( k )];
-        if ( k == self || c.kind() != SourceKind::V4L2 || c.node().empty() )
-            continue;
-        busy.push_back( c.node() );
-    }
-    return busy;
-}
-
-template <class Chan, std::size_t N, class Locator>
+template <class Set, class Locator>
 class BasicSourceProber
 {
 public:
@@ -72,11 +51,10 @@ public:
         kLogEvery = 15,    // "absent" line on the 1st and every 15th round (~30 s)
     };
 
-    // chans: the channels; the first n are probed (n <= N). period_ms: the
-    // cadence -- the default in production, short in the threaded tests.
-    BasicSourceProber( std::array<Chan, N>& chans, int n, Locator& loc, const Log& log, int period_ms = kPeriodMs )
-      : chans_( chans ), n_( n < static_cast<int>( N ) ? n : static_cast<int>( N ) ), loc_( loc ), log_( log )
-      , period_( period_ms )
+    // set: the configured sources (configure() done). period_ms: the cadence --
+    // the default in production, short in the threaded tests.
+    BasicSourceProber( Set& set, Locator& loc, const Log& log, int period_ms = kPeriodMs )
+      : set_( set ), loc_( loc ), log_( log ), period_( period_ms )
     {
     }
     ~BasicSourceProber() { stop(); }
@@ -89,7 +67,7 @@ public:
     // every period. No thread with no sources, or when already started.
     void start()
     {
-        if ( n_ <= 0 || th_.joinable() )
+        if ( set_.size() <= 0 || th_.joinable() )
             return;
         th_ = std::thread( [this] { loop(); } );
     }
@@ -114,9 +92,9 @@ public:
     void round()
     {
         ++rounds_;
-        for ( int s = 0; s < n_; ++s )
+        for ( int s = 0; s < set_.size(); ++s )
         {
-            Chan& c = chans_[static_cast<std::size_t>( s )];
+            auto& c = set_[s];
             if ( quitting() || c.live() )
                 continue;
             // visibility: the 1st and every 15th round show the prober is
@@ -124,7 +102,7 @@ public:
             if ( rounds_ == 1 || rounds_ % kLogEvery == 0 )
                 log_.info() << "probe: s" << s << " absent, attempt " << rounds_ << '\n';
             std::string why;
-            static_cast<void>( c.attach( busy_v4l2_nodes( chans_, n_, s ), loc_, true, why ) );
+            static_cast<void>( c.attach( set_.busy_nodes( s ), loc_, true, why ) );
         }
     }
 
@@ -151,8 +129,7 @@ private:
     }
 
 private:
-    std::array<Chan, N>& chans_;
-    const int n_;
+    Set& set_;
     Locator& loc_;
     const Log& log_;
     const std::chrono::milliseconds period_;

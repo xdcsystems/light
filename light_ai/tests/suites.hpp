@@ -20,5 +20,6 @@ void test_timings( TestRun& t );
 void test_usb_node_locator( TestRun& t );
 void test_source_channel( TestRun& t );
 void test_source_threads( TestRun& t );
+void test_source_set( TestRun& t );
 void test_source_prober( TestRun& t );
 void test_source_prober_threads( TestRun& t );

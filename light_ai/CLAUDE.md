@@ -85,13 +85,13 @@ keep "Migration plan" current when a stage changes state.
       state; OverlaySink takes FrameView (PR #10).
       Check: --pool 1 and --pool 3 FPS and TOTAL timings within noise of fix/audit-p0;
       boxes drawn (GPU and --cpu-draw); camera unplug/replug under --pool 3; Ctrl-C summary.
-- [ ] 3 Sources: SourceChannel with an explicit State {NeverAttached, Detached, Live},
+- [x] 3 Sources: SourceChannel with an explicit State {NeverAttached, Detached, Live},
       SourceSet, SourceProber, UsbNodeLocator; merge init_one_source with the first_attach
       branch of probe_source. Pipeline loses ~9 methods; run() fits in 30 lines.
       Check: unplug/replug a USB camera and the net source; start with no sources.
       Issue #15, split 3a/3b/3c. 3a (SourceChannel, UsbNodeLocator, one attach path, TSan suite):
-      merged (PR #16). 3b (SourceProber: own thread, RAII local of run()): PR open, awaiting review.
-      Next: 3c SourceSet + FrameStatus, run() in 30 lines (closes #15).
+      merged (PR #16). 3b (SourceProber: own thread, RAII local of run()): merged (PR #17).
+      3c (SourceSet, next_frame + step, run() in 30 lines): the PR that closes #15.
       Baselines (fix/audit-p0 @ 7ef8212): build/run_base_pool{1,3}.log, build/run_base_net.log.
 - [ ] 4 NetEncoder, one class at a time: ParamSetCache, PtsClock, BitmapFont + IdlePlate,
       PacketQueue, FrameComposer, MuxSession; the remainder is H264Encoder (100-200 lines each,
