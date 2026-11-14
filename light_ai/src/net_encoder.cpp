@@ -26,6 +26,7 @@ extern "C"
 #include "core/encoder_config.hpp"
 #include "core/log.hpp"
 #include "core/param_set_cache.hpp"
+#include "core/pts_clock.hpp"
 #include "muxer_teardown.hpp"
 #include "net_encoder.h"
 #include "av_common.hpp"
@@ -213,6 +214,7 @@ namespace
 NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
   : log_( log )
   , cfg_( cfg )
+  , pts_( cfg.vfr() )
   , params_( log )
 {
     avformat_network_init();
@@ -776,7 +778,7 @@ void NetEncoder::clear_pkt_queue()
 bool NetEncoder::send_frame( AVStream* st )
 {
     AVFrame* fr = frames_[cur_];
-    const int64_t fpts = packet_pts();
+    const int64_t fpts = pts_.next( ts_us_, frames_sent_ );
     fr->pts = fpts;
 
     // 7c forced-IDR: a fresh viewer session forces the next encoded frame
@@ -826,11 +828,11 @@ bool NetEncoder::send_frame( AVStream* st )
     {
         // Queue still full with no output to drain: drop the frame
         // instead of tearing the session. IDR on the next frame keeps
-        // the stream decodable; ++pts_ keeps the CFR pts monotonic,
+        // the stream decodable; advance() keeps the CFR pts monotonic,
         // frames_sent_ stays put (the frame was never encoded).
         log_.warn() << "enc: send_frame: input queue full, frame dropped, IDR next frame\n";
         force_idr_.store( true );
-        ++pts_;
+        pts_.advance();
         return true;
     }
 
@@ -845,7 +847,7 @@ bool NetEncoder::send_frame( AVStream* st )
         log_.error() << "enc: receive_packet: " << av_err_str( ret ) << '\n';
         return false;
     }
-    ++pts_;
+    pts_.advance();
     ++frames_sent_;
     return true;
 }
@@ -857,7 +859,7 @@ bool NetEncoder::send_frame( AVStream* st )
 void NetEncoder::enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts )
 {
     pkt->stream_index = st->index;
-    pkt->pts = pkt->dts = fpts * frame_step_;
+    pkt->pts = pkt->dts = pts_.packet_ts( fpts );
     {
         std::lock_guard<std::mutex> plk( pkt_mx_ );
         if ( pkts_.full() )
@@ -879,26 +881,6 @@ void NetEncoder::enqueue_pkt( AVPacket* pkt, AVStream* st, int64_t fpts )
         av_packet_move_ref( tail, pkt );
         pkt_cv_.notify_one();
     }
-}
-
-// M4 pts selection, extracted from send_frame() for readability:
-// CFR gets the sequential codec pts; VFR rescales the dequeue
-// timestamp (us -> 1/90000 ticks) against the per-session base
-// (initialized on the first timestamped packet) or falls back to
-// a 25 fps grid.
-int64_t NetEncoder::packet_pts()
-{
-    if ( !cfg_.vfr() )
-        return static_cast<int64_t>( pts_ );
-    if ( ts_us_ < 0 )
-        return static_cast<int64_t>( frames_sent_ ) * 3600;  // 25 fps grid
-    if ( ts_base_ < 0 )
-        ts_base_ = ts_us_;  // per-session base on the first timestamp
-    int64_t p = av_rescale( ts_us_ - ts_base_, 90000, 1000000 );
-    if ( last_pts_ >= 0 && p <= last_pts_ )
-        p = last_pts_ + 1;
-    last_pts_ = p;
-    return p;
 }
 
 // Batch C follow-up: the mux side of serve(), split out for tidy
@@ -1053,9 +1035,9 @@ bool NetEncoder::open_transport( const std::string& url, AVFormatContext* fc, Tr
 
 // Stream setup, verbatim move out of run_session(): create the
 // stream, fill the codec parameters, write the header with the
-// live-stream mpegts options, derive frame_step_ and print the
+// live-stream mpegts options, derive the pts step and print the
 // session log lines. false = any of the three setup failures.
-bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, bool tcp_pull )
+bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, int64_t* frame_step, bool tcp_pull )
 {
     const StreamLayout& lay = cfg_.layout;
     AVStream* st = avformat_new_stream( fc, nullptr );
@@ -1089,13 +1071,13 @@ bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, bool tcp_
         return false;
     }
     const AVRational tb = st->time_base;
-    frame_step_ = cfg_.vfr() ? 1 : av_rescale_q( 1, AVRational { 1, cfg_.fps }, tb );
-    if ( frame_step_ < 1 )
-        frame_step_ = 1;
+    int64_t step = cfg_.vfr() ? 1 : av_rescale_q( 1, AVRational { 1, cfg_.fps }, tb );
+    if ( step < 1 )
+        step = 1;
     if ( cfg_.vfr() )
         log_.info() << "enc: stream time_base " << tb.num << '/' << tb.den << " (VFR: pts from dequeue times)\n";
     else
-        log_.info() << "enc: stream time_base " << tb.num << '/' << tb.den << ", pts step " << frame_step_ << "\n";
+        log_.info() << "enc: stream time_base " << tb.num << '/' << tb.den << ", pts step " << step << "\n";
     if ( tcp_pull )
     {
         log_.info() << "enc: tcp pull streaming " << lay.w << 'x' << lay.h << " h264 (mpegts) on port " << cfg_.port << '\n';
@@ -1105,6 +1087,7 @@ bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, bool tcp_
         log_.info() << "enc: udp streaming " << lay.w << 'x' << lay.h << " h264 (mpegts) -> " << cfg_.host << ':' << cfg_.port << '\n';
     }
     *st_out = st;
+    *frame_step = step;
     return true;
 }
 
@@ -1142,16 +1125,15 @@ void NetEncoder::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
         return;
 
     AVStream* st = nullptr;
-    if ( !setup_stream( fc.p, &st, tcp_pull ) )
+    int64_t frame_step = 1;
+    if ( !setup_stream( fc.p, &st, &frame_step, tcp_pull ) )
         return;
 
     {
         std::lock_guard<std::mutex> lk( mx_ );
         fc_ = fc.p;
         st_ = st;
-        pts_ = 0;
-        ts_base_ = -1;  // M4: VFR pts restart from zero per session
-        last_pts_ = -1;
+        pts_.restart( frame_step );  // CFR counter and VFR base restart from zero per session
         last_enc_ts_us_ = -1;
         active_.store( true );
     }

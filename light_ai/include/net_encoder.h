@@ -36,6 +36,7 @@
 #include "core/encoder_config.hpp"  // EncoderConfig, StreamLayout
 #include "core/geometry.hpp"        // LbGeom: band geometry arrives as one object
 #include "core/param_set_cache.hpp"  // ParamSetCache: late-join SPS/PPS repeat
+#include "core/pts_clock.hpp"        // PtsClock: CFR / VFR pts
 #include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<kBufCount>: RAII pool sub-object
 #include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
 
@@ -129,12 +130,12 @@ private:
     // Transport setup (accept + socket options / avio_open) and the
     // stream setup (new_stream + header + mpegts options).
     bool open_transport( const std::string& url, AVFormatContext* fc, Transport& t );
-    bool setup_stream( AVFormatContext* fc, AVStream** st, bool tcp_pull );
+    // frame_step: muxer ticks per codec pts, handed to pts_ under mx_ by run_session().
+    bool setup_stream( AVFormatContext* fc, AVStream** st, int64_t* frame_step, bool tcp_pull );
 
     bool init_frames();
     void free_frames();
     void clear_pkt_queue();
-    int64_t packet_pts();  // pts of the next frame; may set ts_base_
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
     bool prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb );
 
@@ -182,20 +183,17 @@ private:
     // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
     // runs before publish() on the same pipeline thread -- no fence fd
     // crosses this boundary (retired, see docs/state.md).
-    int64_t frame_step_ = 1;   // pts increment in the muxer's time base
-    uint64_t pts_ = 0;
-    // Follow-source (--net-fps 0): pts stamped from the real dequeue
-    // times. ts_us_ arrives with publish(); ts_base_ is the session
-    // start (pts restart from zero when a new viewer connects).
-    // frames_sent_ gates the destructor drain in both modes
-    // (pts_ alone would be 0 in VFR and skip the flush).
-    int64_t ts_us_ = -1;
-    int64_t ts_base_ = -1;
-    int64_t last_pts_ = -1;
+    // CFR counter / VFR dequeue-time pts and the muxer step (core/pts_clock.hpp).
+    // mx_: next() / advance() on the pipeline thread, restart() by the serve
+    // thread at session start (pts restart from zero when a new viewer connects).
+    PtsClock pts_;
+    int64_t ts_us_ = -1;  // dequeue time of the frame being encoded (publish -> send_frame)
     // Atomic: written under mx_ by the serve thread on session (re)start,
     // read/written by publish() on the pipeline thread WITHOUT mx_ (only the
     // active_ gate in between) -- a plain int64_t was a data race (UB).
     std::atomic<int64_t> last_enc_ts_us_ { -1 };
+    // Frames encoded; gates the destructor drain in both modes (the CFR
+    // counter alone would be 0 in VFR and skip the flush).
     uint64_t frames_sent_ = 0;
 
     // Late-joiner support: the SPS/PPS prefix of the first IDR, repeated

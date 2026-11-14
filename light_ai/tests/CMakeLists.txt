@@ -35,10 +35,12 @@ add_executable(light_ai_tests
     test_source_prober.cpp
     test_encoder_config.cpp
     test_param_set_cache.cpp
+    test_pts_clock.cpp
     # modules under test
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
     ${LIGHT_AI_ROOT}/src/core/encoder_config.cpp
     ${LIGHT_AI_ROOT}/src/core/param_set_cache.cpp
+    ${LIGHT_AI_ROOT}/src/core/pts_clock.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp
     ${LIGHT_AI_ROOT}/src/tracker.cpp
     ${LIGHT_AI_ROOT}/src/box_mapper.cpp
