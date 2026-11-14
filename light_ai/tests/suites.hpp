@@ -16,3 +16,4 @@ void test_config( TestRun& t );
 void test_signals( TestRun& t );
 void test_log( TestRun& t );
 void test_inference_pool( TestRun& t );
+void test_timings( TestRun& t );

@@ -81,8 +81,8 @@ keep "Migration plan" current when a stage changes state.
       Open: record a reference detection CSV on a fixed MJPEG file -- stage 6 compares against it.
 - [x] 1 Global state: SignalWaiter/ProcessEnv (no g_pipe), Config grouped by consumer, Log (PRs #7-#9).
       Open: ~170 direct std::cout/cerr writes migrate per stage; no CLI option for the log level yet.
-- [ ] 2 InferencePool: slots, workers, FIFO, core masks out of Pipeline; InferSlot with private
-      state; OverlaySink takes FrameView (PR #10, awaiting the board check).
+- [x] 2 InferencePool: slots, workers, FIFO, core masks out of Pipeline; InferSlot with private
+      state; OverlaySink takes FrameView (PR #10).
       Check: --pool 1 and --pool 3 FPS and TOTAL timings within noise of fix/audit-p0;
       boxes drawn (GPU and --cpu-draw); camera unplug/replug under --pool 3; Ctrl-C summary.
 - [ ] 3 Sources: SourceChannel with an explicit State {NeverAttached, Detached, Live},

@@ -38,6 +38,7 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
   : cfg_( cfg )
   , pool_( cfg_.infer, YoloDecode( cfg_.infer.conf_thr, cfg_.infer.iou_thr ), log, PoolOptions {},
           cfg_.infer.model.c_str() )
+  , t_( log )
   , sink_( log )
   , stop_( stop )
   , log_( log )
@@ -660,7 +661,7 @@ int Pipeline::run()
         ok += publish_oldest();
 
     const double wall = std::chrono::duration<double>( clk::now() - t_start ).count();
-    t_.report( "TOTAL " );
+    t_.report_total();
     rep_.summary( ok, wall, reconnects_ );
     return ok;
 }

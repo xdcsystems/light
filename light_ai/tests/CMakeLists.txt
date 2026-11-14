@@ -27,6 +27,7 @@ add_executable(light_ai_tests
     test_signals.cpp
     test_log.cpp
     test_inference_pool.cpp
+    test_timings.cpp
     # modules under test
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp
@@ -38,6 +39,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/process_env.cpp
     ${LIGHT_AI_ROOT}/src/signal_waiter.cpp
     ${LIGHT_AI_ROOT}/src/cpu_affinity.cpp
+    ${LIGHT_AI_ROOT}/src/timings.cpp
     ${LIGHT_AI_ROOT}/externals/inih/ini.c
 )
 # Same inih switch as the main target: the config-file handler relies on it.
