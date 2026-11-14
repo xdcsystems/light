@@ -6,69 +6,21 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include <netinet/in.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include "check.hpp"
+#include "loopback.hpp"
 #include "source/buffered_socket.hpp"
 #include "suites.hpp"
 
 using Fill = BufferedSocket::Fill;
+using loopback::Listener;
+using loopback::write_all;
 
 namespace
 {
-    // A loopback listener on an ephemeral port; accept() hands out the server end.
-    class Listener
-    {
-    public:
-        Listener()
-        {
-            fd_ = ::socket( AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0 );
-            sockaddr_in a {};
-            a.sin_family = AF_INET;
-            a.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
-            a.sin_port = 0;
-            ::bind( fd_, reinterpret_cast<sockaddr*>( &a ), sizeof( a ) );
-            ::listen( fd_, 4 );
-            socklen_t len = sizeof( a );
-            ::getsockname( fd_, reinterpret_cast<sockaddr*>( &a ), &len );
-            port_ = ntohs( a.sin_port );
-        }
-        ~Listener()
-        {
-            if ( fd_ >= 0 )
-                ::close( fd_ );
-        }
-        Listener( const Listener& ) = delete;
-        Listener& operator=( const Listener& ) = delete;
-
-        int port() const { return port_; }
-        int accept() const { return ::accept( fd_, nullptr, nullptr ); }
-        void close()
-        {
-            ::close( fd_ );
-            fd_ = -1;
-        }
-
-    private:
-        int fd_ = -1;
-        int port_ = 0;
-    };
-
-    void write_all( int fd, const std::string& s )
-    {
-        size_t off = 0;
-        while ( off < s.size() )
-        {
-            const ssize_t w = ::send( fd, s.data() + off, s.size() - off, MSG_NOSIGNAL );
-            if ( w <= 0 )
-                return;
-            off += static_cast<size_t>( w );
-        }
-    }
-
     // Fills until want bytes are buffered or a non-Data result.
     Fill fill_until( BufferedSocket& s, size_t want )
     {
