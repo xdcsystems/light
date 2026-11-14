@@ -23,3 +23,4 @@ void test_source_threads( TestRun& t );
 void test_source_set( TestRun& t );
 void test_source_prober( TestRun& t );
 void test_source_prober_threads( TestRun& t );
+void test_encoder_config( TestRun& t );

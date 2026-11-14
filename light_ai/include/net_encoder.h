@@ -34,7 +34,8 @@
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
 
-#include "core/geometry.hpp"   // LbGeom: band geometry arrives as one object
+#include "core/encoder_config.hpp"  // EncoderConfig, StreamLayout
+#include "core/geometry.hpp"        // LbGeom: band geometry arrives as one object
 #include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<kBufCount>: RAII pool sub-object
 #include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
 
@@ -86,15 +87,8 @@ class NetEncoder
 public:
     // log: the process diagnostics, owned by main(); outlives the encoder
     // (the serve thread logs through it too: Log is thread-safe).
-    NetEncoder( const Log& log,
-                int model_w,
-                int model_h,
-                const LbGeom& band,
-                int fps,
-                int port,
-                const std::string& host,
-                int bitrate_kbps,
-                int nsrc = 1 );
+    // cfg: the stream geometry, rate and endpoint (core/encoder_config.hpp).
+    NetEncoder( const EncoderConfig& cfg, const Log& log );
 
     ~NetEncoder();
     NetEncoder( const NetEncoder& ) = delete;
@@ -150,8 +144,7 @@ private:
 
 private:
     const Log& log_;
-    const int w_, h_, tile_w_, tile_h_, nsrc_, fps_, port_, bitrate_kbps_;
-    const std::string host_;
+    const EncoderConfig cfg_;
     std::thread thread_;
     std::atomic<bool> quit_ { false };
     std::atomic<bool> error_ { false };
@@ -196,7 +189,6 @@ private:
     // start (pts restart from zero when a new viewer connects).
     // frames_sent_ gates the destructor drain in both modes
     // (pts_ alone would be 0 in VFR and skip the flush).
-    bool vfr_ = false;
     int64_t ts_us_ = -1;
     int64_t ts_base_ = -1;
     int64_t last_pts_ = -1;
@@ -205,10 +197,6 @@ private:
     // active_ gate in between) -- a plain int64_t was a data race (UB).
     std::atomic<int64_t> last_enc_ts_us_ { -1 };
     uint64_t frames_sent_ = 0;
-    int model_w_ = 0, model_h_ = 0;  // NPU tensor geometry (RGB888)
-    int band_left_ = 0, band_top_ = 0;  // visible letterbox band in the tensor
-    int band_w_ = 0, band_h_ = 0;       // band size (portrait: vertical strip)
-    int vstride_ = 0;  // NV12 ver stride (16-aligned h), set in the ctor
 
     // h264 parameter-set prefix captured from the first key packet,
     // prepended to every following IDR (late-joiner support).
