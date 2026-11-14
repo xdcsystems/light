@@ -8,7 +8,6 @@
 #include <unistd.h>
 #include <im2d.h>
 #include <rga.h>
-#include <libdrm/drm_fourcc.h>  // DRM_FORMAT_*
 
 extern "C"
 {
@@ -28,6 +27,7 @@ extern "C"
 #include "core/log.hpp"
 #include "core/param_set_cache.hpp"
 #include "core/pts_clock.hpp"
+#include "net/encoder_frame_pool.hpp"
 #include "muxer_teardown.hpp"
 #include "net_encoder.h"
 #include "av_common.hpp"
@@ -106,6 +106,7 @@ namespace
 NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
   : log_( log )
   , cfg_( cfg )
+  , ring_( cfg.layout )
   , pacer_( cfg.layout.nsrc, cfg.fps )
   , pts_( cfg.vfr() )
   , params_( log )
@@ -123,18 +124,16 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
                     << lay.band.top << ',' << lay.band.top + lay.band.h << ") of " << cfg_.model_w << 'x' << cfg_.model_h
                     << " -> " << lay.w << 'x' << lay.h << '\n';
 
-    // Four NV12 dma-bufs: a plane held by an in-flight encode is never
-    // overwritten by RGA. The 3-deep rkmpp task queue can hold a full
-    // VFR clump, so the ring stays one slot deeper than the queue.
-    // RAII sub-object: a throw below (avcodec_open2, av_frame_alloc)
-    // cannot leak the pool -- the sub-object destructs on unwinding.
-    // Alloc failures throw from here (fail loud, RknnEngine pattern);
-    // the pool has already self-cleaned by then.
-    std::string pool_why;
-    if ( !pool_.alloc( static_cast<size_t>( lay.w ) * lay.vstride * 3 / 2, MODULE_TAG, __FUNCTION__, &pool_why ) )
+    // The input ring (ring_, 4 NV12 dma-bufs + DRM_PRIME frames) is
+    // allocated by its own ctor, before this body. The composite canvas
+    // and the idle canvas: RAII sub-objects too -- a throw below
+    // (avcodec_open2, av_packet_alloc) cannot leak them. Alloc failures
+    // throw from here (fail loud, RknnEngine pattern).
+    std::string canvas_why;
+    if ( !canvas_.alloc( static_cast<size_t>( lay.w ) * lay.vstride * 3 / 2, MODULE_TAG, __FUNCTION__, &canvas_why ) )
     {
         avformat_network_deinit();
-        throw std::runtime_error( "net encoder: " + pool_why );
+        throw std::runtime_error( "net encoder: canvas: " + canvas_why );
     }
 
     // Idle canvas (NO SIGNAL): a dedicated dma-buf, gray-filled by the
@@ -222,13 +221,13 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
         log_.info() << "enc: VFR follow-source mode: time_base 1/90000, pts from dequeue times\n";
 
     pkt_ = av_packet_alloc();
-    if ( !pkt_ || !init_frames() )
+    if ( !pkt_ || !init_packets() )
     {
-        free_frames();
+        free_packets();
         av_packet_free( &pkt_ );
         avcodec_free_context( &enc_ );
         avformat_network_deinit();
-        throw std::runtime_error( "net encoder: av_frame/av_packet_alloc failed" );
+        throw std::runtime_error( "net encoder: av_packet_alloc failed" );
     }
 
     try
@@ -237,7 +236,7 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
     }
     catch ( ... )
     {
-        free_frames();
+        free_packets();
         av_packet_free( &pkt_ );
         avcodec_free_context( &enc_ );
         avformat_network_deinit();
@@ -280,11 +279,11 @@ NetEncoder::~NetEncoder()
             // The wrapper runs a NON_BLOCK output timeout (no LOW_DELAY
             // flag): EAGAIN during flush means "frames still in flight",
             // not "done". Stopping at the first EAGAIN leaves up to
-            // kBufCount frames + EOS queued inside MPP; mpp_destroy then
+            // EncoderFramePool::kSlots frames + EOS queued inside MPP; mpp_destroy then
             // tears its internal queues down over live packets
             // ("mpp_meta: put_meta negative ref_count" /
             // "mpp_mem_pool ... caller mpp_packet_deinit" at exit).
-            // Bounded: the encoder holds at most kBufCount frames and
+            // Bounded: the encoder holds at most kSlots frames and
             // codes ~1-2 ms each, so the guards below can never loop
             // forever.
             // EOF must reach the wrapper: on EAGAIN from send (input
@@ -338,7 +337,7 @@ NetEncoder::~NetEncoder()
         }
         avcodec_free_context( &enc_ );
     }
-    free_frames();
+    free_packets();
     if ( pkt_ )
         av_packet_free( &pkt_ );
     // The DRM pool releases itself: pool_ is a member sub-object, its
@@ -407,7 +406,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     if ( do_enc )
     {
         ts_us_ = ts_us;
-        cur_ = ( cur_ + 1 ) % kBufCount;
+        ring_.advance();
     }
 
     // Fence wait + RGA crop run OUTSIDE the lock: the critical section
@@ -415,7 +414,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     // cameras finish within a few ms of each other, !do_enc still updates
     // the source's tile in the persistent composite canvas (mb = nullptr)
     // without emitting a duplicate 2-ms-apart H.264 frame.
-    if ( !prep_frame( tensor_fd, band, src_idx, do_enc ? pool_.buf[cur_] : nullptr ) )
+    if ( !prep_frame( tensor_fd, band, src_idx, do_enc ? ring_.buf( ring_.current() ) : nullptr ) )
     {
         error_.store( true );
         {
@@ -462,8 +461,7 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
     if ( !pacer_.admit_idle( ts_us, queue_depth(), epoch ) )
         return;  // encode queue busy: skip this tick
     ts_us_ = ts_us;
-    cur_ = ( cur_ + 1 ) % kBufCount;
-    if ( !prep_idle_frame( absent, nabs, pool_.buf[ cur_ ] ) )
+    if ( !prep_idle_frame( absent, nabs, ring_.buf( ring_.advance() ) ) )
     {
         error_.store( true );
         {
@@ -497,7 +495,7 @@ bool NetEncoder::prep_idle_frame( const bool* absent, int nabs, MppBuffer mb )
         // Single-view: the idle canvas IS the frame; the band stamp below
         // forces the gray refill on live resume (plate pixels must not
         // survive around the live picture).
-        buf_bands_[ cur_ ] = LbGeom { 0, 1, 0, 1 };
+        buf_bands_[ ring_.current() ] = LbGeom { 0, 1, 0, 1 };
         const IM_STATUS cs = imcopy( idl, out );
         if ( static_cast<int>( cs ) <= 0 )
         {
@@ -508,7 +506,7 @@ bool NetEncoder::prep_idle_frame( const bool* absent, int nabs, MppBuffer mb )
     }
     // Multi-view: stamp the plate tile into every absent cell of the
     // persistent composite canvas; live tiles keep their last picture.
-    MppBuffer cv = pool_.buf[ kBufCount ];
+    MppBuffer cv = canvas_.buf[ 0 ];
     rga_buffer_t cvs = wrapbuffer_fd( mpp_buffer_get_fd( cv ),
                                       lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
     for ( int s = 0; s < lay.nsrc; ++s )
@@ -536,7 +534,7 @@ bool NetEncoder::prep_idle_frame( const bool* absent, int nabs, MppBuffer mb )
 
 // RGA prep for the current frame: crop the letterbox band of the model
 // tensor into the ping-pong NV12 buffer mb (or into the persistent
-// composite buffer pool_.buf[kBufCount] + DMA copy in multi-view); the
+// composite canvas canvas_ + DMA copy in multi-view); the
 // crop and the target rectangle come from place_tile() (core/encoder_config.hpp).
 // GPU draw -> RGA ordering is guaranteed by sync_cpu() in
 // OverlaySink::draw_and_publish, which runs before publish() on the
@@ -548,8 +546,8 @@ bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, Mpp
     const TilePlacement tp = place_tile( lay, band, src_idx );
     const LbGeom& d = tp.dst;
 
-    MppBuffer target = multi ? pool_.buf[kBufCount] : mb;
-    LbGeom& prev = buf_bands_[multi ? static_cast<uint32_t>( tp.cell ) : cur_];
+    MppBuffer target = multi ? canvas_.buf[0] : mb;
+    LbGeom& prev = buf_bands_[multi ? tp.cell : ring_.current()];
     if ( prev.w > 0 && ( prev.left != d.left || prev.top != d.top || prev.w != d.w || prev.h != d.h ) )
     {
         if ( multi )
@@ -565,7 +563,7 @@ bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, Mpp
     rga_buffer_t src = wrapbuffer_fd( tensor_fd, cfg_.model_w, cfg_.model_h, RK_FORMAT_RGB_888 );
     im_rect srect = { tp.src.left, tp.src.top, tp.src.w, tp.src.h };
     // Explicit strides: the VU plane lands at w * vstride - exactly where
-    // the DRM descriptor (init_frames) reports it.
+    // the DRM descriptor (EncoderFramePool) reports it.
     rga_buffer_t dst = wrapbuffer_fd( mpp_buffer_get_fd( target ), lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
     im_rect drect = { d.left, d.top, d.w, d.h };
     const IM_STATUS rs = improcess( src, dst, {}, srect, drect, {}, 0 );
@@ -587,40 +585,8 @@ bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, Mpp
     return true;
 }
 
-bool NetEncoder::init_frames()
+bool NetEncoder::init_packets()
 {
-    const StreamLayout& lay = cfg_.layout;
-    for ( int i = 0; i < kBufCount; ++i )
-    {
-        MppBuffer mb = pool_.buf[i];
-        AVDRMFrameDescriptor& desc = desc_[i];
-        desc.nb_objects = 1;
-        desc.objects[0].fd = mpp_buffer_get_fd( mb );
-        desc.objects[0].size = mpp_buffer_get_size( mb );
-        desc.objects[0].format_modifier = DRM_FORMAT_MOD_LINEAR;
-        desc.nb_layers = 1;
-        desc.layers[0].format = DRM_FORMAT_NV12;
-        desc.layers[0].nb_planes = 2;
-        desc.layers[0].planes[0].object_index = 0;
-        desc.layers[0].planes[0].offset = 0;
-        desc.layers[0].planes[0].pitch = lay.w;
-        desc.layers[0].planes[1].object_index = 0;
-        desc.layers[0].planes[1].offset = lay.w * lay.vstride;
-        desc.layers[0].planes[1].pitch = lay.w;
-
-        AVFrame* fr = av_frame_alloc();
-        if ( !fr )
-            return false;
-        frames_[i] = fr;
-        fr->format = AV_PIX_FMT_DRM_PRIME;
-        fr->width = lay.w;
-        fr->height = lay.h;
-        fr->data[0] = reinterpret_cast<uint8_t*>( &desc );
-        fr->buf[0] = av_buffer_create(
-            reinterpret_cast<uint8_t*>( &desc ), sizeof( desc ), av_noop_free, nullptr, 0 );
-        if ( !fr->buf[0] )
-            return false;
-    }
     mux_pkt_ = av_packet_alloc();
     dup_pkt_ = av_packet_alloc();
     if ( !mux_pkt_ || !dup_pkt_ )
@@ -634,13 +600,8 @@ bool NetEncoder::init_frames()
     return true;
 }
 
-void NetEncoder::free_frames()
+void NetEncoder::free_packets()
 {
-    for ( auto*& fr : frames_ )
-    {
-        if ( fr )
-            av_frame_free( &fr );
-    }
     for ( auto*& qp : pkts_.d )
     {
         if ( qp )
@@ -669,7 +630,7 @@ void NetEncoder::clear_pkt_queue()
 
 bool NetEncoder::send_frame( AVStream* st )
 {
-    AVFrame* fr = frames_[cur_];
+    AVFrame* fr = ring_.frame( ring_.current() );
     const int64_t fpts = pts_.next( ts_us_, frames_sent_ );
     fr->pts = fpts;
 

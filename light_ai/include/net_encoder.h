@@ -16,16 +16,7 @@
 #include <string>
 #include <thread>
 
-// DRM frame descriptor for the encoder zero-copy input: 
-// the ping-pong dma-bufs are wrapped as AV_PIX_FMT_DRM_PRIME frames and 
-// imported by the rkmpp wrapper by fd -- no CPU pixel copies anywhere in the path.
-#include <libavutil/hwcontext_drm.h>
-
 #include "pod_ring.hpp"
-
-// The DRM_FORMAT_* constants (NV12, MOD_LINEAR) live in drm_fourcc.h:
-// this header uses only the descriptor TYPE (hwcontext_drm.h) --
-// the constants are the cpp's business.
 
 // Same include form as mpp_decoder.hpp: <rockchip/rk_mpi.h> resolves to
 // the self-built /usr/local/include/rockchip headers. The quoted form
@@ -38,7 +29,8 @@
 #include "core/geometry.hpp"        // LbGeom: band geometry arrives as one object
 #include "core/param_set_cache.hpp"  // ParamSetCache: late-join SPS/PPS repeat
 #include "core/pts_clock.hpp"        // PtsClock: CFR / VFR pts
-#include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<kBufCount>: RAII pool sub-object
+#include "net/encoder_frame_pool.hpp"  // EncoderFramePool: the encoder input ring
+#include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<1>: RAII canvas sub-objects
 #include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
 
 class Log;
@@ -81,8 +73,6 @@ class NetEncoder
 
     enum
     {
-        kBufCount = 4,
-        kPoolCount = kBufCount + 1,
         kPktQDepth = 32
     };
 
@@ -134,8 +124,8 @@ private:
     // frame_step: muxer ticks per codec pts, handed to pts_ under mx_ by run_session().
     bool setup_stream( AVFormatContext* fc, AVStream** st, int64_t* frame_step, bool tcp_pull );
 
-    bool init_frames();
-    void free_frames();
+    bool init_packets();
+    void free_packets();
     void clear_pkt_queue();
     int queue_depth();  // packets queued for serve() (pkt_mx_)
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
@@ -164,15 +154,13 @@ private:
     AVPacket* pkt_ = nullptr;
     AVPacket* mux_pkt_ = nullptr;
     AVPacket* dup_pkt_ = nullptr;
-    // Four buffers. The 3-deep rkmpp task queue can hold a full VFR
-    // clump: the 4th frame's RGA write would hit the slot of the oldest
-    // in-flight encode. The 4th ring slot absorbs that window.
-    RkmppDrmPool<kPoolCount> pool_;  // 4 ring NV12 dma-bufs + 1 composite canvas (multi-view)
+    // The encoder's input ring: 4 NV12 dma-bufs pre-bound to DRM_PRIME
+    // AVFrames (net/encoder_frame_pool.hpp). Freed after the codec (dtor body).
+    EncoderFramePool ring_;
+    RkmppDrmPool<1> canvas_;     // persistent composite canvas (multi-view)
     RkmppDrmPool<1> idle_pool_;  // pre-rendered NO SIGNAL canvas: gray + plate, stamped once at init
-    uint32_t cur_ = 0;
-    AVDRMFrameDescriptor desc_[kBufCount] {};  // per-buffer DRM descriptors (DRM_PRIME)
-    std::array<AVFrame*, kBufCount> frames_ {};  // pre-bound DRM_PRIME frames (one per pool slot)
-    std::array<LbGeom, kPoolCount> buf_bands_ {}; // last band: NV12 slot (single-view) or canvas cell (multi-view)
+    // last band: ring slot (single-view) or canvas cell (multi-view)
+    std::array<LbGeom, EncoderFramePool::kSlots + 1> buf_bands_ {};
 
     // Encoder -> serve() preallocated packet ring queue. A separate mutex
     // from mx_: network-side wakeups never touch the encode critical section.
