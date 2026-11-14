@@ -105,7 +105,7 @@ keep "Migration plan" current when a stage changes state.
       trivial destructors). Check: viewer joins mid-stream, 1 and 3 sources, NO SIGNAL plate,
       exit without MPP errors.
       Issue #19 (plan + review in its comments), split 4a/4b/4c/4d. 4a (Log, EncoderConfig +
-      StreamLayout, ParamSetCache, PtsClock, EncodePacer): PR open, waiting for review.
+      StreamLayout, ParamSetCache, PtsClock, EncodePacer): PR #20, waiting for review.
       Baselines (fix/audit-p0 @ 2e8d17c, --net --net-h264, viewer connected):
       build/run_base_h264_pool{1,3}.log, build/run_base_h264_net.log, build/base_png*.png.
       Open (after stage 4, separate issues): force an IDR at a UDP session (re)start too;
