@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -30,7 +29,7 @@
 #include "core/param_set_cache.hpp"  // ParamSetCache: late-join SPS/PPS repeat
 #include "core/pts_clock.hpp"        // PtsClock: CFR / VFR pts
 #include "net/encoder_frame_pool.hpp"  // EncoderFramePool: the encoder input ring
-#include "rkmpp_drm_pool.hpp"  // RkmppDrmPool<1>: RAII canvas sub-objects
+#include "net/frame_composer.hpp"     // FrameComposer: the picture the encoder reads
 #include "tcp_pull_server.hpp" // TcpPullServer: RAII single-viewer TCP pull transport
 
 class Log;
@@ -129,11 +128,6 @@ private:
     void clear_pkt_queue();
     int queue_depth();  // packets queued for serve() (pkt_mx_)
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
-    bool prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb );
-
-    // NO SIGNAL frame assembly (idle path): copies the idle-plate tile(s)
-    // into the target buffer. False on RGA failure.
-    bool prep_idle_frame( const bool* absent, int nabs, MppBuffer mb );
 
 private:
     const Log& log_;
@@ -157,10 +151,9 @@ private:
     // The encoder's input ring: 4 NV12 dma-bufs pre-bound to DRM_PRIME
     // AVFrames (net/encoder_frame_pool.hpp). Freed after the codec (dtor body).
     EncoderFramePool ring_;
-    RkmppDrmPool<1> canvas_;     // persistent composite canvas (multi-view)
-    RkmppDrmPool<1> idle_pool_;  // pre-rendered NO SIGNAL canvas: gray + plate, stamped once at init
-    // last band: ring slot (single-view) or canvas cell (multi-view)
-    std::array<LbGeom, EncoderFramePool::kSlots + 1> buf_bands_ {};
+    // The picture: tensor band -> ring slot / canvas cell, the NO SIGNAL
+    // canvas (net/frame_composer.hpp).
+    FrameComposer composer_;
 
     // Encoder -> serve() preallocated packet ring queue. A separate mutex
     // from mx_: network-side wakeups never touch the encode critical section.

@@ -6,8 +6,6 @@
 #include <sstream>
 #include <string>
 #include <unistd.h>
-#include <im2d.h>
-#include <rga.h>
 
 extern "C"
 {
@@ -23,11 +21,11 @@ extern "C"
 
 #include "core/encode_pacer.hpp"
 #include "core/encoder_config.hpp"
-#include "core/idle_plate.hpp"
 #include "core/log.hpp"
 #include "core/param_set_cache.hpp"
 #include "core/pts_clock.hpp"
 #include "net/encoder_frame_pool.hpp"
+#include "net/frame_composer.hpp"
 #include "muxer_teardown.hpp"
 #include "net_encoder.h"
 #include "av_common.hpp"
@@ -54,59 +52,12 @@ static_assert( offsetof( RKMPPPriv, hwdevice ) == 24, "rkmpp priv layout drift" 
 static_assert( offsetof( RKMPPPriv, hwframe ) == 32, "rkmpp priv layout drift" );
 static_assert( offsetof( RKMPPPriv, mcfg ) == 40, "rkmpp priv layout drift" );
 
-namespace
-{
-    void fill_nv12_gray( MppBuffer mb )
-    {
-        if ( void* p = mpp_buffer_get_ptr( mb ) )
-        {
-            const size_t sz = mpp_buffer_get_size( mb );
-            dma::fill_and_flush( mpp_buffer_get_fd( mb ), p, 128, sz );
-        }
-    }
-
-    // Fill one canvas cell (NV12 semi-planar): Y rows + interleaved UV
-    // rows, bounded to the rect. Multi-view only -- the whole-canvas
-    // memset erased every neighbor's tile: live ones went gray until
-    // their next publish, an offline one stayed gray until reconnect.
-    void fill_nv12_gray_rect( MppBuffer mb, int stride, int vstride, const im_rect& rc )
-    {
-        if ( void* p = mpp_buffer_get_ptr( mb ) )
-        {
-            uint8_t* py = static_cast<uint8_t*>( p );
-            const size_t ysz = static_cast<size_t>( stride ) * static_cast<size_t>( vstride );
-            dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
-            for ( int r = 0; r < rc.height; ++r )
-                std::memset( py + static_cast<size_t>( rc.y + r ) * stride + rc.x, 128,
-                             static_cast<size_t>( rc.width ) );
-            uint8_t* puv = py + ysz;
-            for ( int r = 0; r < rc.height / 2; ++r )
-                std::memset( puv + static_cast<size_t>( rc.y / 2 + r ) * stride + ( rc.x / 2 ) * 2, 128,
-                             static_cast<size_t>( rc.width / 2 ) * 2 );
-            dma::cache_clean( p, mpp_buffer_get_size( mb ) );
-        }
-    }
-
-    // NO SIGNAL plate (idle canvas): IdlePlate rasterizes the label into
-    // the Y plane once at init (core/idle_plate.hpp); the DMA sync is here.
-    void draw_no_signal( MppBuffer mb, const StreamLayout& lay )
-    {
-        if ( !mb )
-            return;
-        uint8_t* py = static_cast<uint8_t*>( mpp_buffer_get_ptr( mb ) );
-        if ( !py )
-            return;
-        dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
-        IdlePlate plate;
-        plate.draw( Plane8 { py, lay.w, lay.vstride }, lay );
-        dma::cache_clean( py, mpp_buffer_get_size( mb ) );
-    }
-}  // namespace
 
 NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
   : log_( log )
   , cfg_( cfg )
   , ring_( cfg.layout )
+  , composer_( cfg, log )
   , pacer_( cfg.layout.nsrc, cfg.fps )
   , pts_( cfg.vfr() )
   , params_( log )
@@ -124,28 +75,9 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
                     << lay.band.top << ',' << lay.band.top + lay.band.h << ") of " << cfg_.model_w << 'x' << cfg_.model_h
                     << " -> " << lay.w << 'x' << lay.h << '\n';
 
-    // The input ring (ring_, 4 NV12 dma-bufs + DRM_PRIME frames) is
-    // allocated by its own ctor, before this body. The composite canvas
-    // and the idle canvas: RAII sub-objects too -- a throw below
-    // (avcodec_open2, av_packet_alloc) cannot leak them. Alloc failures
-    // throw from here (fail loud, RknnEngine pattern).
-    std::string canvas_why;
-    if ( !canvas_.alloc( static_cast<size_t>( lay.w ) * lay.vstride * 3 / 2, MODULE_TAG, __FUNCTION__, &canvas_why ) )
-    {
-        avformat_network_deinit();
-        throw std::runtime_error( "net encoder: canvas: " + canvas_why );
-    }
-
-    // Idle canvas (NO SIGNAL): a dedicated dma-buf, gray-filled by the
-    // pool alloc and stamped with the plate in every tile, once at init.
-    // publish_idle() RGA-copies from it -- the NPU tensor is never touched.
-    std::string idle_why;
-    if ( !idle_pool_.alloc( static_cast<size_t>( lay.w ) * lay.vstride * 3 / 2, MODULE_TAG, __FUNCTION__, &idle_why ) )
-    {
-        avformat_network_deinit();
-        throw std::runtime_error( "net encoder: idle canvas: " + idle_why );
-    }
-    draw_no_signal( idle_pool_.buf[ 0 ], lay );
+    // The input ring (ring_) and the canvases (composer_) are allocated by
+    // their own ctors, before this body: RAII members, a throw below
+    // (avcodec_open2, av_packet_alloc) cannot leak them.
 
     const AVCodec* codec = avcodec_find_encoder_by_name( "h264_rkmpp" );
     if ( !codec )
@@ -412,9 +344,10 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     // Fence wait + RGA crop run OUTSIDE the lock: the critical section
     // below now covers only encode + mux. In multi-view mode when two
     // cameras finish within a few ms of each other, !do_enc still updates
-    // the source's tile in the persistent composite canvas (mb = nullptr)
+    // the source's tile in the persistent composite canvas (out = nullptr)
     // without emitting a duplicate 2-ms-apart H.264 frame.
-    if ( !prep_frame( tensor_fd, band, src_idx, do_enc ? ring_.buf( ring_.current() ) : nullptr ) )
+    const int slot = ring_.current();
+    if ( !composer_.compose( tensor_fd, band, src_idx, slot, do_enc ? ring_.buf( slot ) : nullptr ) )
     {
         error_.store( true );
         {
@@ -461,7 +394,8 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
     if ( !pacer_.admit_idle( ts_us, queue_depth(), epoch ) )
         return;  // encode queue busy: skip this tick
     ts_us_ = ts_us;
-    if ( !prep_idle_frame( absent, nabs, ring_.buf( ring_.advance() ) ) )
+    const int slot = ring_.advance();
+    if ( !composer_.compose_idle( absent, nabs, slot, ring_.buf( slot ) ) )
     {
         error_.store( true );
         {
@@ -481,108 +415,6 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
             pkt_cv_.notify_all();  // serve() closes and reopens the stream path
         }
     }
-}
-
-bool NetEncoder::prep_idle_frame( const bool* absent, int nabs, MppBuffer mb )
-{
-    const StreamLayout& lay = cfg_.layout;
-    rga_buffer_t idl = wrapbuffer_fd( mpp_buffer_get_fd( idle_pool_.buf[ 0 ] ),
-                                      lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
-    rga_buffer_t out = wrapbuffer_fd( mpp_buffer_get_fd( mb ),
-                                      lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
-    if ( lay.nsrc <= 1 )
-    {
-        // Single-view: the idle canvas IS the frame; the band stamp below
-        // forces the gray refill on live resume (plate pixels must not
-        // survive around the live picture).
-        buf_bands_[ ring_.current() ] = LbGeom { 0, 1, 0, 1 };
-        const IM_STATUS cs = imcopy( idl, out );
-        if ( static_cast<int>( cs ) <= 0 )
-        {
-            log_.error() << "enc: RGA idle copy failed: " << imStrError( cs ) << "\n";
-            return false;
-        }
-        return true;
-    }
-    // Multi-view: stamp the plate tile into every absent cell of the
-    // persistent composite canvas; live tiles keep their last picture.
-    MppBuffer cv = canvas_.buf[ 0 ];
-    rga_buffer_t cvs = wrapbuffer_fd( mpp_buffer_get_fd( cv ),
-                                      lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
-    for ( int s = 0; s < lay.nsrc; ++s )
-    {
-        if ( absent && s < nabs && !absent[ s ] )
-            continue;
-        const LbGeom c = cell_rect( lay, s );
-        im_rect tile = { c.left, c.top, c.w, c.h };
-        const IM_STATUS rs = improcess( idl, cvs, {}, tile, tile, {}, 0 );
-        if ( static_cast<int>( rs ) <= 0 )
-        {
-            log_.error() << "enc: RGA idle tile copy failed: " << imStrError( rs ) << "\n";
-            return false;
-        }
-        buf_bands_[ s ] = LbGeom { 0, 1, 0, 1 };  // forces the gray refill on live resume
-    }
-    const IM_STATUS cs = imcopy( cvs, out );
-    if ( static_cast<int>( cs ) <= 0 )
-    {
-        log_.error() << "enc: RGA idle composite copy failed: " << imStrError( cs ) << "\n";
-        return false;
-    }
-    return true;
-}
-
-// RGA prep for the current frame: crop the letterbox band of the model
-// tensor into the ping-pong NV12 buffer mb (or into the persistent
-// composite canvas canvas_ + DMA copy in multi-view); the
-// crop and the target rectangle come from place_tile() (core/encoder_config.hpp).
-// GPU draw -> RGA ordering is guaranteed by sync_cpu() in
-// OverlaySink::draw_and_publish, which runs before publish() on the
-// same pipeline thread.
-bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb )
-{
-    const StreamLayout& lay = cfg_.layout;
-    const bool multi = lay.nsrc > 1;
-    const TilePlacement tp = place_tile( lay, band, src_idx );
-    const LbGeom& d = tp.dst;
-
-    MppBuffer target = multi ? canvas_.buf[0] : mb;
-    LbGeom& prev = buf_bands_[multi ? tp.cell : ring_.current()];
-    if ( prev.w > 0 && ( prev.left != d.left || prev.top != d.top || prev.w != d.w || prev.h != d.h ) )
-    {
-        if ( multi )
-        {
-            const LbGeom c = cell_rect( lay, tp.cell );
-            fill_nv12_gray_rect( target, lay.w, lay.vstride, im_rect { c.left, c.top, c.w, c.h } );
-        }
-        else
-            fill_nv12_gray( target );
-    }
-    prev = d;
-
-    rga_buffer_t src = wrapbuffer_fd( tensor_fd, cfg_.model_w, cfg_.model_h, RK_FORMAT_RGB_888 );
-    im_rect srect = { tp.src.left, tp.src.top, tp.src.w, tp.src.h };
-    // Explicit strides: the VU plane lands at w * vstride - exactly where
-    // the DRM descriptor (EncoderFramePool) reports it.
-    rga_buffer_t dst = wrapbuffer_fd( mpp_buffer_get_fd( target ), lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
-    im_rect drect = { d.left, d.top, d.w, d.h };
-    const IM_STATUS rs = improcess( src, dst, {}, srect, drect, {}, 0 );
-    if ( static_cast<int>( rs ) <= 0 )
-    {
-        log_.error() << "enc: RGA convert failed: " << imStrError( rs ) << "\n";
-        return false;
-    }
-    if ( multi && mb != nullptr )
-    {
-        rga_buffer_t out = wrapbuffer_fd( mpp_buffer_get_fd( mb ), lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
-        const IM_STATUS cs = imcopy( dst, out );
-        if ( static_cast<int>( cs ) <= 0 )
-        {
-            log_.error() << "enc: RGA composite copy failed: " << imStrError( cs ) << "\n";
-            return false;
-        }
-    }
-    return true;
 }
 
 bool NetEncoder::init_packets()
