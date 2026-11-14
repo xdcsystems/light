@@ -88,7 +88,7 @@ namespace
         c.fps = stream.fps;
         c.port = stream.port;
         c.host = stream.host;
-        c.bitrate_kbps = stream.bitrate_kbps > 0 ? stream.bitrate_kbps : 12000;
+        c.bitrate_kbps = stream.bitrate_kbps;  // the <= 0 fallback is EncoderConfig::kbps()
         return c;
     }
 

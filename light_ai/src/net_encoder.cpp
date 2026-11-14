@@ -6,10 +6,6 @@
 #include <sstream>
 #include <string>
 #include <unistd.h>
-#include <im2d.h>
-#include <rga.h>
-#include <libdrm/drm_fourcc.h>  // DRM_FORMAT_*
-#include <stb_easy_font.h>
 
 extern "C"
 {
@@ -28,6 +24,8 @@ extern "C"
 #include "core/log.hpp"
 #include "core/param_set_cache.hpp"
 #include "core/pts_clock.hpp"
+#include "net/encoder_frame_pool.hpp"
+#include "net/frame_composer.hpp"
 #include "muxer_teardown.hpp"
 #include "net_encoder.h"
 #include "av_common.hpp"
@@ -54,167 +52,12 @@ static_assert( offsetof( RKMPPPriv, hwdevice ) == 24, "rkmpp priv layout drift" 
 static_assert( offsetof( RKMPPPriv, hwframe ) == 32, "rkmpp priv layout drift" );
 static_assert( offsetof( RKMPPPriv, mcfg ) == 40, "rkmpp priv layout drift" );
 
-namespace
-{
-    void fill_nv12_gray( MppBuffer mb )
-    {
-        if ( void* p = mpp_buffer_get_ptr( mb ) )
-        {
-            const size_t sz = mpp_buffer_get_size( mb );
-            dma::fill_and_flush( mpp_buffer_get_fd( mb ), p, 128, sz );
-        }
-    }
-
-    // Fill one canvas cell (NV12 semi-planar): Y rows + interleaved UV
-    // rows, bounded to the rect. Multi-view only -- the whole-canvas
-    // memset erased every neighbor's tile: live ones went gray until
-    // their next publish, an offline one stayed gray until reconnect.
-    void fill_nv12_gray_rect( MppBuffer mb, int stride, int vstride, const im_rect& rc )
-    {
-        if ( void* p = mpp_buffer_get_ptr( mb ) )
-        {
-            uint8_t* py = static_cast<uint8_t*>( p );
-            const size_t ysz = static_cast<size_t>( stride ) * static_cast<size_t>( vstride );
-            dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
-            for ( int r = 0; r < rc.height; ++r )
-                std::memset( py + static_cast<size_t>( rc.y + r ) * stride + rc.x, 128,
-                             static_cast<size_t>( rc.width ) );
-            uint8_t* puv = py + ysz;
-            for ( int r = 0; r < rc.height / 2; ++r )
-                std::memset( puv + static_cast<size_t>( rc.y / 2 + r ) * stride + ( rc.x / 2 ) * 2, 128,
-                             static_cast<size_t>( rc.width / 2 ) * 2 );
-            dma::cache_clean( p, mpp_buffer_get_size( mb ) );
-        }
-    }
-
-    // One stb_easy_font vertex: x/y/z float + color uint8[4], 16 bytes,
-    // four per quad -- the lib emits 1-px-thick axis-aligned stroke quads,
-    // so rasterization is a scaled bbox fill (smooth at any scale; the
-    // raster font8x8 stays in externals as a spare).
-    struct FontVertex
-    {
-        float x;
-        float y;
-        float z;
-        unsigned char c[ 4 ];
-    };
-
-    // The lib API is char*-based (legacy C): copy into a fixed buffer --
-    // const_cast is banned by the project gate (.clang-tidy keeps
-    // cppcoreguidelines-pro-type-const-cast on).
-    void font_txt( char* dst, int cap, const char* s )
-    {
-        const int n = static_cast<int>( std::strlen( s ) );
-        const int m = n < cap - 1 ? n : cap - 1;
-        std::memcpy( dst, s, static_cast<size_t>( m ) );
-        dst[ m ] = 0;
-    }
-
-    // Rendered text size in Y pixels, for callers that center the plate.
-    int text_width( const char* s, int scale )
-    {
-        if ( !s )
-            return 0;
-        constexpr int k_txt_cap = 64;
-        char txt[ k_txt_cap ];
-        font_txt( txt, k_txt_cap, s );
-        return stb_easy_font_width( txt ) * scale;
-    }
-
-    int text_height( const char* s, int scale )
-    {
-        if ( !s )
-            return 0;
-        constexpr int k_txt_cap = 64;
-        char txt[ k_txt_cap ];
-        font_txt( txt, k_txt_cap, s );
-        return stb_easy_font_height( txt ) * scale;
-    }
-
-    // Renders `s` at (x, y) -- the glyph-area top left -- in the Y plane
-    // `py` (row stride `stride`, plane height `max_h`), scaling every
-    // stroke quad by `scale`. `val` is the Y luminance (0..255). Characters
-    // outside the table render as blanks. The caller owns the DMA cache sync.
-    void stamp_text( uint8_t* py, int stride, int max_h, int x, int y,
-                     const char* s, int scale, uint8_t val )
-    {
-        if ( !py || scale <= 0 || !s )
-            return;
-        constexpr int k_txt_cap = 64;
-        char txt[ k_txt_cap ];
-        font_txt( txt, k_txt_cap, s );
-        stb_easy_font_spacing( 0 );  // default spacing; keeps the static referenced
-        unsigned char col[ 4 ] = { val, val, val, 255 };
-        alignas( FontVertex ) char vbuf[ 8192 ];  // 128 quads -- enough for any short label
-        const int nq = stb_easy_font_print( 0.0f, 0.0f, txt, col, vbuf,
-                                            static_cast<int>( sizeof( vbuf ) ) );
-        for ( int q = 0; q < nq; ++q )
-        {
-            const FontVertex* v = reinterpret_cast<const FontVertex*>( vbuf ) + q * 4;
-            float min_x = v[ 0 ].x;
-            float max_x = v[ 0 ].x;
-            float min_y = v[ 0 ].y;
-            float max_y = v[ 0 ].y;
-            for ( int k = 1; k < 4; ++k )
-            {
-                if ( v[ k ].x < min_x )
-                    min_x = v[ k ].x;
-                if ( v[ k ].x > max_x )
-                    max_x = v[ k ].x;
-                if ( v[ k ].y < min_y )
-                    min_y = v[ k ].y;
-                if ( v[ k ].y > max_y )
-                    max_y = v[ k ].y;
-            }
-            // Stroke quads carry integer coords, so the scaled fill is
-            // exact: [min*scale, max*scale) per axis -- no +1 rounding.
-            const int ix0 = x + static_cast<int>( min_x * scale );
-            const int iy0 = y + static_cast<int>( min_y * scale );
-            int ix1 = x + static_cast<int>( max_x * scale );
-            int iy1 = y + static_cast<int>( max_y * scale );
-            if ( ix1 > stride )
-                ix1 = stride;
-            if ( iy1 > max_h )
-                iy1 = max_h;
-            for ( int ry = iy0; ry < iy1; ++ry )
-            {
-                if ( ry < 0 )
-                    continue;
-                uint8_t* row = py + static_cast<size_t>( ry ) * stride;
-                for ( int rx = ix0; rx < ix1; ++rx )
-                    if ( rx >= 0 )
-                        row[ rx ] = val;
-            }
-        }
-    }
-
-    // NO SIGNAL plate (idle canvas): a one-time CPU raster at init -- the
-    // README zero-copy rule governs the FRAME path, and this follows the
-    // gray-letterbox memset precedent (init-time only, never per frame).
-    // stb_easy_font stroke glyphs at 3x -- the same raster will serve the
-    // box labels. Centered in every tile (single-view: once).
-    void draw_no_signal( MppBuffer mb, int w, int plane_h, int tile_w, int tile_h, int nsrc )
-    {
-        if ( !mb )
-            return;
-        const char* msg = "NO SIGNAL";
-        constexpr int k_text_scale = 3;
-        const int x0 = ( tile_w - text_width( msg, k_text_scale ) ) / 2;
-        const int y0 = ( tile_h - text_height( msg, k_text_scale ) ) / 2;
-        uint8_t* py = static_cast<uint8_t*>( mpp_buffer_get_ptr( mb ) );
-        if ( !py )
-            return;
-        dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
-        for ( int t = 0; t < nsrc; ++t )
-            stamp_text( py, w, plane_h, ( t % 2 ) * tile_w + x0, ( t / 2 ) * tile_h + y0,
-                        msg, k_text_scale, 16 );
-        dma::cache_clean( py, mpp_buffer_get_size( mb ) );
-    }
-}  // namespace
 
 NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
   : log_( log )
   , cfg_( cfg )
+  , ring_( cfg.layout )
+  , composer_( cfg, log )
   , pacer_( cfg.layout.nsrc, cfg.fps )
   , pts_( cfg.vfr() )
   , params_( log )
@@ -232,30 +75,9 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
                     << lay.band.top << ',' << lay.band.top + lay.band.h << ") of " << cfg_.model_w << 'x' << cfg_.model_h
                     << " -> " << lay.w << 'x' << lay.h << '\n';
 
-    // Four NV12 dma-bufs: a plane held by an in-flight encode is never
-    // overwritten by RGA. The 3-deep rkmpp task queue can hold a full
-    // VFR clump, so the ring stays one slot deeper than the queue.
-    // RAII sub-object: a throw below (avcodec_open2, av_frame_alloc)
-    // cannot leak the pool -- the sub-object destructs on unwinding.
-    // Alloc failures throw from here (fail loud, RknnEngine pattern);
-    // the pool has already self-cleaned by then.
-    std::string pool_why;
-    if ( !pool_.alloc( static_cast<size_t>( lay.w ) * lay.vstride * 3 / 2, MODULE_TAG, __FUNCTION__, &pool_why ) )
-    {
-        avformat_network_deinit();
-        throw std::runtime_error( "net encoder: " + pool_why );
-    }
-
-    // Idle canvas (NO SIGNAL): a dedicated dma-buf, gray-filled by the
-    // pool alloc and stamped with the plate in every tile, once at init.
-    // publish_idle() RGA-copies from it -- the NPU tensor is never touched.
-    std::string idle_why;
-    if ( !idle_pool_.alloc( static_cast<size_t>( lay.w ) * lay.vstride * 3 / 2, MODULE_TAG, __FUNCTION__, &idle_why ) )
-    {
-        avformat_network_deinit();
-        throw std::runtime_error( "net encoder: idle canvas: " + idle_why );
-    }
-    draw_no_signal( idle_pool_.buf[ 0 ], lay.w, lay.vstride, lay.tile_w, lay.tile_h, lay.nsrc );
+    // The input ring (ring_) and the canvases (composer_) are allocated by
+    // their own ctors, before this body: RAII members, a throw below
+    // (avcodec_open2, av_packet_alloc) cannot leak them.
 
     const AVCodec* codec = avcodec_find_encoder_by_name( "h264_rkmpp" );
     if ( !codec )
@@ -291,7 +113,7 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
     // dries to ~83 kbps). EncoderConfig::nominal_fps(): 25, 25 per source
     // in multi-view, for rate control only; pts stay VFR from dequeue times.
     ctx->framerate = AVRational { cfg_.nominal_fps(), 1 };
-    ctx->bit_rate = static_cast<int64_t>( cfg_.bitrate_kbps ) * 1000;
+    ctx->bit_rate = cfg_.bit_rate();
     // gop_size reaches MPP as rc:gop (rkmpp_set_enc_cfg):
     // a captured stream shows I-frames every 26 for GOP 25.
     ctx->gop_size = cfg_.gop();  // 1 s: a late joiner waits at most one GOP
@@ -325,19 +147,19 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
     {
         log_.info() << "enc: rkmpp priv unavailable, encoder default rc stays\n";
     }
-    log_.info() << "enc: h264_rkmpp open: " << lay.w << 'x' << lay.h << ", " << cfg_.bitrate_kbps << " kbps, gop "
+    log_.info() << "enc: h264_rkmpp open: " << lay.w << 'x' << lay.h << ", " << cfg_.kbps() << " kbps, gop "
                 << ctx->gop_size << '\n';
     if ( cfg_.vfr() )
         log_.info() << "enc: VFR follow-source mode: time_base 1/90000, pts from dequeue times\n";
 
     pkt_ = av_packet_alloc();
-    if ( !pkt_ || !init_frames() )
+    if ( !pkt_ || !init_packets() )
     {
-        free_frames();
+        free_packets();
         av_packet_free( &pkt_ );
         avcodec_free_context( &enc_ );
         avformat_network_deinit();
-        throw std::runtime_error( "net encoder: av_frame/av_packet_alloc failed" );
+        throw std::runtime_error( "net encoder: av_packet_alloc failed" );
     }
 
     try
@@ -346,7 +168,7 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
     }
     catch ( ... )
     {
-        free_frames();
+        free_packets();
         av_packet_free( &pkt_ );
         avcodec_free_context( &enc_ );
         avformat_network_deinit();
@@ -389,11 +211,11 @@ NetEncoder::~NetEncoder()
             // The wrapper runs a NON_BLOCK output timeout (no LOW_DELAY
             // flag): EAGAIN during flush means "frames still in flight",
             // not "done". Stopping at the first EAGAIN leaves up to
-            // kBufCount frames + EOS queued inside MPP; mpp_destroy then
+            // EncoderFramePool::kSlots frames + EOS queued inside MPP; mpp_destroy then
             // tears its internal queues down over live packets
             // ("mpp_meta: put_meta negative ref_count" /
             // "mpp_mem_pool ... caller mpp_packet_deinit" at exit).
-            // Bounded: the encoder holds at most kBufCount frames and
+            // Bounded: the encoder holds at most kSlots frames and
             // codes ~1-2 ms each, so the guards below can never loop
             // forever.
             // EOF must reach the wrapper: on EAGAIN from send (input
@@ -447,7 +269,7 @@ NetEncoder::~NetEncoder()
         }
         avcodec_free_context( &enc_ );
     }
-    free_frames();
+    free_packets();
     if ( pkt_ )
         av_packet_free( &pkt_ );
     // The DRM pool releases itself: pool_ is a member sub-object, its
@@ -516,15 +338,16 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     if ( do_enc )
     {
         ts_us_ = ts_us;
-        cur_ = ( cur_ + 1 ) % kBufCount;
+        ring_.advance();
     }
 
     // Fence wait + RGA crop run OUTSIDE the lock: the critical section
     // below now covers only encode + mux. In multi-view mode when two
     // cameras finish within a few ms of each other, !do_enc still updates
-    // the source's tile in the persistent composite canvas (mb = nullptr)
+    // the source's tile in the persistent composite canvas (out = nullptr)
     // without emitting a duplicate 2-ms-apart H.264 frame.
-    if ( !prep_frame( tensor_fd, band, src_idx, do_enc ? pool_.buf[cur_] : nullptr ) )
+    const int slot = ring_.current();
+    if ( !composer_.compose( tensor_fd, band, src_idx, slot, do_enc ? ring_.buf( slot ) : nullptr ) )
     {
         error_.store( true );
         {
@@ -571,8 +394,8 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
     if ( !pacer_.admit_idle( ts_us, queue_depth(), epoch ) )
         return;  // encode queue busy: skip this tick
     ts_us_ = ts_us;
-    cur_ = ( cur_ + 1 ) % kBufCount;
-    if ( !prep_idle_frame( absent, nabs, pool_.buf[ cur_ ] ) )
+    const int slot = ring_.advance();
+    if ( !composer_.compose_idle( absent, nabs, slot, ring_.buf( slot ) ) )
     {
         error_.store( true );
         {
@@ -594,142 +417,8 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
     }
 }
 
-bool NetEncoder::prep_idle_frame( const bool* absent, int nabs, MppBuffer mb )
+bool NetEncoder::init_packets()
 {
-    const StreamLayout& lay = cfg_.layout;
-    rga_buffer_t idl = wrapbuffer_fd( mpp_buffer_get_fd( idle_pool_.buf[ 0 ] ),
-                                      lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
-    rga_buffer_t out = wrapbuffer_fd( mpp_buffer_get_fd( mb ),
-                                      lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
-    if ( lay.nsrc <= 1 )
-    {
-        // Single-view: the idle canvas IS the frame; the band stamp below
-        // forces the gray refill on live resume (plate pixels must not
-        // survive around the live picture).
-        buf_bands_[ cur_ ] = LbGeom { 0, 1, 0, 1 };
-        const IM_STATUS cs = imcopy( idl, out );
-        if ( static_cast<int>( cs ) <= 0 )
-        {
-            log_.error() << "enc: RGA idle copy failed: " << imStrError( cs ) << "\n";
-            return false;
-        }
-        return true;
-    }
-    // Multi-view: stamp the plate tile into every absent cell of the
-    // persistent composite canvas; live tiles keep their last picture.
-    MppBuffer cv = pool_.buf[ kBufCount ];
-    rga_buffer_t cvs = wrapbuffer_fd( mpp_buffer_get_fd( cv ),
-                                      lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
-    for ( int s = 0; s < lay.nsrc; ++s )
-    {
-        if ( absent && s < nabs && !absent[ s ] )
-            continue;
-        const LbGeom c = cell_rect( lay, s );
-        im_rect tile = { c.left, c.top, c.w, c.h };
-        const IM_STATUS rs = improcess( idl, cvs, {}, tile, tile, {}, 0 );
-        if ( static_cast<int>( rs ) <= 0 )
-        {
-            log_.error() << "enc: RGA idle tile copy failed: " << imStrError( rs ) << "\n";
-            return false;
-        }
-        buf_bands_[ s ] = LbGeom { 0, 1, 0, 1 };  // forces the gray refill on live resume
-    }
-    const IM_STATUS cs = imcopy( cvs, out );
-    if ( static_cast<int>( cs ) <= 0 )
-    {
-        log_.error() << "enc: RGA idle composite copy failed: " << imStrError( cs ) << "\n";
-        return false;
-    }
-    return true;
-}
-
-// RGA prep for the current frame: crop the letterbox band of the model
-// tensor into the ping-pong NV12 buffer mb (or into the persistent
-// composite buffer pool_.buf[kBufCount] + DMA copy in multi-view); the
-// crop and the target rectangle come from place_tile() (core/encoder_config.hpp).
-// GPU draw -> RGA ordering is guaranteed by sync_cpu() in
-// OverlaySink::draw_and_publish, which runs before publish() on the
-// same pipeline thread.
-bool NetEncoder::prep_frame( int tensor_fd, const LbGeom& band, int src_idx, MppBuffer mb )
-{
-    const StreamLayout& lay = cfg_.layout;
-    const bool multi = lay.nsrc > 1;
-    const TilePlacement tp = place_tile( lay, band, src_idx );
-    const LbGeom& d = tp.dst;
-
-    MppBuffer target = multi ? pool_.buf[kBufCount] : mb;
-    LbGeom& prev = buf_bands_[multi ? static_cast<uint32_t>( tp.cell ) : cur_];
-    if ( prev.w > 0 && ( prev.left != d.left || prev.top != d.top || prev.w != d.w || prev.h != d.h ) )
-    {
-        if ( multi )
-        {
-            const LbGeom c = cell_rect( lay, tp.cell );
-            fill_nv12_gray_rect( target, lay.w, lay.vstride, im_rect { c.left, c.top, c.w, c.h } );
-        }
-        else
-            fill_nv12_gray( target );
-    }
-    prev = d;
-
-    rga_buffer_t src = wrapbuffer_fd( tensor_fd, cfg_.model_w, cfg_.model_h, RK_FORMAT_RGB_888 );
-    im_rect srect = { tp.src.left, tp.src.top, tp.src.w, tp.src.h };
-    // Explicit strides: the VU plane lands at w * vstride - exactly where
-    // the DRM descriptor (init_frames) reports it.
-    rga_buffer_t dst = wrapbuffer_fd( mpp_buffer_get_fd( target ), lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
-    im_rect drect = { d.left, d.top, d.w, d.h };
-    const IM_STATUS rs = improcess( src, dst, {}, srect, drect, {}, 0 );
-    if ( static_cast<int>( rs ) <= 0 )
-    {
-        log_.error() << "enc: RGA convert failed: " << imStrError( rs ) << "\n";
-        return false;
-    }
-    if ( multi && mb != nullptr )
-    {
-        rga_buffer_t out = wrapbuffer_fd( mpp_buffer_get_fd( mb ), lay.w, lay.h, RK_FORMAT_YCbCr_420_SP, lay.w, lay.vstride );
-        const IM_STATUS cs = imcopy( dst, out );
-        if ( static_cast<int>( cs ) <= 0 )
-        {
-            log_.error() << "enc: RGA composite copy failed: " << imStrError( cs ) << "\n";
-            return false;
-        }
-    }
-    return true;
-}
-
-bool NetEncoder::init_frames()
-{
-    const StreamLayout& lay = cfg_.layout;
-    for ( int i = 0; i < kBufCount; ++i )
-    {
-        MppBuffer mb = pool_.buf[i];
-        AVDRMFrameDescriptor& desc = desc_[i];
-        desc.nb_objects = 1;
-        desc.objects[0].fd = mpp_buffer_get_fd( mb );
-        desc.objects[0].size = mpp_buffer_get_size( mb );
-        desc.objects[0].format_modifier = DRM_FORMAT_MOD_LINEAR;
-        desc.nb_layers = 1;
-        desc.layers[0].format = DRM_FORMAT_NV12;
-        desc.layers[0].nb_planes = 2;
-        desc.layers[0].planes[0].object_index = 0;
-        desc.layers[0].planes[0].offset = 0;
-        desc.layers[0].planes[0].pitch = lay.w;
-        desc.layers[0].planes[1].object_index = 0;
-        desc.layers[0].planes[1].offset = lay.w * lay.vstride;
-        desc.layers[0].planes[1].pitch = lay.w;
-
-        AVFrame* fr = av_frame_alloc();
-        if ( !fr )
-            return false;
-        frames_[i] = fr;
-        fr->format = AV_PIX_FMT_DRM_PRIME;
-        fr->width = lay.w;
-        fr->height = lay.h;
-        fr->data[0] = reinterpret_cast<uint8_t*>( &desc );
-        fr->buf[0] = av_buffer_create(
-            reinterpret_cast<uint8_t*>( &desc ), sizeof( desc ), av_noop_free, nullptr, 0 );
-        if ( !fr->buf[0] )
-            return false;
-    }
     mux_pkt_ = av_packet_alloc();
     dup_pkt_ = av_packet_alloc();
     if ( !mux_pkt_ || !dup_pkt_ )
@@ -743,13 +432,8 @@ bool NetEncoder::init_frames()
     return true;
 }
 
-void NetEncoder::free_frames()
+void NetEncoder::free_packets()
 {
-    for ( auto*& fr : frames_ )
-    {
-        if ( fr )
-            av_frame_free( &fr );
-    }
     for ( auto*& qp : pkts_.d )
     {
         if ( qp )
@@ -778,7 +462,7 @@ void NetEncoder::clear_pkt_queue()
 
 bool NetEncoder::send_frame( AVStream* st )
 {
-    AVFrame* fr = frames_[cur_];
+    AVFrame* fr = ring_.frame( ring_.current() );
     const int64_t fpts = pts_.next( ts_us_, frames_sent_ );
     fr->pts = fpts;
 
@@ -1053,7 +737,7 @@ bool NetEncoder::setup_stream( AVFormatContext* fc, AVStream** st_out, int64_t* 
     st->codecpar->format = AV_PIX_FMT_NV12;
     st->codecpar->width = lay.w;
     st->codecpar->height = lay.h;
-    st->codecpar->bit_rate = enc_->bit_rate;
+    st->codecpar->bit_rate = cfg_.bit_rate();  // the codec context belongs to the pipeline thread
     st->time_base = cfg_.vfr() ? AVRational { 1, 90000 } : AVRational { 1, cfg_.fps };
     st->avg_frame_rate = cfg_.vfr() ? AVRational { 0, 1 } : AVRational { cfg_.fps, 1 };
 

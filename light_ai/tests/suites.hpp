@@ -27,3 +27,4 @@ void test_encoder_config( TestRun& t );
 void test_param_set_cache( TestRun& t );
 void test_pts_clock( TestRun& t );
 void test_encode_pacer( TestRun& t );
+void test_idle_plate( TestRun& t );

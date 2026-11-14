@@ -109,6 +109,13 @@ namespace
         CHECK( t, c.nominal_fps() == 75 && c.gop() == 75 );
         c.fps = 25;
         CHECK( t, c.nominal_fps() == 25 && c.gop() == 25 );
+        // Bitrate: as configured, and 12000 kbps for an unset / invalid value (never 0 to MPP).
+        c.bitrate_kbps = 8000;
+        CHECK( t, c.kbps() == 8000 && c.bit_rate() == 8000000 );
+        c.bitrate_kbps = 0;
+        CHECK( t, c.kbps() == 12000 && c.bit_rate() == 12000000 );
+        c.bitrate_kbps = -5;
+        CHECK( t, c.kbps() == 12000 );
     }
 }  // namespace
 
