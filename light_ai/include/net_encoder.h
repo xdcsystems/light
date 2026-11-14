@@ -10,25 +10,17 @@
 
 #include <cstdint>
 
-// Same include form as mpp_decoder.hpp: <rockchip/rk_mpi.h> resolves to
-// the self-built /usr/local/include/rockchip headers. The quoted form
-// "rk_mpi.h" hits the distro /usr/include/rockchip instead, and the two
-// header sets redefine the same MppFrame enums (build failure).
-#include <rockchip/rk_mpi.h>
-
-#include "core/encode_pacer.hpp"     // EncodePacer: which publishes are encoded
-#include "core/encoder_config.hpp"  // EncoderConfig, StreamLayout
-#include "core/geometry.hpp"        // LbGeom: band geometry arrives as one object
-#include "core/pts_clock.hpp"        // PtsClock: CFR / VFR pts
-#include "core/session_gate.hpp"     // SessionGate: the session hand-over
+#include "core/encode_pacer.hpp"       // EncodePacer: which publishes are encoded
+#include "core/encoder_config.hpp"     // EncoderConfig, StreamLayout
+#include "core/geometry.hpp"           // LbGeom: band geometry arrives as one object
+#include "core/session_gate.hpp"       // SessionGate: the session hand-over
 #include "net/av_packet_queue.hpp"     // PacketQueue: encoder -> serve thread
 #include "net/encoder_frame_pool.hpp"  // EncoderFramePool: the encoder input ring
-#include "net/frame_composer.hpp"     // FrameComposer: the picture the encoder reads
-#include "net/mux_session.hpp"        // MuxSession: the serve thread
+#include "net/frame_composer.hpp"      // FrameComposer: the picture the encoder reads
+#include "net/h264_encoder.hpp"        // H264Encoder: the codec
+#include "net/mux_session.hpp"         // MuxSession: the serve thread
 
 class Log;
-struct AVCodecContext;
-struct AVPacket;
 
 class NetEncoder
 {
@@ -63,56 +55,44 @@ public:
     bool viewer_active() const;
 
 private:
-    // One encode under gate_.run(): starts the session's encoder state on a
-    // new epoch (pts clock, forced IDR), sends the frame, queues the packets.
-    bool send_frame( const SessionGate::Session& s );
-    // One finished encoder packet -> the queue for the serve thread;
-    // shared by the EAGAIN retry and the send drain.
-    void enqueue_pkt( AVPacket* pkt, int stream_index, int64_t fpts );
-
-private:
+    // Declaration order IS the shutdown order, read bottom-up (destruction
+    // runs in reverse):
+    //   1. session_  -- the serve thread: quit, queue stop, join. Nothing
+    //                   touches gate_ / queue_ from the network side after.
+    //   2. gate_, then queue_ -- the queued packets are unref'd while the
+    //                   codec is still alive (they reference its buffers).
+    //   3. codec_    -- the EOF drain, then the codec is freed: MPP lets go
+    //                   of the dma-bufs before they go.
+    //   4. composer_, ring_ -- the canvases, the input ring and its frames.
+    // The dtor body stops session_ and closes queue_ first (until the
+    // network layer becomes a member too).
     const Log& log_;
     const EncoderConfig cfg_;
-
-    // The next encode becomes an IDR (the rkmpp wrapper ignores
-    // frame->key_frame, so we go via MPP). Pipeline thread only: set by a
-    // TCP session's start (Session::force_idr, seen on its new epoch), a
-    // dropped frame and a queue overflow.
-    bool force_idr_ = false;
-    uint32_t seen_epoch_ = 0;  // the session the encoder state belongs to (pipeline thread)
-
-    AVCodecContext* enc_ = nullptr;  // h264_rkmpp
-    AVPacket* pkt_ = nullptr;
     // The encoder's input ring: 4 NV12 dma-bufs pre-bound to DRM_PRIME
-    // AVFrames (net/encoder_frame_pool.hpp). Freed after the codec (dtor body).
+    // AVFrames (net/encoder_frame_pool.hpp).
     EncoderFramePool ring_;
     // The picture: tensor band -> ring slot / canvas cell, the NO SIGNAL
-    // canvas (net/frame_composer.hpp).
+    // canvas (net/frame_composer.hpp). Logs the stream layout.
     FrameComposer composer_;
-
-    // Encoder -> serve() packet queue (net/av_packet_queue.hpp): its own
-    // mutex, separate from the gate's: network-side wakeups never touch the
-    // encode critical section. Overflow flush, key gate, per-session fail( epoch ).
+    // The h264_rkmpp codec with the per-session encoder state: pts clock,
+    // forced IDR, frames sent (net/h264_encoder.hpp).
+    H264Encoder codec_;
+    // Pipeline-thread state of publish(): which publishes are encoded
+    // (core/encode_pacer.hpp) and the dequeue time handed to the codec.
+    // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
+    // runs before publish() on the same pipeline thread -- no fence fd
+    // crosses this boundary (retired, see docs/state.md).
+    EncodePacer pacer_;
+    int64_t ts_us_ = -1;
+    // Encoder -> serve thread packet queue (net/av_packet_queue.hpp): its
+    // own mutex, separate from the gate's: network-side wakeups never touch
+    // the encode critical section. Overflow flush, key gate, fail( epoch ).
     PacketQueue queue_;
     // The session hand-over (core/session_gate.hpp): the serve thread opens
     // and closes it, every encode runs under it. With queue_ the only state
     // the two threads share.
     SessionGate gate_;
-    // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
-    // runs before publish() on the same pipeline thread -- no fence fd
-    // crosses this boundary (retired, see docs/state.md).
-    EncodePacer pacer_;  // which publishes are encoded (pipeline thread only)
-    // CFR counter / VFR dequeue-time pts and the muxer step (core/pts_clock.hpp).
-    // Pipeline thread only: restarted by send_frame() on a new session epoch
-    // with the session's frame_step (pts restart from zero per viewer).
-    PtsClock pts_;
-    int64_t ts_us_ = -1;  // dequeue time of the frame being encoded (publish -> send_frame)
-    // Frames encoded; gates the destructor drain in both modes (the CFR
-    // counter alone would be 0 in VFR and skip the flush).
-    uint64_t frames_sent_ = 0;
-
     // The serve thread: viewer sessions, the transport, the muxer
-    // (net/mux_session.hpp). Last: it holds references to queue_ and gate_,
-    // and the dtor body stops it before the codec goes.
+    // (net/mux_session.hpp). Last: it holds references to queue_ and gate_.
     MuxSession session_;
 };

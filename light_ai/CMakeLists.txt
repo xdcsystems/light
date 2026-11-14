@@ -106,6 +106,7 @@ add_executable(light_ai
     src/net/av_packet_queue.cpp
     src/net/av_packet.cpp
     src/net/mux_session.cpp
+    src/net/h264_encoder.cpp
     src/process_env.cpp
     src/signal_waiter.cpp
     src/cpu_affinity.cpp

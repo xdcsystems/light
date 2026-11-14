@@ -99,6 +99,17 @@ FrameComposer::FrameComposer( const EncoderConfig& cfg, const Log& log )
     static_assert( static_cast<int>( EncoderFramePool::kSlots ) <= static_cast<int>( kBands ), "one band per ring slot" );
     static_assert( static_cast<int>( StreamLayout::kMaxTiles ) <= static_cast<int>( kBands ), "one band per grid cell" );
 
+    // The stream geometry (single view: the band at its native size;
+    // multi-view: one cell per source), logged before the canvases and the
+    // codec come up.
+    if ( lay_.nsrc > 1 )
+        log_.info() << "enc: multi-view " << lay_.nsrc << " sources, tile " << lay_.tile_w << 'x' << lay_.tile_h
+                    << " -> " << lay_.w << 'x' << lay_.h << '\n';
+    else
+        log_.info() << "enc: tensor band x=[" << lay_.band.left << ',' << lay_.band.left + lay_.band.w << ") y=["
+                    << lay_.band.top << ',' << lay_.band.top + lay_.band.h << ") of " << model_w_ << 'x' << model_h_
+                    << " -> " << lay_.w << 'x' << lay_.h << '\n';
+
     // Both canvases are gray-filled by the pool alloc. Alloc failures throw
     // (fail loud at startup); a pool that failed has already self-cleaned.
     const size_t bytes = static_cast<size_t>( lay_.w ) * lay_.vstride * 3 / 2;
