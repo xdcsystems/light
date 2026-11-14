@@ -31,6 +31,7 @@ int main()
     run_suite( t, "box_smoother", &test_box_smoother );
     run_suite( t, "tracker", &test_tracker );
     run_suite( t, "box_mapper", &test_box_mapper );
+    run_suite( t, "reference_chain", &test_reference_chain );
     run_suite( t, "config", &test_config );
     run_suite( t, "signals", &test_signals );
     run_suite( t, "log", &test_log );

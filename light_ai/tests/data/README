@@ -9,3 +9,25 @@ ipwebcam_head.bin -- the response head of an IP Webcam phone (IP Webcam Server 0
     and the first part header, the JPEG body cut off: the bytes up to the end of the
     first part header, received after the GET that NetMjpegSource::send_get sends.
     Recorded 2026-11-14 for issue #28.
+
+ref_evening_raw.csv -- layer B of the reference detections (issue #32, reference/README.md):
+    the "raw" lines of reference/ref_evening.csv for two stretches of the clip, frames
+    440..566 (a person walks out, dies into a ghost, the trail ages out; a new person
+    spawns at 566) and 700..800 (empty, then a new entry). The cut right after the
+    spawn at 566 is where test_reference_chain.cpp puts its 1.2 s stall: the tentative
+    track dies by time -- the clip alone never kills one. Made with:
+    awk -F, '/^[0-9]/{f=$1} ((f>=440 && f<=566) || (f>=700 && f<=800)) && !/^sm,/' \
+        reference/ref_evening.csv > tests/data/ref_evening_raw.csv
+
+ref_evening_golden.txt -- the output of test_reference_chain.cpp on that fixture
+    (smoothed boxes, track states, GpuBoxes per frame), written once on the board by
+    fix/audit-p0 @ f3c5a7f:
+    cmake -S tests -B build/tests && cmake --build build/tests --target light_ai_tests
+    cd build/tests && LIGHT_AI_WRITE_GOLDEN=1 ./light_ai_tests
+    Rewrite it only for a deliberate behavior change of BoxSmoother, Tracker or the
+    box mapper -- never in a refactoring (stage 6 must pass against this file).
+    Tolerances (test_reference_chain.cpp): 1e-2 px for positions / sizes, 1e-1 px/s
+    for velocities; ids, states, counts, classes, colors, alpha exact. Measured
+    spread (2026-11-15, the board): the same code built with -ffp-contract=off (no
+    fused multiply-add, as on an x86 host) deviates by at most 1e-4 px and 4e-4 px/s;
+    the Tracker kQAccel nudged 2000 -> 2100 deviates by 11.4 px and 6.6 px/s and fails.
