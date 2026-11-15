@@ -210,7 +210,7 @@ keep "Migration plan" current when a stage changes state.
       empty-list guard, widening / std::forward fixes from the LLVM 23 list): branch ci/issue43-tidy23, merged (PR #52).
       43a logs: build/tidy43/{cold,warm}.log, layer A build/ref43_p{3,1}.*, live (base binary build/light_ai_base43 =
       fix/audit-p0 @ 0dc8c86) build/run43_{base,new}_{pool3,gpu,cpu,replug}.log, frames build/43_*.png. 43b (tests/
-      under both passes, tests/.clang-tidy, the test fixes): branch ci/issue43-tidy-tests, PR #53 (closes #43). clang-tidy 11
+      under both passes, tests/.clang-tidy, the test fixes): branch ci/issue43-tidy-tests, merged (PR #53); #43 closed. clang-tidy 11
       on tests/ before 43b: 42 findings (16 function-size, 26 in 12 checks), all fixed but the size; measurement
       logs build/tidy43b/.
 - [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
