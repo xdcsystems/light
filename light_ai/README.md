@@ -797,7 +797,8 @@ parallel, slowest first (by the last measured time, then by size), each under a 
 - Jobs: TIDY_JOBS=N, by default min(nproc, MemAvailable / 400 MB) -- one clang-tidy peaks at
   ~330 MB, so RAM is the limit on this board, not the cores. The first line of the gate prints
   the job count and MemAvailable (an OOM kill shows up as rc=137 in HANGS.txt).
-- Logs: ${TMPDIR:-/tmp}/tidy/<name>.log, HANGS.txt (timeouts and non-zero exits) there.
+- Logs: ${TMPDIR:-/tmp}/tidy/<TU path without .cpp>.log, a tree like src/ (src/net/h264_encoder.log),
+  HANGS.txt (timeouts and non-zero exits) there. One run at a time: a second run waits on a flock.
 - Result cache: ${TMPDIR:-/tmp}/tidy-cache, TIDY_NO_CACHE=1 disables it. The key
   (scripts/tidy_cache.py) hashes the clang-tidy command line and version, the timeout, the TU's
   compile command, every .clang-tidy up the tree, the `clang++-11 -E -CC` output of the TU and

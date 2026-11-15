@@ -5,7 +5,9 @@
 # Env:   TIDY_JOBS=N      parallel jobs (default min(nproc, MemAvailable / 400 MB): one clang-tidy peaks
 #                         at ~330 MB on pipeline.cpp; RAM, not the cores, is the limit on this board)
 #        TIDY_NO_CACHE=1  no cache lookup, no store
-# Logs:  ${TMPDIR:-/tmp}/tidy/<name>.log, HANGS.txt there; cache: ${TMPDIR:-/tmp}/tidy-cache.
+# Logs:  ${TMPDIR:-/tmp}/tidy/<path of the TU without .cpp>.log (src/net/h264_encoder.log: a tree like src/,
+#        never a flat name -- src/foo.cpp and src/net/foo.cpp must not share a log), HANGS.txt there;
+#        cache: ${TMPDIR:-/tmp}/tidy-cache. One run at a time per $TMPDIR (flock on $OUT/.lock; a second run waits).
 TIDY=clang-tidy
 CLANGXX=clang++-11   # the preprocessor of the cache key: the same LLVM driver as clang-tidy 11
 DB=build
@@ -15,7 +17,14 @@ TDB=$OUT/cc
 CACHE=${TMPDIR:-/tmp}/tidy-cache
 CACHE_DAYS=14        # cache entries not used for this many days are pruned after the run
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd -P)"
-mkdir -p "$OUT" "$TDB" "$OUT/st" "$CACHE/times"
+mkdir -p "$OUT"
+# Two gates at once (board-check and a manual run) would clear and write the same $OUT: the second one waits.
+exec 9> "$OUT/.lock"
+if ! flock -n 9; then
+  echo "tidy: another tidy_run.sh holds $OUT/.lock -- waiting for it to end"
+  flock 9
+fi
+mkdir -p "$TDB" "$OUT/st" "$CACHE/times"
 # clang rejects GCC-specific big.LITTLE flags carried by the cross DB
 # (see the M6-tidy log: "the clang compiler does not support
 # '-mtune=cortex-a76.cortex-a55'") -- strip them into a per-run copy
@@ -32,7 +41,8 @@ for e in db:
     e["command"] = c
 json.dump(db, open(dst, "w"))
 PYEOF
-rm -f "$OUT"/*.log "$OUT"/HANGS.txt "$OUT"/st/*
+rm -rf "$OUT"/src "$OUT"/st/* "$OUT"/HANGS.txt
+rm -f "$OUT"/*.log   # flat logs of the script before #46
 
 # MemAvailable is printed either way: a FAIL from an OOM kill (rc=137 in HANGS.txt) is recognizable
 MEM_MB=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
@@ -49,11 +59,14 @@ echo "tidy: $JOBS jobs ($JOBS_WHY), MemAvailable ${MEM_MB} MB, timeout ${TMO}s,"
      "cache $([ "${TIDY_NO_CACHE:-0}" = 1 ] && echo off || echo "$CACHE")"
 
 # One TU: key -> hit (copy the stored log) or run (store a clean / findings result only).
-# Writes $OUT/<name>.log and $OUT/st/<name> ("rc seconds hit|miss|nokey"), prints one progress line.
+# Writes $OUT/<rel>.log and $OUT/st/<rel> ("rc seconds hit|miss|nokey"), rel = the TU path without .cpp;
+# prints one progress line.
 # Always exits 0: the summaries read the status files, a missing one counts as an error.
 tidy_one() {
-  local f=$1 name key start rc secs n tag="" how=miss
-  name=$(basename "$f" .cpp)
+  local f=$1 rel log key start rc secs n tag="" how=miss
+  rel=${f%.cpp}
+  log=$OUT/$rel.log
+  mkdir -p "$(dirname "$log")" "$(dirname "$OUT/st/$rel")" "$(dirname "$CACHE/times/$f")"
   start=$(date +%s%N)
   key=""
   if [ "${TIDY_NO_CACHE:-0}" != 1 ]; then
@@ -61,29 +74,30 @@ tidy_one() {
     [ -z "$key" ] && how=nokey
   fi
   if [ -n "$key" ] && [ -f "$CACHE/$key.rc" ] && [ -f "$CACHE/$key.log" ]; then
-    cp "$CACHE/$key.log" "$OUT/$name.log"
+    cp "$CACHE/$key.log" "$log"
     touch "$CACHE/$key.log" "$CACHE/$key.rc"
+    [ -f "$CACHE/times/$f" ] && touch "$CACHE/times/$f"
     read -r rc _ < "$CACHE/$key.rc"
     how=hit
   else
-    timeout "$TMO" "$TIDY" -quiet -p "$TDB" "$f" > "$OUT/$name.log" 2>&1
+    timeout "$TMO" "$TIDY" -quiet -p "$TDB" "$f" > "$log" 2>&1
     rc=$?
   fi
   secs=$(( ($(date +%s%N) - start) / 1000000 ))
   secs=$(printf '%d.%01d' $(( secs / 1000 )) $(( secs % 1000 / 100 )))
-  n=$(grep -c ': error: ' "$OUT/$name.log")
+  n=$(grep -c ': error: ' "$log")
   if [ "$how" != hit ]; then
     # the sort hint: a completed run only (a timeout or a kill says nothing about the TU's cost)
-    { [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; } && echo "$secs" > "$CACHE/times/${f//\//_}"
+    { [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; } && echo "$secs" > "$CACHE/times/$f"
     # Store only a clean run (rc 0) or a findings run: rc 1 with >= 1 check finding, no compile error,
     # no clang-tidy processing error. Never a timeout (124), an OOM kill (137), a crash.
     if [ -n "$key" ] && { [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && [ "$n" -gt 0 ] &&
-         ! grep -q -e 'clang-diagnostic-error' -e '^Error while processing' "$OUT/$name.log"; }; }; then
-      cp "$OUT/$name.log" "$CACHE/$key.log.$$" && mv "$CACHE/$key.log.$$" "$CACHE/$key.log"
+         ! grep -q -e 'clang-diagnostic-error' -e '^Error while processing' "$log"; }; }; then
+      cp "$log" "$CACHE/$key.log.$$" && mv "$CACHE/$key.log.$$" "$CACHE/$key.log"
       echo "$rc $secs" > "$CACHE/$key.rc.$$" && mv "$CACHE/$key.rc.$$" "$CACHE/$key.rc"
     fi
   fi
-  echo "$rc $secs $how" > "$OUT/st/$name"
+  echo "$rc $secs $how" > "$OUT/st/$rel"
   [ "$how" = hit ] && tag=" (cached)"
   [ "$how" = nokey ] && tag=" (no key)"
   [ "$rc" -eq 124 ] && tag="$tag TIMEOUT"
@@ -99,7 +113,7 @@ export TIDY CLANGXX TMO OUT TDB CACHE HERE TIDY_NO_CACHE
 # Slowest first, so the tail is short: a TU never timed yet first (it may be slow), then by the last
 # measured time, descending; the line count breaks ties and orders the TUs of a cold cache.
 FILES=$(find src -name '*.cpp' | xargs wc -l | awk '$2!="total" {print $2, $1}' | while read -r f lines; do
-  t=$(cat "$CACHE/times/${f//\//_}" 2>/dev/null || echo inf)
+  t=$(cat "$CACHE/times/$f" 2>/dev/null || echo inf)
   echo "$t $lines $f"
 done | sort -k1,1gr -k2,2nr | awk '{print $3}')
 T0=$(date +%s)
@@ -107,13 +121,12 @@ printf '%s\n' $FILES | xargs -P "$JOBS" -n 1 bash -c 'tidy_one "$1"' _
 WALL=$(( $(date +%s) - T0 ))
 
 for f in $FILES; do
-  name=$(basename "$f" .cpp)
-  if [ ! -f "$OUT/st/$name" ]; then
+  if [ ! -f "$OUT/st/${f%.cpp}" ]; then
     echo "$f" >> "$OUT/HANGS.txt"
     echo "  $f: no status (the worker died) -> logged in HANGS.txt"
     continue
   fi
-  read -r rc _ < "$OUT/st/$name"
+  read -r rc _ < "$OUT/st/${f%.cpp}"
   if [ "$rc" -eq 124 ]; then
     echo "$f" >> "$OUT/HANGS.txt"
     echo "  $f: TIMEOUT -> logged in HANGS.txt"
@@ -123,26 +136,30 @@ for f in $FILES; do
   fi
 done
 echo "---- findings by check ----"
-grep -h ': error: ' "$OUT"/*.log | awk '{print $NF}' | sort | uniq -c | sort -rn
+LOGS=$(find "$OUT/src" -name '*.log' 2>/dev/null | sort)
+STATS=$(find "$OUT/st" -type f | sort)
+# shellcheck disable=SC2086  # paths without blanks
+grep -h ': error: ' $LOGS | awk '{print $NF}' | sort | uniq -c | sort -rn
 echo "---- per-file finding counts ----"
-for l in "$OUT"/*.log; do
+for l in $LOGS; do
   n=$(grep -c ': error: ' "$l")
-  echo "$(basename "$l" .log): $n"
+  echo "${l#"$OUT"/}: $n" | sed 's/\.log: /: /'
 done
 echo "---- hangs / errors ----"
 cat "$OUT/HANGS.txt" 2>/dev/null || echo "(none)"
 echo "---- slowest TUs (s) ----"
-for s in "$OUT"/st/*; do echo "$(awk '{print $2, $3}' "$s") $(basename "$s")"; done | sort -k1,1gr | head -n 10
-HITS=$(cat "$OUT"/st/* 2>/dev/null | awk '$3 == "hit"' | wc -l)
-RUNS=$(cat "$OUT"/st/* 2>/dev/null | awk '$3 != "hit"' | wc -l)
+for s in $STATS; do echo "$(awk '{print $2, $3}' "$s") ${s#"$OUT"/st/}"; done | sort -k1,1gr | head -n 10
+HITS=$(cat $STATS /dev/null | awk '$3 == "hit"' | wc -l)
+RUNS=$(cat $STATS /dev/null | awk '$3 != "hit"' | wc -l)
 if [ "${TIDY_NO_CACHE:-0}" != 1 ]; then
   # a hit touches its entry, so the mtime is the last use
   find "$CACHE" -maxdepth 1 \( -name '*.log' -o -name '*.rc' \) -mmin +$(( CACHE_DAYS * 1440 )) -delete
   find "$CACHE" -maxdepth 1 \( -name '*.log.*' -o -name '*.rc.*' \) -mmin +60 -delete   # temp files of a killed run
+  find "$CACHE/times" -type f -mmin +$(( CACHE_DAYS * 1440 )) -delete   # a hit touches its TU's time too
 fi
 echo "tidy: wall ${WALL} s, $JOBS jobs; cache: $HITS hits / $RUNS runs;" \
      "$(find "$CACHE" -maxdepth 1 -name '*.rc' | wc -l) entries, $(du -sh "$CACHE" | cut -f1)"
-TOTAL=$(grep -h ': error: ' "$OUT"/*.log 2>/dev/null | wc -l)
+TOTAL=$(cat $LOGS /dev/null | grep -c ': error: ')
 HANGS=0
 if [ -s "$OUT/HANGS.txt" ]; then
   HANGS=$(wc -l < "$OUT/HANGS.txt")
