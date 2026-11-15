@@ -2,7 +2,7 @@
 // the candidate filter, the size-consistency gate, the IoU gate and the
 // global greedy best-first matching (greedy_iou_match, box_math.hpp).
 //
-// Two rounds over one pair buffer (stage 3, ByteTrack-style): round 1 pairs
+// Two rounds over one pair buffer (ByteTrack-style): round 1 pairs
 // every person det with every alive track at the strong gate kIoUGate;
 // round 2 pairs round-1-unmatched dets with round-1-unmatched CONF tracks at
 // the weak gate kIoUGateWeak (in the code: round 0 and 1). Target case:
@@ -10,8 +10,8 @@
 // velocity -- the track used to die at kMaxMiss and the person re-spawned
 // under a new id. The lower size gate is shared; the upper one relaxes in
 // round 2 (kSizeMaxWeak): a tent spawned from a partial det stays too small to
-// accept the full-size det of the same person at kSizeMax -- observed live
-// (2026-11-12): a sliver-born track rejected every full-size det and starved
+// accept the full-size det of the same person at kSizeMax -- observed live:
+// a sliver-born track rejected every full-size det and starved
 // to death. What a match does to the track (round 2 measures the position
 // only, never touches hits) is the caller's business: Tracker::associate.
 //
@@ -22,7 +22,7 @@
 // match and injects a false velocity spike into a standing person's track.
 //
 // Pure logic on the pipeline thread (Tracker::update); the pair buffer is a
-// preallocated member (the ~12 KiB used to live on update()'s stack).
+// preallocated member.
 
 #pragma once
 

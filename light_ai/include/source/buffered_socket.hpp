@@ -16,6 +16,7 @@
 #include <string>
 
 #include "core/byte_window.hpp"
+#include "core/status.hpp"
 
 class BufferedSocket
 {
@@ -43,13 +44,15 @@ public:
     BufferedSocket( BufferedSocket&& ) = delete;
     BufferedSocket& operator=( BufferedSocket&& ) = delete;
 
-    // Closes what was open, then connects to host:port (IPv4). 0 = connected;
-    // -1 = why (when non-null) has the reason: "addr resolution failed for <host>",
-    // "socket: ...", "connect: ...", "connect: timeout", "connect: fcntl: ..."; the socket is closed.
-    int connect( const std::string& host, int port, std::string* why );
-    // Sends every byte (EINTR retried). 0 = sent; -1 = why: "send: <strerror>"
-    // or "send: peer closed, 0 bytes sent".
-    int send_all( const std::string& bytes, std::string* why ) const;
+    // Closes what was open, then connects to host:port (IPv4). Not ok: the socket
+    // is closed and the Status says why:
+    //   Absent  -- "addr resolution failed"; "connect: <errno>" refused / unreachable;
+    //   Timeout -- "connect: timeout" (kConnectMs);
+    //   Failed  -- "socket: <errno>", "connect: fcntl: <errno>", any other "connect: <errno>".
+    Status connect( const std::string& host, int port );
+    // Sends every byte (EINTR retried). Not ok: Lost "send: <errno>" or
+    // "send: peer closed, 0 bytes sent"; Failed "send: not connected".
+    Status send_all( const std::string& bytes ) const;
     // One poll( timeout_ms; < 0 = do not wait ) + one recv into the window.
     Fill fill( int timeout_ms );
     // Closes the socket and drops the window. Idempotent.

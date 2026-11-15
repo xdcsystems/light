@@ -1,6 +1,5 @@
 #include <cerrno>
 #include <chrono>
-#include <cstring>
 #include <string>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -11,6 +10,7 @@
 
 #include "camera_v4l2.hpp"
 #include "core/log.hpp"
+#include "source/source_types.hpp"  // dequeue_status
 
 namespace
 {
@@ -41,6 +41,18 @@ namespace
         return timeout_ms >= 0 ? EAGAIN : EIO;
     }
 
+    // A failed open / setup ioctl: the node gone or never there is Absent (the
+    // locator moves on), EBUSY is Busy, anything else Failed.
+    Status setup_errno( const char* what, int e )
+    {
+        Errc c = Errc::Failed;
+        if ( e == ENOENT || e == ENODEV || e == ENXIO )
+            c = Errc::Absent;
+        else if ( e == EBUSY )
+            c = Errc::Busy;
+        return errno_status( c, what, e );
+    }
+
 }  // namespace
 
 // Full open+setup path for the node given by the owner: open + S_FMT +
@@ -48,9 +60,9 @@ namespace
 // substituted camera mode is caught here exactly like at startup.
 // Self-cleaning (P1-5): every error path goes through fail(), which tears
 // the device down, so a failed setup never leaks an fd or a mapping.
-// Non-throwing: failures are reported via the return value and logged
+// Non-throwing: failures are reported via the returned Status and logged
 // here.
-int CameraV4L2::setup_device( const std::string& dev, std::string* why )
+Status CameraV4L2::setup_device( const std::string& dev )
 {
     // Idempotent entry: the startup fallback calls setup_device() twice
     // (direct setup first, then discovery re-runs it). Without this call
@@ -61,41 +73,42 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
 
     int got_w = 0;
     int got_h = 0;
-    if ( open_node( dev, why ) != 0 || negotiate_format( got_w, got_h, why ) != 0 )
-        return -1;
+    if ( Status st = open_node( dev ); !st.ok() )
+        return st;
+    if ( Status st = negotiate_format( got_w, got_h ); !st.ok() )
+        return st;
     request_rate();
-    if ( map_buffers( why ) != 0 )
-        return -1;
+    if ( Status st = map_buffers(); !st.ok() )
+        return st;
     // Adopted only after the whole setup succeeded: a failed attempt
     // leaves the locked session dimensions as they were.
     width_ = got_w;
     height_ = got_h;
-    return 0;
+    return {};
 }
 
-int CameraV4L2::fail( std::string* why, const char* text )
+Status CameraV4L2::fail( const Status& st )
 {
-    if ( why )
-        *why = text;
     teardown();
-    return -1;
+    return st;
 }
 
 // open() failure: nothing is open yet, the teardown() inside fail() is a no-op.
-int CameraV4L2::open_node( const std::string& dev, std::string* why )
+Status CameraV4L2::open_node( const std::string& dev )
 {
     fd_ = ::open( dev.c_str(), O_RDWR | O_CLOEXEC );
     if ( fd_ >= 0 )
-        return 0;
-    log_.warn() << "open camera: " << strerror( errno ) << '\n';
-    return fail( why, "open failed" );
+        return {};
+    const int e = errno;  // before the log write can touch errno
+    log_.warn() << "open camera: " << ErrnoText { e } << '\n';
+    return fail( setup_errno( "open failed", e ) );
 }
 
 // Read back the actual mode negotiated by the driver (VIDIOC_G_FMT).
 // At startup (width_ == 0) we adopt the device's negotiated MJPEG
 // dimensions; on a mid-run reconnect (width_ > 0) the dimensions are
 // already locked into the decoder/encoder and must match.
-int CameraV4L2::negotiate_format( int& got_w, int& got_h, std::string* why )
+Status CameraV4L2::negotiate_format( int& got_w, int& got_h )
 {
     const unsigned req_w = width_ > 0 ? static_cast<unsigned>( width_ ) : kDefaultWidth;
     const unsigned req_h = height_ > 0 ? static_cast<unsigned>( height_ ) : kDefaultHeight;
@@ -107,16 +120,18 @@ int CameraV4L2::negotiate_format( int& got_w, int& got_h, std::string* why )
     fmt.fmt.pix.field = V4L2_FIELD_ANY;
     if ( xioctl_r( VIDIOC_S_FMT, &fmt ) < 0 )
     {
-        log_.warn() << "camera: S_FMT: " << strerror( errno ) << '\n';
-        return fail( why, "S_FMT failed" );
+        const int e = errno;
+        log_.warn() << "camera: S_FMT: " << ErrnoText { e } << '\n';
+        return fail( setup_errno( "S_FMT failed", e ) );
     }
 
     v4l2_format gfmt {};
     gfmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if ( xioctl_r( VIDIOC_G_FMT, &gfmt ) < 0 )
     {
-        log_.warn() << "camera: G_FMT: " << strerror( errno ) << '\n';
-        return fail( why, "G_FMT failed" );
+        const int e = errno;
+        log_.warn() << "camera: G_FMT: " << ErrnoText { e } << '\n';
+        return fail( setup_errno( "G_FMT failed", e ) );
     }
     got_w = static_cast<int>( gfmt.fmt.pix.width );
     got_h = static_cast<int>( gfmt.fmt.pix.height );
@@ -125,9 +140,9 @@ int CameraV4L2::negotiate_format( int& got_w, int& got_h, std::string* why )
     {
         log_.warn() << "camera: mode mismatch: requested " << req_w << 'x' << req_h << " MJPEG, got " << got_w << 'x'
                   << got_h << " fourcc=" << std::hex << gfmt.fmt.pix.pixelformat << std::dec << '\n';
-        return fail( why, "camera mode mismatch" );
+        return fail( make_status( Errc::Unsupported, "camera mode mismatch" ) );
     }
-    return 0;
+    return {};
 }
 
 // Ask explicitly for the highest declared interval. The Sunplus FW
@@ -148,7 +163,7 @@ void CameraV4L2::request_rate()
     }
 }
 
-int CameraV4L2::map_buffers( std::string* why )
+Status CameraV4L2::map_buffers()
 {
     v4l2_requestbuffers req {};
     req.count = kBufCount;
@@ -156,12 +171,13 @@ int CameraV4L2::map_buffers( std::string* why )
     req.memory = V4L2_MEMORY_MMAP;
     if ( xioctl_r( VIDIOC_REQBUFS, &req ) < 0 )
     {
-        log_.warn() << "camera: REQBUFS: " << strerror( errno ) << '\n';
-        return fail( why, "REQBUFS failed" );
+        const int e = errno;
+        log_.warn() << "camera: REQBUFS: " << ErrnoText { e } << '\n';
+        return fail( setup_errno( "REQBUFS failed", e ) );
     }
 
     if ( req.count == 0 )
-        return fail( why, "camera: REQBUFS returned zero buffers" );
+        return fail( make_status( Errc::Unsupported, "camera: REQBUFS returned zero buffers" ) );
 
     // V4L2 allows the driver to return MORE buffers than requested
     // (VIDIOC_REQBUFS spec). The mmap/QBUF loops below index bufs_[],
@@ -183,24 +199,27 @@ int CameraV4L2::map_buffers( std::string* why )
         buf.index = i;
         if ( xioctl_r( VIDIOC_QUERYBUF, &buf ) < 0 )
         {
-            log_.warn() << "camera: QUERYBUF idx=" << i << ": " << strerror( errno ) << '\n';
-            return fail( why, "QUERYBUF failed" );
+            const int e = errno;
+            log_.warn() << "camera: QUERYBUF idx=" << i << ": " << ErrnoText { e } << '\n';
+            return fail( setup_errno( "QUERYBUF failed", e ) );
         }
         bufs_[i].length = buf.length;
         bufs_[i].start = mmap( nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, buf.m.offset );
         if ( bufs_[i].start == reinterpret_cast<void *>( -1 ) )  // MAP_FAILED: its ((void *) -1) lives in a system header
         {
+            const int e = errno;
             bufs_[i].start = nullptr;
-            log_.warn() << "camera: mmap idx=" << i << ": " << strerror( errno ) << '\n';
-            return fail( why, "mmap failed" );
+            log_.warn() << "camera: mmap idx=" << i << ": " << ErrnoText { e } << '\n';
+            return fail( errno_status( Errc::NoMemory, "mmap failed", e ) );
         }
         if ( xioctl_r( VIDIOC_QBUF, &buf ) < 0 )
         {
-            log_.warn() << "camera: QBUF idx=" << i << ": " << strerror( errno ) << '\n';
-            return fail( why, "QBUF failed" );
+            const int e = errno;
+            log_.warn() << "camera: QBUF idx=" << i << ": " << ErrnoText { e } << '\n';
+            return fail( setup_errno( "QBUF failed", e ) );
         }
     }
-    return 0;
+    return {};
 }
 
 // Release the fd and all mappings. Safe on a partially-open device and
@@ -232,26 +251,24 @@ void CameraV4L2::teardown()
 // Full teardown + the setup path + STREAMON: the one way a camera starts
 // streaming (startup, hot attach, re-attach). The node is supplied by the
 // owner (UsbNodeLocator) -- the class never decides which node to open.
-int CameraV4L2::reconnect( const std::string& dev, std::string* why )
+Status CameraV4L2::reconnect( const std::string& dev )
 {
     teardown();
-    if ( setup_device( dev, why ) != 0 )
+    if ( Status st = setup_device( dev ); !st.ok() )
     {
         teardown();
-        return -1;
+        return st;
     }
     v4l2_buf_type t = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if ( xioctl_r( VIDIOC_STREAMON, &t ) < 0 )
     {
-        const std::string err = strerror( errno );  // before the log write can touch errno
-        log_.warn() << "camera: reconnect STREAMON: " << err << '\n';
-        if ( why )
-            *why = "STREAMON: " + err;
+        const int e = errno;  // before the log write can touch errno
+        log_.warn() << "camera: reconnect STREAMON: " << ErrnoText { e } << '\n';
         teardown();
-        return -1;
+        return setup_errno( "STREAMON", e );
     }
     err_streak_ = 0;  // fresh device session (stream running) — the corrupt streak starts over
-    return 0;
+    return {};
 }
 
 CameraV4L2::~CameraV4L2()
@@ -270,24 +287,18 @@ int CameraV4L2::xioctl_r( unsigned long req, void* arg ) const
     return r;
 }
 
-int CameraV4L2::dequeue( uint32_t* size, int* err, int timeout_ms )  // NOLINT(readability-make-member-function-const)
+Status CameraV4L2::dequeue( int& index, uint32_t& size, int timeout_ms )  // NOLINT(readability-make-member-function-const)
 {
     v4l2_buffer buf {};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
     if ( const int werr = wait_clean( buf, timeout_ms ); werr != 0 )
-    {
-        if ( err )
-            *err = werr;
-        return -1;
-    }
+        return dequeue_status( werr );
     skip_to_newest( buf );
     err_streak_ = 0;  // clean buffer resets the streak
-    if ( err )
-        *err = 0;
-    if ( size )
-        *size = buf.bytesused;
-    return buf.index;
+    size = buf.bytesused;
+    index = static_cast<int>( buf.index );
+    return {};
 }
 
 // Loop until a clean buffer comes out.
@@ -355,6 +366,7 @@ void CameraV4L2::requeue( int index )  // NOLINT(readability-make-member-functio
     {
         // A failed QBUF silently removes the buffer from rotation;
         // without this log the symptom is only a mysterious cam-time growth.
-        log_.warn() << "camera: QBUF failed for idx=" << index << ": " << strerror( errno ) << '\n';
+        const int e = errno;
+        log_.warn() << "camera: QBUF failed for idx=" << index << ": " << ErrnoText { e } << '\n';
     }
 }

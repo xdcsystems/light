@@ -1,5 +1,4 @@
 #include <cerrno>
-#include <cstring>
 #include <string>
 #include <fcntl.h>
 #include <netdb.h>
@@ -12,15 +11,15 @@
 
 namespace
 {
-    int fail( std::string* why, const std::string& text )
+    // A failed connect() / SO_ERROR: nobody there is Absent (the prober retries).
+    Status connect_error( int e )
     {
-        if ( why )
-            *why = text;
-        return -1;
+        const bool absent = e == ECONNREFUSED || e == EHOSTUNREACH || e == ENETUNREACH || e == EHOSTDOWN;
+        return errno_status( absent ? Errc::Absent : Errc::Failed, "connect", e );
     }
 }  // namespace
 
-int BufferedSocket::connect( const std::string& host, int port, std::string* why )
+Status BufferedSocket::connect( const std::string& host, int port )
 {
     close();
     addrinfo hints {};
@@ -29,7 +28,7 @@ int BufferedSocket::connect( const std::string& host, int port, std::string* why
     const std::string port_str = std::to_string( port );  // named: c_str() must outlive getaddrinfo
     addrinfo* res = nullptr;
     if ( getaddrinfo( host.c_str(), port_str.c_str(), &hints, &res ) != 0 || res == nullptr )
-        return fail( why, "addr resolution failed for " + host );
+        return make_status( Errc::Absent, "addr resolution failed" );
     // SOCK_CLOEXEC: this fd must not leak into a fork()/exec() (this app
     // never forks, but a library or deploy wrapper might). The flag belongs
     // to the socket() type argument -- putting SOCK_CLOEXEC into
@@ -40,7 +39,7 @@ int BufferedSocket::connect( const std::string& host, int port, std::string* why
     {
         const int e = errno;
         freeaddrinfo( res );
-        return fail( why, std::string( "socket: " ) + strerror( e ) );
+        return errno_status( Errc::Failed, "socket", e );
     }
     // Non-blocking connect with a kConnectMs window, then back to blocking I/O.
     const int fl = ::fcntl( fd_, F_GETFL, 0 );
@@ -49,7 +48,7 @@ int BufferedSocket::connect( const std::string& host, int port, std::string* why
         const int e = errno;
         freeaddrinfo( res );
         close();
-        return fail( why, std::string( "connect: fcntl: " ) + strerror( e ) );
+        return errno_status( Errc::Failed, "connect: fcntl", e );
     }
     const int cr = ::connect( fd_, res->ai_addr, res->ai_addrlen );
     const int ce = errno;
@@ -57,7 +56,7 @@ int BufferedSocket::connect( const std::string& host, int port, std::string* why
     if ( cr != 0 && ce != EINPROGRESS )
     {
         close();
-        return fail( why, std::string( "connect: " ) + strerror( ce ) );
+        return connect_error( ce );
     }
     if ( cr != 0 )
     {
@@ -68,24 +67,24 @@ int BufferedSocket::connect( const std::string& host, int port, std::string* why
         if ( pr <= 0 || ::getsockopt( fd_, SOL_SOCKET, SO_ERROR, &so_err, &slen ) != 0 || so_err != 0 )
         {
             close();
-            return fail( why, pr <= 0 ? std::string( "connect: timeout" ) : std::string( "connect: " ) + strerror( so_err ) );
+            return pr <= 0 ? make_status( Errc::Timeout, "connect: timeout" ) : connect_error( so_err );
         }
     }
     if ( ::fcntl( fd_, F_SETFL, fl ) != 0 )  // a socket left non-blocking would break the poll + recv contract
     {
         const int e = errno;
         close();
-        return fail( why, std::string( "connect: fcntl: " ) + strerror( e ) );
+        return errno_status( Errc::Failed, "connect: fcntl", e );
     }
     int nd = 1;
     ::setsockopt( fd_, IPPROTO_TCP, TCP_NODELAY, &nd, sizeof( nd ) );
-    return 0;
+    return {};
 }
 
-int BufferedSocket::send_all( const std::string& bytes, std::string* why ) const
+Status BufferedSocket::send_all( const std::string& bytes ) const
 {
     if ( fd_ < 0 )
-        return fail( why, "send: not connected" );
+        return make_status( Errc::Failed, "send: not connected" );
     size_t off = 0;
     while ( off < bytes.size() )
     {
@@ -100,11 +99,11 @@ int BufferedSocket::send_all( const std::string& bytes, std::string* why ) const
             // w == 0 on a blocking socket cannot happen for a nonzero
             // buffer, but errno is only set on failure: reading it after a
             // zero return would report a stale value from an unrelated call.
-            return fail( why, std::string( "send: " ) + ( w < 0 ? strerror( errno ) : "peer closed, 0 bytes sent" ) );
+            return w < 0 ? errno_status( Errc::Lost, "send", errno ) : make_status( Errc::Lost, "send: peer closed, 0 bytes sent" );
         }
         off += static_cast<size_t>( w );
     }
-    return 0;
+    return {};
 }
 
 BufferedSocket::Fill BufferedSocket::fill( int timeout_ms )

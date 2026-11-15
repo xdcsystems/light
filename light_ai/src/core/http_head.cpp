@@ -10,8 +10,8 @@ namespace
     HttpHead error( const char* why )
     {
         HttpHead h;
-        h.status = HttpHead::Status::Error;
-        h.why = why;
+        h.parse = HttpHead::Parse::Error;
+        h.err = make_status( Errc::Invalid, why );
         return h;
     }
 
@@ -40,7 +40,7 @@ namespace
         if ( len == 0 )
             return error( "empty multipart boundary" );
         HttpHead h;
-        h.status = HttpHead::Status::Ok;
+        h.parse = HttpHead::Parse::Ok;
         std::memcpy( h.boundary, v + s, len );
         h.boundary[len] = '\0';
         h.boundary_len = len;
@@ -83,7 +83,7 @@ HttpHead parse_http_head( const uint8_t* p, size_t n )
     if ( ct == kNpos )
         return error( "no multipart boundary in Content-Type" );
     HttpHead h = take_boundary( p + ct, ct_end - ct );
-    if ( h.status == HttpHead::Status::Ok )
+    if ( h.parse == HttpHead::Parse::Ok )
         h.len = head_len;
     return h;
 }

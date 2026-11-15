@@ -1,34 +1,14 @@
-// SourceProber: attaches the non-Live sources on its own thread, on a 2 s
-// cadence, with a throttled "absent" log line. Stage 3b: replaces
-// Pipeline::probe_loop, probe_source, the ProbeStop guard and the probe_th_ /
-// probe_quit_ / probe_ticks_ members; since stage 3c it takes the SourceSet
-// (the busy-node list moved there).
+// SourceProber: attaches non-Live sources on its own thread, 2 s cadence,
+// throttled "absent" log. Dedicated thread because net attach can block for
+// the connect timeout (5 s) and must not stall the frame loop.
 //
-// One thread for all sources: a net attach may block for the connect timeout
-// (5 s) -- it must not stall the frame loop, hence a dedicated thread instead
-// of probing from the frame loop. V4L2 attach latency <= ~2 s, net <= ~7 s.
+// Lifetime: local of Pipeline::run() — destructor joins on every exit before
+// channels die. Call start() BEFORE the caller pins itself to the big cores:
+// the prober inherits the creator's affinity mask (cpu_affinity.hpp).
 //
-// Lifetime (RAII): the Pipeline keeps the prober as a local of run(), so the
-// destructor stops and joins it on every exit of run() -- drain, fatal error,
-// exception unwind -- before any channel dies. start() must be called BEFORE
-// the calling thread pins itself to the big cores: the prober inherits the
-// creator's mask and has to keep the scheduler default (cpu_affinity.hpp).
-//
-// Threading: from start() until the join the prober thread is the attaching
-// thread of the SourceChannel thread rule (source/source_channel.hpp): it
-// reads state() (acquire) and calls attach() only on non-Live channels, and
-// it is the only user of the locator. stop() may be called from any thread.
-//
-// Template parameters (static polymorphism; tests/test_source_prober.cpp
-// instantiates it with a SourceSet of SourceChannels over the fakes,
-// pipeline.hpp with the real one):
-//   Set: the SourceSet contract (source/source_set.hpp):
-//     int size() const;                    // fixed before start()
-//     Chan& operator[]( int s );           // Chan: the SourceChannel contract --
-//                                          //   bool live() const; template <class Loc>
-//                                          //   Attach attach( const NodeList& busy, Loc&, bool hot, std::string& why );
-//     NodeList busy_nodes( int self ) const;
-//   Locator: passed through to Chan::attach (source/usb_node_locator.hpp).
+// Threading: start()..join, this thread is the attaching thread per the
+// SourceChannel rule (source_channel.hpp). stop() is safe from any thread.
+// Template params: Set (source_set.hpp contract), Locator (passthrough).
 
 #pragma once
 
@@ -40,6 +20,8 @@
 #include <thread>
 
 #include "core/log.hpp"
+#include "core/status.hpp"
+
 
 template <class Set, class Locator>
 class BasicSourceProber
@@ -101,7 +83,7 @@ public:
             // alive; the camera scan prints on its own (UsbNodeLocator).
             if ( rounds_ == 1 || rounds_ % kLogEvery == 0 )
                 log_.info() << "probe: s" << s << " absent, attempt " << rounds_ << '\n';
-            std::string why;
+            Status why;
             static_cast<void>( c.attach( set_.busy_nodes( s ), loc_, true, why ) );
         }
     }

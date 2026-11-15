@@ -7,6 +7,23 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 
+// Xlib.h (pulled in via eglplatform.h) defines macros that clash
+// with project names. Undefine them right at the X11 entry point.
+#pragma push_macro("Status")
+#pragma push_macro("None")
+#pragma push_macro("Bool")
+#pragma push_macro("True")
+#pragma push_macro("False")
+#pragma push_macro("CursorShape")
+#pragma push_macro("RevertToParent")
+#undef Status
+#undef None
+#undef Bool
+#undef True
+#undef False
+#undef CursorShape
+#undef RevertToParent
+
 #include "core/gpu_box.hpp"  // GpuBox, GpuBoxList
 
 class Log;

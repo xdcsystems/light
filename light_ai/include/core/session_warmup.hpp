@@ -10,8 +10,7 @@
 // Single view (one cell): released by its first publish, nothing waits.
 //
 // Times come from the caller (one steady-clock read per publish in
-// NetEncoder), so the class is SDK-free and host-tested
-// (tests/test_session_warmup.cpp). Thread: the pipeline thread only.
+// NetEncoder). Thread: the pipeline thread only.
 
 #pragma once
 

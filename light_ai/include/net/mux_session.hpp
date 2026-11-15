@@ -9,7 +9,7 @@
 //   PacketQueue& queue: the encoded packets (pop), the session frame
 //     (open / close);
 //   SessionGate& gate:  the session hand-over (open / close).
-// Session order (#19, review of the 4a plan):
+// Session order:
 //   open:  queue.open( epoch ), then gate.open( session );
 //   close: gate.close() (waits for an encode in progress), then
 //          queue.close(), then av_write_trailer -- only when the session

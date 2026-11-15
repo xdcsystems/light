@@ -4,16 +4,15 @@
 // per packet, the payload moves slot to slot (av_packet_move_ref in
 // production).
 //
-// Thread rule:
+// Thread rule (every member is guarded by mx_, nothing is read outside it):
 //   pipeline thread (producer): push(), depth(), fail( epoch );
 //   serve thread (consumer):    open( epoch ), pop(), close();
 //   the owner's destructor:     stop() (wakes a blocked pop for good).
-// Every member below is guarded by mx_; nothing is read outside it.
 //
-// Session frame (the serve thread, review of #19): open( epoch ) before
-// the session is published to the encoder, close() after it is
-// withdrawn. open() clears leftovers, arms the key gate and makes `epoch`
-// the queue's session; close() clears again.
+// Session frame (the serve thread): open( epoch ) before the session is
+// published to the encoder, close() after it is withdrawn. open() clears
+// leftovers, arms the key gate and makes `epoch` the queue's session;
+// close() clears again.
 //
 // Policies:
 //   overflow -- the serve thread stalled (slow viewer, Wi-Fi burst).
@@ -27,18 +26,10 @@
 //   fail( epoch ) -- an encode-side error ends the session: pop() returns
 //     Failed. A fail() for any other session than the open one is a no-op:
 //     an RGA error from a publish that began in session N cannot end
-//     session N+1 (the stale-error bug of the former error_ flag).
+//     session N+1.
 //
-// Template parameters (static polymorphism; tests/test_packet_queue.cpp
-// instantiates it over a fake packet, net/av_packet_queue.hpp over AVPacket*):
-//   Pkt: a slot value, default-constructible, plain assignment;
-//   Ops: an object (held by value) with
-//     bool init( Pkt& );                  // slot allocation, ctor only; false = failed
-//     void release( Pkt& );               // slot deallocation (after unref), dtor / failed ctor
-//     void unref( Pkt& );                 // drop the payload, keep the slot
-//     void move( Pkt& dst, Pkt& src );    // dst := src's payload (dst unref'd first), src empty
-//     bool is_key( const Pkt& ) const;    // an IDR access unit
-// SDK-free; host + TSan tested.
+// Pkt/Ops contracts: the production instantiation is net/av_packet_queue.hpp,
+// the test one tests/test_packet_queue.cpp.
 
 #pragma once
 

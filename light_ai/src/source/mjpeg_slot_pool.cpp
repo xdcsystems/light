@@ -1,11 +1,10 @@
 #include <cerrno>
-#include <cstring>
-#include <stdexcept>
-#include <string>
 #include <utility>
 #include <sys/mman.h>
 
+#include "core/status.hpp"
 #include "source/mjpeg_slot_pool.hpp"
+#include "throw_on.hpp"
 
 namespace
 {
@@ -19,7 +18,7 @@ MjpegSlotPool::MjpegSlotPool()
     // then checked for nullptr, so a failed mmap went unnoticed (#28). Spelled
     // out: the macro's C-style cast trips the cstyle-cast check.
     if ( p == reinterpret_cast<void*>( -1 ) )
-        throw std::runtime_error( std::string( "net-src: frame pool mmap failed: " ) + strerror( errno ) );
+        throw_on( errno_status( Errc::NoMemory, "frame pool mmap failed", errno ), "net-src" );
     base_ = p;
     for ( int k = 0; k < kSlots; ++k )
         slot_[k] = static_cast<uint8_t*>( base_ ) + static_cast<size_t>( k ) * static_cast<size_t>( kSlotBytes );

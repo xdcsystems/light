@@ -14,8 +14,7 @@
 // skip and the start() drain keep the freshest frame in a fixed index); the
 // in-flight flags stay with the indices.
 //
-// POSIX only, no SDK: host-tested (tests/test_mjpeg_slot_pool.cpp). Thread:
-// one owner at a time (the NetMjpegSource that holds it).
+// POSIX only. Thread: one owner at a time (the NetMjpegSource that holds it).
 
 #pragma once
 

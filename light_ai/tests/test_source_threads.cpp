@@ -58,7 +58,7 @@ namespace
                     if ( k != s )
                         busy.push_back( ch[static_cast<size_t>( k )].node() );
                 }
-                std::string why;
+                Status why;
                 if ( c.attach( busy, loc, true, why ) == Channel::Attach::Live )
                     attaches.fetch_add( 1 );
                 c.stamp_ok( clk::now() );

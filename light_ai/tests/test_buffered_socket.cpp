@@ -13,6 +13,7 @@
 #include "check.hpp"
 #include "loopback.hpp"
 #include "source/buffered_socket.hpp"
+#include "status_text.hpp"
 #include "suites.hpp"
 
 using Fill = BufferedSocket::Fill;
@@ -38,14 +39,13 @@ namespace
     {
         Listener l;
         BufferedSocket s;
-        std::string why;
         CHECK( t, !s.is_open() && s.fill( 0 ) == Fill::Closed );
-        CHECK( t, s.connect( "127.0.0.1", l.port(), &why ) == 0 && s.is_open() );
+        CHECK( t, s.connect( "127.0.0.1", l.port() ).ok() && s.is_open() );
         const int srv = l.accept();
         CHECK( t, srv >= 0 );
         // send_all: the server gets every byte.
         const std::string req = "GET /video HTTP/1.1\r\n\r\n";
-        CHECK( t, s.send_all( req, &why ) == 0 );
+        CHECK( t, s.send_all( req ).ok() );
         std::vector<char> got( req.size() );
         size_t n = 0;
         while ( n < got.size() )
@@ -75,7 +75,8 @@ namespace
         s.close();
         s.close();
         CHECK( t, !s.is_open() && s.size() == 0 && s.fill( 0 ) == Fill::Closed );
-        CHECK( t, s.send_all( "x", &why ) == -1 && why.compare( 0, 6, "send: " ) == 0 );
+        const Status st = s.send_all( "x" );
+        CHECK( t, st.code() == Errc::Failed && status_text( st ) == "send: not connected" );
     }
 
     void full_window( TestRun& t )
@@ -83,7 +84,7 @@ namespace
         // More than the window, nothing consumed: Full, and nothing is read past it.
         Listener l;
         BufferedSocket s;
-        CHECK( t, s.connect( "127.0.0.1", l.port(), nullptr ) == 0 );
+        CHECK( t, s.connect( "127.0.0.1", l.port() ).ok() );
         const int srv = l.accept();
         std::thread writer( [srv] { write_all( srv, std::string( BufferedSocket::kWindow + 4096, 'z' ) ); } );
         const Fill r = fill_until( s, BufferedSocket::kWindow + 1 );
@@ -98,20 +99,22 @@ namespace
     void connect_failures( TestRun& t )
     {
         BufferedSocket s;
-        std::string why;
         // A port nobody listens on (a listener that was closed).
         int port = 0;
         {
             Listener l;
             port = l.port();
         }
-        CHECK( t, s.connect( "127.0.0.1", port, &why ) == -1 && !s.is_open() );
-        CHECK( t, why.compare( 0, 9, "connect: " ) == 0 );
-        CHECK( t, s.connect( "", 80, &why ) == -1 && why == "addr resolution failed for " );
+        const Status refused = s.connect( "127.0.0.1", port );
+        CHECK( t, !refused.ok() && !s.is_open() );
+        CHECK( t, refused.code() == Errc::Absent && refused.kind() == Status::Sys::Errno && refused.sys() == ECONNREFUSED );
+        CHECK( t, status_text( refused ) == std::string( "connect: " ) + std::strerror( ECONNREFUSED ) );
+        const Status unresolved = s.connect( "", 80 );
+        CHECK( t, unresolved.code() == Errc::Absent && status_text( unresolved ) == "addr resolution failed" );
         // A failed connect closes what was open before.
         Listener l;
-        CHECK( t, s.connect( "127.0.0.1", l.port(), nullptr ) == 0 );
-        CHECK( t, s.connect( "127.0.0.1", port, nullptr ) == -1 && !s.is_open() );
+        CHECK( t, s.connect( "127.0.0.1", l.port() ).ok() );
+        CHECK( t, !s.connect( "127.0.0.1", port ).ok() && !s.is_open() );
     }
 
     void interrupted( TestRun& t )
@@ -125,7 +128,7 @@ namespace
         sigaction( SIGUSR1, &sa, &old );
         Listener l;
         BufferedSocket s;
-        CHECK( t, s.connect( "127.0.0.1", l.port(), nullptr ) == 0 );
+        CHECK( t, s.connect( "127.0.0.1", l.port() ).ok() );
         const int srv = l.accept();
         std::atomic<bool> done { false };
         const pthread_t self = pthread_self();

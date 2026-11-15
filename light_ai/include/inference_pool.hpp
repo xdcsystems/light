@@ -2,10 +2,6 @@
 // and one worker thread per engine, and the FIFO that hands results back
 // strictly in submit order (BoxSmoother and Tracker see frames in order).
 //
-// Moved out of Pipeline (refactoring stage 2): the slot ring, the worker
-// threads, the publish FIFO and the core pinning used to be eight
-// Pipeline methods sharing its members.
-//
 // Two modes, picked once from InferConfig::pool:
 //   pool < 3 -> one engine ("ring of one"): the caller submits and
 //               collects the same frame, the legacy synchronous path;
@@ -18,18 +14,12 @@
 // thread -- the FIFO has no lock by design. Each worker touches only its
 // own slot and engine (InferSlot documents the handoff).
 //
-// Template parameters (static polymorphism, no virtuals -- the test suite
-// instantiates the pool with a fake engine, see tests/test_inference_pool.cpp):
-//   Engine: move-constructible from the EngineArgs given to the constructor;
-//     int setup_io();                 // 0 = ok, once, before any run()
-//     int set_core_mask( unsigned );  // 0 = ok; 1/2/4 = NPU core 0/1/2
-//     int run() const;                // one inference on the input tensor, 0 = ok
-//     int input_fd() const; void* input_data() const; uint32_t input_size() const;
-//   Decode: copy-constructible; the pool keeps one copy per worker and
-//     worker k calls only its own copy, so a Decode may keep preallocated
-//     per-frame state (YoloDecode: the candidate buffer) and is never called
-//     concurrently on one instance:
-//     void operator()( const Engine&, const InferJob&, DetList& out );
+// Template parameters (static polymorphism, no virtuals): Engine is
+// move-constructible from the EngineArgs given to the constructor; Decode is
+// copy-constructible, the pool keeps one copy per worker and worker k calls
+// only its own copy, so a Decode may keep preallocated per-frame state
+// (YoloDecode: the candidate buffer) and is never called concurrently on one
+// instance.
 //
 // Destruction closes every slot and joins the workers before the engines
 // die. A worker blocked inside a wedged rknn_run keeps the destructor

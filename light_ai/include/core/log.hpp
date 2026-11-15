@@ -20,7 +20,6 @@
 // nothing, takes no lock and still evaluates its operands.
 //
 // Not for per-pixel or per-detection paths: a Line costs a mutex.
-// No heap, no statics, no virtuals; SDK-free.
 
 #pragma once
 

@@ -18,7 +18,7 @@
 // warmup has released the session (core/session_warmup.hpp): held
 // publishes never stamp it.
 //
-// SDK-free, host-tested (tests/test_encode_pacer.cpp). Thread: the
+// Thread:
 // pipeline thread only.
 
 #pragma once

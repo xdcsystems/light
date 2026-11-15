@@ -13,9 +13,7 @@
 // waiting (take() or reclaim() time out on a wedged NPU), but then it
 // marks the slot Abandoned instead of freeing it: handing the tensor back
 // to RGA while rknn_run still reads it would corrupt that inference. The
-// worker frees an Abandoned slot when its job finishes. Before this class
-// the rule lived in comments across three Pipeline methods and a `drop`
-// flag set in two of them.
+// worker frees an Abandoned slot when its job finishes.
 //
 // Data ownership follows the state, no lock needed for the payload:
 // - job_ is written by submit() (Free, pipeline thread) and read by the
@@ -23,8 +21,6 @@
 // - out_ is written by the worker while Queued/Abandoned and read by
 //   take() once Done (pipeline thread).
 // The mutex acquire/release around each transition publishes them.
-//
-// SDK-free: plain data, std::mutex, std::condition_variable.
 
 #pragma once
 

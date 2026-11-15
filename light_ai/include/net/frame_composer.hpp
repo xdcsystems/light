@@ -10,7 +10,7 @@
 //     copied into the slot (single view) or into the absent cells that do
 //     not hold the plate already (multi-view; out == nullptr: canvas only);
 //   session start (multi-view): reset_canvas() fills the whole canvas gray,
-//     so no picture of a previous session reaches the new one (#24).
+//     so no picture of a previous session reaches the new one.
 // Before a band lands in a slot / cell whose last band differs, the
 // slot / cell is refilled gray: plate or old-band pixels must not survive
 // around the new picture.

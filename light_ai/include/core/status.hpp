@@ -1,6 +1,5 @@
 // Status: the result of an operation that can fail for a reason (README,
-// "Rules of the project", Errors). Stage 7: replaces the int 0 / -1 + std::string* why,
-// the bool + log line and the errno out-parameter forms.
+// "Rules of the project", Errors).
 //
 // What it holds:
 //   code  -- the class of the failure, the one a caller branches on (Errc);

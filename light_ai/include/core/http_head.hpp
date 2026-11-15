@@ -1,5 +1,5 @@
 // parse_http_head: the HTTP response head of an MJPEG pull stream, parsed
-// from the bytes buffered so far. Pure, host-tested (tests/test_http_head.cpp).
+// from the bytes buffered so far. Pure.
 //
 // Grammar: lines end with LF, an optional CR before it (core/line_scan.hpp);
 // the head ends at the first empty line. Ok needs:
@@ -8,7 +8,7 @@
 //     optional blanks after '='; an optional opening quote; the value ends
 //     at '"', ';' or the line end; 1..kBoundaryMax characters).
 // NeedMore: no end of head in the bytes yet and fewer than kHeadMax of them.
-// Error: why holds the reason -- the texts of the old read_headers:
+// Error: err holds the reason (Errc::Invalid):
 //   "response headers oversized" (kHeadMax bytes without an end of head),
 //   "server did not answer 200", "no multipart boundary in Content-Type",
 //   "multipart boundary too long", "empty multipart boundary".
@@ -18,6 +18,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "core/status.hpp"
+
 struct HttpHead
 {
     enum
@@ -25,18 +27,18 @@ struct HttpHead
         kHeadMax = 8 * 1024,  // a server that drips headers forever: a data-volume cap
         kBoundaryMax = 60,
     };
-    enum class Status : uint8_t
+    enum class Parse : uint8_t
     {
         NeedMore,
         Ok,
         Error
     };
 
-    Status status = Status::NeedMore;
+    Parse parse = Parse::NeedMore;
     size_t len = 0;  // Ok: bytes of the head, the empty line included
     char boundary[kBoundaryMax + 1] = {};  // Ok: NUL-terminated
     size_t boundary_len = 0;
-    const char* why = "";  // Error: the reason
+    Status err {};  // Error: the reason
 };
 
 HttpHead parse_http_head( const uint8_t* p, size_t n );

@@ -20,8 +20,6 @@
 // (H264Encoder::encode); the warmup (canvas reset + the hold of the first
 // encode, SessionWarmup::enter) and the pacer budget (EncodePacer::admit)
 // start earlier, from the epoch snapshot publish() takes after active().
-//
-// SDK-free; host + TSan tested (tests/test_session_gate.cpp).
 
 #pragma once
 

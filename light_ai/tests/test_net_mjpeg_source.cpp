@@ -68,9 +68,10 @@ namespace
                     request = loopback::read_request( srv_ );
                     loopback::write_all( srv_, initial );
                 } );
-            const int rc = src.setup_device( url(), &why );
+            const Status st = src.setup_device( url() );
             th.join();
-            return rc;
+            why = st.what();
+            return st.ok() ? 0 : -1;
         }
         void send( const std::string& s ) const { loopback::write_all( srv_, s ); }
         void drop_server()
@@ -83,7 +84,11 @@ namespace
         int dequeue( int timeout_ms, int& err, Bytes& frame )
         {
             uint32_t n = 0;
-            const int idx = src.dequeue( &n, &err, timeout_ms );
+            int idx = -1;
+            const Status st = src.dequeue( idx, n, timeout_ms );
+            err = st.ok() ? 0 : st.sys();
+            if ( !st.ok() )
+                idx = -1;
             frame.clear();
             if ( idx >= 0 )
             {
@@ -234,12 +239,23 @@ namespace
                 const Listener gone;
                 port = gone.port();
             }
-            CHECK( t, src.setup_device( "http://127.0.0.1:" + std::to_string( port ) + "/", &why ) == -1
-                          && why.compare( 0, 9, "connect: " ) == 0 );
-            CHECK( t, src.setup_device( "rtsp://cam/", &why ) == -1 && why == "url must start with http://" );
-            uint32_t n = 0;
-            int e = 0;
-            CHECK( t, src.dequeue( &n, &e, 0 ) == -1 && e == ENODEV );
+            CHECK( t, [&]
+            {
+                const Status st = src.setup_device( "http://127.0.0.1:" + std::to_string( port ) + "/" );
+                return !st.ok() && st.kind() == Status::Sys::Errno;  // the errno of the failed connect
+            }() );
+            CHECK( t, [&]
+            {
+                const Status st = src.setup_device( "rtsp://cam/" );
+                return !st.ok() && st.code() == Errc::Invalid && std::strcmp( st.what(), "url must start with http://" ) == 0;
+            }() );
+            CHECK( t, [&]
+            {
+                int idx = -1;
+                uint32_t n2 = 0;
+                const Status st = src.dequeue( idx, n2, 0 );
+                return !st.ok() && st.code() == Errc::Lost && st.sys() == ENODEV;
+            }() );
         }
     }
 }  // namespace

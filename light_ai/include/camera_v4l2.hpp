@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string>
 
+#include "core/status.hpp"
+
 class Log;
 struct v4l2_buffer;  // <linux/videodev2.h>, included by the .cpp only
 
@@ -34,9 +36,10 @@ public:
 
     // Full open+verify path for a node:
     // open, S_FMT, G_FMT verification, REQBUFS, mmap, QBUF.
-    // Nothing is trusted blindly: a substituted camera mode is caught here exactly like at startup. 
-    // Non-throwing: failures return non-zero and fill *why (if not null); details are logged here.
-    int setup_device( const std::string& dev, std::string* why );
+    // Nothing is trusted blindly: a substituted camera mode is caught here exactly like at startup.
+    // Non-throwing: a failure tears down and returns its Status (Absent: the node
+    // is not there; Busy; Unsupported: the mode; NoMemory: mmap); details are logged here.
+    Status setup_device( const std::string& dev );
 
     // Release the fd and all mappings; safe on a partially-open or already-dead device
     // (STREAMOFF errors are ignored on purpose).
@@ -44,17 +47,17 @@ public:
 
     // Full teardown + setup_device() + STREAMON: the only way the camera starts
     // streaming (startup, hot attach, re-attach -- SourceChannel::attach).
-    // Returns 0 on success, non-zero with *why (the cause is logged here).
-    int reconnect( const std::string& dev, std::string* why );
+    // Not ok: the setup Status, or "STREAMON: <errno>" (the cause is logged here).
+    Status reconnect( const std::string& dev );
 
-    // Returns the buffer index; size (if not null) receives the frame length.
-    // On failure returns -1 and stores the errno value in *err:
-    // ENODEV/EIO mean the device is gone or interrupted (recoverable);
-    // any other errno is a hard error.
+    // ok: index = the buffer index, size = the frame length. Otherwise
+    // dequeue_status( errno ) (source/source_types.hpp): Timeout = nothing
+    // ready in timeout_ms; Lost = ENODEV / EIO, gone or a stall (recoverable);
+    // anything else is a hard error.
     // Corrupt buffers (BUF_FLAG_ERROR) are counted ACROSS calls --
     // the err_streak_ member, reset only by a clean frame or by reconnect();
     // kBufCount in a row = recoverable stall.
-    int dequeue( uint32_t* size, int* err, int timeout_ms = -1 );
+    Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 );
     void requeue( int index );
     void* buffer( int index ) const { return bufs_[index].start; }
     size_t buffer_size( int index ) const { return bufs_[index].length; }
@@ -62,19 +65,18 @@ public:
     int height() const { return height_; }
 
 private:
-    // The steps of setup_device(), in this order. The int steps return 0, or the
+    // The steps of setup_device(), in this order. The Status steps return ok, or the
     // fail() result; they log the cause first, except the zero-buffer REQBUFS exit
-    // of map_buffers(), which reports through *why only. request_rate() cannot fail.
-    int open_node( const std::string& dev, std::string* why );
+    // of map_buffers(), which reports through its Status only. request_rate() cannot fail.
+    Status open_node( const std::string& dev );
     // S_FMT + G_FMT + the mode check; got_w/got_h receive the negotiated mode.
-    int negotiate_format( int& got_w, int& got_h, std::string* why );
+    Status negotiate_format( int& got_w, int& got_h );
     // S_PARM 30 fps: best effort, never fatal.
     void request_rate();
     // REQBUFS + the count clamp + the QUERYBUF / mmap / QBUF loop.
-    int map_buffers( std::string* why );
-    // The one error exit of the setup steps: *why = text (if why is not null),
-    // teardown(), returns -1.
-    int fail( std::string* why, const char* text );
+    Status map_buffers();
+    // The one error exit of the setup steps: teardown(), returns st.
+    Status fail( const Status& st );
 
     // The steps of dequeue(), on its caller's thread (the frame thread), like
     // err_streak_. wait_clean: poll + DQBUF into buf until a clean buffer comes out;

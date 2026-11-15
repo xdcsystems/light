@@ -55,7 +55,7 @@ namespace
             configure_v4l2( n );
             for ( int s = 0; s < n; ++s )
             {
-                std::string why;
+                Status why;
                 set[s].attach( {}, loc, false, why );
                 dev[static_cast<size_t>( s )].dq_buf = 0;
             }
@@ -103,7 +103,7 @@ namespace
         Rig q;
         q.configure_v4l2( 2 );
         CHECK( t, q.set.size() == 2 && !q.set.any_live() );
-        std::string why;
+        Status why;
         CHECK( t, q.set[1].attach( {}, q.loc, false, why ) == Channel::Attach::Live );
         CHECK( t, q.dev[1].opens == 1 && q.dev[0].opens == 0 );  // channel i is built on dev[i]
         CHECK( t, q.set[1].index() == 1 && q.set[1].node() == "/dev/video21" );
@@ -148,11 +148,11 @@ namespace
 
         r.dev[2].dq_err = ENODEV;
         f = {};
-        CHECK( t, r.set.next( 0, f ) == FrameStatus::Detached && f.src == 2 && f.err == ENODEV );
+        CHECK( t, r.set.next( 0, f ) == FrameStatus::Detached && f.src == 2 && f.st.sys() == ENODEV );
 
         r.dev[1].dq_err = EBADF;
         f = {};
-        CHECK( t, r.set.next( 0, f ) == FrameStatus::Fatal && f.src == 1 && f.err == EBADF );  // the cursor was 2: s0, s1
+        CHECK( t, r.set.next( 0, f ) == FrameStatus::Fatal && f.src == 1 && f.st.sys() == EBADF );  // the cursor was 2: s0, s1
     }
 
     void stall_detector( TestRun& t )
@@ -162,7 +162,7 @@ namespace
         r.fail_all( EAGAIN );
         r.set[1].stamp_ok( clk::now() - std::chrono::seconds( 3 ) );
         EncodedFrame f {};
-        CHECK( t, r.set.next( 0, f ) == FrameStatus::Detached && f.src == 1 && f.err == EIO );
+        CHECK( t, r.set.next( 0, f ) == FrameStatus::Detached && f.src == 1 && f.st.sys() == EIO );
         CHECK( t, r.err.str().find( "source s1: no frame in 2000 ms - treating as recoverable stall" ) != std::string::npos );
 
         r.set[1].stamp_ok( clk::now() - std::chrono::seconds( 3 ) );
@@ -181,7 +181,7 @@ namespace
         r.dev[0].dq_buf = -1;
         r.dev[0].dq_err = EIO;
         f = {};
-        CHECK( t, r.set.next_blocking( f ) == FrameStatus::Detached && f.err == EIO );
+        CHECK( t, r.set.next_blocking( f ) == FrameStatus::Detached && f.st.sys() == EIO );
         r.set[0].detach();
         const int dq = r.dev[0].dequeues;
         f = {};

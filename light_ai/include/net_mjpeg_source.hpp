@@ -4,6 +4,7 @@
 #include <string>
 
 #include "core/multipart_reader.hpp"
+#include "core/status.hpp"
 #include "source/buffered_socket.hpp"
 #include "source/mjpeg_slot_pool.hpp"
 
@@ -15,13 +16,12 @@ class Log;
 // The only cost vs V4L2 is one memcpy per frame (socket -> slot);
 // V4L2 hands the dma-buf zero-copy, HTTP cannot.
 //
-// The parts (stage 5, #28): the TCP client and its receive window
-// (source/buffered_socket.hpp), the response head and the multipart framing
-// as pure parsers over that window (core/http_head.hpp,
-// core/multipart_reader.hpp), the frame slots (source/mjpeg_slot_pool.hpp).
+// The TCP client and its receive window (source/buffered_socket.hpp), the response
+// head and the multipart framing as pure parsers over that window
+// (core/http_head.hpp, core/multipart_reader.hpp), the frame slots (source/mjpeg_slot_pool.hpp).
 // This class keeps the source contract of MediaSource: connect + prime,
 // the start() drain, the latest-frame skip, the frame check
-// (jpeg_frame_check), the corrupt-frame streak and the errno ladder.
+// (jpeg_frame_check), the corrupt-frame streak and the dequeue ladder (dequeue_status).
 //
 // Thread rule (the Src of SourceChannel, source/source_channel.hpp: one
 // owner at a time, the channel state is the hand-over):
@@ -82,24 +82,24 @@ public:
     NetMjpegSource( NetMjpegSource&& ) = delete;
     NetMjpegSource& operator=( NetMjpegSource&& ) = delete;
 
-    // Full connect path for an http://host[:port]/path URL. Non-throwing:
-    // 0 on success, non-zero fills *why.
-    int setup_device( const std::string& url, std::string* why );
+    // Full connect path for an http://host[:port]/path URL. Non-throwing: not
+    // ok tears down and says why (the url, connect, send, head and first-frame
+    // reasons; Absent = nobody there, so the prober retries).
+    Status setup_device( const std::string& url );
     void teardown();
     // Drains frames accumulated in the TCP socket during Pipeline init
     // so run() starts at the live edge alongside CameraV4L2::start().
     void start();
 
-    // Returns the buffer index holding one complete JPEG frame;
-    // size receives the frame length. On failure returns -1 with the errno
-    // class in *err, same ladder as the camera: EIO = recoverable stall
-    // (watchdog, hangup, corrupt-frame streak, desync),
+    // ok: index = the buffer holding one complete JPEG frame, size = its length.
+    // Otherwise dequeue_status( errno ), the same ladder as the camera:
+    // EIO = recoverable stall (watchdog, hangup, corrupt-frame streak, desync),
     // ENODEV = closed by teardown, EAGAIN = no frame ready within timeout_ms.
     // Corrupt/incomplete frames are dropped with EAGAIN (or EIO once the
     // streak reaches kErrStreakMax); the streak survives across calls and
     // resets only on a clean frame or a successful setup_device().
     // timeout_ms < 0: the blocking single-source mode (the 2 s watchdog).
-    int dequeue( uint32_t* size, int* err, int timeout_ms = -1 );
+    Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 );
     void requeue( int index );
     void* buffer( int index ) const { return pool_.data( index ); }
     size_t buffer_size( int ) const { return pool_.capacity(); }
@@ -107,20 +107,23 @@ public:
     int height() const { return height_; }
 
 private:
-    int send_get( const std::string& host, int port, const std::string& path, std::string* why ) const;
+    Status send_get( const std::string& host, int port, const std::string& path ) const;
     // Response head (core/http_head.hpp) -> the reader's boundary.
-    int read_headers( std::string* why );
+    Status read_headers();
+    // After the head: the first JPEG frame primed into slot 0, its SOFn
+    // geometry checked against a locked one (a reconnect).
+    Status prime_first_frame();
     // One complete part (or a wedged-full window) is buffered: no fill needed.
     bool part_buffered() const;
     // The desync protocol: the buffered window is dropped, the reader resyncs.
     void drop_window();
     // Fills (waiting up to timeout_ms, then without waiting) until a part is complete.
     Ready poll_part_ready( int timeout_ms );
-    // dequeue's wait: false = *err set (EAGAIN, or EIO once the streak is full).
-    bool wait_part_ready( int timeout_ms, int* err );
+    // dequeue's wait: ok = a part is buffered; else EAGAIN, or EIO once the streak is full.
+    Status wait_part_ready( int timeout_ms );
     // dequeue's first frame after setup_device / start: the primed one in
-    // slot 0 (primed_len_ > 0), handed out once; returns slot 0.
-    int take_primed( uint32_t* size );
+    // slot 0 (primed_len_ > 0), handed out once.
+    Status take_primed( int& index, uint32_t& size );
     // One part into slot, then the freshest of the parts already buffered
     // (via a scratch slot, at most kSkipMax); a Desync gets one resync retry.
     Read read_latest_part( int slot, uint32_t* size );

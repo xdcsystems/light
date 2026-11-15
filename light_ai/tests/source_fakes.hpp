@@ -12,6 +12,7 @@
 
 #include "core/log.hpp"
 #include "source/usb_node_locator.hpp"
+#include "source/source_types.hpp"
 
 // Device control: what the next calls return, and what was called.
 // Attach-path fields and frame-path fields are separate memory: under the
@@ -43,32 +44,29 @@ public:
 
     void use_camera() { d_.net = false; }
     void use_net() { d_.net = true; }
-    int open( const std::string& id, std::string* why )
+    Status open( const std::string& id )
     {
         ++d_.opens;
         d_.opened = id;
-        if ( d_.open_rc != 0 && why )
-            *why = "open refused";
-        return d_.open_rc;
+        if ( d_.open_rc != 0 )
+            return make_status( Errc::Absent, "open refused" );
+        return {};
     }
-    int trial( const std::string& node, std::string* why )
+    Status trial( const std::string& node )
     {
         d_.trials.push_back( node );
-        if ( d_.trial_rc != 0 && why )
-            *why = "trial refused";
-        return d_.trial_rc;
+        if ( d_.trial_rc != 0 )
+            return make_status( Errc::Failed, "trial refused" );
+        return {};
     }
-    int dequeue( uint32_t* size, int* err, int )
+    Status dequeue( int& index, uint32_t& size, int )
     {
         ++d_.dequeues;
         if ( d_.dq_buf < 0 )
-        {
-            *err = d_.dq_err;
-            return -1;
-        }
-        *size = d_.dq_size;
-        *err = 0;
-        return d_.dq_buf;
+            return dequeue_status( d_.dq_err );
+        index = d_.dq_buf;
+        size = d_.dq_size;
+        return {};
     }
     void requeue( int ) { ++d_.requeues; }
     void* buffer( int ) const { return bytes_.data(); }

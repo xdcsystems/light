@@ -5,8 +5,7 @@
 //
 // stb_easy_font is a header-only external with file statics of its own: it
 // is included only from src/core/bitmap_font.cpp, never from this header
-// (README, rules: the externals exception). SDK-free, host-tested
-// (tests/test_idle_plate.cpp).
+// (README, rules: the externals exception).
 //
 // Text is copied into a 64-byte buffer (the library API is char*-based);
 // longer strings are cut. Characters outside the font render as blanks.

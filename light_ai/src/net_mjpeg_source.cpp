@@ -7,6 +7,7 @@
 #include "core/http_url.hpp"
 #include "core/log.hpp"
 #include "jpeg_probe.hpp"
+#include "source/source_types.hpp"  // dequeue_status
 
 namespace
 {
@@ -22,56 +23,53 @@ namespace
     }
 }  // namespace
 
-int NetMjpegSource::setup_device( const std::string& url, std::string* why )
+Status NetMjpegSource::setup_device( const std::string& url )
 {
     teardown();
 
+    // A failed attempt is logged here with its url: the prober's absent
+    // line does not carry it, and this is the one place that knows it.
+    const auto warn = [&]( Status st ) {
+        log_.warn() << "net-src: " << url << ": " << st << '\n';
+        return st;
+    };
+
     HttpUrl u;
-    if ( !parse_http_url( url, u, why ) )
-        return -1;
-    if ( sock_.connect( u.host, u.port, why ) != 0 )
-        return -1;
-    if ( send_get( u.host, u.port, u.path, why ) != 0 )
+    if ( Status st = parse_http_url( url, u ); !st.ok() )
+        return warn( st );
+    if ( Status st = sock_.connect( u.host, u.port ); !st.ok() )
+        return warn( st );
+    Status st = send_get( u.host, u.port, u.path );
+    if ( st.ok() )
+        st = read_headers();
+    if ( st.ok() )
+        st = prime_first_frame();
+    if ( !st.ok() )
     {
         teardown();
-        return -1;
+        return warn( st );
     }
-    if ( read_headers( why ) != 0 )
-    {
-        teardown();
-        return -1;
-    }
-    // Prime the first JPEG frame into slot 0 to read its SOFn geometry
-    // before MppDecoder / NetEncoder / RgaResizer are initialized.
+    log_.info() << "net-src: connected " << url << " (" << width_ << 'x' << height_ << "), boundary " << parts_.boundary() << "\n";
+    err_streak_ = 0;
+    return {};
+}
+
+// Prime the first JPEG frame into slot 0 to read its SOFn geometry
+// before MppDecoder / NetEncoder / RgaResizer are initialized.
+Status NetMjpegSource::prime_first_frame()
+{
     uint32_t n = 0;
     if ( read_part( 0, &n ) != Read::Part )
-    {
-        if ( why )
-            *why = "failed to read initial JPEG frame";
-        teardown();
-        return -1;
-    }
+        return make_status( Errc::Lost, "failed to read initial JPEG frame" );
     JpegSofInfo info {};
     if ( !jpeg_frame_check( pool_.data( 0 ), n, info ) )
-    {
-        if ( why )
-            *why = "initial JPEG frame is incomplete or missing SOFn";
-        teardown();
-        return -1;
-    }
+        return make_status( Errc::Invalid, "initial JPEG frame is incomplete or missing SOFn" );
     if ( width_ > 0 && height_ > 0 && ( info.w != width_ || info.h != height_ ) )
-    {
-        if ( why )
-            *why = "stream resolution changed on reconnect";
-        teardown();
-        return -1;
-    }
+        return make_status( Errc::Unsupported, "stream resolution changed on reconnect" );
     width_ = info.w;
     height_ = info.h;
     primed_len_ = n;
-    log_.info() << "net-src: connected " << url << " (" << width_ << 'x' << height_ << "), boundary " << parts_.boundary() << "\n";
-    err_streak_ = 0;
-    return 0;
+    return {};
 }
 
 void NetMjpegSource::teardown()
@@ -81,46 +79,36 @@ void NetMjpegSource::teardown()
     pool_.release_all();
 }
 
-int NetMjpegSource::send_get( const std::string& host, int port, const std::string& path, std::string* why ) const
+Status NetMjpegSource::send_get( const std::string& host, int port, const std::string& path ) const
 {
     // Streamed together, no printf-family (project rule 2).
     const std::string req = "GET " + path + " HTTP/1.1\r\nHost: " + host + ":" + std::to_string( port )
         + "\r\nConnection: keep-alive\r\nAccept: multipart/x-mixed-replace, image/jpeg\r\nUser-Agent: light_ai/1.0\r\n\r\n";
-    return sock_.send_all( req, why );
+    return sock_.send_all( req );
 }
 
-int NetMjpegSource::read_headers( std::string* why )
+Status NetMjpegSource::read_headers()
 {
     // parse_http_head owns the grammar and the kHeadMax cap (a server that
     // drips headers forever is a data-volume cap, not a wall-clock one).
     while ( true )
     {
         const HttpHead h = parse_http_head( sock_.data(), sock_.size() );
-        if ( h.status == HttpHead::Status::Ok )
+        if ( h.parse == HttpHead::Parse::Ok )
         {
             // Cannot fail while the caps match (the static_assert above);
             // checked anyway, with the head parser's own text.
             if ( !parts_.reset( h.boundary, h.boundary_len ) )
-            {
-                if ( why )
-                    *why = "multipart boundary too long";
-                return -1;
-            }
+                return make_status( Errc::Invalid, "multipart boundary too long" );
             sock_.consume( h.len );
-            return 0;
+            return {};
         }
-        if ( h.status == HttpHead::Status::Error )
-        {
-            if ( why )
-                *why = h.why;
-            return -1;
-        }
+        if ( h.parse == HttpHead::Parse::Error )
+            return h.err;
         const BufferedSocket::Fill r = sock_.fill( kPollMs );
         if ( r == BufferedSocket::Fill::Interrupted || r == BufferedSocket::Fill::Data )
             continue;  // EINTR: transient, not a watchdog expiry
-        if ( why )
-            *why = "no HTTP response within the watchdog window";
-        return -1;
+        return make_status( Errc::Timeout, "no HTTP response within the watchdog window" );
     }
 }
 
@@ -158,21 +146,19 @@ NetMjpegSource::Ready NetMjpegSource::poll_part_ready( int timeout_ms )
     }
 }
 
-bool NetMjpegSource::wait_part_ready( int timeout_ms, int* err )
+Status NetMjpegSource::wait_part_ready( int timeout_ms )
 {
     if ( timeout_ms < 0 )
-        return true;
+        return {};
     const Ready pr = poll_part_ready( timeout_ms );
     if ( pr == Ready::Yes )
-        return true;
+        return {};
     if ( pr == Ready::Desync )
     {
         ++err_streak_;
         drop_window();
     }
-    if ( err )
-        *err = ( pr == Ready::No || ( pr == Ready::Desync && err_streak_ < kErrStreakMax ) ) ? EAGAIN : EIO;
-    return false;
+    return dequeue_status( ( pr == Ready::No || ( pr == Ready::Desync && err_streak_ < kErrStreakMax ) ) ? EAGAIN : EIO );
 }
 
 void NetMjpegSource::start()
@@ -261,26 +247,16 @@ NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size 
     return Read::Part;
 }
 
-int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
+Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms )
 {
-    int sink = 0;  // err may be null: the errno class goes here instead
-    int* const ep = err ? err : &sink;
-    int& e = *ep;
-    e = 0;
     if ( !sock_.is_open() )
-    {
-        e = ENODEV;
-        return -1;
-    }
+        return dequeue_status( ENODEV );
     if ( err_streak_ >= kErrStreakMax )
-    {
-        e = EIO;  // recoverable stall -> the reconnect ladder
-        return -1;
-    }
+        return dequeue_status( EIO );  // recoverable stall -> the reconnect ladder
     if ( primed_len_ > 0 )
-        return take_primed( size );
-    if ( !wait_part_ready( timeout_ms, &e ) )
-        return -1;
+        return take_primed( index, size );
+    if ( Status st = wait_part_ready( timeout_ms ); !st.ok() )
+        return st;
     int slot = pool_.free_slot();
     if ( slot < 0 )
     {
@@ -291,32 +267,28 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
     }
     uint32_t n = 0;
     if ( read_latest_part( slot, &n ) != Read::Part )
-    {
-        e = EIO;  // EOF / watchdog / recv error, a desync past its retry: recoverable
-        return -1;
-    }
+        return dequeue_status( EIO );  // EOF / watchdog / recv error, a desync past its retry: recoverable
     if ( !frame_ok( pool_.data( slot ), n, width_, height_ ) )
     {
         ++err_streak_;
         log_.warn() << "net-src: corrupt/incomplete JPEG frame (" << n << " bytes, streak " << err_streak_ << ") dropped\n";
-        e = ( err_streak_ >= kErrStreakMax ) ? EIO : EAGAIN;
-        return -1;
+        return dequeue_status( ( err_streak_ >= kErrStreakMax ) ? EIO : EAGAIN );
     }
     err_streak_ = 0;
     pool_.mark( slot );
-    if ( size )
-        *size = n;
-    return slot;
+    size = n;
+    index = slot;
+    return {};
 }
 
-int NetMjpegSource::take_primed( uint32_t* size )
+Status NetMjpegSource::take_primed( int& index, uint32_t& size )
 {
     pool_.mark( 0 );
-    if ( size )
-        *size = primed_len_;
+    size = primed_len_;
+    index = 0;
     primed_len_ = 0;
     err_streak_ = 0;
-    return 0;
+    return {};
 }
 
 void NetMjpegSource::requeue( int index )

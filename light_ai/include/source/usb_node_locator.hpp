@@ -2,23 +2,19 @@
 // first, then a /dev/videoN scan -- and never trials a node another source
 // reserves (busy-node reservation: two sources must not compete for one camera).
 //
-// Moved out of camera_v4l2.cpp (find_usb_capture_node) in stage 3a. The scan-log
-// throttle is a member now (was Pipeline::scan_log_ms_ behind a long long*
-// parameter that the recover() path left null), so every caller shares it.
+// The scan-log throttle is a member, so every caller shares it.
 //
 // Threading: called only by the thread that attaches sources -- the Pipeline
 // constructor before the prober starts, then the prober. No lock.
 //
-// Template parameter (static polymorphism; tests/test_usb_node_locator.cpp
-// instantiates it with a fake host):
-//   Host:
-//     bool exists( const std::string& path ) const;   // the node is present (stat)
-//     // numeric /dev/videoN nodes that are USB capture devices (rkcif/rkisp
-//     // platform nodes rejected), in any order; returns the count (<= out.size()).
-//     int usb_capture_nodes( std::array<int, kMaxCandidates>& out ) const;
-//     long long now_ms() const;                         // steady clock, for the throttle
-// Trial (locate() argument): int( const std::string& node, std::string* why ),
-//   0 = the full setup passed on that node; the trial leaves the camera closed.
+// Template parameter (static polymorphism): Host provides
+//   exists( path ) -- the node is present (stat);
+//   usb_capture_nodes( out ) -- numeric /dev/videoN nodes that are USB
+//     capture devices (rkcif/rkisp platform nodes rejected), in any order,
+//     returns the count (<= out.size());
+//   now_ms() -- steady clock, for the throttle.
+// Trial (locate() argument): Status( const std::string& node ),
+//   ok = the full setup passed on that node; the trial leaves the camera closed.
 
 #pragma once
 
@@ -27,6 +23,7 @@
 #include <string>
 
 #include "core/log.hpp"
+#include "core/status.hpp"
 #include "source/source_types.hpp"
 
 enum
@@ -44,19 +41,20 @@ public:
     // The configured node when it is present, not busy and its trial passes;
     // otherwise the first scanned node (ascending N) that is not busy, not the
     // preferred one (it just failed above; the next attach retries it) and
-    // whose trial passes. Returns 0 and fills out, -1 when nothing is usable.
+    // whose trial passes. ok fills out; Absent "no usable USB capture node found"
+    // when nothing is usable.
     template <class Trial>
-    int locate( const std::string& preferred, const NodeList& busy, Trial& trial, std::string& out )
+    Status locate( const std::string& preferred, const NodeList& busy, Trial& trial, std::string& out )
     {
-        std::string why;
         if ( !preferred.empty() && !node_listed( busy, preferred ) && host_.exists( preferred ) )
         {
-            if ( trial( preferred, &why ) == 0 )
+            const Status st = trial( preferred );
+            if ( st.ok() )
             {
                 out = preferred;
-                return 0;
+                return {};
             }
-            log_.warn() << "camera: reconnect setup on " << preferred << " failed: " << why << '\n';
+            log_.warn() << "camera: reconnect setup on " << preferred << " failed: " << st << '\n';
         }
         // The scan itself is never throttled, only its log line.
         const long long now = host_.now_ms();
@@ -76,13 +74,13 @@ public:
             if ( node == preferred )
                 continue;  // just failed the direct attempt above
             log_.warn() << "camera: trying " << node << '\n';
-            if ( trial( node, &why ) == 0 )
+            if ( trial( node ).ok() )
             {
                 out = node;
-                return 0;
+                return {};
             }
         }
-        return -1;
+        return make_status( Errc::Absent, "no usable USB capture node found" );
     }
 
     bool exists( const std::string& node ) const { return host_.exists( node ); }

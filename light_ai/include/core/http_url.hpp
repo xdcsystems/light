@@ -1,10 +1,12 @@
 // parse_http_url: http://host[:port][/path] -> host, port (default 80), path
 // (default "/"). Pure, host-tested (tests/test_http_url.cpp). The source of
-// NetMjpegSource::setup_device; the texts in why are its error reasons.
+// NetMjpegSource::setup_device; the Status texts are its error reasons.
 
 #pragma once
 
 #include <string>
+
+#include "core/status.hpp"
 
 struct HttpUrl
 {
@@ -13,5 +15,5 @@ struct HttpUrl
     std::string path = "/";
 };
 
-// true = out filled. false: why (when non-null) gets the reason, out is unspecified.
-bool parse_http_url( const std::string& url, HttpUrl& out, std::string* why );
+// ok = out filled. Otherwise Errc::Invalid with the reason; out is unspecified.
+Status parse_http_url( const std::string& url, HttpUrl& out );

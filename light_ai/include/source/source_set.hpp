@@ -1,8 +1,6 @@
 // SourceSet: the configured sources as one object -- it owns the channels and
 // picks the next frame among them: a round-robin round over the Live channels
-// from the cursor, with the 2 s stall detector. Stage 3c: replaces
-// Pipeline::init_source, try_dequeue_round, dequeue_next_source, cur_src_,
-// nsrc_ and the busy_v4l2_nodes helper of stage 3b.
+// from the cursor, with the 2 s stall detector.
 //
 // Threading (the SourceChannel thread rule, source/source_channel.hpp):
 //   configure() -- the Pipeline ctor, before the prober starts;
@@ -12,17 +10,11 @@
 //   busy_nodes() -- the attaching thread only (Chan::node());
 //   size(), operator[], any_live() -- any thread (size() is fixed after configure()).
 //
-// Template parameters (static polymorphism; tests/test_source_set.cpp
-// instantiates the set with SourceChannel over the fakes, pipeline.hpp with
-// the real one):
-//   Chan: the SourceChannel contract (source/source_channel.hpp):
-//     void configure( int idx, const SourceEndpoint&, int model_w, int model_h );
-//     bool live() const; SourceKind kind() const; const std::string& node() const;
-//     FrameStatus poll( int wait_ms, EncodedFrame& );
-//     time_point last_ok() const; void stamp_ok( time_point );   // steady_clock
-//   N: the most sources the run supports (one per NPU core).
-//   Make (ctor argument): Chan( int index ), called once per channel; returns a
-//     prvalue (guaranteed elision: Chan need not be movable).
+// Template parameters (static polymorphism): Chan is the SourceChannel
+// contract (source/source_channel.hpp); N is the most sources the run
+// supports (one per NPU core); Make (ctor argument) is Chan( int index ),
+// called once per channel, returning a prvalue (guaranteed elision: Chan
+// need not be movable).
 
 #pragma once
 
@@ -106,7 +98,7 @@ public:
     // One round over the Live channels, starting after the cursor (the source
     // of the last frame or failure). The first poll that is not NotReady wins
     // and moves the cursor. A NotReady channel without a frame for 2 s is
-    // reported as Detached with out.err = EIO (a stall: the source still
+    // reported as Detached with out.st = dequeue_status( EIO ) (a stall: the source still
     // streams nothing). NotReady when the whole round had nothing.
     FrameStatus next( int wait_ms, EncodedFrame& out )
     {
@@ -127,7 +119,7 @@ public:
                 log_.warn() << "source s" << s << ": no frame in " << static_cast<int>( kStallMs )
                             << " ms - treating as recoverable stall\n";
                 cursor_ = s;
-                out.err = EIO;
+                out.st = dequeue_status( EIO );
                 return FrameStatus::Detached;
             }
         }

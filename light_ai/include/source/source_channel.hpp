@@ -1,49 +1,26 @@
 // SourceChannel: one source from attach to decoded frame -- the device
-// (MediaSource), its MJPEG decoder, its geometry, its warm-up counter and an
-// explicit State. Stage 3a: replaces Pipeline::SourceSlot, init_one_source,
-// start_source, init_aux and the body of probe_source (one attach path).
+// (MediaSource), its MJPEG decoder, its geometry and its warm-up counter.
 //
 // State:
 //   NeverAttached -- configured, never Live; the decoder is not initialized yet;
 //   Detached      -- was Live, the frame thread saw it fail; the decoder stays;
 //   Live          -- the frame thread may poll and decode it.
 //
-// Thread rule (one owner at a time, the state is the hand-over):
-//   attaching thread (the Pipeline ctor before the prober starts, then the prober):
-//     owns every field while state != Live; attach() writes them all and
-//     stores Live LAST (release);
-//   frame thread:
-//     loads the state (acquire) and touches the fields only while Live;
-//     detach() clears the warm-up, then stores Detached (release) and stops
-//     touching the fields;
-//   outside the rule:
-//     last_ok -- atomic: attach() stamps it, the frame thread stamps and reads it;
-//     node()  -- written only by attach(), read only on the attaching thread
-//                (busy-node list); the frame thread never reads it.
+// Thread rule (one owner at a time, the state is the hand-over): the attaching
+// thread (the Pipeline ctor before the prober starts, then the prober) owns
+// every field while state != Live, writes them all and stores Live LAST
+// (release); the frame thread loads the state (acquire) and touches the fields
+// only while Live; detach() clears the warm-up, then stores Detached (release)
+// and stops touching the fields. Outside the rule: last_ok is atomic (stamped
+// by attach() and by the frame thread), node() is written by attach() only and
+// read only on the attaching thread (busy-node list).
 //
-// Template parameters (static polymorphism; tests/test_source_channel.cpp
-// instantiates the channel with fakes, src/sources.cpp with the real types):
-//   Src:
-//     explicit Src( const Log& );
-//     void use_camera(); void use_net();                    // kind, once, at configure()
-//     int open( const std::string& id, std::string* why );  // 0 = streaming; teardown first
-//     int trial( const std::string& node, std::string* why );  // camera: setup + teardown, 0 = ok
-//     int dequeue( uint32_t* size, int* err, int timeout_ms );   // buffer index or -1 + errno
-//     void requeue( int idx ); void* buffer( int idx ) const;
-//     int width() const; int height() const; void teardown();
-//   Dec: explicit Dec( const Log& ) (production);
-//     int init( int w, int h );                    // 0 = ok; self-cleans on failure
-//     int decode( const uint8_t* data, size_t n );  // dma-buf fd, < 0 = no frame
-//     int aux_fd( size_t bytes );                   // fd or -1; lives as long as the decoder
-//     out_fmt() const;                              // any type: handed to the RGA read side
-//   Locator (attach() argument): see source/usb_node_locator.hpp:
-//     int locate( const std::string& preferred, const NodeList& busy, Trial&&, std::string& out );
-//     bool exists( const std::string& node ) const;
+// Contracts: the dequeue status ladder lives in source_types.hpp, the Locator
+// contract in source/usb_node_locator.hpp.
 
 #pragma once
 
 #include <atomic>
-#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -52,6 +29,7 @@
 #include "config/config.hpp"  // SourceKind, SourceEndpoint
 #include "core/geometry.hpp"
 #include "core/log.hpp"
+#include "core/status.hpp"
 #include "source/source_types.hpp"
 
 template <class Src, class Dec>
@@ -109,15 +87,17 @@ public:
 
     // The one attach path (startup, hot attach, re-attach), attaching thread only,
     // never while Live. hot: false = the Pipeline ctor (startup log texts, no warm-up).
-    // why: the reason when the result is not Live.
+    // why: the reason when the result is not Live (ok when Live).
     template <class Locator>
-    Attach attach( const NodeList& busy, Locator& loc, bool hot, std::string& why )
+    Attach attach( const NodeList& busy, Locator& loc, bool hot, Status& why )
     {
         const bool first = state_.load( std::memory_order_acquire ) == State::NeverAttached;
-        why.clear();
-        if ( kind_ == SourceKind::V4L2 && locate_node( busy, loc, hot, first, why ) != 0 )
-            return Attach::Absent;
-        if ( src_.open( node_, &why ) != 0 )
+        why = {};
+        if ( kind_ == SourceKind::V4L2 )
+            why = locate_node( busy, loc, hot, first );
+        if ( why.ok() )
+            why = src_.open( node_ );
+        if ( !why.ok() )
             return Attach::Absent;
         const Attach a = prepare_decode( src_.width(), src_.height(), hot, why );
         if ( a != Attach::Live )
@@ -148,17 +128,21 @@ public:
     FrameStatus poll( int wait_ms, EncodedFrame& out )
     {
         out.src = idx_;
+        out.buf = -1;
         out.size = 0;
-        out.err = 0;
-        out.buf = src_.dequeue( &out.size, &out.err, wait_ms );
-        if ( out.buf >= 0 )
+        out.st = src_.dequeue( out.buf, out.size, wait_ms );
+        switch ( out.st.code() )
         {
-            last_ok_.store( clk::now() );
-            return FrameStatus::Frame;
+            case Errc::Ok:
+                last_ok_.store( clk::now() );
+                return FrameStatus::Frame;
+            case Errc::Timeout:
+                return FrameStatus::NotReady;
+            case Errc::Lost:
+                return FrameStatus::Detached;
+            default:
+                return FrameStatus::Fatal;
         }
-        if ( out.err == EAGAIN || out.err == EINTR )
-            return FrameStatus::NotReady;
-        return ( out.err == ENODEV || out.err == EIO ) ? FrameStatus::Detached : FrameStatus::Fatal;
     }
 
     // Frame thread, after a Frame poll: decodes, requeues the buffer and applies
@@ -205,19 +189,16 @@ public:
 private:
     // Camera node lookup with the startup / hot-attach / re-attach log texts.
     template <class Locator>
-    int locate_node( const NodeList& busy, Locator& loc, bool hot, bool first, std::string& why )
+    Status locate_node( const NodeList& busy, Locator& loc, bool hot, bool first )
     {
         if ( !hot && !loc.exists( node_ ) )
             log_.warn() << "camera: configured node " << node_ << " not present, falling back to USB discovery\n";
         std::string found;
-        auto trial = [this]( const std::string& n, std::string* w ) { return src_.trial( n, w ); };
-        if ( loc.locate( node_, busy, trial, found ) != 0 )
-        {
-            why = "no usable USB capture node found";
-            return -1;
-        }
+        auto trial = [this]( const std::string& n ) { return src_.trial( n ); };
+        if ( Status st = loc.locate( node_, busy, trial, found ); !st.ok() )
+            return st;
         if ( found == node_ )
-            return 0;
+            return {};
         if ( !hot )
             log_.info() << "camera: discovery adopted " << found << '\n';
         else if ( first )
@@ -225,11 +206,11 @@ private:
         else
             log_.info() << "source s" << idx_ << ": identity adopted: " << node_ << " -> " << found << '\n';
         node_ = found;
-        return 0;
+        return {};
     }
 
     // Decoder (first attach only), geometry guard, aux buffer, letterbox.
-    Attach prepare_decode( int w, int h, bool hot, std::string& why )
+    Attach prepare_decode( int w, int h, bool hot, Status& why )
     {
         if ( dec_ready_ && ( w != dec_w_ || h != dec_h_ ) )
         {
@@ -237,7 +218,7 @@ private:
             // another size is not supported yet -- stay absent and say why.
             log_.warn() << "source s" << idx_ << ": geometry changed " << dec_w_ << 'x' << dec_h_ << " -> " << w << 'x' << h
                         << " - decoder stays at " << dec_w_ << 'x' << dec_h_ << ", not attaching\n";
-            why = "geometry changed";
+            why = make_status( Errc::Unsupported, "geometry changed" );
             return Attach::DecoderFailed;
         }
         if ( !dec_ready_ )
@@ -246,7 +227,7 @@ private:
             {
                 if ( hot )
                     log_.warn() << "probe s" << idx_ << ": mpp decoder init failed - staying absent\n";
-                why = "mpp decoder init failed";
+                why = make_status( Errc::Failed, "mpp decoder init failed" );
                 return Attach::DecoderFailed;
             }
             dec_ready_ = true;
@@ -260,7 +241,7 @@ private:
             {
                 if ( hot )
                     log_.warn() << "probe s" << idx_ << ": aux buffer alloc failed - staying absent\n";
-                why = "aux buffer alloc failed";
+                why = make_status( Errc::NoMemory, "aux buffer alloc failed" );
                 return Attach::AuxFailed;
             }
         }

@@ -94,7 +94,7 @@ namespace
     {
         Rig r;
         r.configure_all();
-        std::string why;
+        Status why;
         CHECK( t, r.ch[1].attach( {}, r.loc, false, why ) == Channel::Attach::Live );  // s1: Live before the prober
         Prober p( r.ch, r.loc, r.log );
         p.round();

@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -113,7 +112,7 @@ void Pipeline::attach_sources()
     for ( int s = 0; s < srcs_.size(); ++s )
     {
         SourceChannel& ch = srcs_[s];
-        std::string why;
+        Status why;
         const Attach a = ch.attach( srcs_.busy_nodes( s ), locator_, false, why );
         if ( a == Attach::DecoderFailed )
             throw std::runtime_error( "mpp decoder init failed for " + ch.node() );
@@ -280,9 +279,8 @@ int Pipeline::run()
 
 int Pipeline::handle_source_failure( const EncodedFrame& f )
 {
-    const bool recoverable = ( f.err == ENODEV || f.err == EIO );
-    log_.warn() << "source: dequeue failed: " << strerror( f.err )
-                << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
+    const bool recoverable = f.st.code() == Errc::Lost;  // ENODEV / EIO (dequeue_status)
+    log_.warn() << "source: " << f.st << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
     if ( !recoverable )
         return -1;
     // M4: frames from the dead stream are never published - drop the

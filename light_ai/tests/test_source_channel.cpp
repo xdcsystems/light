@@ -28,9 +28,9 @@ namespace
         }
         Attach attach( bool hot )
         {
-            std::string why;
+            Status why;
             const Attach a = ch.attach( {}, loc, hot, why );
-            last_why = why;
+            last_why = why.what();
             return a;
         }
         // One full frame-path step: poll + decode; returns the decoded fd or -1.
@@ -162,11 +162,11 @@ void test_source_channel( TestRun& t )
         r.dev.dq_err = EINTR;
         CHECK( t, r.ch.poll( 0, f ) == FrameStatus::NotReady );
         r.dev.dq_err = EIO;
-        CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Detached && f.err == EIO );
+        CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Detached && f.st.sys() == EIO );
         r.dev.dq_err = ENODEV;
         CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Detached );
         r.dev.dq_err = EINVAL;
-        CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Fatal && f.err == EINVAL );
+        CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Fatal && f.st.sys() == EINVAL );
     }
     // Net source: no node lookup (an empty /dev does not matter), the URL is opened as is.
     {

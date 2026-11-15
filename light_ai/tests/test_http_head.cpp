@@ -11,7 +11,7 @@
 
 namespace
 {
-    using Status = HttpHead::Status;
+    using Parse = HttpHead::Parse;
 
     HttpHead parse( const std::string& s )
     {
@@ -20,12 +20,12 @@ namespace
 
     bool error_is( const HttpHead& h, const char* why )
     {
-        return h.status == Status::Error && std::strcmp( h.why, why ) == 0;
+        return h.parse == Parse::Error && h.err.code() == Errc::Invalid && std::strcmp( h.err.what(), why ) == 0;
     }
 
     bool boundary_is( const HttpHead& h, const char* b )
     {
-        return h.status == Status::Ok && h.boundary_len == std::strlen( b ) && std::strcmp( h.boundary, b ) == 0;
+        return h.parse == Parse::Ok && h.boundary_len == std::strlen( b ) && std::strcmp( h.boundary, b ) == 0;
     }
 
     std::string head( const std::string& content_type, const std::string& eol = "\r\n" )
@@ -74,12 +74,12 @@ namespace
         // Every proper prefix needs more; the whole head parses.
         bool all_need_more = true;
         for ( size_t n = 0; n < h.size(); ++n )
-            all_need_more = all_need_more && parse( h.substr( 0, n ) ).status == Status::NeedMore;
+            all_need_more = all_need_more && parse( h.substr( 0, n ) ).parse == Parse::NeedMore;
         CHECK( t, all_need_more );
-        CHECK( t, parse( h ).status == Status::Ok );
+        CHECK( t, parse( h ).parse == Parse::Ok );
         // The cap lives in the parser: kHeadMax bytes without an end of head is an Error.
         const std::string drip = "HTTP/1.1 200 OK\r\nX-Pad: " + std::string( HttpHead::kHeadMax, 'p' );
-        CHECK( t, parse( drip.substr( 0, HttpHead::kHeadMax - 1 ) ).status == Status::NeedMore );
+        CHECK( t, parse( drip.substr( 0, HttpHead::kHeadMax - 1 ) ).parse == Parse::NeedMore );
         CHECK( t, error_is( parse( drip.substr( 0, HttpHead::kHeadMax ) ), "response headers oversized" ) );
     }
 
@@ -91,7 +91,7 @@ namespace
         const HttpHead r = parse_http_head( rec.data(), rec.size() );
         CHECK( t, boundary_is( r, "Ba4oTvQMY8ew04N8dcnM" ) );
         CHECK( t, r.len < rec.size() );
-        if ( r.status != Status::Ok )
+        if ( r.parse != Parse::Ok )
             return;
         // The rest of the recording: an extra CRLF, the delimiter, the first part
         // header (Content-Length: 64866). The body is not recorded: a stand-in

@@ -8,7 +8,7 @@
 // packet_ts() converts a codec pts to the muxer time base (frame_step
 // ticks per frame, set per session from the stream time base).
 //
-// SDK-free, host-tested (tests/test_pts_clock.cpp). The rescale is
+// The rescale is
 // av_rescale( us, 90000, 1000000 ) re-implemented exactly (round to
 // nearest, halves away from zero).
 

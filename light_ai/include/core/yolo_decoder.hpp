@@ -1,6 +1,6 @@
 // YoloDecoder: the yolov5 postprocess over the raw output heads of the model
 // -- decode, confidence threshold, class-aware NMS, the bar filter and the
-// mapping into scene coordinates. SDK-free: the RKNN side (YoloDecode,
+// mapping into scene coordinates. The RKNN side (YoloDecode,
 // yolo_postprocess.hpp) only builds the YoloHead views of the engine outputs.
 //
 // Letterbox: the visible band occupies rows [lb.top, lb.top + lb.h)

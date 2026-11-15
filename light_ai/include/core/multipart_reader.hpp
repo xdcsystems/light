@@ -2,7 +2,6 @@
 // stream as a pure state machine fed with bytes. No I/O: the caller keeps
 // the receive window (core/byte_window.hpp), hands its unconsumed bytes to
 // feed(), consumes what feed() parsed and refills on NeedMore.
-// Host-tested on recorded streams (tests/test_multipart_reader.cpp).
 //
 // Grammar (lines end with LF, an optional CR before it: core/line_scan.hpp):
 //   delimiter line -- the dash-boundary at a line start (after an LF, or
