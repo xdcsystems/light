@@ -32,6 +32,7 @@ add_executable(light_ai_tests
     test_box_smoother.cpp
     test_kalman_axis.cpp
     test_associator.cpp
+    test_trail_window.cpp
     test_tracker.cpp
     test_box_mapper.cpp
     test_reference_chain.cpp
@@ -67,6 +68,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/multipart_reader.cpp
     ${LIGHT_AI_ROOT}/src/core/yolo_decoder.cpp
     ${LIGHT_AI_ROOT}/src/core/associator.cpp
+    ${LIGHT_AI_ROOT}/src/core/trail_window.cpp
     ${LIGHT_AI_ROOT}/src/source/buffered_socket.cpp
     ${LIGHT_AI_ROOT}/src/source/mjpeg_slot_pool.cpp
     ${LIGHT_AI_ROOT}/src/net_mjpeg_source.cpp
