@@ -27,3 +27,12 @@ change behavior: same control flow, same values, same log text.
    bash scripts/tidy_run.sh 600), reading logs with tail/grep.
 4. Report: each finding -> file:line -> what you changed (one line each), and
    anything you left for the main session.
+
+## Delivering the report (SubagentHandback)
+The report goes to the main session through SubagentHandback({message: <the report>}), and that
+call ENDS your run: nothing after it is seen, and no tool result that arrives after it reaches anyone.
+- Call it alone, in a message of its own, as your very last action, only after every tool result
+  you need is back. Never in the same message as another tool call (a parallel Bash + handback ends
+  the run before the Bash output exists).
+- Its message is the finished report (the findings, the edits, what is left). Never a placeholder,
+  a draft or "see above": the main session sees only this text.
