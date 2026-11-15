@@ -1,64 +1,58 @@
+// light_ai_tests: every suite of tests/suites.hpp, in this order. Arguments (a suite filter, --repeat N):
+// tests/suite_runner.hpp. scripts/test.sh runs it with none: all suites, once.
+
 #include <iostream>
 
 #include "check.hpp"
+#include "suite_runner.hpp"
 #include "suites.hpp"
 
-namespace
+int main( int argc, char** argv )
 {
-    void run_suite( TestRun& t, const char* name, void ( *suite )( TestRun& ) )
-    {
-        const int checks0 = t.checks();
-        const int fails0 = t.failures();
-        suite( t );
-        std::cout << ( t.failures() == fails0 ? "ok    " : "FAIL  " ) << name << " (" << t.checks() - checks0 << " checks)\n";
-    }
-}  // namespace
-
-int main()
-{
-    TestRun t;
-    run_suite( t, "pod_containers", &test_pod_containers );
-    run_suite( t, "box_math", &test_box_math );
-    run_suite( t, "fp16", &test_fp16 );
-    run_suite( t, "yolo_decoder", &test_yolo_decoder );
-    run_suite( t, "geometry", &test_geometry );
-    run_suite( t, "jpeg_probe", &test_jpeg_probe );
-    run_suite( t, "byte_window", &test_byte_window );
-    run_suite( t, "http_url", &test_http_url );
-    run_suite( t, "http_head", &test_http_head );
-    run_suite( t, "multipart_reader", &test_multipart_reader );
-    run_suite( t, "buffered_socket", &test_buffered_socket );
-    run_suite( t, "mjpeg_slot_pool", &test_mjpeg_slot_pool );
-    run_suite( t, "net_mjpeg_source", &test_net_mjpeg_source );
-    run_suite( t, "box_smoother", &test_box_smoother );
-    run_suite( t, "kalman_axis", &test_kalman_axis );
-    run_suite( t, "associator", &test_associator );
-    run_suite( t, "trail_window", &test_trail_window );
-    run_suite( t, "tracker", &test_tracker );
-    run_suite( t, "box_mapper", &test_box_mapper );
-    run_suite( t, "reference_chain", &test_reference_chain );
-    run_suite( t, "config", &test_config );
-    run_suite( t, "signals", &test_signals );
-    run_suite( t, "log", &test_log );
-    run_suite( t, "inference_pool", &test_inference_pool );
-    run_suite( t, "timings", &test_timings );
-    run_suite( t, "console_reporter", &test_console_reporter );
-    run_suite( t, "usb_node_locator", &test_usb_node_locator );
-    run_suite( t, "source_channel", &test_source_channel );
-    run_suite( t, "source_threads", &test_source_threads );
-    run_suite( t, "source_set", &test_source_set );
-    run_suite( t, "source_prober", &test_source_prober );
-    run_suite( t, "source_prober_threads", &test_source_prober_threads );
-    run_suite( t, "encoder_config", &test_encoder_config );
-    run_suite( t, "param_set_cache", &test_param_set_cache );
-    run_suite( t, "pts_clock", &test_pts_clock );
-    run_suite( t, "encode_pacer", &test_encode_pacer );
-    run_suite( t, "session_warmup", &test_session_warmup );
-    run_suite( t, "idle_plate", &test_idle_plate );
-    run_suite( t, "packet_queue", &test_packet_queue );
-    run_suite( t, "packet_queue_threads", &test_packet_queue_threads );
-    run_suite( t, "session_gate", &test_session_gate );
-    run_suite( t, "session_gate_threads", &test_session_gate_threads );
-    std::cout << "light_ai_tests: " << t.checks() << " checks, " << t.failures() << " failed\n";
-    return t.failures() == 0 ? 0 : 1;
+    const Suite suites[] = {
+        { "check_harness", &test_check_harness },
+        { "pod_containers", &test_pod_containers },
+        { "box_math", &test_box_math },
+        { "fp16", &test_fp16 },
+        { "yolo_decoder", &test_yolo_decoder },
+        { "geometry", &test_geometry },
+        { "jpeg_probe", &test_jpeg_probe },
+        { "byte_window", &test_byte_window },
+        { "http_url", &test_http_url },
+        { "http_head", &test_http_head },
+        { "multipart_reader", &test_multipart_reader },
+        { "buffered_socket", &test_buffered_socket },
+        { "mjpeg_slot_pool", &test_mjpeg_slot_pool },
+        { "net_mjpeg_source", &test_net_mjpeg_source },
+        { "box_smoother", &test_box_smoother },
+        { "kalman_axis", &test_kalman_axis },
+        { "associator", &test_associator },
+        { "trail_window", &test_trail_window },
+        { "tracker", &test_tracker },
+        { "box_mapper", &test_box_mapper },
+        { "reference_chain", &test_reference_chain },
+        { "config", &test_config },
+        { "signals", &test_signals },
+        { "log", &test_log },
+        { "inference_pool", &test_inference_pool },
+        { "timings", &test_timings },
+        { "console_reporter", &test_console_reporter },
+        { "usb_node_locator", &test_usb_node_locator },
+        { "source_channel", &test_source_channel },
+        { "source_threads", &test_source_threads },
+        { "source_set", &test_source_set },
+        { "source_prober", &test_source_prober },
+        { "source_prober_threads", &test_source_prober_threads },
+        { "encoder_config", &test_encoder_config },
+        { "param_set_cache", &test_param_set_cache },
+        { "pts_clock", &test_pts_clock },
+        { "encode_pacer", &test_encode_pacer },
+        { "session_warmup", &test_session_warmup },
+        { "idle_plate", &test_idle_plate },
+        { "packet_queue", &test_packet_queue },
+        { "packet_queue_threads", &test_packet_queue_threads },
+        { "session_gate", &test_session_gate },
+        { "session_gate_threads", &test_session_gate_threads },
+    };
+    return run_suites( "light_ai_tests", suites, argc, argv, std::cout, std::cerr );
 }

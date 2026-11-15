@@ -34,6 +34,8 @@ keep "Migration plan" current when a stage changes state.
   (CMake build + unit tests + TSan suites + clang-tidy gate; SKIP_TESTS=1 / SKIP_TSAN=1 / SKIP_TIDY=1 to narrow it.)
   On a tidy failure the per-file logs are in /tmp/tidy/<file>.log.
 - Unit tests alone: bash scripts/test.sh (host-side, no SDK; see README, Tests).
+  One suite / a flake hunt: build/tests/light_ai_tests [substr...] [--repeat N] (also light_ai_tests_tsan;
+  exit 2 on a bad argument; README, Tests, "Options").
 - Live run: sudo -n timeout -s INT 60 ./build/light_ai --device /dev/video20 --pool 3 --frames 600
   timeout goes INSIDE sudo: `timeout ... sudo ./build/light_ai` does not deliver SIGINT -- sudo
   does not relay a signal sent from its own process group. To exercise the SIGINT path, make the
