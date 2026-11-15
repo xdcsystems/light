@@ -30,6 +30,7 @@ add_executable(light_ai_tests
     test_mjpeg_slot_pool.cpp
     test_net_mjpeg_source.cpp
     test_box_smoother.cpp
+    test_kalman_axis.cpp
     test_tracker.cpp
     test_box_mapper.cpp
     test_reference_chain.cpp

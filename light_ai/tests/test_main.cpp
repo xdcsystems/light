@@ -31,6 +31,7 @@ int main()
     run_suite( t, "mjpeg_slot_pool", &test_mjpeg_slot_pool );
     run_suite( t, "net_mjpeg_source", &test_net_mjpeg_source );
     run_suite( t, "box_smoother", &test_box_smoother );
+    run_suite( t, "kalman_axis", &test_kalman_axis );
     run_suite( t, "tracker", &test_tracker );
     run_suite( t, "box_mapper", &test_box_mapper );
     run_suite( t, "reference_chain", &test_reference_chain );
