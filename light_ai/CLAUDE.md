@@ -228,7 +228,7 @@ keep "Migration plan" current when a stage changes state.
       #37 (plan 6899492084, review + OK 6899517430): TrailWindow::evict resets the median window once, when it empties
       a ring that held points; feed() no longer resets. Behavior change: an aged-out trail of a live track comes back
       kTrailMedianN matched frames later; a DEAD ghost lingers while its revived trail ages out. Golden unchanged (layer B
-      max |d| 0). Branch fix/issue37-trail-restart. Tests failing on the old code: build/test37_before.log; layer A
+      max |d| 0). Branch fix/issue37-trail-restart, PR #59. Tests failing on the old code: build/test37_before.log; layer A
       build/ref37_p3.*, its track lines diffed against build/ref43_p3.log (build/ref37_tracks_{base,new}.txt; base-vs-base
       replays differ too: pts +-1, last digit of c/v -- wall-clock timestamps; the systematic change is id=2 only).
 - [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
