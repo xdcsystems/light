@@ -263,30 +263,22 @@ NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size 
 
 int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
 {
-    if ( err )
-        *err = 0;
+    int sink = 0;  // err may be null: the errno class goes here instead
+    int& e = err ? *err : sink;
+    e = 0;
     if ( !sock_.is_open() )
     {
-        if ( err )
-            *err = ENODEV;
+        e = ENODEV;
         return -1;
     }
     if ( err_streak_ >= kErrStreakMax )
     {
-        if ( err )
-            *err = EIO;  // recoverable stall -> the reconnect ladder
+        e = EIO;  // recoverable stall -> the reconnect ladder
         return -1;
     }
     if ( primed_len_ > 0 )
-    {
-        pool_.mark( 0 );
-        if ( size )
-            *size = primed_len_;
-        primed_len_ = 0;
-        err_streak_ = 0;
-        return 0;
-    }
-    if ( !wait_part_ready( timeout_ms, err ) )
+        return take_primed( size );
+    if ( !wait_part_ready( timeout_ms, &e ) )
         return -1;
     int slot = pool_.free_slot();
     if ( slot < 0 )
@@ -299,16 +291,14 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
     uint32_t n = 0;
     if ( read_latest_part( slot, &n ) != Read::Part )
     {
-        if ( err )
-            *err = EIO;  // EOF / watchdog / recv error, a desync past its retry: recoverable
+        e = EIO;  // EOF / watchdog / recv error, a desync past its retry: recoverable
         return -1;
     }
     if ( !frame_ok( pool_.data( slot ), n, width_, height_ ) )
     {
         ++err_streak_;
         log_.warn() << "net-src: corrupt/incomplete JPEG frame (" << n << " bytes, streak " << err_streak_ << ") dropped\n";
-        if ( err )
-            *err = ( err_streak_ >= kErrStreakMax ) ? EIO : EAGAIN;
+        e = ( err_streak_ >= kErrStreakMax ) ? EIO : EAGAIN;
         return -1;
     }
     err_streak_ = 0;
@@ -316,6 +306,16 @@ int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
     if ( size )
         *size = n;
     return slot;
+}
+
+int NetMjpegSource::take_primed( uint32_t* size )
+{
+    pool_.mark( 0 );
+    if ( size )
+        *size = primed_len_;
+    primed_len_ = 0;
+    err_streak_ = 0;
+    return 0;
 }
 
 void NetMjpegSource::requeue( int index )

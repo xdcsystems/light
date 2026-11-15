@@ -118,6 +118,9 @@ private:
     Ready poll_part_ready( int timeout_ms );
     // dequeue's wait: false = *err set (EAGAIN, or EIO once the streak is full).
     bool wait_part_ready( int timeout_ms, int* err );
+    // dequeue's first frame after setup_device / start: the primed one in
+    // slot 0 (primed_len_ > 0), handed out once; returns slot 0.
+    int take_primed( uint32_t* size );
     // One part into slot, then the freshest of the parts already buffered
     // (via a scratch slot, at most kSkipMax); a Desync gets one resync retry.
     Read read_latest_part( int slot, uint32_t* size );
