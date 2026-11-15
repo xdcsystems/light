@@ -156,26 +156,32 @@ GpuBoxDrawer::~GpuBoxDrawer()
     done();
 }
 
-bool GpuBoxDrawer::init()
+Status GpuBoxDrawer::init()
 {
     done();
     st_ = State {};
     ready_ = false;
 
-    bool ok = open_display() && load_entry_points() && create_context();
-    if ( ok && !make_program() )
+    Status st {};
+    if ( !open_display() )
+        st = make_status( Errc::Failed, "drawer: EGL/GBM display" );
+    else if ( !load_entry_points() )
+        st = make_status( Errc::Failed, "drawer: EGL entry points" );
+    else if ( !create_context() )
+        st = make_status( Errc::Failed, "drawer: GLES context" );
+    if ( st.ok() && !make_program() )
     {
         log_.warn() << "drawer: program failed\n";
-        ok = false;
+        st = make_status( Errc::Failed, "drawer: shader program" );
     }
-    if ( !ok )
+    if ( !st.ok() )
     {
         done();  // init() error path: release everything created so far
-        return false;
+        return st;
     }
     create_buffers();
     ready_ = true;
-    return true;
+    return {};
 }
 
 bool GpuBoxDrawer::open_display()
@@ -338,13 +344,13 @@ void GpuBoxDrawer::destroy_gbm_device( void *dev ) const
         destroy_dev( dev );
 }
 
-bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride )
+Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride )
 {
     if ( !ready_ || slot < 0 || slot >= State::kSlots )
-        return false;
+        return make_status( Errc::Failed, "drawer: attach_slot precondition" );
     State::SlotImg& si = st_.slot[slot];
     if ( si.img != EGL_NO_IMAGE_KHR )
-        return true;  // idempotent: the pool attaches each slot once
+        return {};  // idempotent: the pool attaches each slot once
     make_current();
 
     EGLint iattr[] = { 
@@ -367,7 +373,7 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
     if ( si.img == EGL_NO_IMAGE_KHR )
     {
         log_.warn() << "drawer: import tensor failed (slot " << slot << ", 0x" << std::hex << eglGetError() << std::dec << ")\n";
-        return false;
+        return make_status( Errc::Failed, "drawer: import tensor failed" );
     }
     glGenTextures( 1, &si.tex );
     glBindTexture( GL_TEXTURE_2D, si.tex );
@@ -383,7 +389,7 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
         log_.warn() << "drawer: FBO incomplete (slot " << slot << ", status 0x" << std::hex << fst << std::dec << ")\n";
         glBindFramebuffer( GL_FRAMEBUFFER, 0 );
         release_slot( slot );
-        return false;
+        return make_status( Errc::Failed, "drawer: FBO incomplete" );
     }
     if ( st_.w == 0 )
     {
@@ -397,11 +403,11 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
                   << " vs " << st_.w << 'x' << st_.h << " stride=" << st_.stride << '\n';
         glBindFramebuffer( GL_FRAMEBUFFER, 0 );
         release_slot( slot );
-        return false;
+        return make_status( Errc::Failed, "drawer: slot geometry mismatch" );
     }
     log_.info() << "drawer: tensor attached (slot " << slot << ") " << w << 'x' << h << " stride=" << stride
               << " (native fence: " << ( st_.native_fence ? "yes" : "no" ) << ")\n";
-    return true;
+    return {};
 }
 
 void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )

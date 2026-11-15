@@ -25,6 +25,7 @@
 #undef RevertToParent
 
 #include "core/gpu_box.hpp"  // GpuBox, GpuBoxList
+#include "core/status.hpp"
 
 class Log;
 
@@ -116,13 +117,14 @@ public:
     GpuBoxDrawer &operator=( const GpuBoxDrawer & ) = delete;
 
     // EGL/GBM display + surfaceless GLES3 context + shader + VBO.
-    // On failure everything created so far is released (done()); the cause is logged.
-    bool init();
+    // On failure everything created so far is released (done()); the cause
+    // is in the returned Status, the step details are in the log.
+    Status init();
     // Imports the NPU tensor dma-buf as an EGLImage-backed FBO,
     // slot-keyed. attach_tensor()/draw() keep the single-context
     // semantics (slot 0); the pool uses attach_slot()/draw_slot().
-    bool attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride );
-    bool attach_tensor( int tensor_dma_fd, int w, int h, uint32_t stride )
+    Status attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride );
+    Status attach_tensor( int tensor_dma_fd, int w, int h, uint32_t stride )
     {
         return attach_slot( 0, tensor_dma_fd, w, h, stride );
     }

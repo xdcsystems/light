@@ -18,13 +18,14 @@ namespace
     }
 
     // The only expansion of imStrError: an im2d status <= 0 is a failure,
-    // logged as "<what>: <the SDK's text>".
-    bool rga_ok( IM_STATUS st, const Log& log, const char* what )
+    // logged as "<what>: <the SDK's text>" and returned as Failed with the
+    // raw IM_STATUS in sys().
+    Status rga_check( IM_STATUS st, const Log& log, const char* what )
     {
         if ( static_cast<int>( st ) > 0 )
-            return true;
+            return {};
         log.error() << what << ": " << imStrError( st ) << '\n';
-        return false;
+        return sdk_status( Errc::Failed, what, static_cast<int>( st ) );
     }
 }  // namespace
 
@@ -35,10 +36,11 @@ RgaResizer::RgaResizer( const Log& log ) : log_( log )
     // "rga_mm: RGA_MMU unsupported memory larger than 4G!", scheduler fell
     // back to RGA2 (core[4]). All jobs are pinned to RGA3 core0 for the
     // process lifetime; RGA2 is never needed here.
-    rga_ok( imconfig( IM_CONFIG_SCHEDULER_CORE, IM_SCHEDULER_RGA3_CORE0 ), log_, "RGA: imconfig RGA3_CORE0 pin failed" );
+    // Best effort: an unpinned RGA still works, rga_check logs the cause.
+    static_cast<void>( rga_check( imconfig( IM_CONFIG_SCHEDULER_CORE, IM_SCHEDULER_RGA3_CORE0 ), log_, "RGA: imconfig RGA3_CORE0 pin failed" ) );
 }
 
-bool RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux, LbGeom* geom, int src_fmt )
+Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux, LbGeom* geom, int src_fmt )
 {
     const int src_fmt_rk = src_fmt == 0 ? RK_FORMAT_YCbCr_420_SP : RK_FORMAT_YCbCr_422_SP;
     // Pass 2 must describe the buffer it actually reads. The intermediate
@@ -51,8 +53,8 @@ bool RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst
     // multiplication.
     if ( w_src > 8 * w_dst || h_src > 8 * h_dst )
     {
-        if ( !downscale_to_aux( src_fd, w_src, h_src, src_fmt_rk, aux_fd, w_aux, h_aux ) )
-            return false;
+        if ( Status st = downscale_to_aux( src_fd, w_src, h_src, src_fmt_rk, aux_fd, w_aux, h_aux ); !st.ok() )
+            return st;
         src_fd = aux_fd;
         w_src = w_aux;
         h_src = h_aux;
@@ -69,7 +71,7 @@ bool RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst
     if ( g.h > h_dst || g.w > w_dst )
     {
         log_.error() << "RGA: aspect " << w_src << 'x' << h_src << " does not fit into " << w_dst << 'x' << h_dst << '\n';
-        return false;
+        return make_status( Errc::Failed, "RGA: aspect does not fit" );
     }
 
     rga_buffer_t src = wrap( src_fd, w_src, h_src, pass_fmt );
@@ -78,22 +80,22 @@ bool RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst
     im_rect drect = { g.left, g.top, g.w, g.h };
     // improcess instead of imresize: the drect band keeps the bars intact,
     // RGA never touches rows outside it.
-    if ( !rga_ok( improcess( src, dst, {}, srect, drect, {}, 0 ), log_, "RGA resize failed" ) )
-        return false;
+    if ( Status st = rga_check( improcess( src, dst, {}, srect, drect, {}, 0 ), log_, "RGA resize failed" ); !st.ok() )
+        return st;
     if ( geom )
         *geom = g;
-    return true;
+    return {};
 }
 
 // Pass 1 of the two-pass path: the source into the NV12 aux buffer.
-bool RgaResizer::downscale_to_aux( int src_fd, int w_src, int h_src, int src_fmt_rk, int aux_fd, int w_aux, int h_aux ) const
+Status RgaResizer::downscale_to_aux( int src_fd, int w_src, int h_src, int src_fmt_rk, int aux_fd, int w_aux, int h_aux ) const
 {
     if ( aux_fd < 0 )
     {
         log_.error() << "RGA: two-pass needed but aux_fd < 0\n";
-        return false;
+        return make_status( Errc::Failed, "RGA: two-pass needed but aux_fd < 0" );
     }
     rga_buffer_t src = wrap( src_fd, w_src, h_src, src_fmt_rk );
     rga_buffer_t mid = wrap( aux_fd, w_aux, h_aux, RK_FORMAT_YCbCr_420_SP );
-    return rga_ok( imresize( src, mid ), log_, "RGA resize (pass 1) failed" );
+    return rga_check( imresize( src, mid ), log_, "RGA resize (pass 1) failed" );
 }
