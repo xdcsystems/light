@@ -5,7 +5,7 @@
 #pragma once
 
 // Letterbox geometry of one resize -- for the detection mapping T:
-// scene = (det - band origin) * src / band size, axial (see yolo_postprocess):
+// scene = (det - band origin) * src / band size, axial (see core/yolo_decoder.hpp):
 // x_scene = (x_det - left) * w_src / w; y_scene = (y_det - top) * h_src / h;
 // a detection outside [left, left + w) x [top, top + h) sits on a bar.
 // Returned BY VALUE per call: no shared mutable state --

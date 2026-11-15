@@ -4,11 +4,11 @@
 #include <fstream>
 #include <string>
 
-#include "box_math.hpp"
+#include "core/box_math.hpp"
 #include "core/detection.hpp"  // Detection, DetList
 
 // EMA smoothing of detection boxes.
-// Filtering lives in Pipeline; yolo_postprocess stays a pure function.
+// Filtering lives in Pipeline; YoloDecoder stays free of history (one frame in, one list out).
 // Global greedy IoU matching: pairs sorted by IoU, best-first;
 // class must match. Tuning constants live in the class.
 // A missed detection keeps the track (and its filtered coords) for up to 2 frames,

@@ -51,7 +51,7 @@
 #include <vector>
 
 #include "box_mapper.h"
-#include "box_math.hpp"
+#include "core/box_math.hpp"
 #include "box_smoother.h"
 #include "check.hpp"
 #include "core/geometry.hpp"

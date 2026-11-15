@@ -4,7 +4,7 @@ The safety net of stage 6 (YoloDecoder, BoxMapper, KalmanAxis, Associator): the
 detection output of today's code on a fixed clip, in two layers.
 
 - **Layer A (board): the NPU path.** `ref_evening.csv` is the `--box-log` of a
-  replay of the clip (decode -> RGA -> NPU -> `yolo_postprocess` -> `BoxSmoother`:
+  replay of the clip (decode -> RGA -> NPU -> the YOLO postprocess (`YoloDecoder` since stage 6a) -> `BoxSmoother`:
   per frame a `frame,n_raw,n_sm` line, then the `raw,...` and `sm,...` boxes).
   It covers YoloDecoder (and BoxSmoother). No tracker: the tracker runs on the
   dequeue time, which differs from run to run -- that is layer B.

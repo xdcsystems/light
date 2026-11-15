@@ -51,7 +51,7 @@ post-processing.
 - const by default: member functions that do not mutate state are
   const; parameters are passed by const-ref unless the callee owns a
   copy. Out-parameters are plain references filled by the callee
-  (yolo_postprocess fills DetList& out — no return-value vectors in
+  (YoloDecoder::decode fills DetList& out — no return-value vectors in
   the frame path).
 - Branch tables over if-chains: a multi-way dispatch on a fixed set
   becomes a switch or a constexpr table, not a ladder. Reference:
@@ -59,7 +59,7 @@ post-processing.
 - Preallocated buffer contract: a buffer that lives across frames
   (a member, not a local) is NEVER implicitly empty — the callee owns
   the reset and clears it at entry (DetList out.clear() in
-  yolo_postprocess). Converting a returned std::vector into a
+  YoloDecoder::decode). Converting a returned std::vector into a
   preallocated member silently loses the "fresh vector each call"
   semantics; the 2026-10-27 live run caught exactly that (detections
   accumulated to the 128 cap, the box set froze, person went
@@ -93,7 +93,10 @@ post-processing.
                (include/core/, src/core/): LbGeom + band_geom
                (geometry.hpp), Detection / DetList (detection.hpp),
                TrackLife / TrajPoint / TrackState / TrajList (track.hpp),
-               GpuBox / GpuBoxList (gpu_box.hpp), StopFlag
+               GpuBox / GpuBoxList (gpu_box.hpp), box_iou /
+               box_iou_corners / greedy_iou_match (box_math.hpp),
+               fp16_to_float (fp16.hpp), YoloDecoder (yolo_decoder.hpp:
+               the yolov5 heads -> DetList, see InferencePool), StopFlag
                (stop_flag.hpp), Log (log.hpp), TensorRef / TensorSet /
                FrameView (frame_view.hpp: what the output stage sees of
                an inferred frame). A consumer that needs
@@ -260,6 +263,10 @@ post-processing.
                reads the tensor). A template over the engine and the
                postprocess step (YoloDecode), so the unit tests run it
                with a fake engine: a wedged NPU, discard, ordering.
+               One postprocess copy per worker: YoloDecode wraps a
+               YoloDecoder (core/yolo_decoder.hpp) whose candidate
+               buffer is a preallocated member, so no instance is ever
+               called from two workers.
 - BoxSmoother (M3.10): 32-slot class-aware greedy IoU (> 0.30) + EMA
                (alpha = 0.5) box stabilizer; decays unmatched tracks
                after 2 misses; optional raw-vs-smoothed CSV via
@@ -783,6 +790,11 @@ light_ai_tests, built into build/tests):
 - Standalone CMake project: needs only cmake and a C++17 compiler,
   no MPP/RGA/RKNN/ffmpeg/EGL -- runs on the board and on any PC.
 - Covered: PodList / PodRing, box_math (IoU, greedy matching),
+  fp16_to_float (known values; on the board all 65536 bit patterns,
+  the hardware fcvt against the software path), YoloDecoder on
+  synthetic fp16 heads (exact boxes in both band orientations, each
+  gate, class-aware NMS, head order, rejected heads, the band misfit,
+  the candidate cap),
   band_geom, jpeg_probe, BoxSmoother, Tracker, fill_gpu_boxes,
   CliOptions / OptionRegistry / ConfigFileLoader, ProcessEnv /
   SignalWaiter (signal delivery, SIGPIPE, armed and unarmed modes),
@@ -819,7 +831,8 @@ light_ai_tests, built into build/tests):
   runs it after the plain suites
   (SKIP_TSAN=1 skips it) and prints its build + run time.
 - Not covered: everything that touches hardware or an SDK (V4L2 capture,
-  decode, RGA, RKNN, yolo_postprocess, encoder, GPU drawer). Those
+  decode, RGA, RKNN, the RKNN side of the postprocess (YoloDecode),
+  encoder, GPU drawer). Those
   are verified by live runs only.
 - Harness: tests/check.hpp (CHECK / CHECK_NEAR, no framework, no
   dependencies). The project rules hold in tests/ as well.
