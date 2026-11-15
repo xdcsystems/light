@@ -60,10 +60,10 @@ RknnEngine::~RknnEngine()
     ctx_ = 0;
 }
 
-int RknnEngine::setup_io()
+Status RknnEngine::setup_io()
 {
     if ( !ctx_ )
-        return -1;
+        return make_status( Errc::Failed, "engine not initialized" );
 
     in_attr_.fmt = RKNN_TENSOR_NHWC;
     in_attr_.type = RKNN_TENSOR_UINT8;
@@ -76,13 +76,13 @@ int RknnEngine::setup_io()
     if ( !in_mem_ )
     {
         log_.error() << "rknn_create_mem (input) failed\n";
-        return -1;
+        return make_status( Errc::NoMemory, "rknn_create_mem failed" );
     }
 
-    if ( rknn_set_io_mem( ctx_, in_mem_, &in_attr_ ) != RKNN_SUCC )
+    if ( const int rc = rknn_set_io_mem( ctx_, in_mem_, &in_attr_ ); rc != RKNN_SUCC )
     {
         log_.error() << "rknn_set_io_mem (input) failed\n";
-        return -1;
+        return sdk_status( Errc::Failed, "rknn_set_io_mem failed", rc );
     }
 
     // The output buffers are sized exactly as the model expects. For an INT8
@@ -100,12 +100,12 @@ int RknnEngine::setup_io()
         if ( !out_mems_[i] )
         {
             log_.error() << "rknn_create_mem (output " << i << ") failed\n";
-            return -1;
+            return make_status( Errc::NoMemory, "rknn_create_mem failed" );
         }
-        if ( rknn_set_io_mem( ctx_, out_mems_[i], &out_attrs_[i] ) != RKNN_SUCC )
+        if ( const int rc = rknn_set_io_mem( ctx_, out_mems_[i], &out_attrs_[i] ); rc != RKNN_SUCC )
         {
             log_.error() << "rknn_set_io_mem (output " << i << ") failed\n";
-            return -1;
+            return sdk_status( Errc::Failed, "rknn_set_io_mem failed", rc );
         }
     }
 
@@ -118,18 +118,19 @@ int RknnEngine::setup_io()
         log_.info() << "  out[" << i << "]: " << out_attrs_[i].n_elems << " elems, " << get_type_string( out_attrs_[i].type ) << "\n";
     }
 
-    return 0;
+    return {};
 }
 
-int RknnEngine::run() const
+Status RknnEngine::run() const
 {
-    return rknn_run( ctx_, nullptr ) == RKNN_SUCC ? 0 : -1;
+    const int rc = rknn_run( ctx_, nullptr );
+    return rc == RKNN_SUCC ? Status{} : sdk_status( Errc::Failed, "rknn_run failed", rc );
 }
 
-int RknnEngine::set_core_mask( unsigned mask ) const
+Status RknnEngine::set_core_mask( unsigned mask ) const
 {
     if ( !ctx_ )
-        return -1;
+        return make_status( Errc::Failed, "engine not initialized" );
 
     // M4: the accepted values are the numeric flags of rknn_api.h:
     // CORE_0=1, CORE_1=2, CORE_0_1=3, CORE_2=4, CORE_0_1_2=7
@@ -149,16 +150,16 @@ int RknnEngine::set_core_mask( unsigned mask ) const
             break;
         default:
             if ( mask == 0 )
-                return 0;  // AUTO by design (--core 0): keep the runtime default, no call
+                return {};  // AUTO by design (--core 0): keep the runtime default, no call
             // Anything else is a caller bug: silently skipping the pin
             // would hide it behind a working-looking return of 0.
             log_.warn() << "rknn_set_core_mask: invalid mask 0x" << std::hex << mask << std::dec << ", pin skipped\n";
-            return -1;
+            return make_status( Errc::Invalid, "invalid core mask" );
     }
-    if ( rknn_set_core_mask( ctx_, static_cast<rknn_core_mask>( mask ) ) != RKNN_SUCC )
+    if ( const int rc = rknn_set_core_mask( ctx_, static_cast<rknn_core_mask>( mask ) ); rc != RKNN_SUCC )
     {
         log_.warn() << "rknn_set_core_mask(0x" << std::hex << mask << std::dec << ") failed\n";
-        return -1;
+        return sdk_status( Errc::Failed, "rknn_set_core_mask failed", rc );
     }
-    return 0;
+    return {};
 }

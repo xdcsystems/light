@@ -7,6 +7,8 @@
 #include <rockchip/mpp_frame.h>
 #include <rockchip/mpp_packet.h>
 
+#include "core/status.hpp"
+
 class Log;
 
 class MppDecoder
@@ -29,9 +31,16 @@ public:
     MppDecoder( const MppDecoder& ) = delete;
     MppDecoder& operator=( const MppDecoder& ) = delete;
 
-    int init( int w, int h );
+    // One-shot setup for the source geometry: Ok, or the failing SDK step
+    // (Failed / NoMemory); the failing call is logged inside.
+    Status init( int w, int h );
 
-    int decode( const uint8_t* data, size_t size );
+    // Decode one packet. Ok with fd >= 0: the dma-buf of a decoded frame.
+    // Ok with fd = -1: this call has no publishable frame (bad input, no
+    // SOI, an errinfo / discard frame) -- normal on the recovery paths.
+    // A failure Status: broken decoder state (Timeout: a poll wait,
+    // NoMemory: a buffer, Failed: an SDK step); fd is -1 then.
+    Status decode( const uint8_t* data, size_t size, int& fd );
 
     // Extra dma-buf from the same DRM pool: intermediate buffer for
     // multi-pass RGA when the scale ratio exceeds the RGA3 limit (1/8).
@@ -49,17 +58,26 @@ private:
     // by exactly one phase at a time --
     // validation + packet creation, hand-off to the decoder,
     // retrieval of the decoded frame.
-    // The negative return codes of decode() come from the failing phase.
-    int make_packet( const uint8_t* data, size_t size );
-    int submit_input();
-    int retrieve_output();
+    // A phase returns Ok with fd = -1 when the call simply has no frame
+    // (bad input, no SOI, an errinfo / discard frame), and a failure
+    // Status when the decoder state is broken (Timeout / Failed / NoMemory).
+    Status make_packet( const uint8_t* data, size_t size );
+    Status submit_input();
+    Status retrieve_output( int& fd );
     void reset_and_strip();
     // The steps of retrieve_output(), on the decode() caller's thread like the
-    // whole class: the output task (0, -6, -7), the info_change frame (-1, -8),
-    // the fd of a decoded frame (-1: no frame, errinfo / discard, no buffer).
-    int take_output_task( MppTask& task );
-    int apply_info_change( MppFrame f, MppTask task );
-    int frame_fd( MppFrame f ) const;
+    // whole class: the output task (Timeout on the poll, Failed on the
+    // dequeue), the info_change frame (Ok: skipped, NoMemory on the buffer),
+    // the fd of a decoded frame (Ok with fd = -1: no frame, errinfo / discard,
+    // no buffer).
+    Status take_output_task( MppTask& task );
+    Status apply_info_change( MppFrame f, MppTask task );
+    Status frame_fd( MppFrame f, int& fd ) const;
+
+    // One-shot teardown of the objects created before a failed init step:
+    // the same release order as the dtor, but only the members that may
+    // exist at that point.
+    void cleanup_failed();
 
     // Packet teardown mechanics. Deinit is legal only at points where
     // the decoder provably holds no reference --

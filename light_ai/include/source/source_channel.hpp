@@ -156,12 +156,13 @@ public:
     int decode( const EncodedFrame& f )
     {
         int fd = -1;
+        Status st;
         if ( f.size > 0 )
-            fd = dec_.decode( static_cast<const uint8_t*>( src_.buffer( f.buf ) ), f.size );
+            st = dec_.decode( static_cast<const uint8_t*>( src_.buffer( f.buf ) ), f.size, fd );
         else
             log_.warn() << "source s" << idx_ << ": zero-size frame skipped\n";
         src_.requeue( f.buf );
-        if ( fd < 0 )
+        if ( !st.ok() || fd < 0 )
             return -1;
         if ( warmup_left_ > 0 )
         {
@@ -223,11 +224,11 @@ private:
         }
         if ( !dec_ready_ )
         {
-            if ( dec_.init( w, h ) != 0 )
+            if ( Status st = dec_.init( w, h ); !st.ok() )
             {
                 if ( hot )
                     log_.warn() << "probe s" << idx_ << ": mpp decoder init failed - staying absent\n";
-                why = make_status( Errc::Failed, "mpp decoder init failed" );
+                why = st;
                 return Attach::DecoderFailed;
             }
             dec_ready_ = true;

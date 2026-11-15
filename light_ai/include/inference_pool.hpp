@@ -36,6 +36,7 @@
 #include <thread>
 #include <vector>
 
+#include "throw_on.hpp"
 #include "config/config.hpp"  // InferConfig
 #include "core/frame_view.hpp"  // TensorRef, TensorSet
 #include "core/log.hpp"
@@ -72,8 +73,7 @@ public:
             engines_.emplace_back( engine_args... );
         for ( auto& e : engines_ )
         {
-            if ( e.setup_io() != 0 )
-                throw std::runtime_error( "rknn setup_io failed" );
+            throw_on( e.setup_io(), "rknn setup_io" );
         }
         set_core_masks( cfg.core );
         start_workers();  // last: nothing below may throw with workers running
@@ -199,8 +199,7 @@ private:
         {
             if ( core != 0 )
             {
-                if ( engines_[0].set_core_mask( static_cast<unsigned>( core ) ) != 0 )
-                    throw std::runtime_error( "rknn set_core_mask failed" );
+                throw_on( engines_[0].set_core_mask( static_cast<unsigned>( core ) ), "rknn set_core_mask" );
                 log_.info() << "npu: core mask 0x" << std::hex << core << std::dec << "\n";
             }
             return;
@@ -208,8 +207,7 @@ private:
         constexpr std::array<unsigned, kMaxSlots> core_masks { 1U, 2U, 4U };  // NPU core 0 / 1 / 2
         for ( int k = 0; k < n_; ++k )
         {
-            if ( engines_[static_cast<size_t>( k )].set_core_mask( core_masks[static_cast<size_t>( k )] ) != 0 )
-                throw std::runtime_error( "rknn set_core_mask failed" );
+            throw_on( engines_[static_cast<size_t>( k )].set_core_mask( core_masks[static_cast<size_t>( k )] ), "rknn set_core_mask" );
         }
         log_.info() << "npu: pool of " << n_ << " engines, one per core\n";
     }
@@ -263,7 +261,7 @@ private:
         if ( !job.rga_ok )
             return;  // the tensor holds no valid frame: the NPU is skipped
         const auto t0 = Timings::clk::now();
-        const bool ran = eng.run() == 0;
+        const bool ran = eng.run().ok();
         out.infer_ms = ms( t0, Timings::clk::now() );
         if ( !ran )
             return;

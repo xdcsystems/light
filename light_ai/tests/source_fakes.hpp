@@ -93,15 +93,16 @@ class FakeDec
 {
 public:
     explicit FakeDec( FakeDecoderCtl& c ) : c_( c ) {}
-    int init( int, int )
+    Status init( int, int )
     {
         ++c_.inits;
-        return c_.init_rc;
+        return c_.init_rc == 0 ? Status{} : make_status( Errc::Failed, "fake init failure" );
     }
-    int decode( const uint8_t*, size_t )
+    Status decode( const uint8_t*, size_t, int& fd )
     {
         ++c_.decodes;
-        return c_.decode_fd;
+        fd = c_.decode_fd;
+        return {};
     }
     int aux_fd( size_t )
     {
