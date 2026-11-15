@@ -135,6 +135,51 @@ void test_jpeg_probe( TestRun& t )
         const uint8_t short_buf[3] = { 0xFF, 0xD8, 0xFF };
         CHECK( t, !probe_jpeg_sof( short_buf, sizeof( short_buf ), info ) );
     }
+    // The remaining exits of the marker walk, pinned before the stage-6e split (#39).
+    {
+        JpegSofInfo info;
+        // Standalone markers (RST0, a stuffed 0x00, a second SOI) carry no
+        // length: skipped, the walk goes on to SOS.
+        Bytes standalone;
+        put_soi( standalone );
+        standalone.insert( standalone.end(), { 0xFF, 0xD0, 0xFF, 0x00, 0xFF, 0xD8 } );
+        put_sof( standalone, 1280, 720, 0x22 );
+        standalone.insert( standalone.end(), { 0xFF, 0xD7 } );
+        put_sos( standalone );
+        CHECK( t, probe( standalone, info ) && info.w == 1280 && info.h == 720 && info.yuv420 );
+
+        Bytes fill_to_end;
+        put_soi( fill_to_end );
+        put_sof( fill_to_end, 1280, 720, 0x22 );
+        fill_to_end.insert( fill_to_end.end(), { 0xFF, 0xFF, 0xFF } );  // fill bytes up to the end, no marker
+        CHECK( t, !probe( fill_to_end, info ) );
+
+        Bytes no_length;
+        put_soi( no_length );
+        put_sof( no_length, 1280, 720, 0x22 );
+        no_length.insert( no_length.end(), { 0xFF, 0xE0 } );  // APP0 with no room for its length field
+        CHECK( t, !probe( no_length, info ) );
+
+        Bytes short_length;
+        put_soi( short_length );
+        short_length.insert( short_length.end(), { 0xFF, 0xE0, 0x00, 0x01 } );  // length 1 < 2 (the field itself)
+        put_sof( short_length, 1280, 720, 0x22 );
+        put_sos( short_length );
+        CHECK( t, !probe( short_length, info ) );
+
+        Bytes short_sof;
+        put_soi( short_sof );
+        put_sof( short_sof, 1280, 720, 0x22 );
+        short_sof[2 + 2 + 1] = 0x0E;  // SOF length 14 < 8 + 3 * 3 (low byte: SOI(2) + marker(2) + high byte(1))
+        put_sos( short_sof );
+        CHECK( t, !probe( short_sof, info ) );
+
+        Bytes sos_first;
+        put_soi( sos_first );
+        put_sos( sos_first );
+        put_sof( sos_first, 1280, 720, 0x22 );
+        CHECK( t, !probe( sos_first, info ) );  // SOS before any SOF
+    }
     // jpeg_frame_check: the probe plus a trailing EOI; the trailing HTTP
     // CR/LF/space is trimmed in place.
     {
