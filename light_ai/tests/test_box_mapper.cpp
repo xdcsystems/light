@@ -83,9 +83,9 @@ void test_box_mapper( TestRun& t )
         Tracker trk;
         TrajList trajs;
         int64_t ts = 0;
-        float cx = 200.0f;
-        for ( int i = 0; i < 100; ++i, ts += 40000, cx += 4.0f )
+        for ( int i = 0; i < 100; ++i, ts += 40000 )
         {
+            const float cx = 200.0f + 4.0f * static_cast<float>( i );
             DetList dets;
             dets.push( Detection { cx - 50.0f, 300.0f, 100.0f, 200.0f, 0, 0.9f } );
             trk.update( dets, ts, trajs );

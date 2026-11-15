@@ -32,6 +32,7 @@ namespace
         std::vector<std::string> store { "light_ai" };
         store.insert( store.end(), args.begin(), args.end() );
         std::vector<char*> argv;
+        argv.reserve( store.size() );
         for ( std::string& s : store )
             argv.push_back( s.data() );
         return cli.opts.parse( static_cast<int>( argv.size() ), argv.data() );

@@ -39,11 +39,14 @@
 // deliberate behavior change (never in a refactoring), see tests/data/README.
 
 #include <algorithm>
+#include <cerrno>
+#include <climits>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -78,6 +81,43 @@ namespace
     constexpr float kTolPxs = 1e-1f;
     constexpr float kTolConf = 1e-4f;
 
+    // One number field of a fixture line at p, followed by sep ('\0': the end of the line); p moves past sep.
+    // strtol / strtof with an end check: a malformed or out-of-range field fails instead of reading as 0.
+    bool field( const char*& p, int& v, char sep )
+    {
+        char* end = nullptr;
+        errno = 0;
+        const long x = std::strtol( p, &end, 10 );
+        if ( end == p || errno != 0 || x < INT_MIN || x > INT_MAX || *end != sep )
+            return false;
+        v = static_cast<int>( x );
+        p = sep != '\0' ? end + 1 : end;
+        return true;
+    }
+
+    bool field( const char*& p, float& v, char sep )
+    {
+        char* end = nullptr;
+        errno = 0;
+        const float x = std::strtof( p, &end );
+        if ( end == p || errno != 0 || *end != sep )
+            return false;
+        v = x;
+        p = sep != '\0' ? end + 1 : end;
+        return true;
+    }
+
+    // "raw,cls,conf,x,y,w,h"
+    bool raw_line( const std::string& line, Detection& d )
+    {
+        const char* p = line.c_str();
+        if ( std::strncmp( p, "raw,", 4 ) != 0 )
+            return false;
+        p += 4;
+        return field( p, d.cls, ',' ) && field( p, d.conf, ',' ) && field( p, d.x, ',' ) && field( p, d.y, ',' ) &&
+               field( p, d.w, ',' ) && field( p, d.h, '\0' );
+    }
+
     // The fixture's next frame: "frame,n_raw,n_sm" then n_raw "raw,cls,conf,x,y,w,h" lines.
     bool next_frame( std::istream& in, int& frame, DetList& raw )
     {
@@ -86,14 +126,15 @@ namespace
         if ( !std::getline( in, line ) || line.empty() )
             return false;
         int n = 0;
-        if ( std::sscanf( line.c_str(), "%d,%d", &frame, &n ) != 2 )
+        const char* p = line.c_str();
+        if ( !field( p, frame, ',' ) || !field( p, n, ',' ) )
             return false;
         for ( int k = 0; k < n; ++k )
         {
             if ( !std::getline( in, line ) )
                 return false;
             Detection d {};
-            if ( std::sscanf( line.c_str(), "raw,%d,%f,%f,%f,%f,%f", &d.cls, &d.conf, &d.x, &d.y, &d.w, &d.h ) != 6 )
+            if ( !raw_line( line, d ) )
                 return false;
             raw.push( d );
         }
@@ -267,17 +308,17 @@ namespace
     }
 
     // Detections that overlap two or more alive tracks of the previous frame at
-    // IoU >= kContestIoU: the association has to arbitrate (greedy_iou_match over
+    // IoU >= contest_iou: the association has to arbitrate (greedy_iou_match over
     // more than one candidate pair). Measured on the previous frame's track boxes;
     // the margin over the tracker's gate (kIoUGate 0.30) covers the predict step.
     bool contested( const DetList& raw, const TrajList& prev )
     {
-        constexpr float kContestIoU = 0.4f;
+        constexpr float contest_iou = 0.4f;
         for ( int i = 0; i < raw.n; ++i )
         {
             int n = 0;
             for ( int k = 0; k < prev.n; ++k )
-                n += alive( prev.d[k] ) && iou_with( raw.d[i], prev.d[k] ) >= kContestIoU ? 1 : 0;
+                n += alive( prev.d[k] ) && iou_with( raw.d[i], prev.d[k] ) >= contest_iou ? 1 : 0;
             if ( n >= 2 )
                 return true;
         }
@@ -296,7 +337,7 @@ namespace
             kHideFrom = 26,  // B occluded: frames 26..28
             kHideTo = 28,
         };
-        constexpr float kStep = 8.0f;
+        constexpr float step_px = 8.0f;
         Chain ch;
         DetList raw;
         int id_a = -1;
@@ -304,8 +345,8 @@ namespace
         put( out, "h crossing" );
         for ( int k = 0; k < kFrames; ++k )
         {
-            const float ax = 420.0f + kStep * static_cast<float>( k );
-            const float bx = 860.0f - kStep * static_cast<float>( k );
+            const float ax = 420.0f + step_px * static_cast<float>( k );
+            const float bx = 860.0f - step_px * static_cast<float>( k );
             raw.clear();
             raw.push( person( ax, 520.0f, 110.0f, 260.0f, 0.86f ) );
             if ( k < kHideFrom || k > kHideTo )
@@ -320,8 +361,8 @@ namespace
                 id_b = b->id;
             }
         }
-        const float a_end = 420.0f + kStep * ( kFrames - 1 );
-        const float b_end = 860.0f - kStep * ( kFrames - 1 );
+        const float a_end = 420.0f + step_px * ( kFrames - 1 );
+        const float b_end = 860.0f - step_px * ( kFrames - 1 );
         const TrackState* a = nearest( ch.tracks(), a_end, 520.0f );
         const TrackState* b = nearest( ch.tracks(), b_end, 500.0f );
         CHECK( t, id_a > 0 && id_b > 0 && id_a != id_b );
@@ -337,6 +378,26 @@ namespace
     // only round 2 can match it. Without round 2 the track misses, dies after
     // kMaxMiss (4) and the blob spawns a new id. Asserts: every blob frame meets the
     // weak-only conditions, and the track survives under the same id, alone.
+    // A blob frame of run_weak against the confirmed track p: the size ratio within the weak band
+    // (200..300 %) and the IoU within [kIoUGateWeak, kIoUGate). 1 when it holds, 0 when not.
+    int weak_only_frame( TestRun& t, const Detection& d, const TrackState& p )
+    {
+        const float rw = d.w / p.bw;
+        const float rh = d.h / p.bh;
+        const float v = iou_with( d, p );
+        const bool weak_only = rw > 2.0f && rw <= 3.0f && rh > 2.0f && rh <= 3.0f && v >= 0.15f && v < 0.30f;
+        CHECK( t, weak_only );
+        return weak_only ? 1 : 0;
+    }
+
+    int count_alive( const TrajList& tracks )
+    {
+        int n = 0;
+        for ( int i = 0; i < tracks.n; ++i )
+            n += alive( tracks.d[i] ) ? 1 : 0;
+        return n;
+    }
+
     void run_weak( std::ostream& out, TestRun& t, int& weak_frames )
     {
         enum : int
@@ -345,11 +406,11 @@ namespace
             kBlobFrom = 10,
             kBlobTo = 21,
         };
-        constexpr float kCx = 640.0f;
-        constexpr float kCy = 500.0f;
-        constexpr float kW = 120.0f;
-        constexpr float kH = 300.0f;
-        constexpr float kBlob = 2.2f;
+        constexpr float cx0 = 640.0f;
+        constexpr float cy0 = 500.0f;
+        constexpr float w0 = 120.0f;
+        constexpr float h0 = 300.0f;
+        constexpr float blob_scale = 2.2f;
         Chain ch;
         DetList raw;
         int id = -1;
@@ -357,24 +418,15 @@ namespace
         for ( int k = 0; k < kFrames; ++k )
         {
             const bool blob = k >= kBlobFrom && k <= kBlobTo;
-            const float g = blob ? kBlob : 1.0f;
+            const float g = blob ? blob_scale : 1.0f;
             raw.clear();
-            raw.push( person( kCx, kCy, kW * g, kH * g, blob ? 0.41f : 0.88f ) );
-            const TrackState* p = nearest( ch.tracks(), kCx, kCy );
+            raw.push( person( cx0, cy0, w0 * g, h0 * g, blob ? 0.41f : 0.88f ) );
+            const TrackState* p = nearest( ch.tracks(), cx0, cy0 );
             if ( blob && p != nullptr && p->state == TRACK_CONF )
-            {
-                const float rw = raw.d[0].w / p->bw;
-                const float rh = raw.d[0].h / p->bh;
-                const float v = iou_with( raw.d[0], *p );
-                const bool weak_only = rw > 2.0f && rw <= 3.0f && rh > 2.0f && rh <= 3.0f && v >= 0.15f && v < 0.30f;
-                CHECK( t, weak_only );
-                weak_frames += weak_only ? 1 : 0;
-            }
+                weak_frames += weak_only_frame( t, raw.d[0], *p );
             ch.step( k, k * kStepUs, raw, out );
-            int n_alive = 0;
-            for ( int i = 0; i < ch.tracks().n; ++i )
-                n_alive += alive( ch.tracks().d[i] ) ? 1 : 0;
-            const TrackState* s = nearest( ch.tracks(), kCx, kCy );
+            const int n_alive = count_alive( ch.tracks() );
+            const TrackState* s = nearest( ch.tracks(), cx0, cy0 );
             if ( k == 0 && s != nullptr )
                 id = s->id;
             if ( k >= kBlobFrom )
@@ -410,6 +462,25 @@ namespace
         double conf = 0.0;
     };
 
+    // The max-deviation slot and the tolerance of a non-exact token class (p, v, c).
+    double& deviation_slot( Deviation& dev, char cls )
+    {
+        if ( cls == 'p' )
+            return dev.px;
+        if ( cls == 'v' )
+            return dev.pxs;
+        return dev.conf;
+    }
+
+    double tolerance( char cls )
+    {
+        if ( cls == 'p' )
+            return static_cast<double>( kTolPx );
+        if ( cls == 'v' )
+            return static_cast<double>( kTolPxs );
+        return static_cast<double>( kTolConf );
+    }
+
     // One line against its golden twin; updates the max deviations.
     bool same_line( const std::string& got, const std::string& want, Deviation& dev )
     {
@@ -433,9 +504,9 @@ namespace
                 continue;
             }
             const double d = std::fabs( std::strtod( a.c_str(), nullptr ) - std::strtod( b.c_str(), nullptr ) );
-            double& mx = *c == 'p' ? dev.px : *c == 'v' ? dev.pxs : dev.conf;
+            double& mx = deviation_slot( dev, *c );
             mx = std::max( mx, d );
-            ok = ok && d <= static_cast<double>( *c == 'p' ? kTolPx : *c == 'v' ? kTolPxs : kTolConf );
+            ok = ok && d <= tolerance( *c );
         }
         std::string extra;
         return ok && !( g >> extra ) && !( w >> extra );

@@ -27,7 +27,7 @@ namespace
 
     struct FakeOps
     {
-        bool init( FakePkt& p )
+        bool init( FakePkt& p ) const
         {
             if ( st->inits == st->fail_at )
                 return false;
@@ -35,18 +35,18 @@ namespace
             p.alloc = true;
             return true;
         }
-        void release( FakePkt& p )
+        void release( FakePkt& p ) const
         {
             ++st->releases;
             p.alloc = false;
         }
-        void unref( FakePkt& p )
+        void unref( FakePkt& p ) const
         {
             if ( p.seq >= 0 )
                 ++st->unrefs;
             p.seq = -1;
         }
-        void move( FakePkt& dst, FakePkt& src )
+        void move( FakePkt& dst, FakePkt& src ) const
         {
             unref( dst );
             dst.seq = src.seq;
@@ -192,89 +192,121 @@ void test_packet_queue( TestRun& t )
     failures( t );
 }
 
+namespace
+{
+    using RaceQueue = BasicPacketQueue<FakePkt, FakeOps, 8>;
+
+    // The shared state of test_packet_queue_threads, one method per thread.
+    class QueueRace
+    {
+    public:
+        enum { k_sessions = 2000 };
+
+        explicit QueueRace( Stats& st ) : q( FakeOps { &st } ) {}
+
+        // Start latch: the three threads run their loops at the same time.
+        void latch()
+        {
+            ready.fetch_add( 1 );
+            while ( ready.load() < 3 )
+                std::this_thread::yield();
+        }
+
+        // Consumer: k_sessions short sessions (open / pop up to 12 / close).
+        void consume()
+        {
+            latch();
+            FakePkt out;
+            for ( uint32_t s = 1; s <= k_sessions; ++s )
+            {
+                q.open( s );
+                epoch.store( s );
+                pop_session( out );
+                q.close();
+            }
+            done.store( true );
+        }
+
+        // Producer: pushes, a stale fail every 7th packet, a real one every 997th.
+        void produce()
+        {
+            latch();
+            int seq = 0;
+            while ( !done.load() )
+            {
+                FakePkt p = pkt( seq, seq % 5 == 0 );
+                q.push( p );
+                const uint32_t e = epoch.load();
+                if ( seq % 7 == 0 )
+                    q.fail( e - 1 );  // stale: never ends a session
+                if ( seq % 997 == 0 )
+                    q.fail( e );  // real: may end the open session
+                ++seq;
+                std::this_thread::yield();
+            }
+        }
+
+        // Reader: the depth stays within [0, 8] while the others run.
+        void read_depth()
+        {
+            latch();
+            while ( !done.load() )
+            {
+                const int d = q.depth();
+                if ( d < 0 || d > 8 )
+                    depth_out_of_range.fetch_add( 1 );
+                std::this_thread::yield();
+            }
+        }
+
+    private:
+        void pop_session( FakePkt& out )
+        {
+            for ( int n = 0; n < 12; ++n )
+            {
+                if ( q.pop( out ).what != RaceQueue::Pop::Packet )
+                {
+                    sessions_failed.fetch_add( 1 );
+                    return;
+                }
+                if ( n == 0 && !out.key )
+                    first_not_key.fetch_add( 1 );
+            }
+        }
+
+    public:
+        RaceQueue q;
+        std::atomic<uint32_t> epoch { 0 };
+        std::atomic<bool> done { false };
+        std::atomic<int> first_not_key { 0 };
+        std::atomic<int> sessions_failed { 0 };
+        std::atomic<int> depth_out_of_range { 0 };
+
+    private:
+        std::atomic<int> ready { 0 };
+    };
+}  // namespace
+
 // Threaded (also run under TSan): a producer pushes and fails, a consumer
 // runs 2000 short sessions (open / pop / close), a third thread reads the
 // depth; at the end stop() wakes a consumer blocked on an empty queue.
 void test_packet_queue_threads( TestRun& t )
 {
     Stats st;
-    BasicPacketQueue<FakePkt, FakeOps, 8> q( FakeOps { &st } );
-    std::atomic<uint32_t> epoch { 0 };
-    std::atomic<bool> done { false };
-    std::atomic<int> first_not_key { 0 };
-    std::atomic<int> sessions_failed { 0 };
-    std::atomic<int> ready { 0 };
-    constexpr int k_sessions = 2000;
-    // Start latch: the three threads run their loops at the same time.
-    const auto latch = [&ready] {
-        ready.fetch_add( 1 );
-        while ( ready.load() < 3 )
-            std::this_thread::yield();
-    };
-
-    std::thread consumer( [&] {
-        latch();
-        FakePkt out;
-        for ( uint32_t s = 1; s <= k_sessions; ++s )
-        {
-            q.open( s );
-            epoch.store( s );
-            bool first = true;
-            for ( int n = 0; n < 12; ++n )
-            {
-                const auto r = q.pop( out );
-                if ( r.what != BasicPacketQueue<FakePkt, FakeOps, 8>::Pop::Packet )
-                {
-                    sessions_failed.fetch_add( 1 );
-                    break;
-                }
-                if ( first && !out.key )
-                    first_not_key.fetch_add( 1 );
-                first = false;
-            }
-            q.close();
-        }
-        done.store( true );
-    } );
-
-    std::thread producer( [&] {
-        latch();
-        int seq = 0;
-        while ( !done.load() )
-        {
-            FakePkt p = pkt( seq, seq % 5 == 0 );
-            q.push( p );
-            const uint32_t e = epoch.load();
-            if ( seq % 7 == 0 )
-                q.fail( e - 1 );  // stale: never ends a session
-            if ( seq % 997 == 0 )
-                q.fail( e );  // real: may end the open session
-            ++seq;
-            std::this_thread::yield();
-        }
-    } );
-
-    std::atomic<int> depth_out_of_range { 0 };
-    std::thread reader( [&] {
-        latch();
-        while ( !done.load() )
-        {
-            const int d = q.depth();
-            if ( d < 0 || d > 8 )
-                depth_out_of_range.fetch_add( 1 );
-            std::this_thread::yield();
-        }
-    } );
-
+    QueueRace race( st );
+    std::thread consumer( [&race] { race.consume(); } );
+    std::thread producer( [&race] { race.produce(); } );
+    std::thread reader( [&race] { race.read_depth(); } );
     consumer.join();
     producer.join();
     reader.join();
-    CHECK( t, first_not_key.load() == 0 );   // every session starts at a key frame
-    CHECK( t, depth_out_of_range.load() == 0 );
-    CHECK( t, sessions_failed.load() < k_sessions / 2 );  // stale fails never end sessions
+    CHECK( t, race.first_not_key.load() == 0 );   // every session starts at a key frame
+    CHECK( t, race.depth_out_of_range.load() == 0 );
+    CHECK( t, race.sessions_failed.load() < static_cast<int>( QueueRace::k_sessions ) / 2 );  // stale fails never end sessions
 
     // stop() wakes a consumer blocked on an empty open queue.
-    q.open( k_sessions + 1 );
+    RaceQueue& q = race.q;
+    q.open( QueueRace::k_sessions + 1 );
     std::atomic<int> got { -1 };
     std::thread blocked( [&] {
         FakePkt out;
@@ -283,5 +315,5 @@ void test_packet_queue_threads( TestRun& t )
     std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) );
     q.stop();
     blocked.join();
-    CHECK( t, got.load() == static_cast<int>( BasicPacketQueue<FakePkt, FakeOps, 8>::Pop::Stopped ) );
+    CHECK( t, got.load() == static_cast<int>( RaceQueue::Pop::Stopped ) );
 }

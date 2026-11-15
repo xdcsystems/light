@@ -110,11 +110,10 @@ void test_tracker( TestRun& t )
     {
         Tracker trk;
         TrajList out;
-        float cx = 200.0f;
         int64_t ts = 0;
-        for ( int i = 0; i < 100; ++i, ts += kFrameUs, cx += 4.0f )
-            trk.update( one( person( cx, 400, 100, 200 ) ), ts, out );
-        cx -= 4.0f;  // the last fed position
+        for ( int i = 0; i < 100; ++i, ts += kFrameUs )
+            trk.update( one( person( 200.0f + 4.0f * static_cast<float>( i ), 400, 100, 200 ) ), ts, out );
+        const float cx = 200.0f + 4.0f * 99.0f;  // the last fed position
         CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
         CHECK_NEAR( t, out.d[0].cx, cx, 6.0f );
         CHECK_NEAR( t, out.d[0].cy, 400.0f, 1.0f );

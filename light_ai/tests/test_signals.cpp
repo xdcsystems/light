@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
 #include <sys/wait.h>
@@ -118,7 +119,7 @@ void test_signals( TestRun& t )
             SignalWaiter waiter( env, stop );
             const SignalWaiter::Armed armed( waiter );
             int fds[2] = { -1, -1 };
-            if ( pipe( fds ) != 0 )
+            if ( pipe2( fds, O_CLOEXEC ) != 0 )
                 _exit( 4 );
             std::thread sender( [] {
                 std::this_thread::sleep_for( std::chrono::milliseconds( 200 ) );
@@ -146,7 +147,7 @@ void test_signals( TestRun& t )
 
         // A write to a pipe with no reader returns EPIPE instead of killing the process.
         int fds[2] = { -1, -1 };
-        CHECK( t, pipe( fds ) == 0 );
+        CHECK( t, pipe2( fds, O_CLOEXEC ) == 0 );
         close( fds[0] );
         const char byte = 'x';
         errno = 0;
