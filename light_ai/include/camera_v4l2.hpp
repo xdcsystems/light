@@ -4,6 +4,7 @@
 #include <string>
 
 class Log;
+struct v4l2_buffer;  // <linux/videodev2.h>, included by the .cpp only
 
 // The node is NOT part of the instance state: open/reconnect take it as
 // an argument, the class owns only the fd/buffer machinery. Identity
@@ -74,6 +75,15 @@ private:
     // The one error exit of the setup steps: *why = text (if why is not null),
     // teardown(), returns -1.
     int fail( std::string* why, const char* text );
+
+    // The steps of dequeue(), on its caller's thread (the frame thread), like
+    // err_streak_. wait_clean: poll + DQBUF into buf until a clean buffer comes out;
+    // 0, or the errno class for *err (poll_frame's EAGAIN / EIO, the DQBUF errno,
+    // EIO once the corrupt streak reaches kBufCount).
+    int wait_clean( v4l2_buffer& buf, int timeout_ms );
+    // skip_to_newest: the drain-ahead -- at most kBufCount - 1 buffers that are
+    // already done replace buf with the newest clean one; the others are requeued.
+    void skip_to_newest( v4l2_buffer& buf );
 
     // Non-throwing ioctl wrapper: EINTR retry only, errno is the caller's error report.
     int xioctl_r( unsigned long req, void* arg ) const;
