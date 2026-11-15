@@ -275,8 +275,25 @@ int CameraV4L2::dequeue( uint32_t* size, int* err, int timeout_ms )  // NOLINT(r
     v4l2_buffer buf {};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
-    bool have = false;  // loop until a clean buffer comes out
-    while ( !have )
+    if ( const int werr = wait_clean( buf, timeout_ms ); werr != 0 )
+    {
+        if ( err )
+            *err = werr;
+        return -1;
+    }
+    skip_to_newest( buf );
+    err_streak_ = 0;  // clean buffer resets the streak
+    if ( err )
+        *err = 0;
+    if ( size )
+        *size = buf.bytesused;
+    return buf.index;
+}
+
+// Loop until a clean buffer comes out.
+int CameraV4L2::wait_clean( v4l2_buffer& buf, int timeout_ms )
+{
+    while ( true )
     {
         // Watchdog: the wait is bounded by poll(). In single-source mode
         // (timeout_ms < 0) a 2 s timeout is reported as EIO (recoverable
@@ -284,35 +301,33 @@ int CameraV4L2::dequeue( uint32_t* size, int* err, int timeout_ms )  // NOLINT(r
         // 0/short poll timeout returns EAGAIN so the dispatcher can
         // service other ready cameras immediately.
         if ( const int perr = poll_frame( fd_, timeout_ms, static_cast<int>( kDequeuePollMs ), log_ ); perr != 0 )
-        {
-            if ( err )
-                *err = perr;
-            return -1;
-        }
+            return perr;
         if ( ioctl( fd_, VIDIOC_DQBUF, &buf ) < 0 )
         {
             if ( errno == EINTR || errno == EAGAIN )
                 continue;
-            if ( err )
-                *err = errno;
-            return -1;
+            return errno;
         }
-        if ( buf.flags & V4L2_BUF_FLAG_ERROR )
+        if ( !( buf.flags & V4L2_BUF_FLAG_ERROR ) )
+            return 0;
+        requeue( static_cast<int>( buf.index ) );
+        // the streak survives dequeue() calls
+        // (e.g. corrupt frames followed by a poll timeout),
+        // so the watchdog threshold reflects the real buffer history.
+        ++err_streak_;
+        if ( err_streak_ >= static_cast<int>( kBufCount ) )
         {
-            requeue( static_cast<int>( buf.index ) );
-            // the streak survives dequeue() calls
-            // (e.g. corrupt frames followed by a poll timeout),
-            // so the watchdog threshold reflects the real buffer history.
-            ++err_streak_;
-            if ( err_streak_ < static_cast<int>( kBufCount ) )
-                continue;
             log_.warn() << "cam: " << err_streak_ << " consecutive corrupt buffers - stall\n";
-            if ( err )
-                *err = EIO;
-            return -1;
+            return EIO;
         }
-        have = true;
     }
+}
+
+// Buffers that completed while the frame was waiting: the newest clean one
+// replaces buf (the older one is requeued); corrupt or empty ones go straight
+// back. A failed DQBUF ends the skip and keeps buf.
+void CameraV4L2::skip_to_newest( v4l2_buffer& buf )
+{
     for ( unsigned skip = 0; skip + 1 < kBufCount && poll_ready( fd_, 0 ) > 0; ++skip )
     {
         v4l2_buffer next_buf {};
@@ -328,12 +343,6 @@ int CameraV4L2::dequeue( uint32_t* size, int* err, int timeout_ms )  // NOLINT(r
         requeue( static_cast<int>( buf.index ) );
         buf = next_buf;
     }
-    err_streak_ = 0;  // clean buffer resets the streak
-    if ( err )
-        *err = 0;
-    if ( size )
-        *size = buf.bytesused;
-    return buf.index;
 }
 
 void CameraV4L2::requeue( int index )  // NOLINT(readability-make-member-function-const)
