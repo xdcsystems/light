@@ -61,8 +61,9 @@ public:
     int height() const { return height_; }
 
 private:
-    // The steps of setup_device(), in this order. Each one returns 0, or the
-    // fail() result after logging its own cause.
+    // The steps of setup_device(), in this order. The int steps return 0, or the
+    // fail() result; they log the cause first, except the zero-buffer REQBUFS exit
+    // of map_buffers(), which reports through *why only. request_rate() cannot fail.
     int open_node( const std::string& dev, std::string* why );
     // S_FMT + G_FMT + the mode check; got_w/got_h receive the negotiated mode.
     int negotiate_format( int& got_w, int& got_h, std::string* why );
