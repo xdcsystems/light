@@ -204,9 +204,8 @@ keep "Migration plan" current when a stage changes state.
       6d live logs (baseline binary build/light_ai_base6d): build/run6d_{base,new}_{pool3,pool1,gpu,cpu}.log,
       build/run6d_new_{replug,nocam}.log, frames build/6d_*.png. Function-size measurement: clang-tidy 11 with every
       readability-function-size threshold at 0 (nesting: one pass at the candidate threshold, threshold 0 shows level 1 only).
-      Open: an alive track whose trail ages out completely never gets trail points again (TrailWindow::feed resets
-      the median window on every call while the ring is empty, not once); kept in 6b (a refactoring): issue #37, after
-      stage 6.
+      Found in 6b, kept (a refactoring): an alive track whose trail aged out completely never got trail points again
+      (TrailWindow::feed reset the median window on every call while the ring was empty); fixed after stage 6 in #37.
       After stage 6: #42 (parallel tidy gate + cache, PR #46) and #48 (NVMe checkout, PR #49) closed. #43 (tidy gate:
       plan + decision in its comments 6897676300 / 6897763312): the full move to LLVM 23 dropped (~1870 findings,
       almost all style or against the project rules; measurement logs build/tidy43/); the gate stays on clang-tidy 11
@@ -226,6 +225,12 @@ keep "Migration plan" current when a stage changes state.
       #55 (plan + OK in its comments): --dump-cal and --cal N independent (CalKind, separate state; a failed write
       logs once per kind and stops only that kind). Branch fix/issue55-cal-kinds, PR #58. Live log build/run55_both.log
       (--dump-cal --cal 3 --cal-interval 30 --cal-dir build/cal_both: 4 files), /tmp listings build/tmp55_{before,after}.txt.
+      #37 (plan 6899492084, review + OK 6899517430): TrailWindow::evict resets the median window once, when it empties
+      a ring that held points; feed() no longer resets. Behavior change: an aged-out trail of a live track comes back
+      kTrailMedianN matched frames later; a DEAD ghost lingers while its revived trail ages out. Golden unchanged (layer B
+      max |d| 0). Branch fix/issue37-trail-restart. Tests failing on the old code: build/test37_before.log; layer A
+      build/ref37_p3.*, its track lines diffed against build/ref43_p3.log (build/ref37_tracks_{base,new}.txt; base-vs-base
+      replays differ too: pts +-1, last digit of c/v -- wall-clock timestamps; the systematic change is id=2 only).
 - [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
       Check: runs with a wrong model, a busy port, a missing camera.
 Out of scope: light_control, light_sensor, tools/, scripts/.

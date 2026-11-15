@@ -61,7 +61,10 @@ public:
     // newest point (or the ring is empty).
     void feed( int64_t ts_us, float x, float y );
 
-    // Drops the points older than cutoff_us from the head of the ring.
+    // Drops the points older than cutoff_us from the head of the ring. The
+    // call that empties a ring holding points (the trail aged out) also resets
+    // the median window, once: the trail of a live track restarts from the
+    // next kTrailMedianN feeds, with no pre-gap posterior in its first median.
     void evict( int64_t cutoff_us );
 
     bool empty() const { return ring_.empty(); }
