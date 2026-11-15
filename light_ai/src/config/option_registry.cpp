@@ -2,6 +2,8 @@
 // One registry of names, ranges and error texts; both the
 // argv loop (CliOptions::parse) and the INI config-file handler
 // validate through it, so both sources reject identically.
+// The rejection text is built in one place, OptionRegistry::apply, from the
+// row's name and `expected`.
 
 #include <cerrno>
 #include <algorithm>
@@ -11,7 +13,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <string>
 #include <string_view>
 
@@ -57,15 +58,6 @@ namespace
         return true;
     }
 
-    bool value_error( const char* opt, const char* val, const char* expected )
-    {
-        std::cerr << "invalid value for " << opt << ": '" << val << '\'';
-        if ( expected )
-            std::cerr << " (expected " << expected << ')';
-        std::cerr << '\n';
-        return false;
-    }
-
     bool set_flag( bool& dst )
     {
         dst = true;
@@ -78,20 +70,20 @@ namespace
         return true;
     }
 
-    bool set_int( const char* opt, const char* v, int lo, int hi, const char* exp, int& dst )
+    bool set_int( const char* v, int lo, int hi, int& dst )
     {
         int n = 0;
         if ( !parse_int( v, &n ) || n < lo || n > hi )
-            return value_error( opt, v, exp );
+            return false;
         dst = n;
         return true;
     }
 
-    bool set_float_01( const char* opt, const char* v, float& dst )
+    bool set_float_01( const char* v, float& dst )
     {
         float f = NAN;
         if ( !parse_float( v, &f ) || f < 0.0f || f > 1.0f )
-            return value_error( opt, v, "0.0..1.0" );
+            return false;
         dst = f;
         return true;
     }
@@ -99,7 +91,7 @@ namespace
     bool apply_cal_dir( Config& c, const char* v )
     {
         if ( !v || !*v )
-            return value_error( "--cal-dir", v ? v : "", "non-empty path" );
+            return false;
         c.cal.dir = v;
         return true;
     }
@@ -107,7 +99,7 @@ namespace
     bool apply_device( Config& c, const char* v )
     {
         if ( !v || !*v )
-            return value_error( "--device", v ? v : "", "/dev/videoN" );
+            return false;
         c.sources.push_back( { SourceKind::V4L2, v } );
         return true;
     }
@@ -122,7 +114,7 @@ namespace
     {
         int n = 0;
         if ( !parse_int( v, &n ) || ( n != 0 && n != 1 && n != 2 && n != 3 && n != 4 && n != 7 ) )
-            return value_error( "--core", v, "0|1|2|3|4|7" );
+            return false;
         c.infer.core = n;
         return true;
     }
@@ -130,7 +122,7 @@ namespace
     bool apply_net_src( Config& c, const char* v )
     {
         if ( !v || std::strncmp( v, "http://", 7 ) != 0 )
-            return value_error( "--net-src", v ? v : "", "http://host:port/path" );
+            return false;
         c.sources.push_back( { SourceKind::NetMjpeg, v } );
         return true;
     }
@@ -139,60 +131,77 @@ namespace
     {
         int n = 0;
         if ( !parse_int( v, &n ) || ( n != 0 && n != 1 && n != 3 ) )
-            return value_error( "--pool", v, "0|1|3" );
+            return false;
         c.infer.pool = n;
         return true;
     }
 }  // namespace
 
-OptionRegistry::OptionRegistry()
+OptionRegistry::OptionRegistry( const Log& log )
   : table_ { {
-        { "--box-log",      { true, "per-frame box CSV for jitter A/B (raw vs smoothed)",
-                                    +[]( Config& c, const char* v ) { return set_str( v, c.box_log ); } } },
-        { "--cal",          { true, "calibration frames 1..10000",
-                                    +[]( Config& c, const char* v ) { return set_int( "--cal", v, 1, 10000, "1..10000", c.cal.frames ); } } },
-        { "--cal-dir",      { true, "directory for the --cal series (default: dataset/)", &apply_cal_dir } },
-        { "--cal-interval", { true, "calibration sampling stride 1..10000",
-                                    +[]( Config& c, const char* v ) { return set_int( "--cal-interval", v, 1, 10000, "1..10000", c.cal.interval ); } } },
-        { "--conf",         { true, "confidence threshold 0.0..1.0",
-                                    +[]( Config& c, const char* v ) { return set_float_01( "--conf", v, c.infer.conf_thr ); } } },
-        { "--config",       { true, "INI config file (key = value); applied BEFORE the CLI options", &apply_config } },
-        { "--core",         { true, "NPU cores: 0 auto, 1/2/4 = core 0/1/2, 3 (0+1), 7 (0+1+2); ignored with --pool > 1", &apply_core } },
-        { "--cpu-draw",     { false, "draw boxes on CPU (A/B vs GPU drawer)",
-                                    +[]( Config& c, const char* ) { return set_flag( c.stream.cpu_draw ); } } },
-        { "--device",       { true, "camera device path (repeatable; default /dev/video20)", &apply_device } },
-        { "--dump-cal",     { false, "dump one model-input frame to /tmp/cal.ppm",
-                                    +[]( Config& c, const char* ) { return set_flag( c.cal.dump_one ); } } },
-        { "--frames",       { true, "stop after N frames (>= 1; default: run until Ctrl-C)",
-                                    +[]( Config& c, const char* v ) { return set_int( "--frames", v, 1, INT_MAX, ">= 1", c.frames ); } } },
-        { "--iou",          { true, "NMS IoU threshold 0.0..1.0",
-                                    +[]( Config& c, const char* v ) { return set_float_01( "--iou", v, c.infer.iou_thr ); } } },
-        { "--model",        { true, "RKNN model path", +[]( Config& c, const char* v ) { return set_str( v, c.infer.model ); } } },
-        { "--net",          { false, "network preview (raw rgb24 or --net-h264)",
-                                    +[]( Config& c, const char* ) { return set_flag( c.stream.enabled ); } } },
-        { "--net-bitrate",  { true, "preview bitrate 1000..100000 kbps",
-                                    +[]( Config& c, const char* v ) { return set_int( "--net-bitrate", v, 1000, 100000, "1000..100000 kbps", c.stream.bitrate_kbps ); } } },
-        { "--net-fps",      { true, "preview stream fps 1..120, 0 = follow the source (VFR pts from dequeue times)",
-                                    +[]( Config& c, const char* v ) { return set_int( "--net-fps", v, 0, 120, "0..120", c.stream.fps ); } } },
-        { "--net-h264",     { false, "H.264/MPEG-TS preview instead of raw rgb24",
-                                    +[]( Config& c, const char* ) { return set_flag( c.stream.h264 ); } } },
-        { "--net-host",     { true, "optional UDP destination (h264 push); unset = TCP pull",
-                                    +[]( Config& c, const char* v ) { return set_str( v, c.stream.host ); } } },
-        { "--net-port",     { true, "preview port 1..65535",
-                                    +[]( Config& c, const char* v ) { return set_int( "--net-port", v, 1, 65535, "1..65535", c.stream.port ); } } },
-        { "--net-src",      { true, "network MJPEG pull source (http://host:port/path; repeatable)", &apply_net_src } },
-        { "--pool",         { true, "NPU context pool: 0|1 = single context (baseline), 3 = one engine per core", &apply_pool } },
+        { "--box-log",      { true, "per-frame box CSV for jitter A/B (raw vs smoothed)", nullptr,
+                              +[]( Config& c, const char* v ) { return set_str( v, c.box_log ); } } },
+        { "--cal",          { true, "calibration frames 1..10000", "1..10000",
+                              +[]( Config& c, const char* v ) { return set_int( v, 1, 10000, c.cal.frames ); } } },
+        { "--cal-dir",      { true, "directory for the --cal series (default: dataset/)", "non-empty path", &apply_cal_dir } },
+        { "--cal-interval", { true, "calibration sampling stride 1..10000", "1..10000",
+                              +[]( Config& c, const char* v ) { return set_int( v, 1, 10000, c.cal.interval ); } } },
+        { "--conf",         { true, "confidence threshold 0.0..1.0", "0.0..1.0",
+                              +[]( Config& c, const char* v ) { return set_float_01( v, c.infer.conf_thr ); } } },
+        { "--config",       { true, "INI config file (key = value); applied BEFORE the CLI options", nullptr, &apply_config } },
+        { "--core",         { true, "NPU cores: 0 auto, 1/2/4 = core 0/1/2, 3 (0+1), 7 (0+1+2); ignored with --pool > 1", "0|1|2|3|4|7",
+                              &apply_core } },
+        { "--cpu-draw",     { false, "draw boxes on CPU (A/B vs GPU drawer)", nullptr,
+                              +[]( Config& c, const char* ) { return set_flag( c.stream.cpu_draw ); } } },
+        { "--device",       { true, "camera device path (repeatable; default /dev/video20)", "/dev/videoN", &apply_device } },
+        { "--dump-cal",     { false, "dump one model-input frame to /tmp/cal.ppm", nullptr,
+                              +[]( Config& c, const char* ) { return set_flag( c.cal.dump_one ); } } },
+        { "--frames",       { true, "stop after N frames (>= 1; default: run until Ctrl-C)", ">= 1",
+                              +[]( Config& c, const char* v ) { return set_int( v, 1, INT_MAX, c.frames ); } } },
+        { "--iou",          { true, "NMS IoU threshold 0.0..1.0", "0.0..1.0",
+                              +[]( Config& c, const char* v ) { return set_float_01( v, c.infer.iou_thr ); } } },
+        { "--model",        { true, "RKNN model path", nullptr,
+                              +[]( Config& c, const char* v ) { return set_str( v, c.infer.model ); } } },
+        { "--net",          { false, "network preview (raw rgb24 or --net-h264)", nullptr,
+                              +[]( Config& c, const char* ) { return set_flag( c.stream.enabled ); } } },
+        { "--net-bitrate",  { true, "preview bitrate 1000..100000 kbps", "1000..100000 kbps",
+                              +[]( Config& c, const char* v ) { return set_int( v, 1000, 100000, c.stream.bitrate_kbps ); } } },
+        { "--net-fps",      { true, "preview stream fps 1..120, 0 = follow the source (VFR pts from dequeue times)", "0..120",
+                              +[]( Config& c, const char* v ) { return set_int( v, 0, 120, c.stream.fps ); } } },
+        { "--net-h264",     { false, "H.264/MPEG-TS preview instead of raw rgb24", nullptr,
+                              +[]( Config& c, const char* ) { return set_flag( c.stream.h264 ); } } },
+        { "--net-host",     { true, "optional UDP destination (h264 push); unset = TCP pull", nullptr,
+                              +[]( Config& c, const char* v ) { return set_str( v, c.stream.host ); } } },
+        { "--net-port",     { true, "preview port 1..65535", "1..65535",
+                              +[]( Config& c, const char* v ) { return set_int( v, 1, 65535, c.stream.port ); } } },
+        { "--net-src",      { true, "network MJPEG pull source (http://host:port/path; repeatable)", "http://host:port/path",
+                              &apply_net_src } },
+        { "--pool",         { true, "NPU context pool: 0|1 = single context (baseline), 3 = one engine per core", "0|1|3",
+                              &apply_pool } },
     } }
+  , log_( log )
 {
 }
 
-const OptionRegistry::Option* OptionRegistry::find( std::string_view name ) const
+const OptionRegistry::Entry* OptionRegistry::find( std::string_view name ) const
 {
     // view compare, not strcmp: a string_view is not NUL-terminated
     // in general; the table names are literals, so == is exact.
     const auto *const it = std::find_if( table_.begin(), table_.end(),
                                   [name]( const Entry& e ) { return e.name == name; } );
-    return it != table_.end() ? &it->opt : nullptr;
+    return it != table_.end() ? &*it : nullptr;
+}
+
+bool OptionRegistry::apply( const Entry& e, Config& cfg, const char* val ) const
+{
+    if ( e.opt.apply( cfg, val ) )
+        return true;
+    Log::Line line = log_.error();
+    line << "invalid value for " << e.name << ": '" << ( val ? val : "" ) << '\'';
+    if ( e.opt.expected )
+        line << " (expected " << e.opt.expected << ')';
+    line << '\n';
+    return false;
 }
 
 void OptionRegistry::print_usage( std::ostream& os ) const

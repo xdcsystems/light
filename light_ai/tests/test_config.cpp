@@ -1,39 +1,49 @@
 #include <cstdio>
 #include <fstream>
 #include <initializer_list>
-#include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "check.hpp"
 #include "config/cli.hpp"
+#include "core/log.hpp"
 #include "suites.hpp"
 
 namespace
 {
     using Args = std::initializer_list<const char*>;
 
+    // CliOptions over its own Log: both streams are strings the test reads.
+    struct Cli
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        Log log { out, err };
+        CliOptions opts { log };
+
+        const Config& config() const { return opts.config(); }
+    };
+
     // Runs CliOptions::parse over a copy of the arguments (argv is char**,
-    // the copy keeps the literals const). Output is muted: rejections are loud by design.
-    CliOptions::ParseStatus parse( CliOptions& cli, Args args )
+    // the copy keeps the literals const).
+    CliOptions::ParseStatus parse( Cli& cli, Args args )
     {
         std::vector<std::string> store { "light_ai" };
         store.insert( store.end(), args.begin(), args.end() );
         std::vector<char*> argv;
         for ( std::string& s : store )
             argv.push_back( s.data() );
-        const QuietStreams quiet;
-        return cli.parse( static_cast<int>( argv.size() ), argv.data() );
+        return cli.opts.parse( static_cast<int>( argv.size() ), argv.data() );
     }
 
     bool rejected( Args args )
     {
-        CliOptions cli;
+        Cli cli;
         return parse( cli, args ) == CliOptions::ParseStatus::Error;
     }
 
-    // One parse with its two output streams: what the user sees on stdout / stderr.
+    // One parse with its two Log streams: what the user sees on stdout / stderr.
     struct Run
     {
         CliOptions::ParseStatus st;
@@ -41,39 +51,11 @@ namespace
         std::string err;
     };
 
-    // std::cout / std::cerr redirected for the scope (the parse writes to the global streams).
-    class Capture
-    {
-    public:
-        Capture() : old_out_( std::cout.rdbuf( out_.rdbuf() ) ), old_err_( std::cerr.rdbuf( err_.rdbuf() ) ) {}
-        ~Capture()
-        {
-            std::cout.rdbuf( old_out_ );
-            std::cerr.rdbuf( old_err_ );
-        }
-        Capture( const Capture& ) = delete;
-        Capture& operator=( const Capture& ) = delete;
-        std::string out() const { return out_.str(); }
-        std::string err() const { return err_.str(); }
-
-    private:
-        std::ostringstream out_;
-        std::ostringstream err_;
-        std::streambuf* old_out_;
-        std::streambuf* old_err_;
-    };
-
     Run run( Args args )
     {
-        std::vector<std::string> store { "light_ai" };
-        store.insert( store.end(), args.begin(), args.end() );
-        std::vector<char*> argv;
-        for ( std::string& s : store )
-            argv.push_back( s.data() );
-        CliOptions cli;
-        const Capture cap;
-        const CliOptions::ParseStatus st = cli.parse( static_cast<int>( argv.size() ), argv.data() );
-        return { st, cap.out(), cap.err() };
+        Cli cli;
+        const CliOptions::ParseStatus st = parse( cli, args );
+        return { st, cli.out.str(), cli.err.str() };
     }
 
     bool error_text( Args args, const std::string& err )
@@ -134,11 +116,14 @@ namespace
         CHECK( t, error_text( { "--device", "a", "--device", "b", "--device", "c", "--device", "d" },
                               "too many video sources (4): at most 3 sources are supported (one per NPU core)\n" ) );
 
-        // --help: the usage on stdout, nothing on stderr.
+        // --help: parse() prints nothing; main() prints the usage on stdout through print_usage.
         {
             const Run r = run( { "--help" } );
-            CHECK( t, r.st == CliOptions::ParseStatus::Help && r.err.empty() );
-            CHECK( t, r.out.rfind( "usage: light_ai [options]\noptions:\n", 0 ) == 0 );
+            CHECK( t, r.st == CliOptions::ParseStatus::Help && r.out.empty() && r.err.empty() );
+            const Cli cli;
+            std::ostringstream usage;
+            cli.opts.print_usage( usage );
+            CHECK( t, usage.str().rfind( "usage: light_ai [options]\noptions:\n", 0 ) == 0 );
         }
 
         // The config file: its own texts, then the line of the first error.
@@ -186,7 +171,7 @@ void test_config( TestRun& t )
 
     // Defaults: one V4L2 source on /dev/video20, everything optional is off.
     {
-        CliOptions cli;
+        Cli cli;
         CHECK( t, parse( cli, {} ) == Status::Run );
         const Config& c = cli.config();
         CHECK( t, c.sources.size() == 1 && c.sources[0].kind == SourceKind::V4L2 && c.sources[0].uri == "/dev/video20" );
@@ -199,7 +184,7 @@ void test_config( TestRun& t )
     }
     // Values land in their fields.
     {
-        CliOptions cli;
+        Cli cli;
         CHECK( t, parse( cli, { "--frames", "100", "--conf", "0.5", "--iou", "0.3", "--pool", "3", "--core", "7", "--net",
                                "--net-h264", "--net-port", "5000", "--net-fps", "0", "--net-bitrate", "8000", "--cpu-draw",
                                "--model", "m.rknn", "--box-log", "b.csv", "--net-host", "10.0.0.1", "--dump-cal",
@@ -215,7 +200,7 @@ void test_config( TestRun& t )
     }
     // Repeatable sources keep the command-line order.
     {
-        CliOptions cli;
+        Cli cli;
         CHECK( t, parse( cli, { "--net-src", "http://cam:8080/stream", "--device", "/dev/video1" } ) == Status::Run );
         const Config& c = cli.config();
         CHECK( t, c.sources.size() == 2 );
@@ -224,9 +209,9 @@ void test_config( TestRun& t )
     }
     // Integer front-end: leading whitespace and an explicit '+' are accepted.
     {
-        CliOptions plus;
+        Cli plus;
         CHECK( t, parse( plus, { "--frames", "+10" } ) == Status::Run && plus.config().frames == 10 );
-        CliOptions space;
+        Cli space;
         CHECK( t, parse( space, { "--frames", " 10" } ) == Status::Run && space.config().frames == 10 );
     }
     // Loud rejections: unknown names, missing values, out-of-range and malformed values.
@@ -254,24 +239,27 @@ void test_config( TestRun& t )
     CHECK( t, rejected( { "--device", "/dev/video0", "--device", "/dev/video1", "--device", "/dev/video2", "--device",
                           "/dev/video3" } ) );                  // at most 3 sources
     {
-        CliOptions cli;
+        Cli cli;
         CHECK( t, parse( cli, { "--net", "--net-h264" } ) == Status::Run );
-        CliOptions three;
+        Cli three;
         CHECK( t, parse( three, { "--device", "/dev/video0", "--device", "/dev/video1", "--net-src", "http://c/s" } )
                   == Status::Run );
         CHECK( t, three.config().sources.size() == 3 );
     }
     // --help wins over everything else and never reads a config file.
     {
-        CliOptions cli;
+        Cli cli;
         CHECK( t, parse( cli, { "--no-such-option", "--config", "missing.ini", "--help" } ) == Status::Help );
     }
 
     // The registry: lookup by full name, usage lists every option once.
     {
-        const OptionRegistry reg;
-        CHECK( t, reg.find( "--pool" ) != nullptr && reg.find( "--pool" )->needs_value );
-        CHECK( t, reg.find( "--net" ) != nullptr && !reg.find( "--net" )->needs_value );
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        const OptionRegistry reg( log );
+        CHECK( t, reg.find( "--pool" ) != nullptr && reg.find( "--pool" )->opt.needs_value );
+        CHECK( t, reg.find( "--net" ) != nullptr && !reg.find( "--net" )->opt.needs_value );
         CHECK( t, reg.find( "--poo" ) == nullptr && reg.find( "pool" ) == nullptr && reg.find( "" ) == nullptr );
         std::ostringstream usage;
         reg.print_usage( usage );
@@ -287,7 +275,7 @@ void test_config( TestRun& t )
     // Config file: flat key = value through the same registry; '_' and '-' are equivalent.
     {
         const TempIni ini( "frames = 50\nnet = true\nnet_port = 4321\n--conf = 0.6\ndevice = /dev/video5\n" );
-        CliOptions cli;
+        Cli cli;
         CHECK( t, parse( cli, { "--config", ini.path() } ) == Status::Run );
         const Config& c = cli.config();
         CHECK( t, c.frames == 50 && c.stream.enabled && c.stream.port == 4321 );
@@ -295,7 +283,7 @@ void test_config( TestRun& t )
         CHECK( t, c.sources.size() == 1 && c.sources[0].uri == "/dev/video5" );
 
         // Precedence: defaults < config file < CLI; CLI sources replace the file's sources.
-        CliOptions over;
+        Cli over;
         CHECK( t, parse( over, { "--frames", "7", "--config", ini.path(), "--device", "/dev/video9" } ) == Status::Run );
         CHECK( t, over.config().frames == 7 && over.config().stream.port == 4321 );
         CHECK( t, over.config().sources.size() == 1 && over.config().sources[0].uri == "/dev/video9" );

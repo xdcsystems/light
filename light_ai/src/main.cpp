@@ -18,24 +18,29 @@
 // default action and ends the process at once.
 //
 // Declaration order is the lifetime contract (destruction runs in reverse):
-// env first (before any thread), then the flag, then the waiter, then the
-// Pipeline; the Armed scope ends before the Pipeline is destroyed.
+// the Log first (the parse already reports through it), then the parsed
+// options, then -- inside the try block -- env (before any thread), the
+// flag, the waiter and the Pipeline; the Armed scope ends before the
+// Pipeline is destroyed.
 int main( int argc, char** argv )
 {
-    CliOptions cli;
+    // Diagnostics: info -> stdout, warnings/errors -> stderr, as before.
+    // Declared first, outside the try block: CliOptions reports its
+    // rejections through it, and so does the catch below. There is no
+    // log-level option yet, so the Log does not depend on the parse.
+    const Log log( std::cout, std::cerr );
+
+    CliOptions cli( log );
     switch ( cli.parse( argc, argv ) )
     {
         case CliOptions::ParseStatus::Help:
+            cli.print_usage( std::cout );  // the usage is the program's output, not a diagnostic
             return 0;
         case CliOptions::ParseStatus::Error:
             return 2;
         case CliOptions::ParseStatus::Run:
             break;
     }
-
-    // Diagnostics: info -> stdout, warnings/errors -> stderr, as before.
-    // Declared outside the try block: the catch below reports through it.
-    const Log log( std::cout, std::cerr );
 
     try
     {
