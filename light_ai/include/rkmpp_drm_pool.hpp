@@ -12,7 +12,7 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include <string>
+#include "core/status.hpp"
 
 // Same include form as mpp_decoder.hpp: <rockchip/rk_mpi.h> resolves to
 // the self-built /usr/local/include/rockchip headers. The quoted form
@@ -38,39 +38,32 @@ struct RkmppDrmPool
     // Self-cleaning on failure: everything created so far is
     // released and the pool is left empty, so the owner's throw is
     // safe and a later retry starts clean.
-    // Non-throwing: reports through `why`, the owner throws loudly.
-    bool alloc( size_t bytes, const char* tag, const char* caller, std::string* why )
+    // Non-throwing: returns a Status; the owner throws via throw_on (startup only).
+    Status alloc( size_t bytes, const char* tag, const char* caller )
     {
         if ( group )
-        {
-            if ( why )
-                *why = "drm pool: already allocated";
-            return false;
-        }
+            return make_status( Errc::Failed, "drm pool: already allocated" );
         const MPP_RET rg = mpp_buffer_group_get(
                 &group, MPP_BUFFER_TYPE_DRM, MPP_BUFFER_INTERNAL, tag, caller );
         if ( rg != MPP_OK )
         {
             group = nullptr;
-            if ( why )
-                *why = "mpp_buffer_group_get failed";
-            return false;
+            return sdk_status( Errc::NoMemory, "mpp_buffer_group_get failed", rg );
         }
         for ( auto& b : buf )
         {
-            if ( mpp_buffer_get( group, &b, bytes ) != MPP_OK )
+            const MPP_RET rc = mpp_buffer_get( group, &b, bytes );
+            if ( rc != MPP_OK )
             {
                 release_all();
-                if ( why )
-                    *why = "mpp_buffer_get failed";
-                return false;
+                return sdk_status( Errc::NoMemory, "mpp_buffer_get failed", rc );
             }
             // Neutral gray fill: the 16-aligned tail columns of the
             // stream keep their fill (never receive RGA data).
             if ( void* p = mpp_buffer_get_ptr( b ) )
                 dma::fill_and_flush( mpp_buffer_get_fd( b ), p, 128, bytes );
         }
-        return true;
+        return Status{};
     }
 
 private:
