@@ -43,6 +43,7 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
           cfg_.infer.model.c_str() )
   , t_( log )
   , sink_( log )
+  , rep_( log )
   , stop_( stop )
   , log_( log )
 {

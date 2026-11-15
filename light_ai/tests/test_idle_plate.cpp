@@ -96,6 +96,52 @@ namespace
         CHECK( t, only( q, kGray, 16 ) );
     }
 
+    // FNV-1a over the whole plane: pins every byte stamp() writes.
+    uint64_t fnv1a( const std::vector<uint8_t>& p )
+    {
+        uint64_t h = 1469598103934665603ULL;
+        for ( uint8_t v : p )
+        {
+            h ^= v;
+            h *= 1099511628211ULL;
+        }
+        return h;
+    }
+
+    // The exact output of stamp() on a 200x60 gray plane, pinned before the
+    // stage-6e split (#39): three scales, and labels clipped at each edge.
+    void pinned( TestRun& t )
+    {
+        struct Case
+        {
+            int x;
+            int y;
+            const char* s;
+            int scale;
+            uint64_t hash;
+            int n;  // pixels set to val
+        };
+        const Case cases[] = {
+            { 10, 20, "NO SIGNAL", 1, 0x2477b1c55d14a243ULL, 110 },
+            { 10, 20, "NO SIGNAL", 2, 0x576cc14b5b45be03ULL, 440 },
+            { 4, 2, "NO SIGNAL", 3, 0x2d9603c6bcac54e3ULL, 990 },
+            { -6, -6, "WWWW", 2, 0x5c34a4bb255d8003ULL, 192 },       // top left
+            { 180, 50, "WWWW", 2, 0x94f4e32596918703ULL, 96 },       // right and bottom
+            { -30, 30, "Ag-0:% s1", 2, 0x07f273305f8e6b83ULL, 204 },  // left
+            { 150, -9, "LIGHT 42", 3, 0x6e28dfa79662ecd3ULL, 207 },   // top and right
+        };
+        const int stride = 200;
+        const int h = 60;
+        for ( const Case& c : cases )
+        {
+            BitmapFont f;
+            std::vector<uint8_t> p( static_cast<size_t>( stride ) * h, kGray );
+            f.stamp( Plane8 { p.data(), stride, h }, c.x, c.y, c.s, c.scale, 16 );
+            CHECK( t, fnv1a( p ) == c.hash );
+            CHECK( t, ink( p, stride, 0, 0, stride, h ).n == c.n );
+        }
+    }
+
     // The plate on a canvas of `layout`: one label per tile, all identical,
     // each centered by text_x / text_y, nothing outside the label boxes.
     void plate_on( TestRun& t, const StreamLayout& l )
@@ -145,5 +191,6 @@ void test_idle_plate( TestRun& t )
 {
     font( t );
     clipping( t );
+    pinned( t );
     plate( t );
 }

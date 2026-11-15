@@ -71,6 +71,41 @@ inline bool parse_sof_segment( const uint8_t* seg, size_t seglen, JpegSofInfo& o
     return true;
 }
 
+// pos at the 0xFF that starts a marker: skips the fill bytes (0xFF runs)
+// and reads the marker byte into m, pos ends just past it. False on
+// garbage where a marker must be, or on fill bytes up to the end.
+inline bool read_marker( const uint8_t* data, size_t len, size_t& pos, uint8_t& m )
+{
+    if ( data[pos] != 0xFF )
+        return false;  // garbage before SOS: not structurally sound
+    while ( pos < len && data[pos] == 0xFF )
+        ++pos;  // fill bytes
+    if ( pos >= len )
+        return false;
+    m = data[pos++];
+    return true;
+}
+
+// pos just past marker m, which carries a length-delimited segment:
+// checks the length, parses the FIRST SOF (a second one is a corrupt
+// header), pos ends past the segment. False on any structural error.
+inline bool take_segment( const uint8_t* data, size_t len, size_t& pos, uint8_t m, bool& seen_sof, JpegSofInfo& out )
+{
+    if ( pos + 2 > len )
+        return false;
+    const size_t seglen = ( static_cast<size_t>( data[pos] ) << 8 ) | data[pos + 1];
+    if ( seglen < 2 || pos + seglen > len )
+        return false;
+    if ( is_sof_marker( m ) )
+    {
+        if ( seen_sof || !parse_sof_segment( data + pos, seglen, out ) )
+            return false;  // two SOFs, or a bad SOF segment
+        seen_sof = true;
+    }
+    pos += seglen;
+    return true;
+}
+
 } // namespace detail
 
 inline bool probe_jpeg_sof( const uint8_t* data, size_t len, JpegSofInfo& out )
@@ -81,33 +116,17 @@ inline bool probe_jpeg_sof( const uint8_t* data, size_t len, JpegSofInfo& out )
     size_t pos = 2;
     while ( pos + 2 <= len )
     {
-        if ( data[pos] != 0xFF )
-            return false;  // garbage before SOS: not structurally sound
-        while ( pos < len && data[pos] == 0xFF )
-            ++pos;  // fill bytes
-        if ( pos >= len )
+        uint8_t m = 0;
+        if ( !detail::read_marker( data, len, pos, m ) )
             return false;
-        const uint8_t m = data[pos++];
         if ( m == 0xDA )
             return seen_sof;  // SOS: the structural walk ends here
         if ( m == 0xD9 )
             return false;  // EOI before SOS: truncated header
         if ( detail::is_standalone_marker( m ) )
             continue;
-        if ( pos + 2 > len )
+        if ( !detail::take_segment( data, len, pos, m, seen_sof, out ) )
             return false;
-        const size_t seglen = ( static_cast<size_t>( data[pos] ) << 8 ) | data[pos + 1];
-        if ( seglen < 2 || pos + seglen > len )
-            return false;
-        if ( detail::is_sof_marker( m ) )
-        {
-            if ( seen_sof )
-                return false;  // two SOFs: corrupt header
-            if ( !detail::parse_sof_segment( data + pos, seglen, out ) )
-                return false;
-            seen_sof = true;
-        }
-        pos += seglen;
     }
     return false;  // ran out of data before SOS
 }
