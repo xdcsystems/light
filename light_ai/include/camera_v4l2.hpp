@@ -61,6 +61,20 @@ public:
     int height() const { return height_; }
 
 private:
+    // The steps of setup_device(), in this order. The int steps return 0, or the
+    // fail() result; they log the cause first, except the zero-buffer REQBUFS exit
+    // of map_buffers(), which reports through *why only. request_rate() cannot fail.
+    int open_node( const std::string& dev, std::string* why );
+    // S_FMT + G_FMT + the mode check; got_w/got_h receive the negotiated mode.
+    int negotiate_format( int& got_w, int& got_h, std::string* why );
+    // S_PARM 30 fps: best effort, never fatal.
+    void request_rate();
+    // REQBUFS + the count clamp + the QUERYBUF / mmap / QBUF loop.
+    int map_buffers( std::string* why );
+    // The one error exit of the setup steps: *why = text (if why is not null),
+    // teardown(), returns -1.
+    int fail( std::string* why, const char* text );
+
     // Non-throwing ioctl wrapper: EINTR retry only, errno is the caller's error report.
     int xioctl_r( unsigned long req, void* arg ) const;
 

@@ -46,8 +46,8 @@ namespace
 // Full open+setup path for the node given by the owner: open + S_FMT +
 // G_FMT verification + REQBUFS/mmap/QBUF. Nothing is trusted blindly: a
 // substituted camera mode is caught here exactly like at startup.
-// Self-cleaning (P1-5): every error path after open() tears the device
-// down, so a failed setup never leaks an fd or a mapping.
+// Self-cleaning (P1-5): every error path goes through fail(), which tears
+// the device down, so a failed setup never leaks an fd or a mapping.
 // Non-throwing: failures are reported via the return value and logged
 // here.
 int CameraV4L2::setup_device( const std::string& dev, std::string* why )
@@ -59,15 +59,44 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
     // teardown() is a no-op when nothing is open.
     teardown();
 
-    fd_ = ::open( dev.c_str(), O_RDWR | O_CLOEXEC );
-    if ( fd_ < 0 )
-    {
-        log_.warn() << "open camera: " << strerror( errno ) << '\n';
-        if ( why )
-            *why = "open failed";
+    int got_w = 0;
+    int got_h = 0;
+    if ( open_node( dev, why ) != 0 || negotiate_format( got_w, got_h, why ) != 0 )
         return -1;
-    }
+    request_rate();
+    if ( map_buffers( why ) != 0 )
+        return -1;
+    // Adopted only after the whole setup succeeded: a failed attempt
+    // leaves the locked session dimensions as they were.
+    width_ = got_w;
+    height_ = got_h;
+    return 0;
+}
 
+int CameraV4L2::fail( std::string* why, const char* text )
+{
+    if ( why )
+        *why = text;
+    teardown();
+    return -1;
+}
+
+// open() failure: nothing is open yet, the teardown() inside fail() is a no-op.
+int CameraV4L2::open_node( const std::string& dev, std::string* why )
+{
+    fd_ = ::open( dev.c_str(), O_RDWR | O_CLOEXEC );
+    if ( fd_ >= 0 )
+        return 0;
+    log_.warn() << "open camera: " << strerror( errno ) << '\n';
+    return fail( why, "open failed" );
+}
+
+// Read back the actual mode negotiated by the driver (VIDIOC_G_FMT).
+// At startup (width_ == 0) we adopt the device's negotiated MJPEG
+// dimensions; on a mid-run reconnect (width_ > 0) the dimensions are
+// already locked into the decoder/encoder and must match.
+int CameraV4L2::negotiate_format( int& got_w, int& got_h, std::string* why )
+{
     const unsigned req_w = width_ > 0 ? static_cast<unsigned>( width_ ) : kDefaultWidth;
     const unsigned req_h = height_ > 0 ? static_cast<unsigned>( height_ ) : kDefaultHeight;
     v4l2_format fmt {};
@@ -79,43 +108,34 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
     if ( xioctl_r( VIDIOC_S_FMT, &fmt ) < 0 )
     {
         log_.warn() << "camera: S_FMT: " << strerror( errno ) << '\n';
-        if ( why )
-            *why = "S_FMT failed";
-        teardown();
-        return -1;
+        return fail( why, "S_FMT failed" );
     }
 
-    // Read back the actual mode negotiated by the driver (VIDIOC_G_FMT).
-    // At startup (width_ == 0) we adopt the device's negotiated MJPEG
-    // dimensions; on a mid-run reconnect (width_ > 0) the dimensions are
-    // already locked into the decoder/encoder and must match.
     v4l2_format gfmt {};
     gfmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if ( xioctl_r( VIDIOC_G_FMT, &gfmt ) < 0 )
     {
         log_.warn() << "camera: G_FMT: " << strerror( errno ) << '\n';
-        if ( why )
-            *why = "G_FMT failed";
-        teardown();
-        return -1;
+        return fail( why, "G_FMT failed" );
     }
-    const int got_w = static_cast<int>( gfmt.fmt.pix.width );
-    const int got_h = static_cast<int>( gfmt.fmt.pix.height );
+    got_w = static_cast<int>( gfmt.fmt.pix.width );
+    got_h = static_cast<int>( gfmt.fmt.pix.height );
     if ( gfmt.fmt.pix.pixelformat != V4L2_PIX_FMT_MJPEG || got_w < 16 || got_h < 16
          || ( width_ > 0 && ( got_w != width_ || got_h != height_ ) ) )
     {
         log_.warn() << "camera: mode mismatch: requested " << req_w << 'x' << req_h << " MJPEG, got " << got_w << 'x'
                   << got_h << " fourcc=" << std::hex << gfmt.fmt.pix.pixelformat << std::dec << '\n';
-        if ( why )
-            *why = "camera mode mismatch";
-        teardown();
-        return -1;
+        return fail( why, "camera mode mismatch" );
     }
+    return 0;
+}
 
-    // Ask explicitly for the highest declared interval. The Sunplus FW
-    // accepts this request and honors it when AE picks a short exposure;
-    // in dim light it still throttles to its own rhythm — the request is
-    // harmless and documents intent. Best-effort: never fatal.
+// Ask explicitly for the highest declared interval. The Sunplus FW
+// accepts this request and honors it when AE picks a short exposure;
+// in dim light it still throttles to its own rhythm — the request is
+// harmless and documents intent. Best-effort: never fatal.
+void CameraV4L2::request_rate()
+{
     v4l2_streamparm parm {};
     parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     parm.parm.capture.timeperframe.numerator = 1;
@@ -126,7 +146,10 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
         if ( d != 30 )
             log_.warn() << "camera: requested 30 fps, driver set " << d << "\n";
     }
+}
 
+int CameraV4L2::map_buffers( std::string* why )
+{
     v4l2_requestbuffers req {};
     req.count = kBufCount;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -134,19 +157,11 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
     if ( xioctl_r( VIDIOC_REQBUFS, &req ) < 0 )
     {
         log_.warn() << "camera: REQBUFS: " << strerror( errno ) << '\n';
-        if ( why )
-            *why = "REQBUFS failed";
-        teardown();
-        return -1;
+        return fail( why, "REQBUFS failed" );
     }
 
     if ( req.count == 0 )
-    {
-        if ( why )
-            *why = "camera: REQBUFS returned zero buffers";
-        teardown();
-        return -1;
-    }
+        return fail( why, "camera: REQBUFS returned zero buffers" );
 
     // V4L2 allows the driver to return MORE buffers than requested
     // (VIDIOC_REQBUFS spec). The mmap/QBUF loops below index bufs_[],
@@ -169,10 +184,7 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
         if ( xioctl_r( VIDIOC_QUERYBUF, &buf ) < 0 )
         {
             log_.warn() << "camera: QUERYBUF idx=" << i << ": " << strerror( errno ) << '\n';
-            if ( why )
-                *why = "QUERYBUF failed";
-            teardown();
-            return -1;
+            return fail( why, "QUERYBUF failed" );
         }
         bufs_[i].length = buf.length;
         bufs_[i].start = mmap( nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, buf.m.offset );
@@ -180,22 +192,14 @@ int CameraV4L2::setup_device( const std::string& dev, std::string* why )
         {
             bufs_[i].start = nullptr;
             log_.warn() << "camera: mmap idx=" << i << ": " << strerror( errno ) << '\n';
-            if ( why )
-                *why = "mmap failed";
-            teardown();
-            return -1;
+            return fail( why, "mmap failed" );
         }
         if ( xioctl_r( VIDIOC_QBUF, &buf ) < 0 )
         {
             log_.warn() << "camera: QBUF idx=" << i << ": " << strerror( errno ) << '\n';
-            if ( why )
-                *why = "QBUF failed";
-            teardown();
-            return -1;
+            return fail( why, "QBUF failed" );
         }
     }
-    width_ = got_w;
-    height_ = got_h;
     return 0;
 }
 

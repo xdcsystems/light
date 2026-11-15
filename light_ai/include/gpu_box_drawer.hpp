@@ -9,6 +9,8 @@
 
 #include "core/gpu_box.hpp"  // GpuBox, GpuBoxList
 
+class Log;
+
 // GPU-assisted box drawing straight into the NPU input tensor
 // (Mali G610 via EGL/GBM, zero CPU pixels per frame).
 // GpuBox / GpuBoxList live in core/gpu_box.hpp.
@@ -28,6 +30,9 @@ class GpuBoxDrawer
     using P_GenVertexArrays = void( GL_APIENTRYP )( GLsizei, GLuint * );
     using P_DeleteVertexArrays = void( GL_APIENTRYP )( GLsizei, const GLuint * );
     using P_BindVertexArray = void( GL_APIENTRYP )( GLuint );
+    // libgbm is dlopen'ed (the mali copy first): its entry points come from dlsym.
+    using P_GbmCreateDevice = void *( * )( int );
+    using P_GbmDestroyDevice = void ( * )( void * );
 
     // Batched VBO vertex layout (moved out of gpu_box_drawer.cpp: the
     // draw() staging buffer is typed by it). r/g/b/a fields are GL
@@ -88,12 +93,13 @@ private:
     };
 
 public:
-    GpuBoxDrawer();
+    explicit GpuBoxDrawer( const Log& log ) : log_( log ) {}
     ~GpuBoxDrawer();
     GpuBoxDrawer( const GpuBoxDrawer & ) = delete;
     GpuBoxDrawer &operator=( const GpuBoxDrawer & ) = delete;
 
     // EGL/GBM display + surfaceless GLES3 context + shader + VBO.
+    // On failure everything created so far is released (done()); the cause is logged.
     bool init();
     // Imports the NPU tensor dma-buf as an EGLImage-backed FBO,
     // slot-keyed. attach_tensor()/draw() keep the single-context
@@ -123,6 +129,20 @@ public:
     bool ok() const { return ready_; }
 
 private:
+    // The steps of init(), in this order. Each one logs its own failure;
+    // the release of a partial init is done() in init() alone.
+    // GBM display: dlopen libgbm, then the first DRM node that initializes.
+    bool open_display();
+    // One DRM node: fd + GBM device + EGL display; a failed candidate releases what it created.
+    bool try_node( const char *path, P_GbmCreateDevice create_dev );
+    // The image import extensions and the extension entry points.
+    bool load_entry_points();
+    // Config (with the fallback), ES3 context then ES2, made current.
+    bool create_context();
+    // The batch VBO, and the VAO on ES3. Cannot fail.
+    void create_buffers();
+    void destroy_gbm_device( void *dev ) const;
+
     void done();
     void release_slot( int slot );
     void make_current();
@@ -132,6 +152,7 @@ private:
     void setup_attribs() const;
 
 private:
+    const Log& log_;
     State st_ {};
     bool ready_ = false;
 };

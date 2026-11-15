@@ -149,8 +149,10 @@ keep "Migration plan" current when a stage changes state.
       Issue #34 (plan + review in its comments), split 6a-6e. 6a (box_math.hpp to core/, fp16_to_float with an exact
       software path, YoloDecoder in core/, one decoder per pool worker): merged (PR #35). 6b (KalmanAxis, Associator,
       TrailWindow in core/, the Tracker split; golden max |d| 0): merged (PR #36). 6c (BoxMapper class, BoxSmoother
-      in steps + Log, the dead DEAD-ghost-box branch removed; golden max |d| 0): the PR in review. 6d: setup_device,
-      GpuBoxDrawer::init, the thresholds. 6e (own issue, after 6d): the functions above 20 outside the six targets.
+      in steps + Log, the dead DEAD-ghost-box branch removed; golden max |d| 0): merged (PR #38). 6d (setup_device and
+      GpuBoxDrawer::init in steps, the drawer on Log, function-size thresholds 100/110/18/5/17): the PR in review.
+      6e (own issue, after 6d): the functions above 20 outside the six targets; then tighten the thresholds again
+      (statements / branches / nesting are held by RgaResizer::resize alone, lines by MppDecoder::retrieve_output).
       Cognitive complexity: the gate's clang-tidy 11 has no such check (LLVM 12+). Measure with the PyPI clang-tidy
       (LLVM 23) in light_ai/venv (git-ignored): venv/bin/clang-tidy --quiet -p <copy of build/compile_commands.json
       without -mtune=cortex-a76.cortex-a55> with Checks '-*,readability-function-cognitive-complexity', Threshold 20.
@@ -158,7 +160,11 @@ keep "Migration plan" current when a stage changes state.
       fill_trail_points 35, BoxSmoother::update 32; outside the targets: BitmapFont::stamp 33, CameraV4L2::dequeue 31,
       probe_jpeg_sof 29, ConsoleReporter::report 25, H264Encoder::drain 24, CliOptions::parse 23, NetMjpegSource::dequeue 22,
       NetPreview::serve 21. After 6a: YoloDecoder max 10; after 6b: Tracker max 13 (Associator::match); after 6c:
-      BoxMapper max 7, BoxSmoother max 14 (collect_pairs). Layer A logs: build/ref6{a,b,c}_p{3,1}.{csv,log}.
+      BoxMapper max 7, BoxSmoother max 14 (collect_pairs); after 6d: setup_device 3 (steps max 11, map_buffers),
+      GpuBoxDrawer::init 4 (steps max 7). Layer A logs: build/ref6{a,b,c}_p{3,1}.{csv,log}, build/ref6d_p3.{csv,log}.
+      6d live logs (baseline binary build/light_ai_base6d): build/run6d_{base,new}_{pool3,pool1,gpu,cpu}.log,
+      build/run6d_new_{replug,nocam}.log, frames build/6d_*.png. Function-size measurement: clang-tidy 11 with every
+      readability-function-size threshold at 0 (nesting: one pass at the candidate threshold, threshold 0 shows level 1 only).
       Open: an alive track whose trail ages out completely never gets trail points again (TrailWindow::feed resets
       the median window on every call while the ring is empty, not once); kept in 6b (a refactoring): issue #37, after
       stage 6.

@@ -7,12 +7,15 @@ AnalyzeTemporaryDtors: true
 CheckOptions:
   - { key: hicpp-special-member-functions.AllowSoleDefaultDtor, value: '1' } # When set to 1 this check doesn’t flag classes with a sole, explicitly defaulted destructor.
   - { key: modernize-use-override.IgnoreDestructors,     value: '1' } # If set to non-zero, this check will not diagnose destructors.
-  - { key: readability-function-size.LineThreshold,      value: '200' } # Flag functions exceeding this number of lines.
-  - { key: readability-function-size.StatementThreshold, value: '500' } # Flag functions exceeding this number of statements.
-  - { key: readability-function-size.BranchThreshold,    value: '50' }   # Flag functions exceeding this number of control statements.
+  # readability-function-size: the maxima after stage 6d, rounded up (measured on the board, clang-tidy 11):
+  # lines 93 (MppDecoder::retrieve_output), statements 109 / branches 18 / nesting 5 (RgaResizer::resize),
+  # variables 17 (BitmapFont::stamp). Stage 6e splits those and tightens again.
+  - { key: readability-function-size.LineThreshold,      value: '100' } # Flag functions exceeding this number of lines.
+  - { key: readability-function-size.StatementThreshold, value: '110' } # Flag functions exceeding this number of statements.
+  - { key: readability-function-size.BranchThreshold,    value: '18' }   # Flag functions exceeding this number of control statements.
   - { key: readability-function-size.ParameterThreshold, value: '20' }   # Flag functions that exceed a specified number of parameters.
-  - { key: readability-function-size.NestingThreshold,   value: '10' }   # Flag compound statements which create next nesting level after NestingThreshold.
-  - { key: readability-function-size.VariableThreshold,  value: '20' }   # Flag functions exceeding this number of variables declared in the body.
+  - { key: readability-function-size.NestingThreshold,   value: '5' }    # Flag compound statements which create next nesting level after NestingThreshold.
+  - { key: readability-function-size.VariableThreshold,  value: '17' }   # Flag functions exceeding this number of variables declared in the body.
   - { key: readability-identifier-length.MinimumVariableNameLength, value: '1' } # minimum variable name length
   - { key: readability-identifier-length.MinimumParameterNameLength, value: '1' } # minimum parameter name length
   - { key: readability-identifier-length.MinimumLoopCounterNameLength, value: '1' } # minimum loop counter name length
@@ -27,6 +30,11 @@ CheckOptions:
   - { key: readability-identifier-naming.StaticConstantPrefix, value: s_ }
   - { key: readability-identifier-naming.GlobalConstantPrefix, value: k }
   - { key: readability-identifier-naming.GlobalVariablePrefix, value: g_ }
+  # readability-function-cognitive-complexity: clang-tidy 11 (the gate) does not know this check, so these two
+  # lines are inert today; they turn on by themselves once the gate moves to LLVM 12+. Stage 6 measures it
+  # with the newer clang-tidy in light_ai/venv (CLAUDE.md, Migration plan, 6); the functions still above 20
+  # after 6d are the scope of stage 6e.
+  - { key: readability-function-cognitive-complexity.Threshold,    value: '20' } # flag functions above this cognitive complexity
   - { key: readability-function-cognitive-complexity.IgnoreMacros, value: true } # ignore macros when computing cognitive complexity
 
 

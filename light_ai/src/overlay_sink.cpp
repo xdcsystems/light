@@ -146,7 +146,7 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
     if ( ( !preview_ && !enc_ ) || cpu_draw )
         return;
 
-    drawer_.emplace();
+    drawer_.emplace( log_ );
 
     bool drew_ok = drawer_->init();
     for ( int k = 0; drew_ok && k < tensors.n; ++k )
