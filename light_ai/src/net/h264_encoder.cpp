@@ -130,72 +130,80 @@ void H264Encoder::drain()
     // Without the flush the wrapper tears down its pools first and
     // then runs mpp_frame_deinit on the leftovers — "non-positive
     // ref_count" / "invalid mem pool ptr" at exit.
-    auto* ctx = ctx_;
     // Drain only if frames were actually encoded: EOF on an idle
     // encoder makes the wrapper's flush path touch an already-torn-down
     // MPP pool ("invalid mem pool ptr" at exit, idle-run case).
-    if ( frames_sent_ > 0 )
+    if ( frames_sent_ == 0 )
+        return;
+    send_eof();
+    // Telemetry: pulled / eof / eagains make the drain outcome
+    // visible for the shutdown-print investigation.
+    const DrainTally tally = collect_pending();
+    Log::Line line = log_.info();
+    line << "enc: drain: " << tally.pulled << " packet(s), " << ( tally.eof ? "EOF reached" : "NO EOF (EAGAIN x" );
+    if ( !tally.eof )
+        line << tally.eagains << ")";
+    line << "\n";
+}
+
+// The wrapper runs a NON_BLOCK output timeout (no LOW_DELAY
+// flag): EAGAIN during flush means "frames still in flight",
+// not "done". Stopping at the first EAGAIN leaves up to
+// EncoderFramePool::kSlots frames + EOS queued inside MPP; mpp_destroy
+// then tears its internal queues down over live packets
+// ("mpp_meta: put_meta negative ref_count" /
+// "mpp_mem_pool ... caller mpp_packet_deinit" at exit).
+// Bounded: the encoder holds at most kSlots frames and
+// codes ~1-2 ms each, so the guards below can never loop
+// forever.
+// EOF must reach the wrapper: on EAGAIN from send (input
+// queue full) pull one output packet out first, then retry
+// the EOF.
+void H264Encoder::send_eof()
+{
+    AVPacket* pkt = pkt_.get();
+    for ( int attempt = 0; attempt < 8; ++attempt )
     {
-        AVPacket* pkt = pkt_.get();
-        // The wrapper runs a NON_BLOCK output timeout (no LOW_DELAY
-        // flag): EAGAIN during flush means "frames still in flight",
-        // not "done". Stopping at the first EAGAIN leaves up to
-        // EncoderFramePool::kSlots frames + EOS queued inside MPP; mpp_destroy
-        // then tears its internal queues down over live packets
-        // ("mpp_meta: put_meta negative ref_count" /
-        // "mpp_mem_pool ... caller mpp_packet_deinit" at exit).
-        // Bounded: the encoder holds at most kSlots frames and
-        // codes ~1-2 ms each, so the guards below can never loop
-        // forever.
-        // EOF must reach the wrapper: on EAGAIN from send (input
-        // queue full) pull one output packet out first, then retry
-        // the EOF.
-        for ( int attempt = 0; attempt < 8; ++attempt )
+        if ( avcodec_send_frame( ctx_, nullptr ) == 0 )
+            break;
+        if ( avcodec_receive_packet( ctx_, pkt ) == 0 )
         {
-            if ( avcodec_send_frame( ctx, nullptr ) == 0 )
-                break;
-            if ( avcodec_receive_packet( ctx, pkt ) == 0 )
-            {
-                av_packet_unref( pkt );
-                continue;
-            }
-            break;  // non-EAGAIN error: drain only as far as it goes
+            av_packet_unref( pkt );
+            continue;
         }
-        // Drain until EOF; EAGAIN here = async frames in flight.
-        // Telemetry: pulled / eof / eagains make the drain outcome
-        // visible for the shutdown-print investigation.
-        int pulled = 0;
-        bool eof = false;
-        int eagains = 0;
-        for ( int guard = 0; guard < 512; ++guard )
+        break;  // non-EAGAIN error: drain only as far as it goes
+    }
+}
+
+// Drain until EOF; EAGAIN here = async frames in flight (see send_eof).
+H264Encoder::DrainTally H264Encoder::collect_pending()
+{
+    AVPacket* pkt = pkt_.get();
+    DrainTally tally;
+    for ( int guard = 0; guard < 512; ++guard )
+    {
+        const int r = avcodec_receive_packet( ctx_, pkt );
+        if ( r == 0 )
         {
-            const int r = avcodec_receive_packet( ctx, pkt );
-            if ( r == 0 )
-            {
-                av_packet_unref( pkt );
-                ++pulled;
-                continue;
-            }
-            if ( r == AVERROR_EOF )
-            {
-                eof = true;
-                break;
-            }
-            if ( r == AVERROR( EAGAIN ) )
-            {
-                ++eagains;
-                std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
-                continue;
-            }
-            log_.warn() << "enc: drain receive error, residual frames possible\n";
+            av_packet_unref( pkt );
+            ++tally.pulled;
+            continue;
+        }
+        if ( r == AVERROR_EOF )
+        {
+            tally.eof = true;
             break;
         }
-        Log::Line line = log_.info();
-        line << "enc: drain: " << pulled << " packet(s), " << ( eof ? "EOF reached" : "NO EOF (EAGAIN x" );
-        if ( !eof )
-            line << eagains << ")";
-        line << "\n";
+        if ( r == AVERROR( EAGAIN ) )
+        {
+            ++tally.eagains;
+            std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
+            continue;
+        }
+        log_.warn() << "enc: drain receive error, residual frames possible\n";
+        break;
     }
+    return tally;
 }
 
 // 7c forced-IDR: the rkmpp wrapper ignores frame->key_frame, so reach MPP
