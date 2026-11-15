@@ -8,6 +8,8 @@ project(light_ai_tests C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# compile_commands.json for the clang-tidy gate (scripts/tidy_run.sh runs tests/*.cpp through both passes; #43)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
