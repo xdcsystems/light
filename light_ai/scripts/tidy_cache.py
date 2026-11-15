@@ -9,8 +9,11 @@ the caller then runs clang-tidy as a plain miss and never stores the result.
 The key covers every input of the run:
   - the clang-tidy argv and the timeout, `clang-tidy --version`, `<clang++> --version`;
   - the TU's command line from the (stripped) compile DB;
-  - the bytes of every .clang-tidy from the TU's directory up to /;
-  - the output of `<clang++> <same args> -E -CC` (the LLVM driver of clang-tidy, not the DB's gcc);
+  - the bytes of every .clang-tidy from the TU's directory up to /, and of the file named by a
+    --config-file= argument (the cognitive pass of tidy_run.sh: its argv holds only the file name);
+  - the output of `<clang++> <same args> -E -CC` (an LLVM driver, not the DB's gcc: clang++-11, the
+    driver of the main pass; the cognitive pass's LLVM 23 wheel ships none, so its include set is the one
+    LLVM 11's predefined macros select -- a difference is possible only in system headers);
   - the raw bytes of every file named in its line markers. -E drops or normalizes what some checks
     read (comments with NOLINT, intra-line columns), so the raw files make any edit of any
     included file, system headers too, change the key; a different include resolution changes
@@ -69,6 +72,11 @@ def make_key(db_dir, source, timeout, clangxx, tidy_argv):
     part(b"tidy", tool_version(tidy_argv[0]))
     part(b"cxx", tool_version(clangxx))
     part(b"cmd", json.dumps(entry, sort_keys=True).encode())
+    for a in tidy_argv[1:]:
+        for flag in ("--config-file=", "-config-file="):
+            if a.startswith(flag):
+                with open(a[len(flag):], "rb") as f:
+                    part(b"config-file", f.read())
     d = os.path.dirname(os.path.realpath(source))
     while True:
         cfg = os.path.join(d, ".clang-tidy")
