@@ -10,6 +10,7 @@
 #include "config/config.hpp"  // StreamConfig
 #include "core/frame_view.hpp"
 #include "core/log.hpp"
+#include "core/status.hpp"
 #include "dma_sync.hpp"
 #include "timings.hpp"
 
@@ -148,12 +149,12 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
 
     drawer_.emplace( log_ );
 
-    bool drew_ok = drawer_->init();
-    for ( int k = 0; drew_ok && k < tensors.n; ++k )
-        drew_ok = drawer_->attach_slot( k, tensors.d[k].fd, model_w_, model_h_,
+    Status drew_st = drawer_->init();
+    for ( int k = 0; drew_st.ok() && k < tensors.n; ++k )
+        drew_st = drawer_->attach_slot( k, tensors.d[k].fd, model_w_, model_h_,
                 static_cast<uint32_t>( model_w_ ) * 3 );
 
-    if ( !drew_ok )
+    if ( !drew_st.ok() )
     {
         log_.warn() << "pipeline: gpu drawer unavailable, CPU fallback\n";
         drawer_.reset();
