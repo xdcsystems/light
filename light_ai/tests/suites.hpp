@@ -1,10 +1,11 @@
 // Test suites of light_ai_tests: one free function per module under test.
-// Each suite is self-contained; test_main.cpp runs them in this order.
+// Each suite is self-contained; test_main.cpp runs them in this order (check_harness first).
 
 #pragma once
 
 class TestRun;
 
+void test_check_harness( TestRun& t );
 void test_pod_containers( TestRun& t );
 void test_box_math( TestRun& t );
 void test_fp16( TestRun& t );

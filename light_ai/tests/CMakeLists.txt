@@ -16,6 +16,7 @@ set(LIGHT_AI_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 add_executable(light_ai_tests
     test_main.cpp
+    test_check_harness.cpp
     test_pod_containers.cpp
     test_box_math.cpp
     test_fp16.cpp
