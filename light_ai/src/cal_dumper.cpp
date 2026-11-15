@@ -45,6 +45,7 @@ bool CalDumper::write_ppm( const std::string& path, const uint8_t* data, size_t 
         return false;
     out << "P6\n" << model_w_ << ' ' << model_h_ << "\n255\n";
     out.write( reinterpret_cast<const char*>( data ), static_cast<std::streamsize>( bytes ) );
+    out.close();  // flushes: a failed final write (ENOSPC, EIO) sets failbit here, not in the destructor
     return static_cast<bool>( out );
 }
 
