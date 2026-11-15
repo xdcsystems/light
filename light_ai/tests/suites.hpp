@@ -32,6 +32,7 @@ void test_log( TestRun& t );
 void test_inference_pool( TestRun& t );
 void test_timings( TestRun& t );
 void test_console_reporter( TestRun& t );
+void test_cal_dumper( TestRun& t );
 void test_usb_node_locator( TestRun& t );
 void test_source_channel( TestRun& t );
 void test_source_threads( TestRun& t );

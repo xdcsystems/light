@@ -37,6 +37,7 @@ int main( int argc, char** argv )
         { "inference_pool", &test_inference_pool },
         { "timings", &test_timings },
         { "console_reporter", &test_console_reporter },
+        { "cal_dumper", &test_cal_dumper },
         { "usb_node_locator", &test_usb_node_locator },
         { "source_channel", &test_source_channel },
         { "source_threads", &test_source_threads },

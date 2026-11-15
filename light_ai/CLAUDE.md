@@ -106,7 +106,8 @@ keep "Migration plan" current when a stage changes state.
       sha256 in the README); layer A reference/ref_evening.csv (--box-log of a drop-free replay,
       --pool 1 = --pool 3, cmp-identical); layer B tests/test_reference_chain.cpp (golden, in the gate).
 - [x] 1 Global state: SignalWaiter/ProcessEnv (no g_pipe), Config grouped by consumer, Log (PRs #7-#9).
-      Open: ~170 direct std::cout/cerr writes migrate per stage; no CLI option for the log level yet.
+      The direct std::cout/cerr writes migrated per stage; the last ones (RknnEngine, CalDumper) in #51: only
+      main.cpp's Log( std::cout, std::cerr ) and print_usage( std::cout ) remain. Open: no CLI option for the log level yet.
 - [x] 2 InferencePool: slots, workers, FIFO, core masks out of Pipeline; InferSlot with private
       state; OverlaySink takes FrameView (PR #10).
       Check: --pool 1 and --pool 3 FPS and TOTAL timings within noise of fix/audit-p0;
@@ -213,6 +214,12 @@ keep "Migration plan" current when a stage changes state.
       under both passes, tests/.clang-tidy, the test fixes): branch ci/issue43-tidy-tests, merged (PR #53); #43 closed. clang-tidy 11
       on tests/ before 43b: 42 findings (16 function-size, 26 in 12 checks), all fixed but the size; measurement
       logs build/tidy43b/.
+      #51 (plan + OK in its comments): RknnEngine and CalDumper on Log; --dump-cal writes build/cal.ppm (<cal-dir>/cal.ppm
+      with --cal-dir, now accepted with --dump-cal alone); "calibration dump failed: <path>"; scripts/probe_yolo.py [PPM]
+      (rknnlite: run it with venv/bin/python). Branch refactor/issue51-log-tails, PR #56. Logs (base binary build/light_ai_base43:
+      rknn_engine / cal_dumper unchanged since): build/run51_{base,new_dump,new_caldir}.log, model lines
+      build/run51_{base,new}.model.txt (identical), /tmp listings build/tmp51_{before,after}.txt (identical). A sudo run
+      leaves build/cal.ppm root-owned: a later non-root dump fails until it is removed.
 - [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
       Check: runs with a wrong model, a busy port, a missing camera.
 Out of scope: light_control, light_sensor, tools/, scripts/.

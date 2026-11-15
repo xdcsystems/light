@@ -74,16 +74,16 @@ int CliOptions::validate() const
         return 2;
     }
 
-    // --cal-dir only makes sense with the --cal series; --dump-cal always
-    // writes /tmp/cal.ppm and is unaffected. Post-parse for the same
-    // reason as --net-h264: order of argv is arbitrary.
-    if ( !cfg_.cal.dir.empty() && cfg_.cal.frames == 0 )
+    // --cal-dir only makes sense with something to write into it: the --cal
+    // series or the single-shot --dump-cal (<cal-dir>/cal.ppm). Post-parse for
+    // the same reason as --net-h264: order of argv is arbitrary.
+    if ( !cfg_.cal.dir.empty() && cfg_.cal.frames == 0 && !cfg_.cal.dump_one )
     {
-        log_.error() << "--cal-dir: no --cal series requested, nothing to write.\n"
+        log_.error() << "--cal-dir: no --cal series or --dump-cal requested, nothing to write.\n"
                         "  --cal-dir sets the directory for the --cal N --cal-interval K\n"
-                        "  frame series; the single-shot --dump-cal always writes\n"
-                        "  /tmp/cal.ppm and ignores --cal-dir, e.g.:\n"
-                        "    light_ai --cal 5 --cal-interval 60 --cal-dir /tmp/calrun\n";
+                        "  frame series (default dataset/) and for the single-shot\n"
+                        "  --dump-cal (default build/cal.ppm), e.g.:\n"
+                        "    light_ai --cal 5 --cal-interval 60 --cal-dir build/calrun\n";
         return 2;
     }
     if ( !cfg_.cal.dir.empty() && !ensure_writable_dir( cfg_.cal.dir, log_ ) )
