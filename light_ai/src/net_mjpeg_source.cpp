@@ -264,7 +264,8 @@ NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size 
 int NetMjpegSource::dequeue( uint32_t* size, int* err, int timeout_ms )
 {
     int sink = 0;  // err may be null: the errno class goes here instead
-    int& e = err ? *err : sink;
+    int* const ep = err ? err : &sink;
+    int& e = *ep;
     e = 0;
     if ( !sock_.is_open() )
     {
