@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 
@@ -33,6 +34,49 @@ namespace
         std::memcpy( dst, s, static_cast<size_t>( m ) );
         dst[m] = 0;
     }
+
+    // A pixel rectangle [x0, x1) x [y0, y1), already clipped to the plane
+    // (empty when x0 >= x1 or y0 >= y1).
+    struct QuadBox
+    {
+        int x0;
+        int y0;
+        int x1;
+        int y1;
+    };
+
+    // The bbox of one stroke quad (4 vertices), scaled, placed at (x, y) and
+    // clipped to the plane. Stroke quads carry integer coords, so the scaled
+    // fill is exact: [min*scale, max*scale) per axis -- no +1 rounding.
+    QuadBox quad_box( const FontVertex* v, int x, int y, int scale, const Plane8& plane )
+    {
+        float min_x = v[0].x;
+        float max_x = v[0].x;
+        float min_y = v[0].y;
+        float max_y = v[0].y;
+        for ( int k = 1; k < 4; ++k )
+        {
+            min_x = std::min( min_x, v[k].x );
+            max_x = std::max( max_x, v[k].x );
+            min_y = std::min( min_y, v[k].y );
+            max_y = std::max( max_y, v[k].y );
+        }
+        const int x0 = x + static_cast<int>( min_x * scale );
+        const int y0 = y + static_cast<int>( min_y * scale );
+        const int x1 = x + static_cast<int>( max_x * scale );
+        const int y1 = y + static_cast<int>( max_y * scale );
+        return QuadBox { std::max( x0, 0 ), std::max( y0, 0 ), std::min( x1, plane.stride ), std::min( y1, plane.h ) };
+    }
+
+    void fill_box( const Plane8& plane, const QuadBox& b, uint8_t val )
+    {
+        for ( int ry = b.y0; ry < b.y1; ++ry )
+        {
+            uint8_t* row = plane.p + static_cast<size_t>( ry ) * plane.stride;
+            for ( int rx = b.x0; rx < b.x1; ++rx )
+                row[rx] = val;
+        }
+    }
 }  // namespace
 
 int BitmapFont::width( const char* s, int scale ) const
@@ -65,39 +109,6 @@ void BitmapFont::stamp( const Plane8& plane, int x, int y, const char* s, int sc
     for ( int q = 0; q < nq; ++q )
     {
         const FontVertex* v = reinterpret_cast<const FontVertex*>( vbuf_ ) + q * 4;
-        float min_x = v[0].x;
-        float max_x = v[0].x;
-        float min_y = v[0].y;
-        float max_y = v[0].y;
-        for ( int k = 1; k < 4; ++k )
-        {
-            if ( v[k].x < min_x )
-                min_x = v[k].x;
-            if ( v[k].x > max_x )
-                max_x = v[k].x;
-            if ( v[k].y < min_y )
-                min_y = v[k].y;
-            if ( v[k].y > max_y )
-                max_y = v[k].y;
-        }
-        // Stroke quads carry integer coords, so the scaled fill is
-        // exact: [min*scale, max*scale) per axis -- no +1 rounding.
-        const int ix0 = x + static_cast<int>( min_x * scale );
-        const int iy0 = y + static_cast<int>( min_y * scale );
-        int ix1 = x + static_cast<int>( max_x * scale );
-        int iy1 = y + static_cast<int>( max_y * scale );
-        if ( ix1 > plane.stride )
-            ix1 = plane.stride;
-        if ( iy1 > plane.h )
-            iy1 = plane.h;
-        for ( int ry = iy0; ry < iy1; ++ry )
-        {
-            if ( ry < 0 )
-                continue;
-            uint8_t* row = plane.p + static_cast<size_t>( ry ) * plane.stride;
-            for ( int rx = ix0; rx < ix1; ++rx )
-                if ( rx >= 0 )
-                    row[rx] = val;
-        }
+        fill_box( plane, quad_box( v, x, y, scale, plane ), val );
     }
 }
