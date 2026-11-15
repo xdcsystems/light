@@ -39,6 +39,7 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
   : cfg_( cfg )
   , locator_( usb_host_, log )
   , srcs_( log, [&log]( int /*idx*/ ) { return SourceChannel( log ); } )
+  , rga_( log )
   , pool_( cfg_.infer, YoloDecode( cfg_.infer.conf_thr, cfg_.infer.iou_thr, log ), log, PoolOptions {},
           cfg_.infer.model.c_str() )
   , t_( log )
