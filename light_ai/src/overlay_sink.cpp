@@ -125,7 +125,7 @@ void OverlaySink::init( const StreamConfig& stream,
     }
     else
     {
-        preview_.emplace( model_w_, model_h_, model_w_ * 3, stream.fps, stream.port );
+        preview_.emplace( model_w_, model_h_, model_w_ * 3, stream.fps, stream.port, log_ );
         log_.info() << "net: preview server on port " << stream.port << "\n";
     }
 

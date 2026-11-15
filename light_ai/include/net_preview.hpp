@@ -10,6 +10,8 @@
 struct AVFormatContext;
 struct AVPacket;
 struct AVStream;
+class Log;
+class TcpPullServer;
 
 // Raw preview over TCP, zero pixel copies.
 // The frame IS the NPU input tensor (RGB888, model_w x model_h, gray letterbox bars).
@@ -21,11 +23,16 @@ struct AVStream;
 // publish() is a no-op. A stalled viewer backpressures the pipeline
 // (write blocks up to the socket I/O timeout, then the connection is dropped and
 // the server waits for a new one).
+// Threads: serve() and its session steps run on the preview thread (started
+// by the constructor, joined by the destructor); viewer_connected() and
+// publish() on the pipeline thread. fc_ / stream_ / frame_step_ / pts_ are
+// shared under mx_; connected_ / error_ / quit_ are atomics.
 
 class NetPreview
 {
 public:
-    NetPreview( int w, int h, int stride, int fps, int port );
+    // log: diagnostics, also from the preview thread (must outlive this object).
+    NetPreview( int w, int h, int stride, int fps, int port, const Log& log );
     ~NetPreview();
     NetPreview( const NetPreview& ) = delete;
     NetPreview& operator=( const NetPreview& ) = delete;
@@ -40,9 +47,17 @@ public:
     void publish( const uint8_t* rgb );
 
 private:
+    // The preview thread: listen, then one viewer session after another.
     void serve();
+    // One session, in serve()'s order (preview thread). fc: the session's
+    // muxer context, owned by serve()'s guard.
+    AVStream* open_session( TcpPullServer& tcp, AVFormatContext*& fc );  // NUT, AVIO, stream, header; nullptr = drop
+    void go_live( AVFormatContext* fc, AVStream* st );                   // the pts step, publish under mx_
+    void wait_session_end();                                             // until quit_ or error_
+    void close_session( AVFormatContext* fc );                           // unpublish, the trailer
 
 private:
+    const Log& log_;
     const int w_, h_, stride_, fps_, pace_fps_, port_;
     std::thread thread_;
     std::atomic<bool> quit_ { false };
