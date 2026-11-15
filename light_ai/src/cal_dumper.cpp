@@ -6,9 +6,9 @@
 #include "cal_dumper.hpp"
 #include "dma_sync.hpp"
 
-std::string cal_dump_path( const CalConfig& cal, int frame_idx )
+std::string cal_dump_path( const CalConfig& cal, CalKind kind, int frame_idx )
 {
-    if ( cal.dump_one )
+    if ( kind == CalKind::Single )
         return ( cal.dir.empty() ? std::string( "build" ) : cal.dir ) + "/cal.ppm";
 
     // The series name follows the FRAME counter, as documented
@@ -29,36 +29,60 @@ void CalDumper::init( const CalConfig& cal, int model_w, int model_h )
     inited_ = true;
 }
 
+// Up to --cal N files, one every --cal-interval frames from the first frame seen.
+bool CalDumper::series_due( int frame_idx ) const
+{
+    if ( cal_.frames <= 0 || series_failed_ || series_saved_ >= cal_.frames )
+        return false;
+    return series_last_ < 0 || frame_idx - series_last_ >= cal_.interval;
+}
+
+bool CalDumper::write_ppm( const std::string& path, const uint8_t* data, size_t size ) const
+{
+    const size_t bytes = static_cast<size_t>( model_w_ ) * model_h_ * 3;
+    std::ofstream out( path, std::ios::binary );
+    if ( !out || size < bytes )
+        return false;
+    out << "P6\n" << model_w_ << ' ' << model_h_ << "\n255\n";
+    out.write( reinterpret_cast<const char*>( data ), static_cast<std::streamsize>( bytes ) );
+    out.close();  // flushes: a failed final write (ENOSPC, EIO) sets failbit here, not in the destructor
+    return static_cast<bool>( out );
+}
+
 void CalDumper::maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t size )
 {
     if ( !inited_ )
         return;
-    // --dump-cal contract: ONE model-input frame per run. dump_one
-    // is never cleared, so without the cal_done_ guard cal_wanted
-    // stayed true for the whole run and the interval condition kept
-    // rewriting the file every interval frames.
-    // cal_saved_ is the --cal N cap.
-    const bool cal_wanted = ( cal_.dump_one && !cal_done_ ) || ( cal_.frames > 0 && cal_saved_ < cal_.frames );
-    const bool cal_due = !cal_done_ || ( frame_idx - last_cal_ >= cal_.interval );
-    if ( !cal_wanted || !cal_due )
+    // --dump-cal contract: ONE model-input frame per run (single_done_);
+    // the series runs on its own counters, so neither kind changes the other's
+    // files. A failure is logged once per kind: no retry spam on a broken sink.
+    const bool single = cal_.dump_one && !single_done_;
+    const bool series = series_due( frame_idx );
+    if ( !single && !series )
         return;
-    const size_t bytes = static_cast<size_t>( model_w_ ) * model_h_ * 3;
-    const std::string path = cal_dump_path( cal_, frame_idx );
-    std::ofstream out( path, std::ios::binary );
-    if ( out && size >= bytes )
+
+    const dma::DmaSync rd( tensor_fd, false );
+    if ( single )
     {
-        dma::DmaSync rd( tensor_fd, false );
-        out << "P6\n" << model_w_ << ' ' << model_h_ << "\n255\n";
-        out.write( reinterpret_cast<const char*>( data ), static_cast<std::streamsize>( bytes ) );
-        if ( cal_.dump_one )
+        single_done_ = true;
+        const std::string path = cal_dump_path( cal_, CalKind::Single, frame_idx );
+        if ( write_ppm( path, data, size ) )
             log_.info() << "calibration dump: " << path << " (" << model_w_ << 'x' << model_h_ << ")\n";
-        ++cal_saved_;
-        last_cal_ = frame_idx;
-        cal_done_ = true;
+        else
+            log_.error() << "calibration dump failed: " << path << '\n';
     }
-    else
+    if ( series )
     {
-        log_.error() << "calibration dump failed: " << path << '\n';
-        cal_done_ = true;  // do not retry-spam on a broken sink
+        const std::string path = cal_dump_path( cal_, CalKind::Series, frame_idx );
+        if ( write_ppm( path, data, size ) )
+        {
+            ++series_saved_;
+            series_last_ = frame_idx;
+        }
+        else
+        {
+            series_failed_ = true;
+            log_.error() << "calibration dump failed: " << path << '\n';
+        }
     }
 }

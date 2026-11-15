@@ -1017,8 +1017,10 @@ uncreatable path fails immediately, not mid-run. Without --cal or
 --dump-cal the option is rejected (--cal-dir alone does nothing).
 Example: --cal 50 --cal-interval 4 --cal-dir build/night_cal ->
 build/night_cal/cal_%04d.ppm, same numbering as the dataset/ default.
---dump-cal together with --cal N: the single-shot path wins, the series
-frames all overwrite the one file.
+--dump-cal and --cal N are independent: with both, the run writes the
+single file and the full series (frame 0 lands in both); a failed write
+logs "calibration dump failed: <path>" once per kind and stops only that
+kind.
 --box-log <path> (per-frame CSV of raw vs smoothed boxes — the
 M3.10 jitter A/B tool; near-zero cost when unset).
 Numeric values are strictly validated (garbage is an error, not a

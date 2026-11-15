@@ -2,6 +2,8 @@
 // PPM snapshots of the model input, the only diagnostic CPU pixel read in the pipeline.
 //   --dump-cal writes a single build/cal.ppm (<cal-dir>/cal.ppm with --cal-dir);
 //   --cal N saves up to N frames (one every --cal-interval) into dataset/ (or --cal-dir).
+// The two are independent: with both, the single file and the full series
+// (one frame may land in both). --cal-dir applies to both.
 // Both defaults are relative to the working directory: inside the project when run from light_ai/.
 // The cal counters and the file sink live here;
 // Pipeline owns the tensor and passes raw bytes.
@@ -15,10 +17,16 @@
 #include "config/config.hpp"  // CalConfig
 #include "core/log.hpp"
 
-// The file a dump of frame frame_idx goes to: with cal.dump_one the single
-// <dir>/cal.ppm (dir: cal.dir, default build), else the series file
-// <dir>/cal_%04d.ppm (dir: cal.dir, default dataset). frame_idx >= 0.
-std::string cal_dump_path( const CalConfig& cal, int frame_idx );
+enum class CalKind : uint8_t
+{
+    Single,  // --dump-cal: one file per run
+    Series   // --cal N --cal-interval K: files named by the frame counter
+};
+
+// The file a dump of frame frame_idx goes to: Single -> <dir>/cal.ppm
+// (dir: cal.dir, default build), Series -> <dir>/cal_%04d.ppm (dir: cal.dir,
+// default dataset). frame_idx >= 0. The one place that builds a dump path.
+std::string cal_dump_path( const CalConfig& cal, CalKind kind, int frame_idx );
 
 // No preconditions for the caller:
 // with CalConfig defaults (dump_one=false, frames=0) or before init(),
@@ -28,7 +36,8 @@ std::string cal_dump_path( const CalConfig& cal, int frame_idx );
 class CalDumper
 {
 public:
-    // log: the "calibration dump: ..." (info) and "calibration dump failed: ..." (error) lines.
+    // log: the "calibration dump: ..." (info, single shot) and
+    // "calibration dump failed: <path>" (error, once per kind) lines.
     explicit CalDumper( const Log& log ) : log_( log ) {}
 
     // Called once by Pipeline after the model geometry is known.
@@ -38,12 +47,20 @@ public:
     void maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t size );
 
 private:
+    bool series_due( int frame_idx ) const;
+    // One P6 file of the model size; false on an unopenable path or a short tensor.
+    bool write_ppm( const std::string& path, const uint8_t* data, size_t size ) const;
+
+private:
     CalConfig cal_;
     int model_w_ = 0;
     int model_h_ = 0;
     bool inited_ = false;
-    int cal_saved_ = 0;
-    int last_cal_ = -1;
-    bool cal_done_ = false;
+    // Single shot: set by the first attempt, a success or a failure (no retry).
+    bool single_done_ = false;
+    // Series: files written, the frame of the last one, and a failed write stops it.
+    int series_saved_ = 0;
+    int series_last_ = -1;
+    bool series_failed_ = false;
     const Log& log_;  // owned by main(); outlives the Pipeline
 };

@@ -9,6 +9,7 @@
       "Bash(sudo -n ./build/light_ai *)",
       "Bash(sudo -n timeout -s INT *)",
       "Bash(sudo -n /usr/local/sbin/light-usb-replug *)",
+      "Bash(sudo -n chown -R linaro: build dataset)",
       "Bash(tail *)",
       "Bash(grep *)",
       "Bash(git status *)",
