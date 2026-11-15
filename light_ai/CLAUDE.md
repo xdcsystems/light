@@ -156,7 +156,7 @@ keep "Migration plan" current when a stage changes state.
       above 20 outside the six targets, plus RgaResizer::resize and MppDecoder::retrieve_output (they hold the size
       thresholds); then the thresholds go to lines 90 / statements 60 / branches 11 / nesting 4 / variables 14.
       6e1 (stamp, probe_jpeg_sof, ConsoleReporter + core/fixed_fmt.hpp, CliOptions + the config/ layer on Log,
-      the Log constructed before the parse): the PR in review. 6e2 (CameraV4L2::dequeue, NetMjpegSource::dequeue,
+      the Log constructed before the parse): PR #44 in review. 6e2 (CameraV4L2::dequeue, NetMjpegSource::dequeue,
       MppDecoder::retrieve_output, RgaResizer::resize). 6e3 (H264Encoder::drain, NetPreview::serve, thresholds).
       Re-measure at f2f100d: cognitive list unchanged from 4b97d21; scripts in the session scratchpad (not in git).
       Baseline binary for 6e2 / 6e3: build/light_ai_base6e (f2f100d, built from a git archive in $TMPDIR).
