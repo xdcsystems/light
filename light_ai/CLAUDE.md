@@ -168,7 +168,7 @@ keep "Migration plan" current when a stage changes state.
       MppDecoder::retrieve_output and RgaResizer::resize in steps; MppDecoder and RgaResizer on Log): branch
       refactor/stage6e2-capture, merged (PR #47). 6e3 (H264Encoder::drain, NetPreview::serve + NetPreview on Log, the
       function-size thresholds to lines 90 / statements 60 / branches 11 / nesting 4 / variables 14): branch
-      refactor/stage6e3-output, the PR that closes #39. 6e3 logs (base binary build/light_ai_base6e2: the output side
+      refactor/stage6e3-output, PR #50 (closes #39). 6e3 logs (base binary build/light_ai_base6e2: the output side
       is unchanged from fix/audit-p0 @ 5e4d9d3): build/run6e3_{base,new}_{h264,udp,raw}.log, viewers .v1.log / .v2.log;
       driver live6e3.sh (session scratch, not in git): no viewer 0-10 s, ffmpeg pull 10-16 s, a second one through SIGINT.
       A UDP ffmpeg input never sees EOF: `timeout` alone does not end it, kill it after the run.
