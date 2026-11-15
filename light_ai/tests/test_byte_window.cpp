@@ -19,7 +19,8 @@ void test_byte_window( TestRun& t )
     CHECK( t, w.room() == 3 );
     uint8_t* tl = w.tail();
     CHECK( t, w.room() == 5 && w.data()[0] == 'c' && tl == w.data() + 3 );
-    std::memcpy( tl, "XYZ", 3 );
+    const uint8_t xyz[3] = { 'X', 'Y', 'Z' };
+    std::memcpy( tl, xyz, sizeof( xyz ) );
     w.commit( 3 );
     CHECK( t, w.size() == 6 && std::memcmp( w.data(), "cdeXYZ", 6 ) == 0 );
     // append() takes what fits; a full window has no room.

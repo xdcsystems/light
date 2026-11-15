@@ -14,6 +14,17 @@ namespace
 
     struct Box
     {
+        // One ink pixel at column c, row r: grows the box, counts it.
+        void add( int c, int r )
+        {
+            ++n;
+            x0 = c < x0 ? c : x0;
+            x1 = c > x1 ? c : x1;
+            y0 = r < y0 ? r : y0;
+            y1 = r > y1 ? r : y1;
+        }
+
+    public:
         int x0 = 1 << 30;
         int y0 = 1 << 30;
         int x1 = -1;  // inclusive
@@ -28,13 +39,7 @@ namespace
         for ( int r = y; r < y + h; ++r )
             for ( int c = x; c < x + w; ++c )
                 if ( p[static_cast<size_t>( r ) * stride + c] != kGray )
-                {
-                    ++b.n;
-                    b.x0 = c < b.x0 ? c : b.x0;
-                    b.x1 = c > b.x1 ? c : b.x1;
-                    b.y0 = r < b.y0 ? r : b.y0;
-                    b.y1 = r > b.y1 ? r : b.y1;
-                }
+                    b.add( c, r );
         return b;
     }
 

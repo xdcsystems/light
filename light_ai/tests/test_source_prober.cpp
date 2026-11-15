@@ -55,6 +55,7 @@ namespace
         void configure_v4l2( int n )
         {
             std::vector<SourceEndpoint> eps;
+            eps.reserve( static_cast<size_t>( n ) );
             for ( int s = 0; s < n; ++s )
                 eps.push_back( { SourceKind::V4L2, "/dev/video2" + std::to_string( s ) } );
             ch.configure( eps, 640, 640 );

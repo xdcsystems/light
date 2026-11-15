@@ -88,6 +88,7 @@ void test_log( TestRun& t )
         constexpr int k_threads = 4;
         constexpr int k_lines = 500;
         std::vector<std::thread> pool;
+        pool.reserve( k_threads );
         for ( int id = 0; id < k_threads; ++id )
             pool.emplace_back( [&log, id] {
                 for ( int n = 0; n < k_lines; ++n )

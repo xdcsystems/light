@@ -39,8 +39,9 @@ keep "Migration plan" current when a stage changes state.
   The tidy gate has two passes (#43): main = system clang-tidy 11 with .clang-tidy (every check), then
   cognitive = the pinned clang-tidy 23.1.4 in light_ai/venv with scripts/tidy_cognitive.yaml (cognitive
   complexity only, Threshold 20). The gate never installs into the venv: a missing / other version fails at
-  once with the install command (README, Build). On a tidy failure the per-file logs are in
-  build/tidy/src/<path>.log (main) and build/tidy/cognitive/src/<path>.log. Both passes run the TUs in parallel
+  once with the install command (README, Build). TUs: src/ and tests/ (tests/.clang-tidy relaxes only the
+  function size). On a tidy failure the per-file logs are in build/tidy/{src,tests}/<path>.log (main) and
+  build/tidy/cognitive/{src,tests}/<path>.log. Both passes run the TUs in parallel
   (TIDY_JOBS=N, default by MemAvailable) with an exact result cache in build/tidy-cache (TIDY_NO_CACHE=1
   disables it); README, Build.
 - Unit tests alone: bash scripts/test.sh (host-side, no SDK; see README, Tests).
@@ -206,10 +207,12 @@ keep "Migration plan" current when a stage changes state.
       plan + decision in its comments 6897676300 / 6897763312): the full move to LLVM 23 dropped (~1870 findings,
       almost all style or against the project rules; measurement logs build/tidy43/); the gate stays on clang-tidy 11
       plus a cognitive-only LLVM 23 pass. 43a (the second pass, the cache key with the --config-file bytes, the
-      empty-list guard, widening / std::forward fixes from the LLVM 23 list): branch ci/issue43-tidy23, PR #52.
+      empty-list guard, widening / std::forward fixes from the LLVM 23 list): branch ci/issue43-tidy23, merged (PR #52).
       43a logs: build/tidy43/{cold,warm}.log, layer A build/ref43_p{3,1}.*, live (base binary build/light_ai_base43 =
       fix/audit-p0 @ 0dc8c86) build/run43_{base,new}_{pool3,gpu,cpu,replug}.log, frames build/43_*.png. 43b (tests/
-      under both passes, tests/.clang-tidy, the test fixes): next, closes #43.
+      under both passes, tests/.clang-tidy, the test fixes): branch ci/issue43-tidy-tests, PR #53 (closes #43). clang-tidy 11
+      on tests/ before 43b: 42 findings (16 function-size, 26 in 12 checks), all fixed but the size; measurement
+      logs build/tidy43b/.
 - [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
       Check: runs with a wrong model, a busy port, a missing camera.
 Out of scope: light_control, light_sensor, tools/, scripts/.

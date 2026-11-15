@@ -55,7 +55,10 @@ inline Bytes make_stream( const std::string& delim, const std::vector<Bytes>& bo
     {
         if ( i > 0 )
             put( s, eol );
-        put( s, delim + eol + "Content-Type: image/jpeg" + eol );
+        put( s, delim );
+        put( s, eol );
+        put( s, "Content-Type: image/jpeg" );
+        put( s, eol );
         if ( with_length )
             put( s, "Content-Length: " + std::to_string( bodies[i].size() ) + eol );
         put( s, eol );

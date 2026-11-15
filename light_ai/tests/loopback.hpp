@@ -14,20 +14,27 @@ namespace loopback
 {
 
 // A loopback listener on an ephemeral port; accept() hands out the server end.
+// A failed socket / bind / listen / getsockname leaves port() at 0 and no socket:
+// the test's connect to port 0 then fails visibly instead of hanging on a half-set listener.
 class Listener
 {
 public:
     Listener()
     {
         fd_ = ::socket( AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0 );
+        if ( fd_ < 0 )
+            return;
         sockaddr_in a {};
         a.sin_family = AF_INET;
         a.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
         a.sin_port = 0;
-        ::bind( fd_, reinterpret_cast<sockaddr*>( &a ), sizeof( a ) );
-        ::listen( fd_, 4 );
         socklen_t len = sizeof( a );
-        ::getsockname( fd_, reinterpret_cast<sockaddr*>( &a ), &len );
+        if ( ::bind( fd_, reinterpret_cast<sockaddr*>( &a ), sizeof( a ) ) != 0 || ::listen( fd_, 4 ) != 0 ||
+             ::getsockname( fd_, reinterpret_cast<sockaddr*>( &a ), &len ) != 0 )
+        {
+            close();
+            return;
+        }
         port_ = ntohs( a.sin_port );
     }
     ~Listener()
@@ -39,7 +46,7 @@ public:
     Listener& operator=( const Listener& ) = delete;
 
     int port() const { return port_; }
-    int accept() const { return ::accept( fd_, nullptr, nullptr ); }
+    int accept() const { return ::accept4( fd_, nullptr, nullptr, SOCK_CLOEXEC ); }
     void close()
     {
         ::close( fd_ );

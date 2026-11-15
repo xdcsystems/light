@@ -46,7 +46,7 @@ Logs are long: use tail and grep, never read a whole log.
   and show the FIRST error with ~15 lines of context.
 - Tidy: two passes (main = clang-tidy 11, cognitive = clang-tidy 23 with cognitive complexity
   only), each with its block "---- <pass>: findings by check ----" in build/gate.log; per-file
-  details in build/tidy/src/<path>.log (main) and build/tidy/cognitive/src/<path>.log, e.g.
+  details in build/tidy/{src,tests}/<path>.log (main) and build/tidy/cognitive/{src,tests}/<path>.log, e.g.
   build/tidy/src/net/h264_encoder.log; the line `tidy: wall ... (main ..., cognitive ...) ...
   cache: N hits / M runs` gives the times and the cache use. A FAIL before any pass that names
   venv/bin/clang-tidy = the pinned tool is missing: report the printed install command, do not install it.
