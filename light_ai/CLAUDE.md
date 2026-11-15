@@ -162,7 +162,7 @@ keep "Migration plan" current when a stage changes state.
       6e1 (stamp, probe_jpeg_sof, ConsoleReporter + core/fixed_fmt.hpp, CliOptions + the config/ layer on Log,
       the Log constructed before the parse): merged (PR #44). 6e2 (CameraV4L2::dequeue, NetMjpegSource::dequeue,
       MppDecoder::retrieve_output and RgaResizer::resize in steps; MppDecoder and RgaResizer on Log): branch
-      refactor/stage6e2-capture, PR in review. 6e3 (H264Encoder::drain, NetPreview::serve, thresholds).
+      refactor/stage6e2-capture, PR #47 in review. 6e3 (H264Encoder::drain, NetPreview::serve, thresholds).
       Re-measure at f2f100d: cognitive list unchanged from 4b97d21; scripts in the session scratchpad (not in git).
       Baseline binaries: build/light_ai_base6e (f2f100d), build/light_ai_base6e2 (6d44748, fix/audit-p0 before 6e2).
       6e2 logs: layer A build/ref6e2_p{3,1}.*; a 1920x1080 camera clip replayed base vs new build/ref6e2_1080_*
