@@ -106,6 +106,8 @@ add_executable(light_ai
     src/core/http_head.cpp
     src/core/multipart_reader.cpp
     src/core/yolo_decoder.cpp
+    src/core/associator.cpp
+    src/core/trail_window.cpp
     src/source/buffered_socket.cpp
     src/source/mjpeg_slot_pool.cpp
     src/net/encoder_frame_pool.cpp

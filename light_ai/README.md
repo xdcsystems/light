@@ -96,7 +96,10 @@ post-processing.
                GpuBox / GpuBoxList (gpu_box.hpp), box_iou /
                box_iou_corners / greedy_iou_match (box_math.hpp),
                fp16_to_float (fp16.hpp), YoloDecoder (yolo_decoder.hpp:
-               the yolov5 heads -> DetList, see InferencePool), StopFlag
+               the yolov5 heads -> DetList, see InferencePool),
+               KalmanAxis / Associator + TrackBox / TrailWindow
+               (kalman_axis.hpp, associator.hpp, trail_window.hpp: the
+               parts of Tracker), StopFlag
                (stop_flag.hpp), Log (log.hpp), TensorRef / TensorSet /
                FrameView (frame_view.hpp: what the output stage sees of
                an inferred frame). A consumer that needs
@@ -276,6 +279,11 @@ post-processing.
                0.90x per-miss velocity decay, size-consistency gate,
                spawn-dedupe gate, global greedy IoU association) with a 300-point trajectory ring
                per track; recent_points() feeds the trail renderer.
+               Its parts live in core/ (stage 6b): KalmanAxis (one axis
+               of the filter), Associator (one round of the two-round
+               association: candidates, size and IoU gates, greedy
+               matching) and TrailWindow (the ring, the median window
+               and the step gate in front of it).
 - BoxMapper  : fill_gpu_boxes() maps smoothed detections and confirmed
                trajectory trails into the 128-box GpuBoxList VBO
                budget, clamped to the exact LbGeom band [left,
@@ -794,7 +802,10 @@ light_ai_tests, built into build/tests):
   the hardware fcvt against the software path), YoloDecoder on
   synthetic fp16 heads (exact boxes in both band orientations, each
   gate, class-aware NMS, head order, rejected heads, the band misfit,
-  the candidate cap),
+  the candidate cap), KalmanAxis (predict / update against hand-computed
+  values, the v clamp), Associator (candidates per round, both size gates,
+  the IoU gates, skips, best-first order), TrailWindow (the full-window
+  gate, the median, the step gate, eviction, recent(), the counter fold),
   band_geom, jpeg_probe, BoxSmoother, Tracker, fill_gpu_boxes,
   CliOptions / OptionRegistry / ConfigFileLoader, ProcessEnv /
   SignalWaiter (signal delivery, SIGPIPE, armed and unarmed modes),
