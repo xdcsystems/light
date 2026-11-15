@@ -1,12 +1,12 @@
-#include <iostream>
+#include <ios>
 #include <stdexcept>
 #include <string>
 
 #include "rknn_engine.hpp"
 
-RknnEngine::RknnEngine( const char* model_path )
+RknnEngine::RknnEngine( const char* model_path, const Log& log ) : log_( log )
 {
-    std::cout << "loading model: " << model_path << '\n';
+    log_.info() << "loading model: " << model_path << '\n';
 
     if ( rknn_init( &ctx_, const_cast<char*>( model_path ), 0, 0, nullptr ) != RKNN_SUCC ) // NOLINT(cppcoreguidelines-pro-type-const-cast)
     {
@@ -75,13 +75,13 @@ int RknnEngine::setup_io()
     in_mem_ = rknn_create_mem( ctx_, in_size );
     if ( !in_mem_ )
     {
-        std::cerr << "rknn_create_mem (input) failed\n";
+        log_.error() << "rknn_create_mem (input) failed\n";
         return -1;
     }
 
     if ( rknn_set_io_mem( ctx_, in_mem_, &in_attr_ ) != RKNN_SUCC )
     {
-        std::cerr << "rknn_set_io_mem (input) failed\n";
+        log_.error() << "rknn_set_io_mem (input) failed\n";
         return -1;
     }
 
@@ -99,23 +99,23 @@ int RknnEngine::setup_io()
         out_mems_[i] = rknn_create_mem( ctx_, out_attrs_[i].size );
         if ( !out_mems_[i] )
         {
-            std::cerr << "rknn_create_mem (output " << i << ") failed\n";
+            log_.error() << "rknn_create_mem (output " << i << ") failed\n";
             return -1;
         }
         if ( rknn_set_io_mem( ctx_, out_mems_[i], &out_attrs_[i] ) != RKNN_SUCC )
         {
-            std::cerr << "rknn_set_io_mem (output " << i << ") failed\n";
+            log_.error() << "rknn_set_io_mem (output " << i << ") failed\n";
             return -1;
         }
     }
 
     // NHWC: dims = {N, H, W, C}; print W x H honestly.
-    std::cout << "model input: " << in_attr_.dims[in_attr_.n_dims - 2] << 'x' << in_attr_.dims[in_attr_.n_dims - 3] << ' '
+    log_.info() << "model input: " << in_attr_.dims[in_attr_.n_dims - 2] << 'x' << in_attr_.dims[in_attr_.n_dims - 3] << ' '
               << get_type_string( in_attr_.type ) << " zp=" << in_attr_.zp << " scale=" << in_attr_.scale
               << ", outputs: " << out_attrs_.size() << "\n";
     for ( size_t i = 0; i < out_attrs_.size(); ++i )
     {
-        std::cout << "  out[" << i << "]: " << out_attrs_[i].n_elems << " elems, " << get_type_string( out_attrs_[i].type ) << "\n";
+        log_.info() << "  out[" << i << "]: " << out_attrs_[i].n_elems << " elems, " << get_type_string( out_attrs_[i].type ) << "\n";
     }
 
     return 0;
@@ -152,12 +152,12 @@ int RknnEngine::set_core_mask( unsigned mask ) const
                 return 0;  // AUTO by design (--core 0): keep the runtime default, no call
             // Anything else is a caller bug: silently skipping the pin
             // would hide it behind a working-looking return of 0.
-            std::cerr << "rknn_set_core_mask: invalid mask 0x" << std::hex << mask << std::dec << ", pin skipped\n";
+            log_.warn() << "rknn_set_core_mask: invalid mask 0x" << std::hex << mask << std::dec << ", pin skipped\n";
             return -1;
     }
     if ( rknn_set_core_mask( ctx_, static_cast<rknn_core_mask>( mask ) ) != RKNN_SUCC )
     {
-        std::cerr << "rknn_set_core_mask(0x" << std::hex << mask << std::dec << ") failed\n";
+        log_.warn() << "rknn_set_core_mask(0x" << std::hex << mask << std::dec << ") failed\n";
         return -1;
     }
     return 0;

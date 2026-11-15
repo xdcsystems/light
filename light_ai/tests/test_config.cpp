@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <initializer_list>
 #include <sstream>
@@ -109,11 +110,12 @@ namespace
                               "  --net-h264 selects the transport of the --net preview subsystem (MPEG-TS over TCP pull, or UDP\n"
                               "  push with --net-host); add --net to enable the preview itself, e.g.:\n"
                               "    light_ai --net --net-h264\n" ) );
-        CHECK( t, error_text( { "--cal-dir", "light_ai_tests_cal" }, "--cal-dir: no --cal series requested, nothing to write.\n"
-                                                                    "  --cal-dir sets the directory for the --cal N --cal-interval K\n"
-                                                                    "  frame series; the single-shot --dump-cal always writes\n"
-                                                                    "  /tmp/cal.ppm and ignores --cal-dir, e.g.:\n"
-                                                                    "    light_ai --cal 5 --cal-interval 60 --cal-dir /tmp/calrun\n" ) );
+        CHECK( t, error_text( { "--cal-dir", "light_ai_tests_cal" },
+                              "--cal-dir: no --cal series or --dump-cal requested, nothing to write.\n"
+                              "  --cal-dir sets the directory for the --cal N --cal-interval K\n"
+                              "  frame series (default dataset/) and for the single-shot\n"
+                              "  --dump-cal (default build/cal.ppm), e.g.:\n"
+                              "    light_ai --cal 5 --cal-interval 60 --cal-dir build/calrun\n" ) );
         CHECK( t, error_text( { "--device", "a", "--device", "b", "--device", "c", "--device", "d" },
                               "too many video sources (4): at most 3 sources are supported (one per NPU core)\n" ) );
 
@@ -236,7 +238,7 @@ void test_config( TestRun& t )
     CHECK( t, rejected( { "--device", "" } ) );
     // Cross-field checks run after the argv loop.
     CHECK( t, rejected( { "--net-h264" } ) );                   // transport without the preview
-    CHECK( t, rejected( { "--cal-dir", "light_ai_tests_cal" } ) );  // directory without the series
+    CHECK( t, rejected( { "--cal-dir", "light_ai_tests_cal" } ) );  // directory without the series or --dump-cal
     CHECK( t, rejected( { "--device", "/dev/video0", "--device", "/dev/video1", "--device", "/dev/video2", "--device",
                           "/dev/video3" } ) );                  // at most 3 sources
     {
@@ -246,6 +248,17 @@ void test_config( TestRun& t )
         CHECK( t, parse( three, { "--device", "/dev/video0", "--device", "/dev/video1", "--net-src", "http://c/s" } )
                   == Status::Run );
         CHECK( t, three.config().sources.size() == 3 );
+    }
+    // --cal-dir with the single-shot --dump-cal alone: accepted, the directory
+    // is created and write-probed at startup (relative to the test cwd, build/tests).
+    {
+        const char* dir = "light_ai_tests_cal_dump";
+        Cli cli;
+        CHECK( t, parse( cli, { "--dump-cal", "--cal-dir", dir } ) == Status::Run );
+        CHECK( t, cli.config().cal.dump_one && cli.config().cal.dir == dir && cli.config().cal.frames == 0 );
+        CHECK( t, std::filesystem::is_directory( dir ) );
+        std::error_code ec;
+        std::filesystem::remove( dir, ec );
     }
     // --help wins over everything else and never reads a config file.
     {

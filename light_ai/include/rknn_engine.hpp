@@ -6,10 +6,13 @@
 
 #include <rknn_api.h>
 
+#include "core/log.hpp"
+
 class RknnEngine
 {
 public:
-    explicit RknnEngine( const char* model_path );
+    // log: the diagnostics sink (the model / attribute lines, the io-mem and core-mask failures).
+    RknnEngine( const char* model_path, const Log& log );
     ~RknnEngine();
 
     // Non-copyable by design:
@@ -30,6 +33,7 @@ public:
       , out_mems_( std::move( o.out_mems_ ) )
       , in_attr_( o.in_attr_ )
       , out_attrs_( std::move( o.out_attrs_ ) )
+      , log_( o.log_ )
     {
         o.ctx_ = 0;
         o.in_mem_ = nullptr;
@@ -74,4 +78,5 @@ private:
     std::vector<rknn_tensor_mem*> out_mems_;
     rknn_tensor_attr in_attr_ {};
     std::vector<rknn_tensor_attr> out_attrs_;
+    const Log& log_;  // owned by main(); outlives every engine
 };

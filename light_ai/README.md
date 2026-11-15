@@ -291,8 +291,9 @@ post-processing.
                by age) into the 128-box GpuBoxList VBO budget, clamped
                to the exact LbGeom band [left, left+w] x [top, top+h].
 - CalDumper / ConsoleReporter / Timings : calibration PPM dumper
-               (--dump-cal single frame, --cal N --cal-interval K
-               series under --cal-dir, DMA-synced CPU read),
+               (--dump-cal single frame build/cal.ppm, --cal N
+               --cal-interval K series in dataset/, both under
+               --cal-dir when given; DMA-synced CPU read; on Log),
                throttled detection/track console + CSV reporter, and
                per-stage FrameTrace accumulator (avg/60 every 60
                frames; TOTAL at exit averages the whole run).
@@ -506,7 +507,7 @@ rate control a nominal fps (25) while pts stay per-dequeue
   lb_w = model_w.)
 - The calibration dump file is created by whatever user runs the binary;
   a dump left by a root run cannot be overwritten by a normal user run
-  ("calibration dump failed"). Clean it up between sudo and non-sudo runs.
+  ("calibration dump failed: <path>"). Clean it up between sudo and non-sudo runs.
 - NPU multi-core (verified 2026-10-30; runtime version confirmed via
   `strings /lib/librknnrt.so` -> "librknnrt version: 2.5.0"): a single
   RKNN context is NEVER split across cores. Under --core 1 debugfs
@@ -754,8 +755,9 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
   (ReLU check), PASS/FAIL exit code.
 - scripts/diag_zero_out.py  — multi-input diagnostic (noise/zeros/gray) for
   yolov5s_relu + a system mobilenet sanity check.
-- scripts/probe_yolo.py     — output semantics probe on a real /tmp/cal.ppm
-  frame (per-head box/obj/cls ranges, hot-cell counts). Feeds the model a
+- scripts/probe_yolo.py [PPM] — output semantics probe on a real
+  model-input frame, default build/cal.ppm of the project (the --dump-cal
+  output; per-head box/obj/cls ranges, hot-cell counts). Feeds the model a
   4-dim input (img[None]).
 - tools/save_board_csv.py   — RKNNLite predictions dump (misc/board_preds.csv).
 - tools/mjpeg_replay.py + tools/ref_replay.sh — the drop-free replay of a
@@ -994,21 +996,29 @@ including portrait streams such as 720x1280 -> 368x640 band),
 source-bound, M2.5),
 --cal N, --cal-interval K (--cal saves up to N model-input frames into
 dataset/, one every K frames — the int8 calibration dataset collector;
-one frame is ~1.2 MB, so 200 frames are ~240 MB on /tmp's storage).
+one frame is ~1.2 MB, so 200 frames are ~240 MB in dataset/).
 --dump-cal (no argument) writes ONE model-input frame (P6 PPM) to
-/tmp/cal.ppm, once per run — the first eligible frame. The oracle input
+build/cal.ppm (<cal-dir>/cal.ppm with --cal-dir), once per run — the
+first eligible frame. Both defaults, dataset/ and build/, are relative
+to the working directory: run from light_ai/, as every documented
+command does, they land inside the project (on the NVMe, git-ignored),
+never in /tmp. Neither directory is created by the dump: build/ exists
+after scripts/build.sh. The oracle input
 for tools/oracle_check.py is the SERIES: --cal N --cal-interval K writes
 cal_%04d.ppm into dataset/, numbering follows the frame counter: with
 --cal-interval K the dumps are frames 0, K, 2K, .... The dump files are
 created by whoever runs the binary — root/normal-user ownership
-conflicts abort with "calibration dump failed" (see Platform constraints).
---cal-dir PATH redirects the --cal SERIES directory (default: dataset/).
+conflicts abort with "calibration dump failed: <path>" (see Platform
+constraints).
+--cal-dir PATH redirects the --cal SERIES directory (default: dataset/)
+and the --dump-cal file (default: build/cal.ppm -> PATH/cal.ppm).
 The directory is created and write-probed at startup, so a read-only or
-uncreatable path fails immediately, not mid-run. Without --cal the option
-is rejected (--cal-dir alone does nothing; --dump-cal is unaffected and
-always writes /tmp/cal.ppm). Example: --cal 50 --cal-interval 4
---cal-dir /tmp/night_cal -> /tmp/night_cal/cal_%04d.ppm, same numbering
-as the dataset/ default.
+uncreatable path fails immediately, not mid-run. Without --cal or
+--dump-cal the option is rejected (--cal-dir alone does nothing).
+Example: --cal 50 --cal-interval 4 --cal-dir build/night_cal ->
+build/night_cal/cal_%04d.ppm, same numbering as the dataset/ default.
+--dump-cal together with --cal N: the single-shot path wins, the series
+frames all overwrite the one file.
 --box-log <path> (per-frame CSV of raw vs smoothed boxes — the
 M3.10 jitter A/B tool; near-zero cost when unset).
 Numeric values are strictly validated (garbage is an error, not a

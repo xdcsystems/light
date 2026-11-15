@@ -51,12 +51,12 @@ struct InferConfig
 
 struct CalConfig
 {
-    bool dump_one = false;  // --dump-cal: dump one model-input frame to /tmp/cal.ppm
+    bool dump_one = false;  // --dump-cal: dump one model-input frame to build/cal.ppm (or <dir>/cal.ppm)
     // Calibration dataset: --cal N saves up to N model-input frames
     // (one every --cal-interval frames) for int8 quantization.
     int frames = 0;
     int interval = 15;
-    std::string dir;  // --cal-dir: overrides the series directory (default: dataset/)
+    std::string dir;  // --cal-dir: overrides the series directory (default: dataset/) and the --dump-cal one (build/)
 };
 
 struct StreamConfig
