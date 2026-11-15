@@ -283,7 +283,15 @@ post-processing.
                of the filter), Associator (one round of the two-round
                association: candidates, size and IoU gates, greedy
                matching) and TrailWindow (the ring, the median window
-               and the step gate in front of it).
+               and the step gate in front of it). A trail point lives
+               kTrailMaxAgeMs (4 s); when a live track's trail ages out
+               completely (a person standing still: the step gate
+               pushes nothing), the window restarts once and the trail
+               comes back kTrailMedianN (5) matched frames later, from
+               post-gap positions only (#37). A DEAD ghost keeps its
+               slot until its trail is empty, so a track whose trail
+               restarted shortly before dying leaves a ghost for up to
+               4 s.
 - BoxMapper  : BoxMapper::fill() (a member of OverlaySink) maps the
                non-person smoothed detections, the track boxes (TENT /
                CONF, from the Kalman posterior; a DEAD ghost draws no
@@ -870,7 +878,8 @@ light_ai_tests, built into build/tests):
   the candidate cap), KalmanAxis (predict / update against hand-computed
   values, the v clamp), Associator (candidates per round, both size gates,
   the IoU gates, skips, best-first order), TrailWindow (the full-window
-  gate, the median, the step gate, eviction, recent(), the counter fold),
+  gate, the median, the step gate, eviction, the restart of an aged-out
+  trail, recent(), the counter fold),
   band_geom, jpeg_probe, BoxSmoother, Tracker, BoxMapper,
   CliOptions / OptionRegistry / ConfigFileLoader, ProcessEnv /
   SignalWaiter (signal delivery, SIGPIPE, armed and unarmed modes),

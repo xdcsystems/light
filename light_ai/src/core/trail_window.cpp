@@ -33,7 +33,7 @@ void TrailWindow::restart( int64_t ts_us, float x, float y )
 {
     // Slot reuse: the median window belongs to the previous occupant. A stale
     // mwin_n would mix old posteriors into the first trail median -- the
-    // empty-ring reset in feed() cannot fire for a fresh spawn, the spawn
+    // aged-out reset in evict() cannot fire for a fresh spawn, the spawn
     // point is already in the ring (x/y match the KF posterior at spawn).
     mwin_n_ = 0;
     mwin_x_.fill( x );
@@ -45,10 +45,9 @@ void TrailWindow::restart( int64_t ts_us, float x, float y )
 void TrailWindow::feed( int64_t ts_us, float x, float y )
 {
     static_assert( kTrailMedianN == 5, "median_of_5 is the median of the window" );
-    // A stale window must not mix with post-gap positions, so it resets
-    // whenever the ring is empty (fresh spawn, or fully aged-out trail).
-    if ( ring_.empty() )
-        mwin_n_ = 0;
+    // The window was reset by restart() or by the evict() that emptied the
+    // ring; it is never reset here (#37: a reset on every feed while the ring
+    // is empty kept the counter at 1 and the trail never came back).
     mwin_x_[mwin_n_ % kTrailMedianN] = x;
     mwin_y_[mwin_n_ % kTrailMedianN] = y;
     ++mwin_n_;
@@ -79,8 +78,15 @@ bool TrailWindow::far_enough( float mx, float my ) const
 
 void TrailWindow::evict( int64_t cutoff_us )
 {
+    const bool had_points = !ring_.empty();
     while ( !ring_.empty() && ring_.front().ts_us < cutoff_us )
         ring_.pop();
+    // The trail aged out: reset the window once, at this transition. The next
+    // kTrailMedianN feeds overwrite every slot before the full-window gate
+    // opens, so the first post-gap median holds no pre-gap posterior; the ring
+    // is empty, so it is pushed without the step gate (as the spawn point is).
+    if ( had_points && ring_.empty() )
+        mwin_n_ = 0;
 }
 
 // Oldest-first output, newest point always included: walk the ring backwards,

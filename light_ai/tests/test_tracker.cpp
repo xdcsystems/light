@@ -30,6 +30,24 @@ namespace
             trk.update( one( person( 500, 400, 100, 200 ) ), ts, out );
         return ts;
     }
+
+    // A trail that ages out while the track lives restarts (#37): a confirmed
+    // person stands still past kTrailMaxAgeMs (the step gate pushes nothing, the
+    // spawn point ages out: n_pts 0 while CONF), then walks -- the trail grows again.
+    void check_trail_restart( TestRun& t )
+    {
+        CHECK( t, Tracker {}.trail_max_age_us() == 4000000 );  // the 4 s the frame counts below rely on
+        Tracker trk;
+        TrajList out;
+        int64_t ts = stand( trk, out, 101, 0 );  // ts 0 .. 4.0 s: the spawn point is still in
+        CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF && out.d[0].n_pts == 1 );
+        ts = stand( trk, out, 1, ts );  // 4.04 s: the spawn point ages out
+        CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF && out.d[0].n_pts == 0 );
+        for ( int i = 1; i <= 20; ++i, ts += kFrameUs )
+            trk.update( one( person( 500.0f + 10.0f * static_cast<float>( i ), 400, 100, 200 ) ), ts, out );
+        CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
+        CHECK( t, out.d[0].n_pts >= 2 );
+    }
 }  // namespace
 
 void test_tracker( TestRun& t )
@@ -199,5 +217,5 @@ void test_tracker( TestRun& t )
         trk.update( one( person( 500, 400, 100, 200 ) ), kFrameUs, out );
         CHECK( t, out.n == 1 && out.d[0].id == 1 );
     }
-    CHECK( t, Tracker {}.trail_max_age_us() == 4000000 );
+    check_trail_restart( t );
 }

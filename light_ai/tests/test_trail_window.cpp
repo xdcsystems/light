@@ -1,5 +1,5 @@
 // TrailWindow: the spawn point, the full-window gate, the median, the step
-// gate, eviction, recent() order, the counter fold.
+// gate, eviction, the restart of an aged-out trail (#37), recent() order, the counter fold.
 
 #include <array>
 
@@ -52,6 +52,40 @@ void test_trail_window( TestRun& t )
     CHECK( t, w.size() == 2 );
     w.evict( 100 );
     CHECK( t, w.empty() );
+
+    // A trail that ages out restarts (#37): the window resets once, when evict()
+    // empties the ring, not on every feed. The stale window (x = 1000) must not
+    // reach the first post-gap median.
+    {
+        TrailWindow gap;
+        gap.restart( 0, 1000.0f, 0.0f );
+        for ( int i = 1; i <= 7; ++i )
+            gap.feed( i, 1000.0f, 0.0f );  // a full window of x = 1000, no push (step gate)
+        CHECK( t, gap.size() == 1 );
+        gap.evict( 100 );
+        CHECK( t, gap.empty() );
+        for ( int i = 0; i < 4; ++i )
+            gap.feed( 101 + i, 10.0f * static_cast<float>( i ), 0.0f );  // x = 0, 10, 20, 30
+        CHECK( t, gap.empty() );  // the window refills from zero
+        gap.feed( 105, 40.0f, 0.0f );
+        CHECK( t, gap.recent( 1, pts.data(), 8 ) == 1 && pts[0].ts_us == 105 && pts[0].x == 20.0f );  // median of 0..40
+        for ( int i = 6; i <= 8; ++i )
+            gap.feed( 100 + i, 10.0f * static_cast<float>( i - 1 ), 0.0f );  // x = 50, 60, 70: the median moves on
+        CHECK( t, gap.size() >= 2 );
+    }
+    // evict() on an already empty ring is not a transition: a half-refilled window keeps counting.
+    {
+        TrailWindow half;
+        half.restart( 0, 0.0f, 0.0f );
+        half.evict( 1 );
+        CHECK( t, half.empty() );
+        half.feed( 10, 50.0f, 0.0f );
+        half.feed( 11, 50.0f, 0.0f );
+        half.evict( 12 );  // nothing to drop
+        for ( int i = 12; i <= 14; ++i )
+            half.feed( i, 50.0f, 0.0f );
+        CHECK( t, half.recent( 1, pts.data(), 8 ) == 1 && pts[0].ts_us == 14 && pts[0].x == 50.0f );
+    }
 
     // A long walk from a fresh spawn: the window counter folds back (no
     // overflow), every step pushes (the median moves 10 px per feed) until
