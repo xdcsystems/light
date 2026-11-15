@@ -70,17 +70,20 @@ namespace
     public:
         explicit FakeEngine( FakeNpu* npu ) : npu_( npu ), fd_( npu->next_fd++ ) {}
 
-        int setup_io() { return npu_->setup_io_rc; }
-        int set_core_mask( unsigned mask )
+        Status setup_io()
+        {
+            return npu_->setup_io_rc == 0 ? Status{} : make_status( Errc::Failed, "fake setup_io failure" );
+        }
+        Status set_core_mask( unsigned mask )
         {
             npu_->masks.push_back( mask );
-            return 0;
+            return {};
         }
-        int run() const
+        Status run() const
         {
             npu_->gate();
             ++npu_->runs;
-            return npu_->run_rc.load();
+            return npu_->run_rc.load() == 0 ? Status{} : make_status( Errc::Failed, "fake run failure" );
         }
         int input_fd() const { return fd_; }
         void* input_data() const { return nullptr; }
