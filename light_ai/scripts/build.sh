@@ -12,6 +12,10 @@ cd "$PROJ_ROOT"
 
 echo "PROJ_ROOT=$PROJ_ROOT"
 echo "BUILD_DIR=$BUILD_DIR"
+# The build tree, the test builds, the tidy logs and cache all live under build/: warn when it is on the eMMC
+# shellcheck source=storage_guard.sh
+. "$PROJ_ROOT/scripts/storage_guard.sh"
+storage_guard build "$BUILD_DIR"
 
 # Pin the libav* checks to the self-built ffmpeg (same pin as CMakeLists):
 # PKG_CONFIG_PATH prepends -- distro .pc files stay visible for

@@ -1,4 +1,6 @@
 # build and temp files
+# build/ of the root .gitignore matches a directory only: /build also covers a build symlink (#48)
+/build
 *.o
 *.d
 *.bak

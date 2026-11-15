@@ -1,8 +1,10 @@
 #!/bin/bash
 # collect_state.sh — collect the current light_ai state into a single file for a new chat.
-# Usage: bash collect_state.sh && cat /tmp/light_ai_state.txt
+# Usage: bash collect_state.sh && cat build/light_ai_state.txt
+# The output stays inside the project (build/, git-ignored; #48), not in /tmp.
 cd ~/Projects/light/light_ai || { echo "project directory not found"; exit 1; }
-OUT=/tmp/light_ai_state.txt
+mkdir -p build
+OUT=build/light_ai_state.txt
 
 {
 echo "==== date / uptime ===="

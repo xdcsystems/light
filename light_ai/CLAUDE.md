@@ -8,11 +8,15 @@ keep "Migration plan" current when a stage changes state.
 - Work directory: ~/Projects/light/light_ai (start `claude` here). The git root is
   ~/Projects/light: the repo also holds light_control/ and light_sensor/ -- other projects,
   out of scope: never read for the task, edit, stage or commit anything outside light_ai/.
-- Physical path: /userdata/home/linaro/Projects/light (eMMC). This is also the user's own
-  working copy: dataset*/, venv/, artifacts/, build-tidy/ belong to the user -- never delete
-  or rewrite them.
-- Home and /tmp are on eMMC (15 GB): keep scratch files in $TMPDIR (NVMe,
-  /mnt/nvme_data/claude/tmp); build logs go to build/ (git-ignored).
+- Physical path: /mnt/nvme_data/linaro/Projects/light (NVMe, #48). ~/Projects/light is a symlink to it
+  (home = /userdata/home/linaro, eMMC); a symlink, not a bind mount: if the NVMe is missing the project is
+  unavailable, the system is fine. This is also the user's own working copy: dataset*/, venv/, artifacts/,
+  build-tidy/ belong to the user -- never delete or rewrite them.
+- Everything the project generates stays inside the project, under build/ (git-ignored): the CMake tree,
+  the test builds, tidy logs and cache, run logs, CSVs, frames, baselines. Never /tmp or the home (eMMC,
+  wears out); the system keeps its own /tmp and environment (no TMPDIR in the user's shells). Claude Code's
+  own $TMPDIR (/mnt/nvme_data/claude/tmp, NVMe) is for session scratch only. build.sh / tidy_run.sh warn
+  when their output is on the eMMC (README, Build, "Where the files live").
 - Models (*.rknn) are not in git: they live in light_ai/misc/.
 
 ## Workflow
@@ -32,8 +36,8 @@ keep "Migration plan" current when a stage changes state.
 - Before a PR the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
   (CMake build + unit tests + TSan suites + clang-tidy gate; SKIP_TESTS=1 / SKIP_TSAN=1 / SKIP_TIDY=1 to narrow it.)
-  On a tidy failure the per-file logs are in $TMPDIR/tidy/src/<path>.log (TMPDIR unset: /tmp/tidy). The tidy gate runs
-  the TUs in parallel (TIDY_JOBS=N, default by MemAvailable) with an exact result cache in $TMPDIR/tidy-cache
+  On a tidy failure the per-file logs are in build/tidy/src/<path>.log. The tidy gate runs
+  the TUs in parallel (TIDY_JOBS=N, default by MemAvailable) with an exact result cache in build/tidy-cache
   (TIDY_NO_CACHE=1 disables it); README, Build.
 - Unit tests alone: bash scripts/test.sh (host-side, no SDK; see README, Tests).
   One suite / a flake hunt: build/tests/light_ai_tests [substr...] [--repeat N] (also light_ai_tests_tsan;
@@ -162,7 +166,7 @@ keep "Migration plan" current when a stage changes state.
       6e1 (stamp, probe_jpeg_sof, ConsoleReporter + core/fixed_fmt.hpp, CliOptions + the config/ layer on Log,
       the Log constructed before the parse): merged (PR #44). 6e2 (CameraV4L2::dequeue, NetMjpegSource::dequeue,
       MppDecoder::retrieve_output and RgaResizer::resize in steps; MppDecoder and RgaResizer on Log): branch
-      refactor/stage6e2-capture, PR #47 in review. 6e3 (H264Encoder::drain, NetPreview::serve, thresholds).
+      refactor/stage6e2-capture, merged (PR #47). 6e3 (H264Encoder::drain, NetPreview::serve, thresholds).
       Re-measure at f2f100d: cognitive list unchanged from 4b97d21; scripts in the session scratchpad (not in git).
       Baseline binaries: build/light_ai_base6e (f2f100d), build/light_ai_base6e2 (6d44748, fix/audit-p0 before 6e2).
       6e2 logs: layer A build/ref6e2_p{3,1}.*; a 1920x1080 camera clip replayed base vs new build/ref6e2_1080_*
