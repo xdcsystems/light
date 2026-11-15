@@ -160,10 +160,16 @@ keep "Migration plan" current when a stage changes state.
       above 20 outside the six targets, plus RgaResizer::resize and MppDecoder::retrieve_output (they hold the size
       thresholds); then the thresholds go to lines 90 / statements 60 / branches 11 / nesting 4 / variables 14.
       6e1 (stamp, probe_jpeg_sof, ConsoleReporter + core/fixed_fmt.hpp, CliOptions + the config/ layer on Log,
-      the Log constructed before the parse): PR #44 in review. 6e2 (CameraV4L2::dequeue, NetMjpegSource::dequeue,
-      MppDecoder::retrieve_output, RgaResizer::resize). 6e3 (H264Encoder::drain, NetPreview::serve, thresholds).
+      the Log constructed before the parse): merged (PR #44). 6e2 (CameraV4L2::dequeue, NetMjpegSource::dequeue,
+      MppDecoder::retrieve_output and RgaResizer::resize in steps; MppDecoder and RgaResizer on Log): branch
+      refactor/stage6e2-capture, PR in review. 6e3 (H264Encoder::drain, NetPreview::serve, thresholds).
       Re-measure at f2f100d: cognitive list unchanged from 4b97d21; scripts in the session scratchpad (not in git).
-      Baseline binary for 6e2 / 6e3: build/light_ai_base6e (f2f100d, built from a git archive in $TMPDIR).
+      Baseline binaries: build/light_ai_base6e (f2f100d), build/light_ai_base6e2 (6d44748, fix/audit-p0 before 6e2).
+      6e2 logs: layer A build/ref6e2_p{3,1}.*; a 1920x1080 camera clip replayed base vs new build/ref6e2_1080_*
+      (one-pass only: the two-pass RGA path needs a source over 8x the 640x640 model, unreachable with misc/ models);
+      build/run6e2_{base,new}_{pool3,pool1,gpu,cpu,net,2x1}.log, build/run6e2_new_{replug,drop}.log, build/6e2_*.png.
+      After a replug cycle the camera may come back as /dev/video21: check light-usb-replug list before the next run.
+      clang-tidy 11 by hand (size metrics) also needs the compile DB copy without -mtune (else clang-diagnostic-error).
       6e1 logs: build/run6e1_{base,new}_{pool3,nosig}.log, frames build/6e1_{base,new}_nosig.png (byte-identical),
       layer A build/ref6e1_p{3,1}.{csv,log,out}. NO SIGNAL check: light-usb-replug off /dev/video20 prints
       "usb_replug: <busid> off (...)" -- the busid is its 2nd field, not the whole line.
