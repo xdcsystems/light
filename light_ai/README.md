@@ -792,8 +792,13 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
 Gates, in order: build, unit tests (SKIP_TESTS=1 to skip), clang-tidy
 (SKIP_TIDY=1 to skip). A failed gate rejects the build.
 
-The clang-tidy gate (scripts/tidy_run.sh) has two passes, one after the other, over the same TUs
-of src/ and the same compile DB copy (`-mtune=cortex-a76.cortex-a55` stripped: neither clang accepts it):
+The clang-tidy gate (scripts/tidy_run.sh) has two passes, one after the other, over the same TUs and the
+same compile DB copies. The TUs: src/**/*.cpp, from build/ (`-mtune=cortex-a76.cortex-a55` stripped: neither
+clang accepts it), and tests/*.cpp, from the host tests' own DB build/tests (configured by the gate, not
+built, so SKIP_TESTS=1 still checks them; one entry per file, the TSan target's only for tsan_main.cpp; the
+src/ files the tests compile are checked once, from build/). tests/.clang-tidy inherits the root config and
+relaxes only the function size (a suite is one table-driven function; the thresholds are the measured maxima
+of tests/, the reason is in the file). The passes:
 - main: the system clang-tidy 11 with the .clang-tidy files of the tree -- every check of the project;
 - cognitive: readability-function-cognitive-complexity only (Threshold 20; LLVM 11 does not have it), run by
   the PyPI clang-tidy 23.1.4 in light_ai/venv with `--config-file=scripts/tidy_cognitive.yaml` (LLVM 23
@@ -811,7 +816,8 @@ time, then by size), each under a 600 s timeout:
 - Jobs: TIDY_JOBS=N, by default min(nproc, MemAvailable / 400 MB) -- one clang-tidy 11 peaks at
   ~330 MB, so RAM is the limit on this board, not the cores; both passes use the same count. The first
   line of the gate prints the job count and MemAvailable (an OOM kill shows up as rc=137 in HANGS.txt).
-- Logs: main build/tidy/<TU path without .cpp>.log, a tree like src/ (src/net/h264_encoder.log), cognitive
+- Logs: main build/tidy/<TU path without .cpp>.log, a tree like the sources (src/net/h264_encoder.log,
+  tests/test_log.log; build/tidy/cmake-tests.log: the configure of the tests' DB), cognitive
   the same tree under build/tidy/cognitive/; HANGS.txt (timeouts and non-zero exits; a cognitive entry starts
   with `cognitive: `) in build/tidy. One run at a time: a second run waits on a flock.
 - Result cache: build/tidy-cache, one store for both passes, TIDY_NO_CACHE=1 disables it. Deleting build/
