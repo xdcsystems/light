@@ -150,9 +150,15 @@ keep "Migration plan" current when a stage changes state.
       software path, YoloDecoder in core/, one decoder per pool worker): merged (PR #35). 6b (KalmanAxis, Associator,
       TrailWindow in core/, the Tracker split; golden max |d| 0): merged (PR #36). 6c (BoxMapper class, BoxSmoother
       in steps + Log, the dead DEAD-ghost-box branch removed; golden max |d| 0): merged (PR #38). 6d (setup_device and
-      GpuBoxDrawer::init in steps, the drawer on Log, function-size thresholds 100/110/18/5/17): the PR in review.
-      6e (own issue, after 6d): the functions above 20 outside the six targets; then tighten the thresholds again
-      (statements / branches / nesting are held by RgaResizer::resize alone, lines by MppDecoder::retrieve_output).
+      GpuBoxDrawer::init in steps, the drawer on Log, function-size thresholds 100/110/18/5/17): merged (PR #40);
+      #34 closed.
+      6e: issue #39 (plan + approval in its comments 6894174610 / 6894216198), split 6e1/6e2/6e3. The eight functions
+      above 20 outside the six targets, plus RgaResizer::resize and MppDecoder::retrieve_output (they hold the size
+      thresholds); then the thresholds go to lines 90 / statements 60 / branches 11 / nesting 4 / variables 14.
+      6e1 (stamp, probe_jpeg_sof, ConsoleReporter + core/fixed_fmt.hpp, CliOptions + the config/ layer on Log,
+      the Log constructed before the parse): the current branch. 6e2 (CameraV4L2::dequeue, NetMjpegSource::dequeue,
+      MppDecoder::retrieve_output, RgaResizer::resize). 6e3 (H264Encoder::drain, NetPreview::serve, thresholds).
+      Re-measure at f2f100d: cognitive list unchanged from 4b97d21; scripts in the session scratchpad (not in git).
       Cognitive complexity: the gate's clang-tidy 11 has no such check (LLVM 12+). Measure with the PyPI clang-tidy
       (LLVM 23) in light_ai/venv (git-ignored): venv/bin/clang-tidy --quiet -p <copy of build/compile_commands.json
       without -mtune=cortex-a76.cortex-a55> with Checks '-*,readability-function-cognitive-complexity', Threshold 20.
