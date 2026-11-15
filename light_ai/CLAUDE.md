@@ -52,6 +52,9 @@ keep "Migration plan" current when a stage changes state.
   does not relay a signal sent from its own process group. To exercise the SIGINT path, make the
   timeout shorter than the frame budget; exit 124 = stopped by the timer (normal).
   Redirect to build/run.log and read it with tail/grep.
+  A sudo run creates its files as root (build/cal.ppm, build/<cal-dir>/, dataset/, logs written by the program):
+  a later non-root run or build.sh then fails on them. After every sudo run that writes files, give them back:
+      sudo -n chown -R linaro: build dataset
 - Permissions: .claude/settings.json (tracked) pre-approves the gate, test, run and git/gh
   commands above and denies edits in light_control/ and light_sensor/, history rewrites,
   `git add -A` / `commit -a` and `git stash`. Personal overrides: .claude/settings.local.json.
@@ -216,10 +219,10 @@ keep "Migration plan" current when a stage changes state.
       logs build/tidy43b/.
       #51 (plan + OK in its comments): RknnEngine and CalDumper on Log; --dump-cal writes build/cal.ppm (<cal-dir>/cal.ppm
       with --cal-dir, now accepted with --dump-cal alone); "calibration dump failed: <path>"; scripts/probe_yolo.py [PPM]
-      (rknnlite: run it with venv/bin/python). Branch refactor/issue51-log-tails, PR #56. Logs (base binary build/light_ai_base43:
+      (rknnlite: run it with venv/bin/python). Branch refactor/issue51-log-tails, merged (PR #56). Logs (base binary build/light_ai_base43:
       rknn_engine / cal_dumper unchanged since): build/run51_{base,new_dump,new_caldir}.log, model lines
       build/run51_{base,new}.model.txt (identical), /tmp listings build/tmp51_{before,after}.txt (identical). A sudo run
-      leaves build/cal.ppm root-owned: a later non-root dump fails until it is removed.
+      leaves build/cal.ppm root-owned: hence the chown rule under "Live run".
 - [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
       Check: runs with a wrong model, a busy port, a missing camera.
 Out of scope: light_control, light_sensor, tools/, scripts/.
