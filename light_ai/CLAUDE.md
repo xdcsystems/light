@@ -156,9 +156,13 @@ keep "Migration plan" current when a stage changes state.
       above 20 outside the six targets, plus RgaResizer::resize and MppDecoder::retrieve_output (they hold the size
       thresholds); then the thresholds go to lines 90 / statements 60 / branches 11 / nesting 4 / variables 14.
       6e1 (stamp, probe_jpeg_sof, ConsoleReporter + core/fixed_fmt.hpp, CliOptions + the config/ layer on Log,
-      the Log constructed before the parse): the current branch. 6e2 (CameraV4L2::dequeue, NetMjpegSource::dequeue,
+      the Log constructed before the parse): the PR in review. 6e2 (CameraV4L2::dequeue, NetMjpegSource::dequeue,
       MppDecoder::retrieve_output, RgaResizer::resize). 6e3 (H264Encoder::drain, NetPreview::serve, thresholds).
       Re-measure at f2f100d: cognitive list unchanged from 4b97d21; scripts in the session scratchpad (not in git).
+      Baseline binary for 6e2 / 6e3: build/light_ai_base6e (f2f100d, built from a git archive in $TMPDIR).
+      6e1 logs: build/run6e1_{base,new}_{pool3,nosig}.log, frames build/6e1_{base,new}_nosig.png (byte-identical),
+      layer A build/ref6e1_p{3,1}.{csv,log,out}. NO SIGNAL check: light-usb-replug off /dev/video20 prints
+      "usb_replug: <busid> off (...)" -- the busid is its 2nd field, not the whole line.
       Cognitive complexity: the gate's clang-tidy 11 has no such check (LLVM 12+). Measure with the PyPI clang-tidy
       (LLVM 23) in light_ai/venv (git-ignored): venv/bin/clang-tidy --quiet -p <copy of build/compile_commands.json
       without -mtune=cortex-a76.cortex-a55> with Checks '-*,readability-function-cognitive-complexity', Threshold 20.
