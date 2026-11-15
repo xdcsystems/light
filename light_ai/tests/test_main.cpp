@@ -19,6 +19,7 @@ int main()
     TestRun t;
     run_suite( t, "pod_containers", &test_pod_containers );
     run_suite( t, "box_math", &test_box_math );
+    run_suite( t, "fp16", &test_fp16 );
     run_suite( t, "geometry", &test_geometry );
     run_suite( t, "jpeg_probe", &test_jpeg_probe );
     run_suite( t, "byte_window", &test_byte_window );
