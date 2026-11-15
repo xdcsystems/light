@@ -847,11 +847,27 @@ light_ai_tests, built into build/tests):
   decode, RGA, RKNN, the RKNN side of the postprocess (YoloDecode),
   encoder, GPU drawer). Those
   are verified by live runs only.
-- Harness: tests/check.hpp (CHECK / CHECK_NEAR, no framework, no
-  dependencies). The project rules hold in tests/ as well.
+- Harness: tests/check.hpp (CHECK, CHECK_EQ, CHECK_STR_EQ, CHECK_NEAR;
+  no framework, no dependencies). On a failure CHECK_EQ prints both
+  values, CHECK_STR_EQ both texts quoted with \n etc. escaped and the
+  index of the first difference, CHECK_NEAR both values and |a - b|;
+  every argument is evaluated once. New tests use CHECK_EQ /
+  CHECK_STR_EQ; an old CHECK( t, a == b ) moves over when its file is
+  touched anyway. Its own suite check_harness tests it. The project
+  rules hold in tests/ as well.
+- Options (tests/suite_runner.hpp), both binaries, run from build/tests:
+  `light_ai_tests [substr...] [--repeat N]` runs only the suites whose
+  name contains one of the substrings (none: all), N times, e.g.
+  `light_ai_tests --repeat 50 packet_queue_threads`,
+  `light_ai_tests_tsan --repeat 200`. Each run starts from fresh
+  counters and prints its own summary; with N > 1 a total follows.
+  Exit 1 if any run had a failure, 2 on a bad argument (an unknown
+  option, a bad count, a substring matching no suite). scripts/test.sh
+  and the gate pass none: every suite, once.
 - A module joins the suite once it compiles without SDK headers:
-  add its .cpp and a test_<module>.cpp to tests/CMakeLists.txt and
-  declare the suite in tests/suites.hpp.
+  add its .cpp and a test_<module>.cpp to tests/CMakeLists.txt,
+  declare the suite in tests/suites.hpp and add its row to the table
+  in tests/test_main.cpp (a threaded suite also to tests/tsan_main.cpp).
 
 Target CPU flags (CMakeLists.txt TARGET_CPU_FLAGS, 2026-11-02):
 -mcpu=cortex-a76+dotprod+crypto -mtune=cortex-a76.cortex-a55. The dot form is legal
