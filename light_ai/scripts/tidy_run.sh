@@ -5,19 +5,25 @@
 # Env:   TIDY_JOBS=N      parallel jobs (default min(nproc, MemAvailable / 400 MB): one clang-tidy peaks
 #                         at ~330 MB on pipeline.cpp; RAM, not the cores, is the limit on this board)
 #        TIDY_NO_CACHE=1  no cache lookup, no store
-# Logs:  ${TMPDIR:-/tmp}/tidy/<path of the TU without .cpp>.log (src/net/h264_encoder.log: a tree like src/,
+# Logs:  build/tidy/<path of the TU without .cpp>.log (src/net/h264_encoder.log: a tree like src/,
 #        never a flat name -- src/foo.cpp and src/net/foo.cpp must not share a log), HANGS.txt there;
-#        cache: ${TMPDIR:-/tmp}/tidy-cache. One run at a time per $TMPDIR (flock on $OUT/.lock; a second run waits).
+#        cache: build/tidy-cache. Both inside the project (#48: nothing of the project is written outside it,
+#        not even to $TMPDIR or /tmp), git-ignored with build/. One run at a time (flock on $OUT/.lock; a second
+#        run waits). The output filesystem is printed first, with a warning when it is the eMMC (storage_guard.sh).
 TIDY=clang-tidy
 CLANGXX=clang++-11   # the preprocessor of the cache key: the same LLVM driver as clang-tidy 11
 DB=build
 TMO=${1:-600}
-OUT=${TMPDIR:-/tmp}/tidy
-TDB=$OUT/cc
-CACHE=${TMPDIR:-/tmp}/tidy-cache
-CACHE_DAYS=14        # cache entries not used for this many days are pruned after the run
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd -P)"
+PROJ_ROOT="$(cd "$HERE/.." && pwd -P)"
+OUT=$PROJ_ROOT/build/tidy
+TDB=$OUT/cc
+CACHE=$PROJ_ROOT/build/tidy-cache
+CACHE_DAYS=14        # cache entries not used for this many days are pruned after the run
 mkdir -p "$OUT"
+# shellcheck source=storage_guard.sh
+. "$HERE/storage_guard.sh"
+storage_guard tidy "$OUT"
 # Two gates at once (board-check and a manual run) would clear and write the same $OUT: the second one waits.
 exec 9> "$OUT/.lock"
 if ! flock -n 9; then

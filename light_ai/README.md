@@ -797,9 +797,10 @@ parallel, slowest first (by the last measured time, then by size), each under a 
 - Jobs: TIDY_JOBS=N, by default min(nproc, MemAvailable / 400 MB) -- one clang-tidy peaks at
   ~330 MB, so RAM is the limit on this board, not the cores. The first line of the gate prints
   the job count and MemAvailable (an OOM kill shows up as rc=137 in HANGS.txt).
-- Logs: ${TMPDIR:-/tmp}/tidy/<TU path without .cpp>.log, a tree like src/ (src/net/h264_encoder.log),
+- Logs: build/tidy/<TU path without .cpp>.log, a tree like src/ (src/net/h264_encoder.log),
   HANGS.txt (timeouts and non-zero exits) there. One run at a time: a second run waits on a flock.
-- Result cache: ${TMPDIR:-/tmp}/tidy-cache, TIDY_NO_CACHE=1 disables it. The key
+- Result cache: build/tidy-cache, TIDY_NO_CACHE=1 disables it. Deleting build/ empties it (the next run is cold);
+  moving the checkout misses it once (the compile commands in the key hold absolute paths). The key
   (scripts/tidy_cache.py) hashes the clang-tidy command line and version, the timeout, the TU's
   compile command, every .clang-tidy up the tree, the `clang++-11 -E -CC` output of the TU and
   the raw bytes of every file it includes: any edit of any included header re-runs exactly the
@@ -808,6 +809,24 @@ parallel, slowest first (by the last measured time, then by size), each under a 
 - Output: one line per finished TU (`tidy: <file> <seconds> s <findings>`), then the findings by
   check, per file, hangs, the ten slowest TUs, `tidy: wall ... cache: N hits / M runs; size`, and
   the verdict `tidy: PASS (0 findings)` / `tidy: FAIL -- findings: X, hangs/errors: Y`.
+
+### Where the files live
+Everything the project generates stays inside the project folder: the CMake tree, build/tests (unit and
+TSan builds), the tidy logs and cache (build/tidy, build/tidy-cache), run logs, layer A CSVs, frames,
+baseline binaries -- all under build/ (git-ignored). No script of the gate or the board checks writes
+to $TMPDIR or /tmp: the system keeps its own /tmp and environment, and the project does not depend on
+how a shell sets TMPDIR (sudo resets it anyway: env_reset).
+
+On the board the checkout itself lives on the NVMe, because the eMMC wears out with every write:
+~/Projects/light is a symlink to /mnt/nvme_data/linaro/Projects/light (/home/linaro is itself
+/userdata/home/linaro, an eMMC partition). A symlink, not an fstab bind mount: the system has no
+boot-time dependency on the NVMe -- if the NVMe is missing, the link dangles, the project is
+unavailable, and the board boots and works normally. Old absolute paths
+(~/Projects/light/..., /userdata/home/linaro/Projects/light/...) keep resolving through the link.
+
+build.sh and tidy_run.sh print the filesystem of their output dir first (`build: output ... on
+/dev/nvme0n1p1 (/mnt/nvme_data)`) and warn -- never fail, so a fresh machine still builds -- when it is
+on the eMMC: the filesystem of / or any /dev/mmcblk* device (scripts/storage_guard.sh).
 
 ## Tests
     ./scripts/test.sh

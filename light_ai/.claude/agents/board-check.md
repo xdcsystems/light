@@ -45,7 +45,7 @@ Logs are long: use tail and grep, never read a whole log.
 - Build/gate: `tail -n 40 build/gate.log`; on failure grep for `error:` / `FAILED`
   and show the FIRST error with ~15 lines of context.
 - Tidy: the summary block "---- findings by check ----" in build/gate.log; per-file
-  details in $TMPDIR/tidy/src/<path>.log, e.g. src/net/h264_encoder.log (/tmp/tidy when TMPDIR is unset); the line
+  details in build/tidy/src/<path>.log, e.g. build/tidy/src/net/h264_encoder.log; the line
   `tidy: wall ... cache: N hits / M runs` gives the time and the cache use.
 - Run: the TOTAL / FPS summary lines at the end, plus every line with
   `warn`, `error`, `gave up`, `pubfifo`, `pool:`, `detached`.
