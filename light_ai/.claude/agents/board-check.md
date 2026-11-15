@@ -44,9 +44,12 @@ anything (checkout, merge, commit, push, stash, reset).
 Logs are long: use tail and grep, never read a whole log.
 - Build/gate: `tail -n 40 build/gate.log`; on failure grep for `error:` / `FAILED`
   and show the FIRST error with ~15 lines of context.
-- Tidy: the summary block "---- findings by check ----" in build/gate.log; per-file
-  details in build/tidy/src/<path>.log, e.g. build/tidy/src/net/h264_encoder.log; the line
-  `tidy: wall ... cache: N hits / M runs` gives the time and the cache use.
+- Tidy: two passes (main = clang-tidy 11, cognitive = clang-tidy 23 with cognitive complexity
+  only), each with its block "---- <pass>: findings by check ----" in build/gate.log; per-file
+  details in build/tidy/src/<path>.log (main) and build/tidy/cognitive/src/<path>.log, e.g.
+  build/tidy/src/net/h264_encoder.log; the line `tidy: wall ... (main ..., cognitive ...) ...
+  cache: N hits / M runs` gives the times and the cache use. A FAIL before any pass that names
+  venv/bin/clang-tidy = the pinned tool is missing: report the printed install command, do not install it.
 - Run: the TOTAL / FPS summary lines at the end, plus every line with
   `warn`, `error`, `gave up`, `pubfifo`, `pool:`, `detached`.
 

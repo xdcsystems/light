@@ -28,6 +28,7 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <utility>
 
 class SessionGate
 {
@@ -67,7 +68,7 @@ public:
         std::lock_guard<std::mutex> lk( mx_ );
         if ( !active_.load() )
             return false;
-        f( static_cast<const Session&>( session_ ) );
+        std::forward<F>( f )( static_cast<const Session&>( session_ ) );
         return true;
     }
 

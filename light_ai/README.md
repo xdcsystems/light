@@ -792,23 +792,42 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
 Gates, in order: build, unit tests (SKIP_TESTS=1 to skip), clang-tidy
 (SKIP_TIDY=1 to skip). A failed gate rejects the build.
 
-The clang-tidy gate (scripts/tidy_run.sh) runs one clang-tidy 11 per TU of src/, the TUs in
-parallel, slowest first (by the last measured time, then by size), each under a 600 s timeout:
-- Jobs: TIDY_JOBS=N, by default min(nproc, MemAvailable / 400 MB) -- one clang-tidy peaks at
-  ~330 MB, so RAM is the limit on this board, not the cores. The first line of the gate prints
-  the job count and MemAvailable (an OOM kill shows up as rc=137 in HANGS.txt).
-- Logs: build/tidy/<TU path without .cpp>.log, a tree like src/ (src/net/h264_encoder.log),
-  HANGS.txt (timeouts and non-zero exits) there. One run at a time: a second run waits on a flock.
-- Result cache: build/tidy-cache, TIDY_NO_CACHE=1 disables it. Deleting build/ empties it (the next run is cold);
-  moving the checkout misses it once (the compile commands in the key hold absolute paths). The key
-  (scripts/tidy_cache.py) hashes the clang-tidy command line and version, the timeout, the TU's
-  compile command, every .clang-tidy up the tree, the `clang++-11 -E -CC` output of the TU and
-  the raw bytes of every file it includes: any edit of any included header re-runs exactly the
-  TUs that include it. A clean or findings result is stored; a timeout, crash, compile error, or
+The clang-tidy gate (scripts/tidy_run.sh) has two passes, one after the other, over the same TUs
+of src/ and the same compile DB copy (`-mtune=cortex-a76.cortex-a55` stripped: neither clang accepts it):
+- main: the system clang-tidy 11 with the .clang-tidy files of the tree -- every check of the project;
+- cognitive: readability-function-cognitive-complexity only (Threshold 20; LLVM 11 does not have it), run by
+  the PyPI clang-tidy 23.1.4 in light_ai/venv with `--config-file=scripts/tidy_cognitive.yaml` (LLVM 23
+  rejects the root .clang-tidy, and the other checks stay on clang-tidy 11; #43).
+
+The venv is git-ignored and belongs to the user: the gate only reads it, never installs into it. A missing
+binary or another version fails the gate at once and prints the command. On a fresh board, once:
+
+    cd light_ai && python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4
+
+(`--no-cache-dir`: pip's cache is in the home, on the eMMC.) The pin is COG_VERSION in tidy_run.sh.
+
+Each pass runs one clang-tidy per TU, the TUs in parallel, slowest first (by the pass's last measured
+time, then by size), each under a 600 s timeout:
+- Jobs: TIDY_JOBS=N, by default min(nproc, MemAvailable / 400 MB) -- one clang-tidy 11 peaks at
+  ~330 MB, so RAM is the limit on this board, not the cores; both passes use the same count. The first
+  line of the gate prints the job count and MemAvailable (an OOM kill shows up as rc=137 in HANGS.txt).
+- Logs: main build/tidy/<TU path without .cpp>.log, a tree like src/ (src/net/h264_encoder.log), cognitive
+  the same tree under build/tidy/cognitive/; HANGS.txt (timeouts and non-zero exits; a cognitive entry starts
+  with `cognitive: `) in build/tidy. One run at a time: a second run waits on a flock.
+- Result cache: build/tidy-cache, one store for both passes, TIDY_NO_CACHE=1 disables it. Deleting build/
+  empties it (the next run is cold); moving the checkout misses it once (the compile commands in the key hold
+  absolute paths). The key (scripts/tidy_cache.py) hashes the clang-tidy command line, binary version and
+  the timeout, the TU's compile command, every .clang-tidy up the tree, the bytes of a `--config-file`,
+  the `clang++-11 -E -CC` output of the TU and the raw bytes of every file it includes: any edit of any
+  included header re-runs exactly the TUs that include it. (Both passes take the include list from
+  clang++-11: the wheel ships no driver; LLVM 23's predefined macros could select another system header,
+  never another project one.) A clean or findings result is stored; a timeout, crash, compile error, or
   a TU whose key could not be made (`(no key)`) never is. Entries unused for 14 days are pruned.
-- Output: one line per finished TU (`tidy: <file> <seconds> s <findings>`), then the findings by
-  check, per file, hangs, the ten slowest TUs, `tidy: wall ... cache: N hits / M runs; size`, and
-  the verdict `tidy: PASS (0 findings)` / `tidy: FAIL -- findings: X, hangs/errors: Y`.
+- Output, per pass: `==== tidy pass: <name> (LLVM <version>...) ====`, one line per finished TU
+  (`tidy: <file> <seconds> s <findings>`, `tidy cognitive: ...` in the second pass), then the findings by
+  check, per file, the ten slowest TUs, `tidy <name>: wall ... findings: N`. Then hangs,
+  `tidy: wall ... (main ..., cognitive ...) ... cache: N hits / M runs; size`, and the verdict
+  `tidy: PASS (0 findings: main + cognitive)` / `tidy: FAIL -- findings: X (main A, cognitive B), hangs/errors: Y`.
 
 ### Where the files live
 Everything the project generates stays inside the project folder: the CMake tree, build/tests (unit and

@@ -60,7 +60,7 @@ namespace
                 std::memset( py + static_cast<size_t>( rc.top + r ) * stride + rc.left, 128, static_cast<size_t>( rc.w ) );
             uint8_t* puv = py + ysz;
             for ( int r = 0; r < rc.h / 2; ++r )
-                std::memset( puv + static_cast<size_t>( rc.top / 2 + r ) * stride + ( rc.left / 2 ) * 2, 128,
+                std::memset( puv + static_cast<size_t>( rc.top / 2 + r ) * stride + static_cast<std::ptrdiff_t>( rc.left / 2 ) * 2, 128,
                              static_cast<size_t>( rc.w / 2 ) * 2 );
             dma::cache_clean( p, mpp_buffer_get_size( mb ) );
         }

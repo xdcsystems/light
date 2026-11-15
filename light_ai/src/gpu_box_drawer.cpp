@@ -56,7 +56,7 @@ namespace
     // BatchVert + kVertsPerBox live in the header: State::vstage is typed
     // by them (std::array), the reinterpret_cast is gone.
     constexpr GLsizeiptr kVboBytes =
-            GpuBoxList::cap * GpuBoxDrawer::kVertsPerBox *
+            static_cast<GLsizeiptr>( GpuBoxList::cap ) * GpuBoxDrawer::kVertsPerBox *
             static_cast<GLsizeiptr>( sizeof( GpuBoxDrawer::BatchVert ) );
 
     // Compile/link diagnostics: libmali returns non-zero handles even for

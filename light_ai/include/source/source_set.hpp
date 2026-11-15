@@ -43,7 +43,7 @@ namespace source_detail
 {
     // std::array of non-movable channels, each built in place by make( i ).
     template <class Chan, class Make, std::size_t... I>
-    std::array<Chan, sizeof...( I )> make_channels( Make& make, std::index_sequence<I...> /*unused*/ )
+    std::array<Chan, sizeof...( I )> make_channels( const Make& make, std::index_sequence<I...> /*unused*/ )
     {
         return { { make( static_cast<int>( I ) )... } };
     }
@@ -61,7 +61,7 @@ class BasicSourceSet
 
 public:
     template <class Make>
-    BasicSourceSet( const Log& log, Make&& make )
+    BasicSourceSet( const Log& log, const Make& make )
       : log_( log ), ch_( source_detail::make_channels<Chan>( make, std::make_index_sequence<N> {} ) )
     {
     }

@@ -108,7 +108,7 @@ void BitmapFont::stamp( const Plane8& plane, int x, int y, const char* s, int sc
     const int nq = stb_easy_font_print( 0.0f, 0.0f, txt, col, vbuf_, static_cast<int>( sizeof( vbuf_ ) ) );
     for ( int q = 0; q < nq; ++q )
     {
-        const FontVertex* v = reinterpret_cast<const FontVertex*>( vbuf_ ) + q * 4;
+        const FontVertex* v = reinterpret_cast<const FontVertex*>( vbuf_ ) + static_cast<std::ptrdiff_t>( q ) * 4;
         fill_box( plane, quad_box( v, x, y, scale, plane ), val );
     }
 }

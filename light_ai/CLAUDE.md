@@ -36,9 +36,13 @@ keep "Migration plan" current when a stage changes state.
 - Before a PR the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
   (CMake build + unit tests + TSan suites + clang-tidy gate; SKIP_TESTS=1 / SKIP_TSAN=1 / SKIP_TIDY=1 to narrow it.)
-  On a tidy failure the per-file logs are in build/tidy/src/<path>.log. The tidy gate runs
-  the TUs in parallel (TIDY_JOBS=N, default by MemAvailable) with an exact result cache in build/tidy-cache
-  (TIDY_NO_CACHE=1 disables it); README, Build.
+  The tidy gate has two passes (#43): main = system clang-tidy 11 with .clang-tidy (every check), then
+  cognitive = the pinned clang-tidy 23.1.4 in light_ai/venv with scripts/tidy_cognitive.yaml (cognitive
+  complexity only, Threshold 20). The gate never installs into the venv: a missing / other version fails at
+  once with the install command (README, Build). On a tidy failure the per-file logs are in
+  build/tidy/src/<path>.log (main) and build/tidy/cognitive/src/<path>.log. Both passes run the TUs in parallel
+  (TIDY_JOBS=N, default by MemAvailable) with an exact result cache in build/tidy-cache (TIDY_NO_CACHE=1
+  disables it); README, Build.
 - Unit tests alone: bash scripts/test.sh (host-side, no SDK; see README, Tests).
   One suite / a flake hunt: build/tests/light_ai_tests [substr...] [--repeat N] (also light_ai_tests_tsan;
   exit 2 on a bad argument; README, Tests, "Options").
@@ -147,7 +151,7 @@ keep "Migration plan" current when a stage changes state.
       then -S; driver live28.sh was a session scratch script. A/B logs: build/run28_{base,5a}_{2x1,net,drop}.log,
       build/run28_{base5b,5b}_{2x1,net}.log, build/run28_5b_drop.log, build/run28_{base5c,5c}_{2x1,net}.log,
       build/run28_5c_drop.log.
-- [ ] 6 Complex functions: YoloDecoder and BoxMapper as classes; KalmanAxis, Associator; split
+- [x] 6 Complex functions: YoloDecoder and BoxMapper as classes; KalmanAxis, Associator; split
       setup_device and GpuBoxDrawer::init. Goal: no function above cognitive complexity 20.
       Check: layer A -- bash tools/ref_replay.sh misc/ref_evening.mjpeg build/ref_p3.csv 3 reference/ref_evening.csv,
       and the same with pool 1 (~107 s each): PASS = cmp-identical, i.e. equal to 6 significant digits (the
@@ -168,7 +172,7 @@ keep "Migration plan" current when a stage changes state.
       MppDecoder::retrieve_output and RgaResizer::resize in steps; MppDecoder and RgaResizer on Log): branch
       refactor/stage6e2-capture, merged (PR #47). 6e3 (H264Encoder::drain, NetPreview::serve + NetPreview on Log, the
       function-size thresholds to lines 90 / statements 60 / branches 11 / nesting 4 / variables 14): branch
-      refactor/stage6e3-output, PR #50 (closes #39). 6e3 logs (base binary build/light_ai_base6e2: the output side
+      refactor/stage6e3-output, merged (PR #50); #39 closed: stage 6 done. 6e3 logs (base binary build/light_ai_base6e2: the output side
       is unchanged from fix/audit-p0 @ 5e4d9d3): build/run6e3_{base,new}_{h264,udp,raw}.log, viewers .v1.log / .v2.log;
       driver live6e3.sh (session scratch, not in git): no viewer 0-10 s, ffmpeg pull 10-16 s, a second one through SIGINT.
       A UDP ffmpeg input never sees EOF: `timeout` alone does not end it, kill it after the run.
@@ -182,9 +186,10 @@ keep "Migration plan" current when a stage changes state.
       6e1 logs: build/run6e1_{base,new}_{pool3,nosig}.log, frames build/6e1_{base,new}_nosig.png (byte-identical),
       layer A build/ref6e1_p{3,1}.{csv,log,out}. NO SIGNAL check: light-usb-replug off /dev/video20 prints
       "usb_replug: <busid> off (...)" -- the busid is its 2nd field, not the whole line.
-      Cognitive complexity: the gate's clang-tidy 11 has no such check (LLVM 12+). Measure with the PyPI clang-tidy
-      (LLVM 23) in light_ai/venv (git-ignored): venv/bin/clang-tidy --quiet -p <copy of build/compile_commands.json
-      without -mtune=cortex-a76.cortex-a55> with Checks '-*,readability-function-cognitive-complexity', Threshold 20.
+      Cognitive complexity: clang-tidy 11 has no such check (LLVM 12+); since #43 the gate's second pass enforces it
+      (venv/bin/clang-tidy 23.1.4, --config-file=scripts/tidy_cognitive.yaml, Threshold 20). By hand (a list of
+      values, not only the findings): the same binary with -p <copy of build/compile_commands.json without
+      -mtune=cortex-a76.cortex-a55> and a config copy with Threshold 0.
       Baseline (4b97d21): associate 49, setup_device 44, collect_head 42, GpuBoxDrawer::init 36, Tracker::update 35,
       fill_trail_points 35, BoxSmoother::update 32; outside the targets: BitmapFont::stamp 33, CameraV4L2::dequeue 31,
       probe_jpeg_sof 29, ConsoleReporter::report 25, H264Encoder::drain 24, CliOptions::parse 23, NetMjpegSource::dequeue 22,
@@ -197,6 +202,14 @@ keep "Migration plan" current when a stage changes state.
       Open: an alive track whose trail ages out completely never gets trail points again (TrailWindow::feed resets
       the median window on every call while the ring is empty, not once); kept in 6b (a refactoring): issue #37, after
       stage 6.
+      After stage 6: #42 (parallel tidy gate + cache, PR #46) and #48 (NVMe checkout, PR #49) closed. #43 (tidy gate:
+      plan + decision in its comments 6897676300 / 6897763312): the full move to LLVM 23 dropped (~1870 findings,
+      almost all style or against the project rules; measurement logs build/tidy43/); the gate stays on clang-tidy 11
+      plus a cognitive-only LLVM 23 pass. 43a (the second pass, the cache key with the --config-file bytes, the
+      empty-list guard, widening / std::forward fixes from the LLVM 23 list): branch ci/issue43-tidy23, PR #52.
+      43a logs: build/tidy43/{cold,warm}.log, layer A build/ref43_p{3,1}.*, live (base binary build/light_ai_base43 =
+      fix/audit-p0 @ 0dc8c86) build/run43_{base,new}_{pool3,gpu,cpu,replug}.log, frames build/43_*.png. 43b (tests/
+      under both passes, tests/.clang-tidy, the test fixes): next, closes #43.
 - [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
       Check: runs with a wrong model, a busy port, a missing camera.
 Out of scope: light_control, light_sensor, tools/, scripts/.
