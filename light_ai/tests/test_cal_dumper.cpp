@@ -46,24 +46,30 @@ namespace
         return "P6\n" + std::to_string( kW ) + ' ' + std::to_string( kH ) + "\n255\n" + std::string( px.begin(), px.end() );
     }
 
-    std::vector<uint8_t> pixels()
+    // The "tensor" of frame seed: different bytes per frame, so a file proves
+    // which frame it holds.
+    std::vector<uint8_t> pixels( int seed = 0 )
     {
         std::vector<uint8_t> px( kBytes );
         for ( size_t i = 0; i < px.size(); ++i )
-            px[i] = static_cast<uint8_t>( i * 7 + 1 );
+            px[i] = static_cast<uint8_t>( i * 7 + 1 + static_cast<size_t>( seed ) * 31 );
         return px;
     }
 
     void check_paths( TestRun& t )
     {
-        CHECK_STR_EQ( t, cal_dump_path( cal_of( true, 0, 15, "" ), 0 ), "build/cal.ppm" );
-        CHECK_STR_EQ( t, cal_dump_path( cal_of( true, 0, 15, "" ), 42 ), "build/cal.ppm" );  // one file, any frame
-        CHECK_STR_EQ( t, cal_dump_path( cal_of( true, 0, 15, "out/x" ), 7 ), "out/x/cal.ppm" );
-        CHECK_STR_EQ( t, cal_dump_path( cal_of( false, 5, 15, "" ), 0 ), "dataset/cal_0000.ppm" );
-        CHECK_STR_EQ( t, cal_dump_path( cal_of( false, 5, 15, "" ), 45 ), "dataset/cal_0045.ppm" );
-        CHECK_STR_EQ( t, cal_dump_path( cal_of( false, 5, 15, "out/x" ), 12345 ), "out/x/cal_12345.ppm" );
-        // --dump-cal with --cal: the single-shot path wins (the precedence of today).
-        CHECK_STR_EQ( t, cal_dump_path( cal_of( true, 5, 15, "" ), 30 ), "build/cal.ppm" );
+        const CalKind one = CalKind::Single;
+        const CalKind ser = CalKind::Series;
+        CHECK_STR_EQ( t, cal_dump_path( cal_of( true, 0, 15, "" ), one, 0 ), "build/cal.ppm" );
+        CHECK_STR_EQ( t, cal_dump_path( cal_of( true, 0, 15, "" ), one, 42 ), "build/cal.ppm" );  // one file, any frame
+        CHECK_STR_EQ( t, cal_dump_path( cal_of( true, 0, 15, "out/x" ), one, 7 ), "out/x/cal.ppm" );
+        CHECK_STR_EQ( t, cal_dump_path( cal_of( false, 5, 15, "" ), ser, 0 ), "dataset/cal_0000.ppm" );
+        CHECK_STR_EQ( t, cal_dump_path( cal_of( false, 5, 15, "" ), ser, 45 ), "dataset/cal_0045.ppm" );
+        CHECK_STR_EQ( t, cal_dump_path( cal_of( false, 5, 15, "out/x" ), ser, 12345 ), "out/x/cal_12345.ppm" );
+        // The kind picks the path, not dump_one: with both options each has its own.
+        CHECK_STR_EQ( t, cal_dump_path( cal_of( true, 5, 15, "" ), one, 30 ), "build/cal.ppm" );
+        CHECK_STR_EQ( t, cal_dump_path( cal_of( true, 5, 15, "" ), ser, 30 ), "dataset/cal_0030.ppm" );
+        CHECK_STR_EQ( t, cal_dump_path( cal_of( true, 5, 15, "out/x" ), ser, 30 ), "out/x/cal_0030.ppm" );
     }
 
     void check_single_shot( TestRun& t, const std::string& dir )
@@ -100,10 +106,39 @@ namespace
         CHECK( t, out.str().empty() && err.str().empty() );  // the series is silent
     }
 
+    // --dump-cal --cal 3 --cal-interval 2 over frames 0..9: the single file is
+    // frame 0, the series is frames 0, 2, 4; neither overwrites the other.
+    void check_both( TestRun& t, const std::string& dir )
+    {
+        const std::string sub = dir + "/both";
+        std::filesystem::create_directories( sub );
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        CalDumper d( log );
+        d.init( cal_of( true, 3, 2, sub ), kW, kH );
+        for ( int f = 0; f < 10; ++f )
+        {
+            const std::vector<uint8_t> px = pixels( f );
+            d.maybe( f, -1, px.data(), px.size() );
+        }
+        CHECK_STR_EQ( t, read_file( sub + "/cal.ppm" ), ppm_of( pixels( 0 ) ) );
+        CHECK_STR_EQ( t, read_file( sub + "/cal_0000.ppm" ), ppm_of( pixels( 0 ) ) );
+        CHECK_STR_EQ( t, read_file( sub + "/cal_0002.ppm" ), ppm_of( pixels( 2 ) ) );
+        CHECK_STR_EQ( t, read_file( sub + "/cal_0004.ppm" ), ppm_of( pixels( 4 ) ) );
+        CHECK( t, !std::filesystem::exists( sub + "/cal_0006.ppm" ) );  // the cap: 3 files
+        int files = 0;
+        for ( const auto& e : std::filesystem::directory_iterator( sub ) )
+            files += e.is_regular_file() ? 1 : 0;
+        CHECK_EQ( t, files, 4 );
+        CHECK_STR_EQ( t, out.str(), "calibration dump: " + sub + "/cal.ppm (4x2)\n" );
+        CHECK( t, err.str().empty() );
+    }
+
     void check_failures( TestRun& t, const std::string& dir )
     {
         const std::vector<uint8_t> px = pixels();
-        // A short tensor: nothing is written, one error line with the path.
+        // A short tensor with both kinds: nothing usable is written, one error line per kind, no retries.
         {
             std::ostringstream out;
             std::ostringstream err;
@@ -111,25 +146,46 @@ namespace
             CalDumper d( log );
             const std::string sub = dir + "/short";
             std::filesystem::create_directories( sub );
-            d.init( cal_of( true, 0, 15, sub ), kW, kH );
+            d.init( cal_of( true, 3, 2, sub ), kW, kH );
             for ( int f = 0; f < 20; ++f )
                 d.maybe( f, -1, px.data(), px.size() - 1 );
             CHECK( t, out.str().empty() );
-            CHECK_STR_EQ( t, err.str(), "calibration dump failed: " + sub + "/cal.ppm\n" );
+            CHECK_STR_EQ( t, err.str(),
+                          "calibration dump failed: " + sub + "/cal.ppm\n"
+                          "calibration dump failed: " + sub + "/cal_0000.ppm\n" );
         }
-        // A missing directory (the dumper does not create it): the same line, once.
+        // A missing directory (the dumper does not create it): the same, once per kind.
         {
             std::ostringstream out;
             std::ostringstream err;
             const Log log( out, err );
             CalDumper d( log );
             const std::string missing = dir + "/no_such_dir";
-            d.init( cal_of( true, 0, 15, missing ), kW, kH );
+            d.init( cal_of( true, 3, 2, missing ), kW, kH );
             for ( int f = 0; f < 20; ++f )
                 d.maybe( f, -1, px.data(), px.size() );
             CHECK( t, out.str().empty() );
-            CHECK_STR_EQ( t, err.str(), "calibration dump failed: " + missing + "/cal.ppm\n" );
+            CHECK_STR_EQ( t, err.str(),
+                          "calibration dump failed: " + missing + "/cal.ppm\n"
+                          "calibration dump failed: " + missing + "/cal_0000.ppm\n" );
             CHECK( t, !std::filesystem::exists( missing ) );
+        }
+        // A broken series next to a working single shot: the series file path is a
+        // directory (cannot be opened as a file), the single file is still written.
+        {
+            std::ostringstream out;
+            std::ostringstream err;
+            const Log log( out, err );
+            CalDumper d( log );
+            const std::string sub = dir + "/half";
+            std::filesystem::create_directories( sub + "/cal_0000.ppm" );
+            d.init( cal_of( true, 3, 2, sub ), kW, kH );
+            for ( int f = 0; f < 10; ++f )
+                d.maybe( f, -1, px.data(), px.size() );
+            CHECK_STR_EQ( t, read_file( sub + "/cal.ppm" ), ppm_of( px ) );
+            CHECK_STR_EQ( t, out.str(), "calibration dump: " + sub + "/cal.ppm (4x2)\n" );
+            CHECK_STR_EQ( t, err.str(), "calibration dump failed: " + sub + "/cal_0000.ppm\n" );
+            CHECK( t, !std::filesystem::exists( sub + "/cal_0002.ppm" ) );  // the series stopped
         }
     }
 }  // namespace
@@ -145,6 +201,7 @@ void test_cal_dumper( TestRun& t )
     CHECK( t, !ec );
     check_single_shot( t, dir );
     check_series( t, dir );
+    check_both( t, dir );
     check_failures( t, dir );
     std::filesystem::remove_all( dir, ec );
 }

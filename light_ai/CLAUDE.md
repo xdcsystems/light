@@ -223,6 +223,9 @@ keep "Migration plan" current when a stage changes state.
       rknn_engine / cal_dumper unchanged since): build/run51_{base,new_dump,new_caldir}.log, model lines
       build/run51_{base,new}.model.txt (identical), /tmp listings build/tmp51_{before,after}.txt (identical). A sudo run
       leaves build/cal.ppm root-owned: hence the chown rule under "Live run".
+      #55 (plan + OK in its comments): --dump-cal and --cal N independent (CalKind, separate state; a failed write
+      logs once per kind and stops only that kind). Branch fix/issue55-cal-kinds. Live log build/run55_both.log
+      (--dump-cal --cal 3 --cal-interval 30 --cal-dir build/cal_both: 4 files), /tmp listings build/tmp55_{before,after}.txt.
 - [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
       Check: runs with a wrong model, a busy port, a missing camera.
 Out of scope: light_control, light_sensor, tools/, scripts/.
