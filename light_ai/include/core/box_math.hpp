@@ -7,7 +7,7 @@
 // association/spawn, BoxSmoother matching, YOLOv5 NMS).
 // Two box representations exist in the project, and both are kept:
 //   - xywh (top-left corner + size): Detection, BoxTrack;
-//   - corners (x1,y1,x2,y2): the NMS candidate Box in yolo_postprocess.
+//   - corners (x1,y1,x2,y2): the NMS candidate Box in YoloDecoder.
 // The degenerate-union guards differ deliberately:
 //   - box_iou returns 0.0f on an empty intersection (tracker/smooth
 //     contract, unchanged);

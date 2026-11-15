@@ -25,8 +25,11 @@
 //     int set_core_mask( unsigned );  // 0 = ok; 1/2/4 = NPU core 0/1/2
 //     int run() const;                // one inference on the input tensor, 0 = ok
 //     int input_fd() const; void* input_data() const; uint32_t input_size() const;
-//   Decode: copyable, callable concurrently from all workers:
-//     void operator()( const Engine&, const InferJob&, DetList& out ) const;
+//   Decode: copy-constructible; the pool keeps one copy per worker and
+//     worker k calls only its own copy, so a Decode may keep preallocated
+//     per-frame state (YoloDecode: the candidate buffer) and is never called
+//     concurrently on one instance:
+//     void operator()( const Engine&, const InferJob&, DetList& out );
 //
 // Destruction closes every slot and joins the workers before the engines
 // die. A worker blocked inside a wedged rknn_run keeps the destructor
@@ -41,7 +44,6 @@
 #include <ios>
 #include <stdexcept>
 #include <thread>
-#include <utility>
 #include <vector>
 
 #include "config/config.hpp"  // InferConfig
@@ -71,9 +73,9 @@ public:
     // their I/O, pins them to NPU cores and starts the workers.
     // Throws std::runtime_error on any failure; nothing is left running then.
     template <typename... EngineArgs>
-    InferencePool( const InferConfig& cfg, Decode decode, const Log& log, PoolOptions opts,
+    InferencePool( const InferConfig& cfg, const Decode& decode, const Log& log, PoolOptions opts,
                    const EngineArgs&... engine_args )
-      : decode_( std::move( decode ) ), log_( log ), opts_( opts ), n_( cfg.pool >= kMaxSlots ? kMaxSlots : 1 )
+      : decoders_ { { decode, decode, decode } }, log_( log ), opts_( opts ), n_( cfg.pool >= kMaxSlots ? kMaxSlots : 1 )
     {
         engines_.reserve( static_cast<size_t>( n_ ) );  // never reallocates after: &engines_[k] stays valid
         for ( int k = 0; k < n_; ++k )
@@ -254,14 +256,15 @@ private:
         if ( opts_.pin_workers )
             pin_current_thread_to_big_cores( "npu worker", log_ );
         const Engine& eng = engines_[static_cast<size_t>( k )];
+        Decode& dec = decoders_[static_cast<size_t>( k )];
         InferSlot& slot = slots_[static_cast<size_t>( k )];
-        while ( slot.serve( [this, &eng]( const InferJob& job, InferOutput& out ) { run_job( eng, job, out ); } ) )
+        while ( slot.serve( [this, &eng, &dec]( const InferJob& job, InferOutput& out ) { run_job( eng, dec, job, out ); } ) )
         {
         }
     }
 
     // One job on the worker thread: inference, then the postprocess.
-    void run_job( const Engine& eng, const InferJob& job, InferOutput& out ) const
+    void run_job( const Engine& eng, Decode& dec, const InferJob& job, InferOutput& out ) const
     {
         out.dets.clear();
         out.npu_ok = false;
@@ -275,13 +278,14 @@ private:
         if ( !ran )
             return;
         const auto t1 = Timings::clk::now();
-        decode_( eng, job, out.dets );
+        dec( eng, job, out.dets );
         out.post_ms = ms( t1, Timings::clk::now() );
         out.npu_ok = true;
     }
 
 private:
-    const Decode decode_;
+    static_assert( kMaxSlots == 3, "decoders_ is initialized with one copy per slot" );
+    std::array<Decode, kMaxSlots> decoders_;  // one per worker: worker k touches only decoders_[k]
     const Log& log_;
     const PoolOptions opts_;
     const int n_;
