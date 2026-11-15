@@ -7,6 +7,8 @@
 #include <rockchip/mpp_frame.h>
 #include <rockchip/mpp_packet.h>
 
+class Log;
+
 class MppDecoder
 {
     // Bounded MPP polls: a wedged decoder must not hang the pipeline
@@ -21,7 +23,8 @@ class MppDecoder
 public:
     // w/h come from the active source (camera G_FMT or network JPEG SOF):
     // the pre-allocated output buffer matches the actual stream size.
-    MppDecoder() = default;
+    // Diagnostics go to log: the chroma switch to its `out` stream, the rest to `err`.
+    explicit MppDecoder( const Log& log ) : log_( log ) {}
     ~MppDecoder();
     MppDecoder( const MppDecoder& ) = delete;
     MppDecoder& operator=( const MppDecoder& ) = delete;
@@ -51,6 +54,12 @@ private:
     int submit_input();
     int retrieve_output();
     void reset_and_strip();
+    // The steps of retrieve_output(), on the decode() caller's thread like the
+    // whole class: the output task (0, -6, -7), the info_change frame (-1, -8),
+    // the fd of a decoded frame (-1: no frame, errinfo / discard, no buffer).
+    int take_output_task( MppTask& task );
+    int apply_info_change( MppFrame f, MppTask task );
+    int frame_fd( MppFrame f ) const;
 
     // Packet teardown mechanics. Deinit is legal only at points where
     // the decoder provably holds no reference --
@@ -66,6 +75,7 @@ private:
     }
 
 private:
+    const Log& log_;
     MppCtx ctx_ = nullptr;
     MppApi* mpi_ = nullptr;
     MppBufferGroup out_group_ = nullptr;

@@ -31,7 +31,7 @@
 //     int dequeue( uint32_t* size, int* err, int timeout_ms );   // buffer index or -1 + errno
 //     void requeue( int idx ); void* buffer( int idx ) const;
 //     int width() const; int height() const; void teardown();
-//   Dec: default-constructible (production);
+//   Dec: explicit Dec( const Log& ) (production);
 //     int init( int w, int h );                    // 0 = ok; self-cleans on failure
 //     int decode( const uint8_t* data, size_t n );  // dma-buf fd, < 0 = no frame
 //     int aux_fd( size_t bytes );                   // fd or -1; lives as long as the decoder
@@ -81,7 +81,7 @@ public:
         AuxFailed       // two-pass aux buffer allocation failed
     };
 
-    explicit BasicSourceChannel( const Log& log ) : log_( log ), src_( log ) {}
+    explicit BasicSourceChannel( const Log& log ) : log_( log ), src_( log ), dec_( log ) {}
     // Tests: hands each fake its control block (Src( log, sa ), Dec( da )).
     template <class SrcArg, class DecArg>
     BasicSourceChannel( const Log& log, SrcArg& sa, DecArg& da ) : log_( log ), src_( log, sa ), dec_( da )
@@ -273,7 +273,7 @@ private:
 private:
     const Log& log_;
     Src src_;  // declared before dec_: the decoder dies first, as in the old SourceSlot
-    Dec dec_ {};
+    Dec dec_;
     std::atomic<State> state_ { State::NeverAttached };
     std::atomic<clk::time_point> last_ok_ {};  // last good dequeue: the stall detector's clock
 
