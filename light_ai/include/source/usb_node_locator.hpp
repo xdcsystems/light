@@ -46,7 +46,7 @@ public:
     // preferred one (it just failed above; the next attach retries it) and
     // whose trial passes. Returns 0 and fills out, -1 when nothing is usable.
     template <class Trial>
-    int locate( const std::string& preferred, const NodeList& busy, Trial&& trial, std::string& out )
+    int locate( const std::string& preferred, const NodeList& busy, Trial& trial, std::string& out )
     {
         std::string why;
         if ( !preferred.empty() && !node_listed( busy, preferred ) && host_.exists( preferred ) )

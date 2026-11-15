@@ -85,5 +85,5 @@ private:
     bool gate( int round, const Detection& d, const TrackBox& t, float& iou ) const;
 
 private:
-    std::array<IouPair, kMaxDets * kMaxTracks> pairs_ {};
+    std::array<IouPair, static_cast<std::size_t>( kMaxDets ) * kMaxTracks> pairs_ {};
 };

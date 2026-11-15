@@ -62,7 +62,7 @@ private:
         // Preallocated draw() staging buffer, not a per-call stack array.
         // Typed: one slot per vertex of the batched VBO
         // (GpuBoxList cap x kVertsPerBox; see BatchVert above).
-        std::array<BatchVert, GpuBoxList::cap * kVertsPerBox> vstage {};
+        std::array<BatchVert, static_cast<std::size_t>( GpuBoxList::cap ) * kVertsPerBox> vstage {};
 
         // Per-slot import cache. Geometry (w/h/stride) is shared across
         // slots, only the dma-buf fd differs.

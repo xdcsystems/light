@@ -41,7 +41,7 @@ namespace
             const int x1 = std::max( x0, std::clamp( static_cast<int>( std::ceil( b.x1 ) ) - 1, 0, w - 1 ) );
             const int y1 = std::max( y0, std::clamp( static_cast<int>( std::ceil( b.y1 ) ) - 1, 0, h - 1 ) );
             auto put = [&]( int x, int y ) {
-                uint8_t* px = rgb + static_cast<size_t>( y ) * stride + x * 3;
+                uint8_t* px = rgb + static_cast<size_t>( y ) * stride + static_cast<std::ptrdiff_t>( x ) * 3;
                 const unsigned a = b.a;
                 if ( a >= 255 )
                 {
