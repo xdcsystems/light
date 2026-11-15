@@ -14,14 +14,12 @@ extern "C"
 
 #include "av_common.hpp"  // av_noop_free
 #include "net/encoder_frame_pool.hpp"
-
+#include "throw_on.hpp"
 EncoderFramePool::EncoderFramePool( const StreamLayout& layout )
 {
-    // Alloc failures throw from here (fail loud, RknnEngine pattern); the
+    // A failed alloc throws via throw_on (fail loud, RknnEngine pattern); the
     // dma-buf pool has already self-cleaned by then.
-    std::string why;
-    if ( !ring_.alloc( static_cast<size_t>( layout.w ) * layout.vstride * 3 / 2, MODULE_TAG, __FUNCTION__, &why ) )
-        throw std::runtime_error( "net encoder: " + why );
+    throw_on( ring_.alloc( static_cast<size_t>( layout.w ) * layout.vstride * 3 / 2, MODULE_TAG, __FUNCTION__ ), "net encoder" );
 
     for ( int i = 0; i < kSlots; ++i )
     {

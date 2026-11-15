@@ -12,7 +12,7 @@
 #include "dma_sync.hpp"
 #include "net/encoder_frame_pool.hpp"
 #include "net/frame_composer.hpp"
-
+#include "throw_on.hpp"
 namespace
 {
     // Explicit strides: the VU plane lands at w * vstride -- exactly where
@@ -113,13 +113,10 @@ FrameComposer::FrameComposer( const EncoderConfig& cfg, const Log& log )
     // Both canvases are gray-filled by the pool alloc. Alloc failures throw
     // (fail loud at startup); a pool that failed has already self-cleaned.
     const size_t bytes = static_cast<size_t>( lay_.w ) * lay_.vstride * 3 / 2;
-    std::string why;
-    if ( !canvas_.alloc( bytes, MODULE_TAG, __FUNCTION__, &why ) )
-        throw std::runtime_error( "net encoder: canvas: " + why );
+    throw_on( canvas_.alloc( bytes, MODULE_TAG, __FUNCTION__ ), "net encoder: canvas" );
     // Idle canvas (NO SIGNAL): stamped with the plate in every tile, once.
     // compose_idle() RGA-copies from it -- the NPU tensor is never touched.
-    if ( !idle_.alloc( bytes, MODULE_TAG, __FUNCTION__, &why ) )
-        throw std::runtime_error( "net encoder: idle canvas: " + why );
+    throw_on( idle_.alloc( bytes, MODULE_TAG, __FUNCTION__ ), "net encoder: idle canvas" );
     draw_no_signal( idle_.buf[0], lay_ );
 }
 
