@@ -6,8 +6,6 @@
 //   CHECK_STR_EQ( t, a, b )     - std::string / const char* equality; on failure prints both texts
 //                                 quoted and escaped (\n, \t, ...) and the index of the first difference;
 //   CHECK_NEAR( t, a, b, eps )  - |a - b| <= eps, for float results; on failure prints both values and |a - b|;
-//   QuietStreams q;             - mutes std::cout/std::cerr for the scope
-//                                 (error-path tests print loud rejections by design).
 // Every macro argument is evaluated exactly once. CHECK_EQ compares const A& with const B&: pass matching
 // types (int vs size_t warns with -Wsign-compare inside the template). A type with no operator<< stays CHECK.
 // A TestRun reports to the stream it is given (std::cerr by default; the harness self-test passes an ostringstream).
@@ -200,28 +198,6 @@ private:
     std::ostream& out_;
     int checks_ = 0;
     int failures_ = 0;
-};
-
-class QuietStreams
-{
-public:
-    QuietStreams()
-      : old_err_( std::cerr.rdbuf( sink_.rdbuf() ) )
-      , old_out_( std::cout.rdbuf( sink_.rdbuf() ) )
-    {
-    }
-    ~QuietStreams()
-    {
-        std::cerr.rdbuf( old_err_ );
-        std::cout.rdbuf( old_out_ );
-    }
-    QuietStreams( const QuietStreams& ) = delete;
-    QuietStreams& operator=( const QuietStreams& ) = delete;
-
-private:
-    std::ostringstream sink_;
-    std::streambuf* old_err_;
-    std::streambuf* old_out_;
 };
 
 #define CHECK( t, cond ) ( t ).check( ( cond ), #cond, __FILE__, __LINE__ )
