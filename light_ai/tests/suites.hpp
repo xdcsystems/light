@@ -20,6 +20,7 @@ void test_mjpeg_slot_pool( TestRun& t );
 void test_net_mjpeg_source( TestRun& t );
 void test_box_smoother( TestRun& t );
 void test_kalman_axis( TestRun& t );
+void test_associator( TestRun& t );
 void test_tracker( TestRun& t );
 void test_box_mapper( TestRun& t );
 void test_reference_chain( TestRun& t );
