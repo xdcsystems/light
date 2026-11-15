@@ -206,7 +206,9 @@ keep "Migration plan" current when a stage changes state.
       plan + decision in its comments 6897676300 / 6897763312): the full move to LLVM 23 dropped (~1870 findings,
       almost all style or against the project rules; measurement logs build/tidy43/); the gate stays on clang-tidy 11
       plus a cognitive-only LLVM 23 pass. 43a (the second pass, the cache key with the --config-file bytes, the
-      empty-list guard, widening / std::forward fixes from the LLVM 23 list): branch ci/issue43-tidy23. 43b (tests/
+      empty-list guard, widening / std::forward fixes from the LLVM 23 list): branch ci/issue43-tidy23, PR #52.
+      43a logs: build/tidy43/{cold,warm}.log, layer A build/ref43_p{3,1}.*, live (base binary build/light_ai_base43 =
+      fix/audit-p0 @ 0dc8c86) build/run43_{base,new}_{pool3,gpu,cpu,replug}.log, frames build/43_*.png. 43b (tests/
       under both passes, tests/.clang-tidy, the test fixes): next, closes #43.
 - [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
       Check: runs with a wrong model, a busy port, a missing camera.
