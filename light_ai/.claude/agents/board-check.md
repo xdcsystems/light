@@ -53,6 +53,15 @@ Logs are long: use tail and grep, never read a whole log.
 - Run: the TOTAL / FPS summary lines at the end, plus every line with
   `warn`, `error`, `gave up`, `pubfifo`, `pool:`, `detached`.
 
+## Delivering the report (SubagentHandback)
+The report goes to the main session through SubagentHandback({message: <the report>}), and that
+call ENDS your run: nothing after it is seen, and no tool result that arrives after it reaches anyone.
+- Call it alone, in a message of its own, as your very last action, only after every tool result
+  you need is back. Never in the same message as another tool call (a parallel Bash + handback ends
+  the run before the Bash output exists).
+- Its message is the finished report with the real figures from the logs. Never a placeholder,
+  a draft or "see above": the main session sees only this text.
+
 ## Report (keep it short -- the main session pays for every line)
 1. Verdict: PASS or FAIL, per gate (build / tests / tidy / run).
 2. For a FAIL: file:line, the error text, the relevant context lines. No guesses
