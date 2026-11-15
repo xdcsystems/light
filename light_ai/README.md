@@ -792,6 +792,23 @@ the model stays yolov5s @ 640x640. Follow-up: v4 recalibration on a
 Gates, in order: build, unit tests (SKIP_TESTS=1 to skip), clang-tidy
 (SKIP_TIDY=1 to skip). A failed gate rejects the build.
 
+The clang-tidy gate (scripts/tidy_run.sh) runs one clang-tidy 11 per TU of src/, the TUs in
+parallel, slowest first (by the last measured time, then by size), each under a 600 s timeout:
+- Jobs: TIDY_JOBS=N, by default min(nproc, MemAvailable / 400 MB) -- one clang-tidy peaks at
+  ~330 MB, so RAM is the limit on this board, not the cores. The first line of the gate prints
+  the job count and MemAvailable (an OOM kill shows up as rc=137 in HANGS.txt).
+- Logs: ${TMPDIR:-/tmp}/tidy/<TU path without .cpp>.log, a tree like src/ (src/net/h264_encoder.log),
+  HANGS.txt (timeouts and non-zero exits) there. One run at a time: a second run waits on a flock.
+- Result cache: ${TMPDIR:-/tmp}/tidy-cache, TIDY_NO_CACHE=1 disables it. The key
+  (scripts/tidy_cache.py) hashes the clang-tidy command line and version, the timeout, the TU's
+  compile command, every .clang-tidy up the tree, the `clang++-11 -E -CC` output of the TU and
+  the raw bytes of every file it includes: any edit of any included header re-runs exactly the
+  TUs that include it. A clean or findings result is stored; a timeout, crash, compile error, or
+  a TU whose key could not be made (`(no key)`) never is. Entries unused for 14 days are pruned.
+- Output: one line per finished TU (`tidy: <file> <seconds> s <findings>`), then the findings by
+  check, per file, hangs, the ten slowest TUs, `tidy: wall ... cache: N hits / M runs; size`, and
+  the verdict `tidy: PASS (0 findings)` / `tidy: FAIL -- findings: X, hangs/errors: Y`.
+
 ## Tests
     ./scripts/test.sh
 

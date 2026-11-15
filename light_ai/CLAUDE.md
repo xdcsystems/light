@@ -32,7 +32,9 @@ keep "Migration plan" current when a stage changes state.
 - Before a PR the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
   (CMake build + unit tests + TSan suites + clang-tidy gate; SKIP_TESTS=1 / SKIP_TSAN=1 / SKIP_TIDY=1 to narrow it.)
-  On a tidy failure the per-file logs are in /tmp/tidy/<file>.log.
+  On a tidy failure the per-file logs are in $TMPDIR/tidy/src/<path>.log (TMPDIR unset: /tmp/tidy). The tidy gate runs
+  the TUs in parallel (TIDY_JOBS=N, default by MemAvailable) with an exact result cache in $TMPDIR/tidy-cache
+  (TIDY_NO_CACHE=1 disables it); README, Build.
 - Unit tests alone: bash scripts/test.sh (host-side, no SDK; see README, Tests).
   One suite / a flake hunt: build/tests/light_ai_tests [substr...] [--repeat N] (also light_ai_tests_tsan;
   exit 2 on a bad argument; README, Tests, "Options").
