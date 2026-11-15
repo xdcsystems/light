@@ -457,7 +457,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
     glDisable( GL_DEPTH_TEST );
     // Alpha blending: the per-vertex alpha was uploaded
     // but ignored (blend disabled, the RGB888 FBO stores no alpha).
-    // Porter-Duff over: the trail fade from fill_gpu_boxes (255..60)
+    // Porter-Duff over: the trail fade from BoxMapper (255..1)
     // and the a = 255 detections render as computed. The context
     // belongs to this drawer alone, so leaving blending on between
     // draws is safe; every draw sets the state before drawing.

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "box_mapper.h"         // BoxMapper
 #include "core/detection.hpp"   // DetList
 #include "core/frame_view.hpp"  // FrameView, TensorSet
 #include "core/track.hpp"       // TrajList
@@ -58,6 +59,7 @@ private:
     std::optional<NetPreview> preview_ {};
     std::optional<NetEncoder> enc_ {};
     std::optional<GpuBoxDrawer> drawer_ {};
+    BoxMapper mapper_ {};
     GpuBoxList boxes_ {};
     int model_w_ = 0;
     int model_h_ = 0;

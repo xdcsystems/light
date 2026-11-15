@@ -10,7 +10,7 @@ detection output of today's code on a fixed clip, in two layers.
   dequeue time, which differs from run to run -- that is layer B.
 - **Layer B (host): the time-dependent part.** `tests/test_reference_chain.cpp`
   feeds a slice of the `raw` lines of `ref_evening.csv` with fixed timestamps
-  into BoxSmoother + Tracker + `fill_gpu_boxes` and compares with a golden file
+  into BoxSmoother + Tracker + `BoxMapper` (before stage 6c: `fill_gpu_boxes`) and compares with a golden file
   (tests/data/README). It runs in `scripts/test.sh`, so on every gate.
 
 ## What "identical" means in layer A

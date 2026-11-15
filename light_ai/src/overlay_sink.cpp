@@ -179,7 +179,7 @@ double OverlaySink::draw_and_publish( const FrameView& frame,
     const float sx = frame.lb.w / static_cast<float>( frame.src_w );
     const float sy = frame.lb.h / static_cast<float>( frame.src_h );
     boxes_.clear();
-    fill_gpu_boxes( dets, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
+    mapper_.fill( dets, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
     if ( boxes_.n > 0 )
     {
         if ( drawer_ )

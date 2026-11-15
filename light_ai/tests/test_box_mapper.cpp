@@ -29,9 +29,10 @@ void test_box_mapper( TestRun& t )
     const Tracker idle;  // no tracks: recent_points() serves nothing
     const TrajList no_tracks;
     GpuBoxList boxes;
+    BoxMapper mapper;
 
     // A non-person detection maps scene -> tensor: scale, then the band offset.
-    fill_gpu_boxes( one( 100, 200, 300, 400, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
+    mapper.fill( one( 100, 200, 300, 400, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
     CHECK( t, boxes.n == 1 );
     CHECK_NEAR( t, boxes.d[0].x0, 50.0f, 1e-4f );
     CHECK_NEAR( t, boxes.d[0].y0, 180.0f, 1e-4f );
@@ -39,21 +40,21 @@ void test_box_mapper( TestRun& t )
     CHECK_NEAR( t, boxes.d[0].y1, 380.0f, 1e-4f );
     CHECK( t, color( boxes.d[0], 64, 255, 64 ) && boxes.d[0].a == 255 );  // chair
 
-    fill_gpu_boxes( one( 100, 200, 300, 400, 2 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
+    mapper.fill( one( 100, 200, 300, 400, 2 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
     CHECK( t, boxes.n == 1 && color( boxes.d[0], 255, 255, 0 ) );  // any other class
 
     // Preallocated buffer contract: boxes is cleared at entry.
-    fill_gpu_boxes( DetList {}, no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
+    mapper.fill( DetList {}, no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
     CHECK( t, boxes.n == 0 );
 
     // Persons are drawn from the track list only, never from the detection list.
-    fill_gpu_boxes( one( 100, 200, 300, 400, 0 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
+    mapper.fill( one( 100, 200, 300, 400, 0 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
     CHECK( t, boxes.n == 0 );
 
     // A box fully outside the band is rejected; a partial one is clamped to the band.
-    fill_gpu_boxes( one( 2000, 200, 300, 400, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
+    mapper.fill( one( 2000, 200, 300, 400, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
     CHECK( t, boxes.n == 0 );
-    fill_gpu_boxes( one( -100, -100, 300, 300, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
+    mapper.fill( one( -100, -100, 300, 300, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
     CHECK( t, boxes.n == 1 );
     CHECK_NEAR( t, boxes.d[0].x0, 0.0f, 1e-4f );
     CHECK_NEAR( t, boxes.d[0].y0, 80.0f, 1e-4f );
@@ -61,14 +62,14 @@ void test_box_mapper( TestRun& t )
     CHECK_NEAR( t, boxes.d[0].y1, 180.0f, 1e-4f );
 
     // Thinner than 2 px in the tensor: rejected.
-    fill_gpu_boxes( one( 100, 200, 2, 400, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
+    mapper.fill( one( 100, 200, 2, 400, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
     CHECK( t, boxes.n == 0 );
 
     // A tentative track draws its box (person red) and no trail.
     {
         TrajList trajs;
         trajs.push( TrackState { 1, TRACK_TENT, 640.0f, 480.0f, 0.0f, 0.0f, 100.0f, 200.0f, 0 } );
-        fill_gpu_boxes( DetList {}, trajs, idle, boxes, kBand, kScale, kScale, 0 );
+        mapper.fill( DetList {}, trajs, idle, boxes, kBand, kScale, kScale, 0 );
         CHECK( t, boxes.n == 1 && color( boxes.d[0], 255, 64, 64 ) && boxes.d[0].a == 255 );
         CHECK_NEAR( t, boxes.d[0].x0, 295.0f, 1e-4f );
         CHECK_NEAR( t, boxes.d[0].y0, 270.0f, 1e-4f );
@@ -90,7 +91,7 @@ void test_box_mapper( TestRun& t )
             trk.update( dets, ts, trajs );
         }
         const int64_t now = ts - 40000;
-        fill_gpu_boxes( DetList {}, trajs, trk, boxes, kBand, kScale, kScale, now );
+        mapper.fill( DetList {}, trajs, trk, boxes, kBand, kScale, kScale, now );
         CHECK( t, boxes.n > 3 );
         CHECK( t, color( boxes.d[0], 255, 64, 64 ) );  // the track box
         bool dots_ok = true;
@@ -109,7 +110,7 @@ void test_box_mapper( TestRun& t )
         for ( int miss = 0; miss < 5; ++miss, ts += 40000 )
             trk.update( DetList {}, ts, trajs );
         CHECK( t, trajs.n == 1 && trajs.d[0].state == TRACK_DEAD );
-        fill_gpu_boxes( DetList {}, trajs, trk, boxes, kBand, kScale, kScale, ts - 40000 );
+        mapper.fill( DetList {}, trajs, trk, boxes, kBand, kScale, kScale, ts - 40000 );
         CHECK( t, boxes.n > 1 );
         CHECK( t, color( boxes.d[0], 0, 255, 255 ) );  // dots only
     }
@@ -121,7 +122,7 @@ void test_box_mapper( TestRun& t )
             many.push( Detection { 10.0f * static_cast<float>( i ), 200.0f, 8.0f, 8.0f, 56, 0.9f } );
         TrajList trajs;
         trajs.push( TrackState { 1, TRACK_TENT, 640.0f, 480.0f, 0.0f, 0.0f, 100.0f, 200.0f, 0 } );
-        fill_gpu_boxes( many, trajs, idle, boxes, kBand, kScale, kScale, 0 );
+        mapper.fill( many, trajs, idle, boxes, kBand, kScale, kScale, 0 );
         CHECK( t, boxes.n == 128 );
     }
 }
