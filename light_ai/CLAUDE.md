@@ -148,7 +148,8 @@ keep "Migration plan" current when a stage changes state.
       golden in stage 6). Tighten the clang-tidy thresholds.
       Issue #34 (plan + review in its comments), split 6a-6e. 6a (box_math.hpp to core/, fp16_to_float with an exact
       software path, YoloDecoder in core/, one decoder per pool worker): merged (PR #35). 6b (KalmanAxis, Associator,
-      TrailWindow in core/, the Tracker split; golden max |d| 0): the PR in review. 6c: BoxMapper, BoxSmoother, the dead DEAD-ghost-box branch. 6d: setup_device,
+      TrailWindow in core/, the Tracker split; golden max |d| 0): merged (PR #36). 6c (BoxMapper class, BoxSmoother
+      in steps + Log, the dead DEAD-ghost-box branch removed; golden max |d| 0): the PR in review. 6d: setup_device,
       GpuBoxDrawer::init, the thresholds. 6e (own issue, after 6d): the functions above 20 outside the six targets.
       Cognitive complexity: the gate's clang-tidy 11 has no such check (LLVM 12+). Measure with the PyPI clang-tidy
       (LLVM 23) in light_ai/venv (git-ignored): venv/bin/clang-tidy --quiet -p <copy of build/compile_commands.json
@@ -156,10 +157,11 @@ keep "Migration plan" current when a stage changes state.
       Baseline (4b97d21): associate 49, setup_device 44, collect_head 42, GpuBoxDrawer::init 36, Tracker::update 35,
       fill_trail_points 35, BoxSmoother::update 32; outside the targets: BitmapFont::stamp 33, CameraV4L2::dequeue 31,
       probe_jpeg_sof 29, ConsoleReporter::report 25, H264Encoder::drain 24, CliOptions::parse 23, NetMjpegSource::dequeue 22,
-      NetPreview::serve 21. After 6a: YoloDecoder max 10; after 6b: Tracker max 13 (Associator::match).
-      Layer A logs: build/ref6{a,b}_p{3,1}.{csv,log}.
+      NetPreview::serve 21. After 6a: YoloDecoder max 10; after 6b: Tracker max 13 (Associator::match); after 6c:
+      BoxMapper max 7, BoxSmoother max 14 (collect_pairs). Layer A logs: build/ref6{a,b,c}_p{3,1}.{csv,log}.
       Open: an alive track whose trail ages out completely never gets trail points again (TrailWindow::feed resets
-      the median window on every call while the ring is empty, not once); kept in 6b (a refactoring), a separate fix.
+      the median window on every call while the ring is empty, not once); kept in 6b (a refactoring): issue #37, after
+      stage 6.
 - [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
       Check: runs with a wrong model, a busy port, a missing camera.
 Out of scope: light_control, light_sensor, tools/, scripts/.
