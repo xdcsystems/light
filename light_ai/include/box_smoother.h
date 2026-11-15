@@ -4,7 +4,7 @@
 #include <fstream>
 #include <string>
 
-#include "box_math.hpp"
+#include "core/box_math.hpp"
 #include "core/detection.hpp"  // Detection, DetList
 
 // EMA smoothing of detection boxes.

@@ -93,7 +93,8 @@ post-processing.
                (include/core/, src/core/): LbGeom + band_geom
                (geometry.hpp), Detection / DetList (detection.hpp),
                TrackLife / TrajPoint / TrackState / TrajList (track.hpp),
-               GpuBox / GpuBoxList (gpu_box.hpp), StopFlag
+               GpuBox / GpuBoxList (gpu_box.hpp), box_iou /
+               box_iou_corners / greedy_iou_match (box_math.hpp), StopFlag
                (stop_flag.hpp), Log (log.hpp), TensorRef / TensorSet /
                FrameView (frame_view.hpp: what the output stage sees of
                an inferred frame). A consumer that needs

@@ -2,7 +2,7 @@
 #include <iostream>   // set_log failure note
 
 #include "box_smoother.h"
-#include "box_math.hpp"
+#include "core/box_math.hpp"
 
 void BoxSmoother::set_log( const std::string& path )
 {

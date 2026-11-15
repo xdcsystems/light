@@ -1,6 +1,6 @@
 #include <array>
 
-#include "box_math.hpp"
+#include "core/box_math.hpp"
 #include "check.hpp"
 #include "suites.hpp"
 

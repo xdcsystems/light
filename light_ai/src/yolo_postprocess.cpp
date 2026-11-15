@@ -7,7 +7,7 @@
 #include "core/geometry.hpp"  // LbGeom
 #include "infer_slot.hpp"     // InferJob
 #include "rknn_engine.hpp"
-#include "box_math.hpp"
+#include "core/box_math.hpp"
 
 namespace
 {
