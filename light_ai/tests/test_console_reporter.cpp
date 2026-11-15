@@ -1,54 +1,51 @@
-#include <iostream>
+#include <ios>
 #include <sstream>
 #include <string>
 
 #include "check.hpp"
 #include "console_reporter.h"
+#include "core/log.hpp"
 #include "suites.hpp"
 
 namespace
 {
-    // The reporter's stdout for the scope: std::cout redirected into a string.
-    class CoutCapture
-    {
-    public:
-        CoutCapture() : old_( std::cout.rdbuf( os_.rdbuf() ) ) {}
-        ~CoutCapture() { std::cout.rdbuf( old_ ); }
-        CoutCapture( const CoutCapture& ) = delete;
-        CoutCapture& operator=( const CoutCapture& ) = delete;
-        CoutCapture( CoutCapture&& ) = delete;
-        CoutCapture& operator=( CoutCapture&& ) = delete;
-        std::string str() const { return os_.str(); }
-
-    private:
-        std::ostringstream os_;
-        std::streambuf* old_;
-    };
-
     struct Out
     {
         std::string text;
         bool fmt_kept = false;  // the stream's flags and precision are as before the call
     };
 
+    // The reporter's info stream; warn / error must stay empty.
+    struct Streams
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        std::ios_base::fmtflags flags = out.flags();
+        std::streamsize prec = out.precision();
+
+        Out result() const
+        {
+            return { err.str().empty() ? out.str() : "unexpected warn/error: " + err.str(),
+                     out.flags() == flags && out.precision() == prec };
+        }
+    };
+
     Out report( int frame, const DetList& dets, const TrajList& trajs, int src_idx, int nsrc )
     {
-        const ConsoleReporter rep;
-        const CoutCapture cap;
-        const std::ios_base::fmtflags flags = std::cout.flags();
-        const std::streamsize prec = std::cout.precision();
+        Streams s;
+        const Log log( s.out, s.err );
+        const ConsoleReporter rep( log );
         rep.report( frame, dets, trajs, src_idx, nsrc );
-        return { cap.str(), std::cout.flags() == flags && std::cout.precision() == prec };
+        return s.result();
     }
 
     Out summary( int ok, double wall, int reconnects )
     {
-        const ConsoleReporter rep;
-        const CoutCapture cap;
-        const std::ios_base::fmtflags flags = std::cout.flags();
-        const std::streamsize prec = std::cout.precision();
+        Streams s;
+        const Log log( s.out, s.err );
+        const ConsoleReporter rep( log );
         rep.summary( ok, wall, reconnects );
-        return { cap.str(), std::cout.flags() == flags && std::cout.precision() == prec };
+        return s.result();
     }
 
     TrackState track( int id, TrackLife life, float cx, float cy, float vx, float vy, int n_pts )

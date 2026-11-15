@@ -1,68 +1,75 @@
-#include <iomanip>
-#include <iostream>
-
 #include "console_reporter.h"
 #include "coco_names.h"
+#include "core/fixed_fmt.hpp"
 
 namespace
 {
-    struct CoutFmtGuard
+    enum
     {
-        std::ios_base::fmtflags flags = std::cout.flags();
-        std::streamsize prec = std::cout.precision();
-        ~CoutFmtGuard()
-        {
-            std::cout.flags( flags );
-            std::cout.precision( prec );
-        }
+        kEvery = 15,  // report cadence, frames
+        kMaxEntries = 8  // tracks / boxes per report
     };
-}  // namespace
 
-void ConsoleReporter::report(
-    int frame, const DetList& dets, const TrajList& trajs, int src_idx, int nsrc ) const
-{
-    const CoutFmtGuard fmt_guard {};
-    // Throttled trajectory report: every 15th frame.
-    if ( trajs.n > 0 && frame % 15 == 0 )
+    const char* life_tag( TrackLife state )
     {
-        std::cout << "track " << frame;
-        if ( nsrc > 1 )
-            std::cout << " s" << src_idx;
-        std::cout << ": " << trajs.n << " track(s)\n";
-        for ( int k = 0; k < trajs.n && k < 8; ++k )
-        {
-            const TrackState& t = trajs.d[k];
-            const char* life_tag = ( t.state == TRACK_CONF )  ? " conf"
-                                   : ( t.state == TRACK_DEAD ) ? " dead"
-                                                                : " tent";
-            std::cout << "  id=" << t.id << life_tag
-                      << std::fixed << std::setprecision( 1 ) << " c=("
-                      << t.cx << ',' << t.cy << ") v=(" << t.vx << ',' << t.vy << ") pts=" << t.n_pts << '\n';
-        }
+        if ( state == TRACK_CONF )
+            return " conf";
+        if ( state == TRACK_DEAD )
+            return " dead";
+        return " tent";
     }
 
-    // Throttled report: every 15th frame, up to 8 boxes per report.
-    if ( dets.n > 0 && frame % 15 == 0 )
+    const char* cls_name( int cls )
     {
-        std::cout << "frame " << frame;
-        if ( nsrc > 1 )
-            std::cout << " s" << src_idx;
-        std::cout << ": " << dets.n << " det(s)\n";
-        for ( int k = 0; k < dets.n && k < 8; ++k )
-        {
-            const Detection& d = dets.d[k];
-            const char* cls_name = ( d.cls >= 0 && d.cls < 80 ) ? kCocoNames[d.cls] : "?";
-            std::cout << "  cls=" << cls_name << " conf=" << std::fixed << std::setprecision( 2 ) << d.conf << " box=("
-                      << d.x << ',' << d.y << ' ' << d.w << 'x' << d.h << ")\n";
-        }
+        return ( cls >= 0 && cls < 80 ) ? kCocoNames[cls] : "?";
+    }
+}  // namespace
+
+void ConsoleReporter::report( int frame, const DetList& dets, const TrajList& trajs, int src_idx, int nsrc ) const
+{
+    // Throttled: every 15th frame, trajectories first, then up to 8 boxes.
+    if ( frame % kEvery != 0 )
+        return;
+    if ( trajs.n > 0 )
+        report_tracks( frame, trajs, src_idx, nsrc );
+    if ( dets.n > 0 )
+        report_dets( frame, dets, src_idx, nsrc );
+}
+
+void ConsoleReporter::report_tracks( int frame, const TrajList& trajs, int src_idx, int nsrc ) const
+{
+    Log::Line line = log_.info();
+    line << "track " << frame;
+    if ( nsrc > 1 )
+        line << " s" << src_idx;
+    line << ": " << trajs.n << " track(s)\n";
+    for ( int k = 0; k < trajs.n && k < kMaxEntries; ++k )
+    {
+        const TrackState& t = trajs.d[k];
+        line << "  id=" << t.id << life_tag( t.state ) << " c=(" << Fixed { t.cx, 1 } << ',' << Fixed { t.cy, 1 } << ") v=("
+             << Fixed { t.vx, 1 } << ',' << Fixed { t.vy, 1 } << ") pts=" << t.n_pts << '\n';
+    }
+}
+
+void ConsoleReporter::report_dets( int frame, const DetList& dets, int src_idx, int nsrc ) const
+{
+    Log::Line line = log_.info();
+    line << "frame " << frame;
+    if ( nsrc > 1 )
+        line << " s" << src_idx;
+    line << ": " << dets.n << " det(s)\n";
+    for ( int k = 0; k < dets.n && k < kMaxEntries; ++k )
+    {
+        const Detection& d = dets.d[k];
+        line << "  cls=" << cls_name( d.cls ) << " conf=" << Fixed { d.conf, 2 } << " box=(" << Fixed { d.x, 2 } << ','
+             << Fixed { d.y, 2 } << ' ' << Fixed { d.w, 2 } << 'x' << Fixed { d.h, 2 } << ")\n";
     }
 }
 
 void ConsoleReporter::summary( int ok, double wall, int reconnects ) const
 {
-    const CoutFmtGuard fmt_guard {};
+    Log::Line line = log_.info();
     if ( reconnects > 0 )
-        std::cout << "camera disconnects recovered: " << reconnects << '\n';
-    std::cout << "Processed " << ok << " frames in " << std::fixed << std::setprecision( 3 ) << wall << " s -> "
-              << ( wall > 0 ? ok / wall : 0.0 ) << " FPS\n";
+        line << "camera disconnects recovered: " << reconnects << '\n';
+    line << "Processed " << ok << " frames in " << Fixed { wall, 3 } << " s -> " << Fixed { wall > 0 ? ok / wall : 0.0, 3 } << " FPS\n";
 }
