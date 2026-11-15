@@ -1,3 +1,5 @@
+#include <sstream>
+
 #include "box_smoother.h"
 #include "check.hpp"
 #include "suites.hpp"
@@ -94,5 +96,20 @@ void test_box_smoother( TestRun& t )
         CHECK( t, out.n == 2 );
         CHECK_NEAR( t, out.d[0].x, 130.0f, 1e-4f );  // lost the track: passes through
         CHECK_NEAR( t, out.d[1].x, 102.0f, 1e-4f );  // matched: smoothed
+    }
+    // set_log: an empty path is silent; an unopenable one is reported through
+    // the Log (warn) and the CSV stays off.
+    {
+        std::ostringstream lout;
+        std::ostringstream lerr;
+        const Log log( lout, lerr );
+        BoxSmoother sm;
+        sm.set_log( "", log );
+        CHECK( t, lerr.str().empty() );
+        sm.set_log( "/nonexistent-dir/box.csv", log );
+        CHECK( t, lerr.str() == "smoother: box-log open failed for '/nonexistent-dir/box.csv' - A/B logging disabled\n" );
+        DetList out;
+        sm.log_frame( 0, one( det( 1, 1, 1, 1, 0 ) ), out );  // no CSV open: a no-op
+        CHECK( t, lout.str().empty() );
     }
 }

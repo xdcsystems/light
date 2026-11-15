@@ -105,7 +105,7 @@ public:
     }
     // Async GPU draw: 1-px outlines for all boxes in ONE draw call
     // (batched VBO, per-vertex color), alpha-blended
-    // (Porter-Duff over; the trail fade in fill_gpu_boxes is the alpha source).
+    // (Porter-Duff over; the trail fade of BoxMapper is the alpha source).
     // Switching FBOs between slots is the only added cost vs the single-tensor path.
     void draw_slot( int slot, const GpuBox *boxes, int n );
     void draw( const GpuBox *boxes, int n )

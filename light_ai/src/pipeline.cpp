@@ -244,7 +244,7 @@ int Pipeline::run()
     prober.start();
     pin_current_thread_to_big_cores( "pipeline main", log_ );
     for ( int s = 0; s < srcs_.size(); ++s )
-        an_[s].smoother.set_log( source_box_log( cfg_.box_log, s, srcs_.size() ) );
+        an_[s].smoother.set_log( source_box_log( cfg_.box_log, s, srcs_.size() ), log_ );
     srcs_.reset_stall_clocks( t0_ );
     // frames == 0 (no --frames, the default): run until stop (Ctrl-C), then drain and report.
     for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.requested(); )

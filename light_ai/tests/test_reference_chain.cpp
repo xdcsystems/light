@@ -3,7 +3,7 @@
 // (tests/data/ref_evening_raw.csv, a slice of reference/ref_evening.csv) go through
 // the chain of Pipeline::publish_oldest() + OverlaySink with FIXED timestamps:
 //   BoxSmoother::update( raw -> sm ), Tracker::update( raw, ts -> tracks ),
-//   fill_gpu_boxes( sm, tracks, tracker, boxes, lb, sx, sy, ts ) at the production
+//   BoxMapper::fill( sm, tracks, tracker, boxes, lb, sx, sy, ts ) at the production
 //   geometry (1280x960 into the 640x640 model: band_geom, sx = lb.w / 1280).
 // Two synthetic segments follow, detections generated in code, each through a
 // fresh chain: "crossing" (two persons walk through each other, one occluded for
@@ -184,7 +184,7 @@ namespace
         {
             smoother_.update( raw, sm_ );
             tracker_.update( raw, ts, tracks_ );
-            fill_gpu_boxes( sm_, tracks_, tracker_, boxes_, lb_, sx_, sy_, ts );
+            mapper_.fill( sm_, tracks_, tracker_, boxes_, lb_, sx_, sy_, ts );
             if ( frames_ > 0 )
                 cover( prev_, tracks_, ts - prev_ts_, cov_ );
             prev_ = tracks_;
@@ -199,6 +199,7 @@ namespace
 
     private:
         BoxSmoother smoother_;
+        BoxMapper mapper_;
         Tracker tracker_;
         DetList sm_;
         TrajList tracks_;

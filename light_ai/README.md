@@ -55,7 +55,7 @@ post-processing.
   the frame path).
 - Branch tables over if-chains: a multi-way dispatch on a fixed set
   becomes a switch or a constexpr table, not a ladder. Reference:
-  det_color in box_mapper.cpp (switch).
+  BoxMapper::det_color in box_mapper.cpp (switch).
 - Preallocated buffer contract: a buffer that lives across frames
   (a member, not a local) is NEVER implicitly empty — the callee owns
   the reset and clears it at entry (DetList out.clear() in
@@ -284,10 +284,12 @@ post-processing.
                association: candidates, size and IoU gates, greedy
                matching) and TrailWindow (the ring, the median window
                and the step gate in front of it).
-- BoxMapper  : fill_gpu_boxes() maps smoothed detections and confirmed
-               trajectory trails into the 128-box GpuBoxList VBO
-               budget, clamped to the exact LbGeom band [left,
-               left+w] x [top, top+h].
+- BoxMapper  : BoxMapper::fill() (a member of OverlaySink) maps the
+               non-person smoothed detections, the track boxes (TENT /
+               CONF, from the Kalman posterior; a DEAD ghost draws no
+               box) and the trails (CONF tracks and DEAD ghosts, faded
+               by age) into the 128-box GpuBoxList VBO budget, clamped
+               to the exact LbGeom band [left, left+w] x [top, top+h].
 - CalDumper / ConsoleReporter / Timings : calibration PPM dumper
                (--dump-cal single frame, --cal N --cal-interval K
                series under --cal-dir, DMA-synced CPU read),
@@ -806,7 +808,7 @@ light_ai_tests, built into build/tests):
   values, the v clamp), Associator (candidates per round, both size gates,
   the IoU gates, skips, best-first order), TrailWindow (the full-window
   gate, the median, the step gate, eviction, recent(), the counter fold),
-  band_geom, jpeg_probe, BoxSmoother, Tracker, fill_gpu_boxes,
+  band_geom, jpeg_probe, BoxSmoother, Tracker, BoxMapper,
   CliOptions / OptionRegistry / ConfigFileLoader, ProcessEnv /
   SignalWaiter (signal delivery, SIGPIPE, armed and unarmed modes),
   Log (routing, threshold, whole lines across threads),
@@ -829,7 +831,7 @@ light_ai_tests, built into build/tests):
   EOF, refused heads), MjpegSlotPool. The reference chain (issue #32,
   reference/README.md, layer B): recorded raw detections of the
   reference clip with fixed timestamps through BoxSmoother + Tracker +
-  fill_gpu_boxes against a golden file (tests/data/README: the fixture,
+  BoxMapper against a golden file (tests/data/README: the fixture,
   the tolerances, LIGHT_AI_WRITE_GOLDEN=1), with its own coverage
   asserts (a dt clamp, a tentative death, a ghost, a trail eviction),
   plus two synthetic segments for the association: two persons
