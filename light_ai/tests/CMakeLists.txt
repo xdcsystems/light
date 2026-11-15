@@ -26,6 +26,7 @@ add_executable(light_ai_tests
     test_geometry.cpp
     test_jpeg_probe.cpp
     test_byte_window.cpp
+    test_status.cpp
     test_http_url.cpp
     test_http_head.cpp
     test_multipart_reader.cpp
@@ -68,6 +69,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/session_warmup.cpp
     ${LIGHT_AI_ROOT}/src/core/bitmap_font.cpp
     ${LIGHT_AI_ROOT}/src/core/idle_plate.cpp
+    ${LIGHT_AI_ROOT}/src/core/status.cpp
     ${LIGHT_AI_ROOT}/src/core/http_url.cpp
     ${LIGHT_AI_ROOT}/src/core/http_head.cpp
     ${LIGHT_AI_ROOT}/src/core/multipart_reader.cpp
@@ -119,6 +121,7 @@ add_executable(light_ai_tests_tsan EXCLUDE_FROM_ALL
     test_packet_queue.cpp
     test_session_gate.cpp
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
+    ${LIGHT_AI_ROOT}/src/core/status.cpp
 )
 target_include_directories(light_ai_tests_tsan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

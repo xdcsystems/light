@@ -18,6 +18,7 @@ int main( int argc, char** argv )
         { "geometry", &test_geometry },
         { "jpeg_probe", &test_jpeg_probe },
         { "byte_window", &test_byte_window },
+        { "status", &test_status },
         { "http_url", &test_http_url },
         { "http_head", &test_http_head },
         { "multipart_reader", &test_multipart_reader },
