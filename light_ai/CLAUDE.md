@@ -216,7 +216,7 @@ keep "Migration plan" current when a stage changes state.
       logs build/tidy43b/.
       #51 (plan + OK in its comments): RknnEngine and CalDumper on Log; --dump-cal writes build/cal.ppm (<cal-dir>/cal.ppm
       with --cal-dir, now accepted with --dump-cal alone); "calibration dump failed: <path>"; scripts/probe_yolo.py [PPM]
-      (rknnlite: run it with venv/bin/python). Branch refactor/issue51-log-tails. Logs (base binary build/light_ai_base43:
+      (rknnlite: run it with venv/bin/python). Branch refactor/issue51-log-tails, PR #56. Logs (base binary build/light_ai_base43:
       rknn_engine / cal_dumper unchanged since): build/run51_{base,new_dump,new_caldir}.log, model lines
       build/run51_{base,new}.model.txt (identical), /tmp listings build/tmp51_{before,after}.txt (identical). A sudo run
       leaves build/cal.ppm root-owned: a later non-root dump fails until it is removed.
