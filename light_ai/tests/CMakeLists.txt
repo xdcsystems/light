@@ -19,6 +19,7 @@ add_executable(light_ai_tests
     test_pod_containers.cpp
     test_box_math.cpp
     test_fp16.cpp
+    test_yolo_decoder.cpp
     test_geometry.cpp
     test_jpeg_probe.cpp
     test_byte_window.cpp
@@ -62,6 +63,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/http_url.cpp
     ${LIGHT_AI_ROOT}/src/core/http_head.cpp
     ${LIGHT_AI_ROOT}/src/core/multipart_reader.cpp
+    ${LIGHT_AI_ROOT}/src/core/yolo_decoder.cpp
     ${LIGHT_AI_ROOT}/src/source/buffered_socket.cpp
     ${LIGHT_AI_ROOT}/src/source/mjpeg_slot_pool.cpp
     ${LIGHT_AI_ROOT}/src/net_mjpeg_source.cpp
