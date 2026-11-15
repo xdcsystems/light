@@ -38,6 +38,7 @@ Status parse_http_url( const std::string& url, HttpUrl& out )
         const char* ps = hp.c_str() + colon + 1;
         errno = 0;
         char* end = nullptr;
+        errno = 0;  // strtol changes it only on overflow; a stale errno would reject a valid port
         const long pv = std::strtol( ps, &end, 10 );
         if ( errno != 0 || end == ps || *end != '\0' || pv < 1 || pv > 65535 )
             return invalid( "bad port in url" );
