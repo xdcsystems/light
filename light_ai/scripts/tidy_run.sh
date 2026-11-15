@@ -16,6 +16,7 @@ DB=build
 TMO=${1:-600}
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd -P)"
 PROJ_ROOT="$(cd "$HERE/.." && pwd -P)"
+cd "$PROJ_ROOT"       # the TU paths (src/...) and DB=build are relative to the project root
 OUT=$PROJ_ROOT/build/tidy
 TDB=$OUT/cc
 CACHE=$PROJ_ROOT/build/tidy-cache
@@ -118,12 +119,16 @@ export TIDY CLANGXX TMO OUT TDB CACHE HERE TIDY_NO_CACHE
 # the config/ TU from the gate.
 # Slowest first, so the tail is short: a TU never timed yet first (it may be slow), then by the last
 # measured time, descending; the line count breaks ties and orders the TUs of a cold cache.
-FILES=$(find src -name '*.cpp' | xargs wc -l | awk '$2!="total" {print $2, $1}' | while read -r f lines; do
+FILES=$(find src -name '*.cpp' | xargs -r wc -l | awk '$2!="total" {print $2, $1}' | while read -r f lines; do
   t=$(cat "$CACHE/times/$f" 2>/dev/null || echo inf)
   echo "$t $lines $f"
 done | sort -k1,1gr -k2,2nr | awk '{print $3}')
+if [ -z "$FILES" ]; then
+  echo "tidy: FAIL -- no TU found under src/"
+  exit 1
+fi
 T0=$(date +%s)
-printf '%s\n' $FILES | xargs -P "$JOBS" -n 1 bash -c 'tidy_one "$1"' _
+printf '%s\n' $FILES | xargs -r -P "$JOBS" -n 1 bash -c 'tidy_one "$1"' _
 WALL=$(( $(date +%s) - T0 ))
 
 for f in $FILES; do
@@ -144,8 +149,9 @@ done
 echo "---- findings by check ----"
 LOGS=$(find "$OUT/src" -name '*.log' 2>/dev/null | sort)
 STATS=$(find "$OUT/st" -type f | sort)
+# /dev/null after $LOGS / $STATS, -r on xargs: an empty list must not make grep / cat / wc read stdin (a hang)
 # shellcheck disable=SC2086  # paths without blanks
-grep -h ': error: ' $LOGS | awk '{print $NF}' | sort | uniq -c | sort -rn
+grep -h ': error: ' $LOGS /dev/null | awk '{print $NF}' | sort | uniq -c | sort -rn
 echo "---- per-file finding counts ----"
 for l in $LOGS; do
   n=$(grep -c ': error: ' "$l")
