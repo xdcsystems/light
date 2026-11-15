@@ -166,7 +166,12 @@ keep "Migration plan" current when a stage changes state.
       6e1 (stamp, probe_jpeg_sof, ConsoleReporter + core/fixed_fmt.hpp, CliOptions + the config/ layer on Log,
       the Log constructed before the parse): merged (PR #44). 6e2 (CameraV4L2::dequeue, NetMjpegSource::dequeue,
       MppDecoder::retrieve_output and RgaResizer::resize in steps; MppDecoder and RgaResizer on Log): branch
-      refactor/stage6e2-capture, merged (PR #47). 6e3 (H264Encoder::drain, NetPreview::serve, thresholds).
+      refactor/stage6e2-capture, merged (PR #47). 6e3 (H264Encoder::drain, NetPreview::serve + NetPreview on Log, the
+      function-size thresholds to lines 90 / statements 60 / branches 11 / nesting 4 / variables 14): branch
+      refactor/stage6e3-output, PR #50 (closes #39). 6e3 logs (base binary build/light_ai_base6e2: the output side
+      is unchanged from fix/audit-p0 @ 5e4d9d3): build/run6e3_{base,new}_{h264,udp,raw}.log, viewers .v1.log / .v2.log;
+      driver live6e3.sh (session scratch, not in git): no viewer 0-10 s, ffmpeg pull 10-16 s, a second one through SIGINT.
+      A UDP ffmpeg input never sees EOF: `timeout` alone does not end it, kill it after the run.
       Re-measure at f2f100d: cognitive list unchanged from 4b97d21; scripts in the session scratchpad (not in git).
       Baseline binaries: build/light_ai_base6e (f2f100d), build/light_ai_base6e2 (6d44748, fix/audit-p0 before 6e2).
       6e2 logs: layer A build/ref6e2_p{3,1}.*; a 1920x1080 camera clip replayed base vs new build/ref6e2_1080_*

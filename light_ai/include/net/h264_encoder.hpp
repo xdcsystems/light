@@ -35,6 +35,14 @@ struct AVPacket;
 
 class H264Encoder
 {
+    // The receive loop of drain(): its telemetry for the summary line.
+    struct DrainTally
+    {
+        int pulled = 0;    // packets received (and dropped)
+        bool eof = false;  // AVERROR_EOF reached
+        int eagains = 0;   // EAGAIN answers: frames still in flight
+    };
+
 public:
     // Opens the codec; throws std::runtime_error on failure (nothing leaks).
     H264Encoder( const EncoderConfig& cfg, const Log& log );
@@ -50,7 +58,10 @@ public:
 private:
     void enqueue( int stream_index, int64_t fpts, PacketQueue& queue );  // pkt_ -> the queue
     void request_idr();                                                  // MPP_ENC_SET_IDR_FRAME
-    void drain();                                                        // EOF flush at exit
+    // EOF flush at exit (the destructor only): send_eof(), collect_pending(), the summary line.
+    void drain();
+    void send_eof();               // EOF into the codec; a full input queue -> pull one packet, retry
+    DrainTally collect_pending();  // every pending packet until AVERROR_EOF (bounded)
 
 private:
     const Log& log_;
