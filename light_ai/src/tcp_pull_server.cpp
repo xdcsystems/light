@@ -65,32 +65,39 @@ TcpPullServer::~TcpPullServer()
     close_all();
 }
 
-bool TcpPullServer::listen()
+Status TcpPullServer::listen()
 {
     close_all();
     const int fd = ::socket( AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0 );
     if ( fd < 0 )
-        return false;
+        return errno_status( Errc::Failed, "socket", errno );
     int one = 1;
     ::setsockopt( fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof( one ) );
     sockaddr_in addr {};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl( INADDR_ANY );
     addr.sin_port = htons( static_cast<uint16_t>( port_ ) );
-    if ( ::bind( fd, reinterpret_cast<sockaddr*>( &addr ), sizeof( addr ) ) < 0 || ::listen( fd, 1 ) < 0 )
+    if ( ::bind( fd, reinterpret_cast<sockaddr*>( &addr ), sizeof( addr ) ) < 0 )
     {
+        const int e = errno;
         ::close( fd );
-        return false;
+        return errno_status( e == EADDRINUSE ? Errc::Busy : Errc::Failed, "bind", e );
+    }
+    if ( ::listen( fd, 1 ) < 0 )
+    {
+        const int e = errno;
+        ::close( fd );
+        return errno_status( Errc::Failed, "listen", e );
     }
     lfd_ = fd;
-    return true;
+    return {};
 }
 
-bool TcpPullServer::accept_client( const std::atomic<bool>& quit )
+Status TcpPullServer::accept_client( const std::atomic<bool>& quit )
 {
     close_client();
     if ( lfd_ < 0 )
-        return false;
+        return make_status( Errc::Invalid, "no listener" );
 
     pollfd pf {};
     pf.fd = lfd_;
@@ -102,12 +109,12 @@ bool TcpPullServer::accept_client( const std::atomic<bool>& quit )
         {
             if ( errno == EINTR )
                 continue;
-            return false;
+            return errno_status( Errc::Failed, "poll", errno );
         }
         if ( pr == 0 )
             continue;
         if ( ( pf.revents & ( POLLERR | POLLHUP | POLLNVAL ) ) != 0 )
-            return false;
+            return make_status( Errc::Failed, "listener error (poll revents)" );
         const int cfd = ::accept4( lfd_, nullptr, nullptr, SOCK_CLOEXEC );
         if ( cfd >= 0 )
         {
@@ -115,10 +122,10 @@ bool TcpPullServer::accept_client( const std::atomic<bool>& quit )
             break;
         }
         if ( errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR )
-            return false;
+            return errno_status( Errc::Failed, "accept", errno );
     }
     if ( quit.load() || cfd_ < 0 )
-        return false;
+        return make_status( Errc::Timeout, "no viewer" );
     const int cfd = cfd_;
 
     int one = 1;
@@ -131,25 +138,25 @@ bool TcpPullServer::accept_client( const std::atomic<bool>& quit )
         ::setsockopt( cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
     }
     cfd_ = cfd;
-    return true;
+    return {};
 }
 
-bool TcpPullServer::attach_avio( AVFormatContext* fc )
+Status TcpPullServer::attach_avio( AVFormatContext* fc )
 {
     if ( cfd_ < 0 || !fc )
-        return false;
+        return make_status( Errc::Invalid, "no client" );
     iobuf_ = static_cast<uint8_t*>( av_malloc( kIoBufBytes ) );
     if ( !iobuf_ )
-        return false;
+        return make_status( Errc::NoMemory, "avio buffer alloc failed" );
     pb_ = avio_alloc_context( iobuf_, kIoBufBytes, 1, &cfd_, nullptr, write_packet, nullptr );
     if ( !pb_ )
     {
         av_freep( &iobuf_ );
-        return false;
+        return make_status( Errc::NoMemory, "avio_alloc_context failed" );
     }
     fc->pb = pb_;
     fc->flags |= AVFMT_FLAG_CUSTOM_IO;
-    return true;
+    return {};
 }
 
 void TcpPullServer::close_client() noexcept

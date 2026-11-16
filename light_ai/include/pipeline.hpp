@@ -6,6 +6,7 @@
 
 #include "box_smoother.h"
 #include "cal_dumper.hpp"
+#include "core/status.hpp"
 #include "config/config.hpp"
 #include "console_reporter.h"
 #include "core/log.hpp"
@@ -36,7 +37,7 @@ class Pipeline
         Dispatched,  // a frame went to the pool: counts against --frames
         Skipped,     // nothing to count: empty packet, decode error, warm-up, a handled detach
         Stop,        // stop requested: leave through the drain/summary path
-        Fatal        // unrecoverable source error: run() returns -1 (exit code 1)
+        Fatal        // unrecoverable source error: the reason travels in the Status out-param; run() returns it (exit code 1)
     };
 
     // Per-source analytics, frame thread only (publish_oldest): the
@@ -59,14 +60,17 @@ public:
     Pipeline& operator=( Pipeline&& ) = delete;
 
     // Exits the frame loop through the normal drain/summary path once
-    // the stop flag is set (graceful shutdown, P1-6).
-    int run();
+    // the stop flag is set (graceful shutdown, P1-6). Status: Failed on a
+    // frame-path fatal (exit code 1); a clean end is Ok even with zero
+    // published frames.
+    Status run();
 
 private:
     void attach_sources();  // ctor, last: the first attach of every channel (STREAMON)
 
     // One frame: next_frame -> decode -> dispatch -> publish (pool 1).
-    Step step( int& ok );
+    // st: the fatal reason, filled only on Step::Fatal (cleared at entry).
+    Step step( int& ok, Status& st );
     // The next encoded frame or a failure; parks (NO SIGNAL, 40 ms quanta)
     // while no source is Live. Stopped once the stop flag is set.
     FrameStatus next_frame( EncodedFrame& f, int& ok );
@@ -76,7 +80,7 @@ private:
     // NO SIGNAL idle publish: gray plate tiles for absent sources at a
     // fixed pace; not counted in --frames or the timing stats.
     void idle_tick();
-    int handle_source_failure( const EncodedFrame& f );  // 0 = recovered, -1 = fatal
+    Status handle_source_failure( const EncodedFrame& f );  // the fatal reason; Ok = recovered
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
 
     // RGA into the slot's tensor, then submit to the pool.

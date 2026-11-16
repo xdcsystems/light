@@ -5,6 +5,8 @@
 #include <mutex>
 #include <thread>
 
+#include "core/status.hpp"
+
 // Opaque ffmpeg types, forward-declared: the header compiles without
 // the libav* include paths; the real includes stay in the .cpp.
 struct AVFormatContext;
@@ -51,7 +53,7 @@ private:
     void serve();
     // One session, in serve()'s order (preview thread). fc: the session's
     // muxer context, owned by serve()'s guard.
-    AVStream* open_session( TcpPullServer& tcp, AVFormatContext*& fc );  // NUT, AVIO, stream, header; nullptr = drop
+    Status open_session( TcpPullServer& tcp, AVFormatContext*& fc, AVStream*& st );  // NUT, AVIO, stream, header
     void go_live( AVFormatContext* fc, AVStream* st );                   // the pts step, publish under mx_
     void wait_session_end();                                             // until quit_ or error_
     void close_session( AVFormatContext* fc );                           // unpublish, the trailer

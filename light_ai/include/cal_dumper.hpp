@@ -16,6 +16,7 @@
 
 #include "config/config.hpp"  // CalConfig
 #include "core/log.hpp"
+#include "core/status.hpp"
 
 enum class CalKind : uint8_t
 {
@@ -48,8 +49,9 @@ public:
 
 private:
     bool series_due( int frame_idx ) const;
-    // One P6 file of the model size; false on an unopenable path or a short tensor.
-    bool write_ppm( const std::string& path, const uint8_t* data, size_t size ) const;
+    // One P6 file of the model size; Invalid on a short tensor, Failed
+    // on an unopenable path or a failed write (the caller logs the path).
+    Status write_ppm( const std::string& path, const uint8_t* data, size_t size ) const;
 
 private:
     CalConfig cal_;

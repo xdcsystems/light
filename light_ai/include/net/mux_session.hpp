@@ -31,6 +31,7 @@
 #include "core/encoder_config.hpp"
 #include "core/param_set_cache.hpp"
 #include "core/session_gate.hpp"
+#include "core/status.hpp"
 #include "net/av_packet.hpp"
 #include "net/av_packet_queue.hpp"
 
@@ -97,9 +98,9 @@ private:
     void run_session( TcpPullServer& tcp, bool tcp_pull, const std::string& url );
     // Transport setup (accept + socket options / avio_open) and the
     // stream setup (new_stream + header + mpegts options).
-    bool open_transport( const std::string& url, AVFormatContext* fc, Transport& t );
+    Status open_transport( const std::string& url, AVFormatContext* fc, Transport& t );
     // frame_step: muxer ticks per codec pts, handed to the encoder in the gate session.
-    bool setup_stream( AVFormatContext* fc, AVStream** st, int64_t* frame_step, bool tcp_pull );
+    Status setup_stream( AVFormatContext* fc, AVStream** st, int64_t* frame_step, bool tcp_pull );
     // The wait/pop loop and one packet write with the IDR prepend.
     DrainEnd drain_queue( AVFormatContext* fc );
     int mux_write( AVFormatContext* fc, AVPacket* pkt );

@@ -151,8 +151,8 @@ namespace
                 d.maybe( f, -1, px.data(), px.size() - 1 );
             CHECK( t, out.str().empty() );
             CHECK_STR_EQ( t, err.str(),
-                          "calibration dump failed: " + sub + "/cal.ppm\n"
-                          "calibration dump failed: " + sub + "/cal_0000.ppm\n" );
+                          "calibration dump failed: " + sub + "/cal.ppm: tensor shorter than the model frame\n"
+                          "calibration dump failed: " + sub + "/cal_0000.ppm: tensor shorter than the model frame\n" );
         }
         // A missing directory (the dumper does not create it): the same, once per kind.
         {
@@ -166,8 +166,8 @@ namespace
                 d.maybe( f, -1, px.data(), px.size() );
             CHECK( t, out.str().empty() );
             CHECK_STR_EQ( t, err.str(),
-                          "calibration dump failed: " + missing + "/cal.ppm\n"
-                          "calibration dump failed: " + missing + "/cal_0000.ppm\n" );
+                          "calibration dump failed: " + missing + "/cal.ppm: open failed: No such file or directory\n"
+                          "calibration dump failed: " + missing + "/cal_0000.ppm: open failed: No such file or directory\n" );
             CHECK( t, !std::filesystem::exists( missing ) );
         }
         // A broken series next to a working single shot: the series file path is a
@@ -184,7 +184,7 @@ namespace
                 d.maybe( f, -1, px.data(), px.size() );
             CHECK_STR_EQ( t, read_file( sub + "/cal.ppm" ), ppm_of( px ) );
             CHECK_STR_EQ( t, out.str(), "calibration dump: " + sub + "/cal.ppm (4x2)\n" );
-            CHECK_STR_EQ( t, err.str(), "calibration dump failed: " + sub + "/cal_0000.ppm\n" );
+            CHECK_STR_EQ( t, err.str(), "calibration dump failed: " + sub + "/cal_0000.ppm: open failed: Is a directory\n" );
             CHECK( t, !std::filesystem::exists( sub + "/cal_0002.ppm" ) );  // the series stopped
         }
     }
