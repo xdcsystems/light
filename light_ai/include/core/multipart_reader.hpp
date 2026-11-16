@@ -36,6 +36,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "core/status.hpp"
+
 class MultipartReader
 {
 public:
@@ -62,7 +64,7 @@ public:
 
     // A new connection: the boundary from the response head; the form is
     // unlocked again. false = empty or over kBoundaryMax (nothing parses).
-    bool reset( const char* boundary, size_t len );
+    Status reset( const char* boundary, size_t len );
     // Back to "looking for a delimiter line"; the locked form stays.
     void resync();
 

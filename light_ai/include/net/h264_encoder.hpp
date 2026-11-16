@@ -27,6 +27,7 @@
 #include "core/session_gate.hpp"
 #include "net/av_packet.hpp"
 #include "net/av_packet_queue.hpp"
+#include "core/status.hpp"
 
 class Log;
 struct AVCodecContext;
@@ -53,7 +54,7 @@ public:
     // One frame of session `s` (call under SessionGate::run()). ts_us: the
     // dequeue time (VFR pts), < 0 = none. false = a codec error: the caller
     // fails the session.
-    bool encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session& s, PacketQueue& queue );
+    Status encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session& s, PacketQueue& queue );
 
 private:
     void enqueue( int stream_index, int64_t fpts, PacketQueue& queue );  // pkt_ -> the queue

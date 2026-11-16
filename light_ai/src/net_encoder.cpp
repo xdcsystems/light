@@ -76,7 +76,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     // is held, !do_enc still updates the source's tile in the persistent
     // composite canvas (out = nullptr) without emitting an H.264 frame.
     const int slot = ring_.current();
-    if ( !composer_.compose( tensor_fd, tp, slot, do_enc ? ring_.buf( slot ) : nullptr ) )
+    if ( Status cst = composer_.compose( tensor_fd, tp, slot, do_enc ? ring_.buf( slot ) : nullptr ); !cst.ok() )
     {
         queue_.fail( epoch );  // ends THIS session only: serve() reopens the stream path
         return;
@@ -87,7 +87,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     // No session any more (viewer dropped while cropping): the frame is
     // dropped with it. A send failure ends the session it was sent into.
     gate_.run( [this]( const SessionGate::Session& s ) {
-        if ( !codec_.encode( ring_.frame( ring_.current() ), ts_us_, s, queue_ ) )
+        if ( Status est = codec_.encode( ring_.frame( ring_.current() ), ts_us_, s, queue_ ); !est.ok() )
             queue_.fail( s.epoch );
     } );
 }
@@ -126,19 +126,19 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
         // Held or the encode queue busy: no encode this tick. Multi-view
         // still plates the absent cells that lack it (none after the
         // first such tick: compose_idle skips plated cells).
-        if ( lay.nsrc > 1 && !composer_.compose_idle( absent, nabs, ring_.current(), nullptr ) )
+        if ( lay.nsrc > 1 && !composer_.compose_idle( absent, nabs, ring_.current(), nullptr ).ok() )
             queue_.fail( epoch );
         return;
     }
     ts_us_ = ts_us;
     const int slot = ring_.advance();
-    if ( !composer_.compose_idle( absent, nabs, slot, ring_.buf( slot ) ) )
+    if ( Status ist = composer_.compose_idle( absent, nabs, slot, ring_.buf( slot ) ); !ist.ok() )
     {
         queue_.fail( epoch );  // see publish()
         return;
     }
     gate_.run( [this]( const SessionGate::Session& s ) {  // see publish()
-        if ( !codec_.encode( ring_.frame( ring_.current() ), ts_us_, s, queue_ ) )
+        if ( Status est = codec_.encode( ring_.frame( ring_.current() ), ts_us_, s, queue_ ); !est.ok() )
             queue_.fail( s.epoch );
     } );
 }

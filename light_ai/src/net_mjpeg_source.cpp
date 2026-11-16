@@ -97,9 +97,9 @@ Status NetMjpegSource::read_headers()
         if ( h.parse == HttpHead::Parse::Ok )
         {
             // Cannot fail while the caps match (the static_assert above);
-            // checked anyway, with the head parser's own text.
-            if ( !parts_.reset( h.boundary, h.boundary_len ) )
-                return make_status( Errc::Invalid, "multipart boundary too long" );
+            // checked anyway: the reason comes from the reader itself.
+            if ( Status rst = parts_.reset( h.boundary, h.boundary_len ); !rst.ok() )
+                return rst;
             sock_.consume( h.len );
             return {};
         }

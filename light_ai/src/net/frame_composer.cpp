@@ -81,12 +81,12 @@ namespace
         dma::cache_clean( py, mpp_buffer_get_size( mb ) );
     }
 
-    bool rga_ok( IM_STATUS st, const Log& log, const char* what )
+    Status rga_ok( IM_STATUS st, const Log& log, const char* what )
     {
         if ( static_cast<int>( st ) > 0 )
-            return true;
+            return {};
         log.error() << "enc: " << what << " failed: " << imStrError( st ) << "\n";
-        return false;
+        return make_status( Errc::Failed, what );  // the imStrError detail is in the log line above
     }
 }  // namespace
 
@@ -123,7 +123,7 @@ FrameComposer::FrameComposer( const EncoderConfig& cfg, const Log& log )
 // GPU draw -> RGA ordering is guaranteed by sync_cpu() in
 // OverlaySink::draw_and_publish, which runs before publish() on the
 // same pipeline thread.
-bool FrameComposer::compose( int tensor_fd, const TilePlacement& tp, int slot, MppBuffer out )
+Status FrameComposer::compose( int tensor_fd, const TilePlacement& tp, int slot, MppBuffer out )
 {
     const bool multi = lay_.nsrc > 1;
 
@@ -140,21 +140,21 @@ bool FrameComposer::compose( int tensor_fd, const TilePlacement& tp, int slot, M
 
     rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888 );
     rga_buffer_t dst = nv12( target, lay_ );
-    if ( !rga_ok( improcess( src, dst, {}, rect( tp.src ), rect( tp.dst ), {}, 0 ), log_, "RGA convert" ) )
-        return false;
+    if ( Status rst = rga_ok( improcess( src, dst, {}, rect( tp.src ), rect( tp.dst ), {}, 0 ), log_, "RGA convert" ); !rst.ok() )
+        return rst;
     if ( multi && out != nullptr )
         return rga_ok( imcopy( dst, nv12( out, lay_ ) ), log_, "RGA composite copy" );
-    return true;
+    return {};
 }
 
-bool FrameComposer::compose_idle( const bool* absent, int nabs, int slot, MppBuffer out )
+Status FrameComposer::compose_idle( const bool* absent, int nabs, int slot, MppBuffer out )
 {
     rga_buffer_t idl = nv12( idle_.buf[0], lay_ );
     if ( lay_.nsrc <= 1 )
     {
         // Single view: the idle canvas IS the frame.
         if ( out == nullptr )
-            return true;
+            return {};
         bands_[slot] = plate_band();
         return rga_ok( imcopy( idl, nv12( out, lay_ ) ), log_, "RGA idle copy" );
     }
@@ -168,12 +168,12 @@ bool FrameComposer::compose_idle( const bool* absent, int nabs, int slot, MppBuf
         if ( !tile_absent( absent, nabs, s ) || same( bands_[s], plate_band() ) )
             continue;
         const im_rect tile = rect( cell_rect( lay_, s ) );
-        if ( !rga_ok( improcess( idl, cvs, {}, tile, tile, {}, 0 ), log_, "RGA idle tile copy" ) )
-            return false;
+        if ( Status tst = rga_ok( improcess( idl, cvs, {}, tile, tile, {}, 0 ), log_, "RGA idle tile copy" ); !tst.ok() )
+            return tst;
         bands_[s] = plate_band();
     }
     if ( out == nullptr )
-        return true;
+        return {};
     return rga_ok( imcopy( cvs, nv12( out, lay_ ) ), log_, "RGA idle composite copy" );
 }
 

@@ -43,14 +43,16 @@ namespace
     }
 }  // namespace
 
-bool MultipartReader::reset( const char* boundary, size_t len )
+Status MultipartReader::reset( const char* boundary, size_t len )
 {
     cur_ = Cursor {};
     blen_ = 0;
     bare_ok_ = false;
     boundary_[0] = '\0';
-    if ( len == 0 || len > static_cast<size_t>( kBoundaryMax ) )
-        return false;
+    if ( len == 0 )
+        return make_status( Errc::Invalid, "empty multipart boundary" );
+    if ( len > static_cast<size_t>( kBoundaryMax ) )
+        return make_status( Errc::Invalid, "multipart boundary too long" );
     std::memcpy( boundary_, boundary, len );
     boundary_[len] = '\0';
     std::memcpy( dash_, "--", 2 );
@@ -58,7 +60,7 @@ bool MultipartReader::reset( const char* boundary, size_t len )
     dash_[len + 2] = '\0';
     blen_ = len;
     bare_ok_ = len > 2 && boundary[0] == '-' && boundary[1] == '-';
-    return true;
+    return {};
 }
 
 void MultipartReader::resync()

@@ -31,6 +31,7 @@
 #include "core/encoder_config.hpp"
 #include "core/geometry.hpp"
 #include "rkmpp_drm_pool.hpp"
+#include "core/status.hpp"
 
 class Log;
 
@@ -51,14 +52,16 @@ public:
     // Live frame: the band of tensor_fd, placed by tp (place_tile: the
     // caller needs tp.cell too), into ring slot `slot` (buffer `out`);
     // multi-view: into the canvas cell tp.cell, then the canvas into `out`
-    // unless out == nullptr. false on an RGA failure.
-    bool compose( int tensor_fd, const TilePlacement& tp, int slot, MppBuffer out );
+    // unless out == nullptr. Status::Failed on an RGA failure (the
+    // imStrError detail is logged before the return).
+    Status compose( int tensor_fd, const TilePlacement& tp, int slot, MppBuffer out );
 
     // NO SIGNAL frame: tile_absent( absent, nabs, s ) selects the cells that
     // get the plate. Multi-view: out == nullptr updates the canvas only.
-    // Single view: out is required (the idle canvas is the frame). false on
-    // an RGA failure.
-    bool compose_idle( const bool* absent, int nabs, int slot, MppBuffer out );
+    // Single view: out is required (the idle canvas is the frame).
+    // Status::Failed on an RGA failure (the imStrError detail is logged
+    // before the return).
+    Status compose_idle( const bool* absent, int nabs, int slot, MppBuffer out );
 
     // Session start (multi-view; single view: no-op): the whole composite
     // canvas gray, no cell remembers a band or the plate.
