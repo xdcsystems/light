@@ -10,6 +10,7 @@
 
 #include "core/frame_view.hpp"
 #include "core/log.hpp"
+#include "core/status.hpp"
 #include "cpu_affinity.hpp"
 #include "dma_sync.hpp"
 #include "inference_pool.hpp"
@@ -353,7 +354,7 @@ void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int
     }
     dma::cache_drop( tn.data, tn.size );
     LbGeom lg {};
-    const bool rga_ok =
+    const Status rga_st =
             rga_.resize( fd_src, ss.w, ss.h, tn.fd, model_w_, model_h_, ss.aux_fd, ss.w / 2, ss.h / 2, &lg,
                     ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
     cal_dumper_.maybe( frame_idx, tn.fd, static_cast<const uint8_t*>( tn.data ), tn.size );
@@ -373,7 +374,7 @@ void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int
     job.src_h = ss.h;
     job.frame = frame_idx;
     job.ts_us = ts_us;
-    job.rga_ok = rga_ok;
+    job.rga_ok = rga_st.ok();
     job.lb = ss.lb;
     job.tr.cam = cam_ms;
     job.tr.dec = dec_ms;
