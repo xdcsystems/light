@@ -92,7 +92,7 @@ public:
     uint64_t rounds() const { return rounds_; }
 
 private:
-    void loop()
+    void loop() noexcept
     {
         std::unique_lock<std::mutex> lk( mu_ );
         while ( !quit_ )

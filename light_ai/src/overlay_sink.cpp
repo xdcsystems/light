@@ -136,7 +136,7 @@ void OverlaySink::init( const StreamConfig& stream,
 // NO SIGNAL idle publish: h264 path only -- the encoder RGA-copies the
 // pre-rendered gray plate into the absent tiles. The raw NUT preview
 // keeps its live-only diagnostic role (no idle frames there).
-void OverlaySink::publish_idle( int64_t ts_us, const bool* absent, int nabs )
+void OverlaySink::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept
 {
     if ( enc_ )
         enc_->publish_idle( ts_us, absent, nabs );
@@ -168,7 +168,7 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
 double OverlaySink::draw_and_publish( const FrameView& frame,
                                       const DetList& dets,
                                       const TrajList& trajs,
-                                      const Tracker& tracker )
+                                      const Tracker& tracker ) noexcept
 {
     double enc_ms = 0.0;
     const bool enc_live = enc_ && enc_->viewer_active();

@@ -78,7 +78,7 @@ NetPreview::~NetPreview()
     avformat_network_deinit();
 }
 
-void NetPreview::serve()
+void NetPreview::serve() noexcept
 {
     TcpPullServer tcp( port_, 2 * 1024 * 1024, 5 );
     // The bind retries until it succeeds or quit ends the thread; the run

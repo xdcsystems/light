@@ -50,7 +50,7 @@ public:
 
 private:
     // The preview thread: listen, then one viewer session after another.
-    void serve();
+    void serve() noexcept;
     // One session, in serve()'s order (preview thread). fc: the session's
     // muxer context, owned by serve()'s guard.
     Status open_session( TcpPullServer& tcp, AVFormatContext*& fc, AVStream*& st );  // NUT, AVIO, stream, header

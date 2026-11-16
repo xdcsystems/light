@@ -55,7 +55,7 @@ SignalWaiter::~SignalWaiter()
         thread_.join();
 }
 
-void SignalWaiter::loop()
+void SignalWaiter::loop() noexcept
 {
     const sigset_t set = stop_signals();
     const timespec tick { 0, kTickNs };

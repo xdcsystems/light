@@ -46,7 +46,7 @@ void MuxSession::stop()
         thread_.join();
 }
 
-void MuxSession::serve()
+void MuxSession::serve() noexcept
 {
     // Empty host = pull mode: listen on TCP, the viewer connects on its own.
     const bool tcp_pull = cfg_.host.empty();

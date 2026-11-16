@@ -43,7 +43,7 @@ bool NetEncoder::viewer_active() const
     return gate_.active();
 }
 
-void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int src_idx )
+void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int src_idx ) noexcept
 {
     if ( !gate_.active() )
         return;
@@ -102,7 +102,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
 // canvas only (multi-view), and the pacer is consulted only once the
 // session is released. An idle tick can release the session.
 // The frame counter and the timing stats never see idle frames.
-void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs )
+void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept
 {
     const StreamLayout& lay = cfg_.layout;
     if ( !gate_.active() )

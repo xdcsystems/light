@@ -70,7 +70,7 @@ private:
 
     // One frame: next_frame -> decode -> dispatch -> publish (pool 1).
     // st: the fatal reason, filled only on Step::Fatal (cleared at entry).
-    Step step( int& ok, Status& st );
+    Step step( int& ok, Status& st ) noexcept;
     // The next encoded frame or a failure; parks (NO SIGNAL, 40 ms quanta)
     // while no source is Live. Stopped once the stop flag is set.
     FrameStatus next_frame( EncodedFrame& f, int& ok );
