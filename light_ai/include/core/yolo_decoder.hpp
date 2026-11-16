@@ -33,6 +33,16 @@ struct YoloHead
     int w = 0;
 };
 
+// The shape check of one head, shared by YoloDecoder::anchor_set and the
+// startup check (the Pipeline ctor): the width divides the model input, the
+// stride is 8/16/32, the height matches the model at that stride and ch is a
+// 3-anchor layout (ch % 3 == 0). The strict ch == 255 of the standard 80-class
+// model is the startup check's job (a 2-class synthetic head must still
+// decode). One warn per failure; on success stride and head (P3/P4/P5) are set
+// and true is returned. The data pointer is not touched (nullptr is fine):
+// the startup check has no data.
+bool yolo_head_shape( const YoloHead& hd, int gi, int mw, int mh, const Log& log, int& stride, int& head );
+
 // The geometry of one frame: source (camera) size, model input size and the
 // letterbox band of the frame in the model input.
 struct YoloFrame
@@ -90,7 +100,7 @@ private:
     };
 
     bool band_fits( const YoloFrame& f ) const;
-    int anchor_set( const YoloHead& hd, int gi, int mw, int& stride ) const;
+    int anchor_set( const YoloHead& hd, int gi, int mw, int mh, int& stride ) const;
     void collect_head( const HeadScan& s, const Band& b );
     bool decode_anchor( const HeadScan& s, size_t off, int k, int gx, int gy, const Band& b, Box& out ) const;
     float best_class( const HeadScan& s, size_t off, int& best ) const;

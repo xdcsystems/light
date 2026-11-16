@@ -21,6 +21,7 @@ int main( int argc, char** argv )
         { "status", &test_status },
         { "stop_flag", &test_stop_flag },
         { "tcp_retry", &test_tcp_retry },
+        { "yolo_head_shape", &test_yolo_head_shape },
         { "http_url", &test_http_url },
         { "http_head", &test_http_head },
         { "multipart_reader", &test_multipart_reader },

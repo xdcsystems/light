@@ -46,13 +46,14 @@ void YoloDecoder::decode( const YoloHead* heads, int n_heads, const YoloFrame& f
     nc_ = 0;
     dropped_ = 0;
     const int mw = static_cast<int>( f.model_w );
+    const int mh = static_cast<int>( f.model_h );
     for ( int gi = 0; gi < n_heads && gi < kMaxHeads; ++gi )
     {
         const YoloHead& hd = heads[gi];
         if ( !hd.data )
             continue;
         int stride = 0;
-        const int set = anchor_set( hd, gi, mw, stride );
+        const int set = anchor_set( hd, gi, mw, mh, stride );
         if ( set < 0 )
             continue;
         collect_head( HeadScan { hd.data, static_cast<size_t>( hd.h ) * hd.w, hd.h, hd.w, hd.ch / 3, stride, set }, b );
@@ -81,31 +82,51 @@ bool YoloDecoder::band_fits( const YoloFrame& f ) const
     return false;
 }
 
-// The anchor set of head gi, or -1 (logged): the layout must be a 3-anchor
-// yolov5 head whose map divides the model width. Stride from the map size,
-// not from the head index: RKNN does not promise the P3/P4/P5 order, and
-// 8 << gi silently shifts every box when the heads come out in another order.
-int YoloDecoder::anchor_set( const YoloHead& hd, int gi, int mw, int& stride ) const
+// The shape check of one head: the layout must be a 3-anchor yolov5 head --
+// the width divides the model input, the stride is 8/16/32 (the head index is
+// not trusted: RKNN does not promise the P3/P4/P5 order, and 8 << gi silently
+// shifts every box when the heads come out in another order), the height
+// matches the model at that stride and ch is a 3-anchor layout (ch % 3 == 0;
+// the strict ch == 255 of the standard 80-class model is the startup check's
+// job). One warn per failure; the caller decides fatal (the startup check)
+// vs skip (decode).
+bool yolo_head_shape( const YoloHead& hd, int gi, int mw, int mh, const Log& log, int& stride, int& head )
 {
+    stride = 0;
+    head = -1;
     if ( hd.w <= 0 || mw % hd.w != 0 )
     {
-        log_.warn() << "yolo: head " << gi << " width " << hd.w << " does not divide model " << mw << '\n';
-        return -1;
+        log.warn() << "yolo: head " << gi << " width " << hd.w << " does not divide model " << mw << '\n';
+        return false;
     }
     stride = mw / hd.w;
-    const int head = stride_to_head( stride );
+    head = stride_to_head( stride );
     if ( head < 0 )
     {
-        log_.warn() << "yolo: head " << gi << " unsupported stride " << stride << '\n';
-        return -1;
+        log.warn() << "yolo: head " << gi << " unsupported stride " << stride << '\n';
+        return false;
+    }
+    if ( hd.h != mh / stride )
+    {
+        log.warn() << "yolo: head " << gi << " height " << hd.h << " does not match model " << mh << " at stride "
+                   << stride << '\n';
+        return false;
     }
     const int per = hd.ch / 3;  // 85 = 4+1+80
     if ( per * 3 != hd.ch )
     {
-        log_.warn() << "yolo: unexpected head layout (per=" << per << ", ch=" << hd.ch << ")\n";
-        return -1;  // not a 3-anchor yolov5 head - skip
+        log.warn() << "yolo: unexpected head layout (per=" << per << ", ch=" << hd.ch << ")\n";
+        return false;  // not a 3-anchor yolov5 head - skip
     }
-    return head;
+    return true;
+}
+
+// The anchor set of head gi, or -1 (logged): the shape check is shared with
+// the startup check (yolo_head_shape), the warn text comes from there.
+int YoloDecoder::anchor_set( const YoloHead& hd, int gi, int mw, int mh, int& stride ) const
+{
+    int head = -1;
+    return yolo_head_shape( hd, gi, mw, mh, log_, stride, head ) ? head : -1;
 }
 
 // Stage 1/2: decode one head into candidate boxes. The tensor is

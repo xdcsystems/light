@@ -29,6 +29,7 @@ add_executable(light_ai_tests
     test_status.cpp
     test_stop_flag.cpp
     test_tcp_retry.cpp
+    test_yolo_head_shape.cpp
     test_http_url.cpp
     test_http_head.cpp
     test_multipart_reader.cpp
