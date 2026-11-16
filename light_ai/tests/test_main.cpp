@@ -19,6 +19,8 @@ int main( int argc, char** argv )
         { "jpeg_probe", &test_jpeg_probe },
         { "byte_window", &test_byte_window },
         { "status", &test_status },
+        { "stop_flag", &test_stop_flag },
+        { "tcp_retry", &test_tcp_retry },
         { "http_url", &test_http_url },
         { "http_head", &test_http_head },
         { "multipart_reader", &test_multipart_reader },

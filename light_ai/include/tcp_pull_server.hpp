@@ -5,7 +5,9 @@
 #include <atomic>
 #include <cstdint>
 
+#include "core/log.hpp"
 #include "core/status.hpp"
+#include "core/stop_flag.hpp"
 
 struct AVFormatContext;
 struct AVIOContext;
@@ -50,3 +52,36 @@ private:
     uint8_t* iobuf_ = nullptr;
     AVIOContext* pb_ = nullptr;
 };
+
+// The serve-thread bind with a retry: every listen() failure is retried,
+// not only EADDRINUSE -- the run keeps going without a viewer whatever the
+// errno (the policy: recognition never sleeps for the output side; README,
+// Run, "Output side and recognition"). Logging on state change only: one
+// warn on the first failure, the success line is the caller's (its texts
+// differ per side: enc / net).
+// try_listen: one bind attempt, normally a lambda over TcpPullServer::listen.
+// period_ms: the retry cadence, 2000 in production; tests pass less.
+// Returns the last Status: Ok = bound; a failure = quit ended the wait, the
+// caller returns and the output side sleeps.
+template <typename ListenFn>
+Status retry_listen( ListenFn try_listen, const std::atomic<bool>& quit, const Log& log,
+                     const char* tag, int port, int period_ms = 2000 )
+{
+    Status st = try_listen();
+    bool warned = false;
+    while ( !st.ok() && !quit.load( std::memory_order_acquire ) )
+    {
+        if ( !warned )
+        {
+            const bool whole_s = period_ms % 1000 == 0;
+            log.warn() << tag << ": tcp listener on port " << port << ": " << st
+                       << "; retrying every " << ( whole_s ? period_ms / 1000 : period_ms )
+                       << ( whole_s ? " s" : " ms" ) << '\n';
+            warned = true;
+        }
+        if ( sleep_interruptible( quit, period_ms ) )
+            break;
+        st = try_listen();
+    }
+    return st;
+}

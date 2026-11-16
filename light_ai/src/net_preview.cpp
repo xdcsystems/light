@@ -81,12 +81,11 @@ NetPreview::~NetPreview()
 void NetPreview::serve()
 {
     TcpPullServer tcp( port_, 2 * 1024 * 1024, 5 );
-    if ( Status st = tcp.listen(); !st.ok() )
-    {
-        log_.error() << "net: tcp listener on port " << port_ << ": " << st << '\n';
-        error_.store( true );
+    // The bind retries until it succeeds or quit ends the thread; the run
+    // keeps going without a viewer and error_ is not set -- a bind failure
+    // is not a session failure (README, Run).
+    if ( Status st = retry_listen( [&] { return tcp.listen(); }, quit_, log_, "net", port_ ); !st.ok() )
         return;
-    }
     log_.info() << "net: listening on tcp port " << port_ << " (viewer: ffplay tcp://<board-ip>:" << port_ << ")\n";
 
     while ( !quit_.load() )
