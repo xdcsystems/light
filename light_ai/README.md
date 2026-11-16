@@ -12,7 +12,8 @@ post-processing.
   into the decoder packet buffer and the compressed h264 packets out
   of the encoder (both are compressed byte streams, never pixels).
 - I/O is iostream-only: no printf/sprintf/snprintf anywhere. All diagnostics
-  go through std::cout / std::cerr.
+  go through Log (core/log.hpp); main.cpp owns the single Log( std::cout,
+  std::cerr ) and print_usage( std::cout ).
 - Include order: system/service headers first (angle brackets), the
   project's own headers last (quotes). Reference: gpu_box_drawer.cpp.
 - Header layout: within each visibility section (public/private),
@@ -66,6 +67,19 @@ post-processing.
   undetected — 705636b). A heap scan cannot catch this class of bug;
   only a live visual run can.
 
+### Errors
+- Status (core/status.hpp): operations that can fail for a reason return
+  Status (Errc, a string-literal reason, optional errno or SDK rc); results
+  go to out-parameters. Outcome enums stay where the caller branches on
+  more than ok/fail, carrying Status in their failure arm (FrameStatus,
+  SourceChannel::Attach, HttpHead::Parse).
+- Exceptions (std::runtime_error, via throw_on when wrapping a Status) are
+  allowed only on the startup path (constructors, Pipeline init).
+- Frame path and thread bodies are noexcept: no throw, no catch (...) in
+  the frame path. Only two catch (...) exist in the tree, both startup
+  rethrows (InferencePool::start_workers, NetPreview ctor); MediaSource
+  catches std::bad_variant_access only for a failed startup emplace.
+
 ### Comment style
 - Comments are structured, not prose: a header line ending with `:`,
   options/cases one per line, continuation lines indented under their item.
@@ -84,23 +98,21 @@ post-processing.
 - Log        : diagnostics sink (core/log.hpp), owned by main() and
                injected as `const Log&`: info -> stdout, warn/error ->
                stderr, one statement = one whole line across threads,
-               a level threshold. Migration is incremental: Pipeline,
-               InferencePool, OverlaySink and main.cpp log through it;
-               every other class still writes to std::cout / std::cerr
-               directly and switches when its refactoring stage touches
-               it. New code takes a Log -- no new direct stream writes.
+               a level threshold. All classes log through it; only
+               main.cpp touches std::cout / std::cerr (Log + usage).
 - core/      : domain types shared across layers, free of SDK headers
                (include/core/, src/core/): LbGeom + band_geom
                (geometry.hpp), Detection / DetList (detection.hpp),
                TrackLife / TrajPoint / TrackState / TrajList (track.hpp),
                GpuBox / GpuBoxList (gpu_box.hpp), box_iou /
                box_iou_corners / greedy_iou_match (box_math.hpp),
-               fp16_to_float (fp16.hpp), YoloDecoder (yolo_decoder.hpp:
-               the yolov5 heads -> DetList, see InferencePool),
-               KalmanAxis / Associator + TrackBox / TrailWindow
-               (kalman_axis.hpp, associator.hpp, trail_window.hpp: the
-               parts of Tracker), StopFlag
-               (stop_flag.hpp), Log (log.hpp), TensorRef / TensorSet /
+               fp16_to_float (fp16.hpp), YoloDecoder / yolo_head_shape
+               (yolo_decoder.hpp: the yolov5 heads -> DetList, see
+               InferencePool), KalmanAxis / Associator + TrackBox /
+               TrailWindow (kalman_axis.hpp, associator.hpp,
+               trail_window.hpp: the parts of Tracker), StopFlag /
+               sleep_interruptible (stop_flag.hpp), Status / Errc /
+               ErrnoText (status.hpp), Log (log.hpp), TensorRef / TensorSet /
                FrameView (frame_view.hpp: what the output stage sees of
                an inferred frame). A consumer that needs
                only the type includes the core header, not the layer
@@ -325,7 +337,8 @@ post-processing.
 - TcpPullServer : RAII single-viewer TCP pull transport (listener socket,
                poll-based accept, TCP_NODELAY / SO_SNDBUF / SO_SNDTIMEO,
                and custom 32 KiB AVIOContext) shared by NetEncoder and
-               NetPreview.
+               NetPreview; retry_listen() retries a failing bind every 2 s
+               (interruptible by quit, one warn on the first failure).
 
 - OverlaySink : owns the overlay rendering and network preview output
                path (GpuBoxDrawer + draw_boxes_cpu fallback, NetEncoder
@@ -884,10 +897,13 @@ light_ai_tests, built into build/tests):
   CliOptions / OptionRegistry / ConfigFileLoader, ProcessEnv /
   SignalWaiter (signal delivery, SIGPIPE, armed and unarmed modes),
   Log (routing, threshold, whole lines across threads),
+  Status / Errc / ErrnoText (status), StopFlag / sleep_interruptible
+  (stop_flag), retry_listen (tcp_retry), yolo_head_shape,
   InferencePool / InferSlot with a fake engine (pool modes, core
   masks, result order, NPU skip/failure, wedged engine: bounded
   wait + abandon + the worker frees the slot, per-source discard,
-  shutdown with frames in flight), Timings (avg/60 + whole-run TOTAL),
+  shutdown with frames in flight; plus infer_slot_threads),
+  Timings (avg/60 + whole-run TOTAL),
   UsbNodeLocator (preferred / busy / scan order / log throttle),
   SourceChannel with fakes (the attach state machine, failure at each
   step, warm-up, empty packets, errno -> FrameStatus), SourceSet
@@ -1098,6 +1114,21 @@ thread (sigtimedwait) and sets a StopFlag that the Pipeline reads.
 The graceful path is armed only while run() is in progress: during
 model loading (Pipeline ctor) and teardown (dtor) Ctrl-C keeps its
 default action and ends the process at once, as before.
+
+Busy port (--net / --net --net-h264, TCP pull): a listener bind failure
+never aborts the run (recognition keeps running); the serve thread logs
+one warning ("<tag>: tcp listener on port N: <status>; retrying every
+2 s") and retries every 2 s via retry_listen() until the port frees or
+quit is set. UDP push (--net-host) is unchanged: opens lazily, retries
+every 500 ms.
+
+Exit codes:
+- 0: clean exit (including --help, or SIGINT/SIGTERM even with 0 frames
+  published).
+- 1: runtime fatal (Pipeline::run() returned a non-ok Status).
+- 2: bad CLI or config argument.
+- 3: startup failure ("Fatal: <what>" from an init/alloc exception or
+  a bad/missing/non-yolov5 model).
 
 ## Viewer (mpv, legacy Windows laptop; recorded 2026-10-31, revised 2026-11-01)
 

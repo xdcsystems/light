@@ -231,6 +231,11 @@ keep "Migration plan" current when a stage changes state.
       max |d| 0). Branch fix/issue37-trail-restart, PR #59. Tests failing on the old code: build/test37_before.log; layer A
       build/ref37_p3.*, its track lines diffed against build/ref43_p3.log (build/ref37_tracks_{base,new}.txt; base-vs-base
       replays differ too: pts +-1, last digit of c/v -- wall-clock timestamps; the systematic change is id=2 only).
-- [ ] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
-      Check: runs with a wrong model, a busy port, a missing camera.
+- [x] 7 Errors: one Status type; exceptions only at startup; no catch (...) in the frame path.
+      Issue #61 (plan + decisions in its comments): 7a (core/status.hpp Status/Errc/ErrnoText, sources,
+      HttpHead::Parse, RkmppDrmPool, PR #62), 7b (compute/output/pipeline boundaries, exit codes 0/1/2/3,
+      PRs #63/#65/#66/#67), 7c (7c-p1 PR #68 retry_listen + sleep_interruptible: busy port warns once and
+      retries every 2 s while recognition keeps running; 7c-p2 PR #69 yolo_head_shape + startup 3-head
+      yolov5 check -> exit 3; 7c-p3 PR #70 noexcept on frame path and thread bodies, bugprone-exception-escape
+      0 findings, std::visit catch bad_variant_access for startup-only emplace; 7c-p4 README + CLAUDE.md).
 Out of scope: light_control, light_sensor, tools/, scripts/.
