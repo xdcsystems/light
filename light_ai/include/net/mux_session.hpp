@@ -112,10 +112,9 @@ private:
     SessionGate& gate_;
     AvPacket mux_pkt_;  // the packet being written (moved out of the queue)
     AvPacket dup_pkt_;  // an IDR with the SPS/PPS prefix prepended (ParamSetCache buffer)
-    // Late-joiner support: the SPS/PPS prefix of the first IDR, repeated
-    // on every later IDR.
+    // Late-joiner support: the SPS/PPS prefix of the first IDR, repeated on every later IDR.
     ParamSetCache params_;
-    uint32_t sessions_ = 0;            // the last session's epoch (1, 2, ...)
+    uint32_t sessions_ = 0;             // the last session's epoch (1, 2, ...)
     std::atomic<bool> quit_ { false };  // stop() -> the accept poll and the session loop
     std::thread thread_;                // last: started by start(), after every member above
 };

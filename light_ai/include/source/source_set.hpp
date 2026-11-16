@@ -75,10 +75,11 @@ public:
         // the sleep loop itself lands with the udev patch
         if ( n_ == 0 )
             log_.info() << "sources configured: none - waiting for attach\n";
-        // M5: per-source decoders -- mixed resolutions (1280x960 USB next to
+
+        // per-source decoders -- mixed resolutions (1280x960 USB next to
         // 1280x720 net) are supported.
-        for ( int s = 0; s < n_; ++s )
-            ch_[static_cast<std::size_t>( s )].configure( s, eps[static_cast<std::size_t>( s )], model_w, model_h );
+        for ( std::size_t s = 0; s < eps.size(); ++s )
+            ch_[s].configure( static_cast<int>( s ), eps[s], model_w, model_h );
     }
 
     int size() const { return n_; }

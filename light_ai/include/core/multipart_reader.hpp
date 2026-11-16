@@ -1,35 +1,30 @@
 // MultipartReader: the multipart/x-mixed-replace framing of an MJPEG pull
 // stream as a pure state machine fed with bytes. No I/O: the caller keeps
-// the receive window (core/byte_window.hpp), hands its unconsumed bytes to
-// feed(), consumes what feed() parsed and refills on NeedMore.
+// the receive window (core/byte_window.hpp), feeds its unconsumed bytes,
+// consumes what feed() parsed and refills on NeedMore.
 //
 // Grammar (lines end with LF, an optional CR before it: core/line_scan.hpp):
-//   delimiter line -- the dash-boundary at a line start (after an LF, or
-//                     at the start of the bytes while looking for a part),
-//                     followed by a line end. The dash-boundary is the RFC
-//                     form "--" + boundary; a declared boundary that already
-//                     starts with "--" may also be sent bare. The RFC form
-//                     is tried first at each position; the form of the
-//                     first match is locked for the connection;
+//   delimiter line -- at a line start: the RFC form "--" + boundary, or a
+//                     declared boundary already starting with "--" bare;
+//                     the RFC form is tried first and the form of the
+//                     first match is locked;
 //   part header    -- lines up to the first empty line; Content-Length
-//                     (a field at a line start, case-insensitive): digits
-//                     with optional blanks around them, anything else = no
-//                     Content-Length;
-//   body           -- Content-Length bytes, or without it everything up to
-//                     the line break before the next delimiter line (that
-//                     line break, CRLF or LF, belongs to the delimiter and
-//                     stays unconsumed for the next part).
+//                     (a line-start field, case-insensitive): digits
+//                     with optional blanks, anything else = absent;
+//   body           -- Content-Length bytes, or everything up to the line
+//                     break before the next delimiter (that break belongs
+//                     to the delimiter and stays unconsumed).
 // Bytes before a delimiter line are skipped (garbage between parts).
 //
-// The desync limit is the caller's window: while it looks for a delimiter
-// or a header end, feed() consumes nothing, so a window that fills up
-// without one is a desynced stream (NetMjpegSource). feed() reports Desync
-// itself only for a body larger than body_cap. After Desync -- or after any
-// read the caller abandons -- resync() and drop or keep the window.
+// Desync is the caller's window: while searching for a delimiter or a
+// header end feed() consumes nothing, so a full window without one is a
+// desynced stream (NetMjpegSource). feed() reports Desync itself only for
+// a body above body_cap. After Desync -- or an abandoned read -- resync(),
+// then drop or keep the window.
 //
-// part_buffered() runs the same grammar on a copy of the state without
-// copying: true iff feed() on the same bytes would end in Part or Desync
-// (needs no more data). Thread: one owner at a time (the source's).
+// part_buffered() runs the same grammar on a state copy without copying:
+// true iff feed() on the same bytes would end in Part or Desync.
+// Thread: one owner at a time (the source's).
 
 #pragma once
 

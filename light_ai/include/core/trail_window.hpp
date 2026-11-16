@@ -28,7 +28,7 @@ class TrailWindow
 public:
     enum
     {
-        kTrajPoints = 300,  // ring per track (~12 s at 25 fps)
+        kTrajPoints = 300,   // ring per track (~12 s at 25 fps)
         kTrajMinStepPx = 8,  // trail push threshold: a new point enters the ring
                              // only when the center moved this far from the last
                              // pushed one; without it detection jitter fills the

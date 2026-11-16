@@ -31,10 +31,19 @@ enum class FrameStatus : uint8_t
 inline Status dequeue_status( int err )
 {
     Errc c = Errc::Failed;
-    if ( err == EAGAIN || err == EINTR )
+    switch ( err )
+    {
+    case EAGAIN:
+    case EINTR:
         c = Errc::Timeout;
-    else if ( err == ENODEV || err == EIO )
+        break;
+    case ENODEV:
+    case EIO:
         c = Errc::Lost;
+        break;
+    default:
+        break;
+    }
     return errno_status( c, "dequeue failed", err );
 }
 

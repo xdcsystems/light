@@ -1,25 +1,24 @@
-// InferencePool: the NPU stage of the pipeline -- N engines, one InferSlot
-// and one worker thread per engine, and the FIFO that hands results back
-// strictly in submit order (BoxSmoother and Tracker see frames in order).
+// InferencePool: the NPU stage -- N engines, one InferSlot and one worker
+// thread per engine, and a FIFO that hands results back strictly in submit
+// order (BoxSmoother and Tracker see frames in order).
 //
-// Two modes, picked once from InferConfig::pool:
-//   pool < 3 -> one engine ("ring of one"): the caller submits and
-//               collects the same frame, the legacy synchronous path;
-//   pool 3   -> three engines on one model, one per NPU core; up to
-//               three frames in flight, inference overlapped with capture.
-// (2 is rejected by the CLI; anything below 3 maps to one engine here, so
-// a direct construction can never create the untested 2-engine mode.)
+// Mode, picked once from InferConfig::pool:
+//   pool < 3 -> one engine ("ring of one"): the caller submits and collects
+//               the same frame, the legacy synchronous path;
+//   pool 3   -> three engines, one per NPU core; up to three frames in
+//               flight, inference overlapped with capture.
+// 2 is rejected by the CLI; anything below 3 maps to one engine here, so a
+// direct construction can never create the untested 2-engine mode.
 //
-// Threading: all public methods are called from one thread, the pipeline
-// thread -- the FIFO has no lock by design. Each worker touches only its
-// own slot and engine (InferSlot documents the handoff).
+// Threading: all public methods run on the pipeline thread -- the FIFO has
+// no lock by design. Each worker touches only its own slot and engine (see
+// InferSlot for the handoff).
 //
 // Template parameters (static polymorphism, no virtuals): Engine is
-// move-constructible from the EngineArgs given to the constructor; Decode is
-// copy-constructible, the pool keeps one copy per worker and worker k calls
-// only its own copy, so a Decode may keep preallocated per-frame state
-// (YoloDecode: the candidate buffer) and is never called concurrently on one
-// instance.
+// move-constructible from the EngineArgs of the constructor; Decode is
+// copy-constructible, one copy per worker, worker k calls only its own copy,
+// so a Decode may keep preallocated per-frame state (YoloDecode: the
+// candidate buffer) and is never called concurrently on one instance.
 //
 // Destruction closes every slot and joins the workers before the engines
 // die. A worker blocked inside a wedged rknn_run keeps the destructor
@@ -243,12 +242,12 @@ private:
     {
         if ( opts_.pin_workers )
             pin_current_thread_to_big_cores( "npu worker", log_ );
-        const Engine& eng = engines_[static_cast<size_t>( k )];
-        Decode& dec = decoders_[static_cast<size_t>( k )];
-        InferSlot& slot = slots_[static_cast<size_t>( k )];
-        while ( slot.serve( [this, &eng, &dec]( const InferJob& job, InferOutput& out ) { run_job( eng, dec, job, out ); } ) )
-        {
-        }
+        const std::size_t i = static_cast<std::size_t>( k );
+        const Engine& eng = engines_[i];
+        Decode& dec = decoders_[i];
+        InferSlot& slot = slots_[i];
+        const auto work = [this, &eng, &dec]( const InferJob& job, InferOutput& out ) { run_job( eng, dec, job, out ); };
+        slot.run( work );
     }
 
     // One job on the worker thread: inference, then the postprocess.

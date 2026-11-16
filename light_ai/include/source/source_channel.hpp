@@ -79,6 +79,7 @@ public:
         node_ = ep.uri;
         model_w_ = model_w;
         model_h_ = model_h;
+        
         if ( kind_ == SourceKind::NetMjpeg )
             src_.use_net();
         else

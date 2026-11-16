@@ -1,25 +1,22 @@
-// Associator: one round of the tracker's detection-to-track association --
-// the candidate filter, the size-consistency gate, the IoU gate and the
-// global greedy best-first matching (greedy_iou_match, box_math.hpp).
+// Associator: one round of detection-to-track association -- the candidate
+// filter, the size-consistency gate, the IoU gate, global greedy matching
+// (greedy_iou_match, box_math.hpp). Two rounds over one pair buffer
+// (ByteTrack-style; rounds 0/1 in the code): round 1 pairs every person det
+// with every alive track at the strong gate kIoUGate; round 2 pairs
+// round-1-unmatched dets with round-1-unmatched CONF tracks at the weak
+// gate kIoUGateWeak, position only -- what a match does to the track (hits)
+// is Tracker::associate's business. Target case: person #2 emits conf
+// 0.25-0.55 dets that undershoot the strong IoU gate while their track
+// coasts on damped velocity -- without round 2 the track dies at kMaxMiss
+// and the person re-spawns under a new id.
 //
-// Two rounds over one pair buffer (ByteTrack-style): round 1 pairs
-// every person det with every alive track at the strong gate kIoUGate;
-// round 2 pairs round-1-unmatched dets with round-1-unmatched CONF tracks at
-// the weak gate kIoUGateWeak (in the code: round 0 and 1). Target case:
-// person #2 emits conf 0.25-0.55 dets that undershoot the strong IoU gate while their track coasts on damped
-// velocity -- the track used to die at kMaxMiss and the person re-spawned
-// under a new id. The lower size gate is shared; the upper one relaxes in
-// round 2 (kSizeMaxWeak): a tent spawned from a partial det stays too small to
-// accept the full-size det of the same person at kSizeMax -- observed live:
-// a sliver-born track rejected every full-size det and starved
-// to death. What a match does to the track (round 2 measures the position
-// only, never touches hits) is the caller's business: Tracker::associate.
-//
-// Size-consistency gate: a detection matches a track only if its w/h stay
-// within [kSizeMin, kSizeMax] percent of the track's EMA size. Partial
-// detections (a person half-out of frame) carry a full-height box squeezed to
-// a fraction of the track size -- without the gate such a box steals the IoU
-// match and injects a false velocity spike into a standing person's track.
+// Size gate: a det matches only if its w/h stay within [kSizeMin, kSizeMax]
+// percent of the track's EMA size. A partial det (a person half out of
+// frame) is a full-height box squeezed far below that -- without the gate
+// it steals the IoU match and injects a false velocity spike into a
+// standing person's track. Round 2 relaxes the upper bound (kSizeMaxWeak):
+// a sliver-born track stays too small to accept its person's full-size det
+// at kSizeMax and used to starve to death (observed live).
 //
 // Pure logic on the pipeline thread (Tracker::update); the pair buffer is a
 // preallocated member.

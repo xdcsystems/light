@@ -1,32 +1,27 @@
-// BasicPacketQueue: the encoded packets on their way from the encoder
-// (pipeline thread) to the muxer (serve thread). A fixed ring of N
-// preallocated packet slots, one mutex, one condition variable: no heap
-// per packet, the payload moves slot to slot (av_packet_move_ref in
-// production).
+// BasicPacketQueue: the encoded packets from the encoder (pipeline thread)
+// to the muxer (serve thread). A fixed ring of preallocated packet slots,
+// one mutex, one condition variable, no heap per packet; the payload
+// moves slot to slot (av_packet_move_ref in production).
 //
-// Thread rule (every member is guarded by mx_, nothing is read outside it):
+// Thread rule (every member is guarded by mx_):
 //   pipeline thread (producer): push(), depth(), fail( epoch );
 //   serve thread (consumer):    open( epoch ), pop(), close();
 //   the owner's destructor:     stop() (wakes a blocked pop for good).
 //
-// Session frame (the serve thread): open( epoch ) before the session is
-// published to the encoder, close() after it is withdrawn. open() clears
-// leftovers, arms the key gate and makes `epoch` the queue's session;
-// close() clears again.
+// Session (the serve thread): open( epoch ) before the session is published
+// to the encoder, close() after it is withdrawn. open() clears leftovers,
+// arms the key gate and makes `epoch` the session; close() clears again.
 //
-// Policies:
-//   overflow -- the serve thread stalled (slow viewer, Wi-Fi burst).
-//     Dropping one packet would tear the reference chain (every later
-//     P-frame decodes into corruption until the next IDR), so push()
-//     flushes the whole queue and re-arms the key gate; the caller forces
-//     an IDR on the next frame. The gap is one frame, not a GOP.
-//   key gate -- after open() and after an overflow, pop() drops packets
-//     until the first key frame (a late join mid-GOP must not decode
-//     P-frames against a missing reference).
-//   fail( epoch ) -- an encode-side error ends the session: pop() returns
-//     Failed. A fail() for any other session than the open one is a no-op:
-//     an RGA error from a publish that began in session N cannot end
-//     session N+1.
+// Overflow (the serve thread stalled): push() flushes the whole queue and
+// re-arms the key gate; the caller forces an IDR on the next frame -- a
+// dropped packet would tear the reference chain, later P-frames decode into
+// corruption until the next IDR; the gap is one frame, not a GOP.
+// Key gate: after open() and after an overflow, pop() drops packets until
+// the first key frame (a late join mid-GOP must not decode P-frames against
+// a missing reference).
+// fail( epoch ): an encode-side error ends the session, pop() returns
+// Failed. A fail() for another session than the open one is a no-op: an RGA
+// error from a publish begun in session N cannot end session N+1.
 //
 // Pkt/Ops contracts: the production instantiation is net/av_packet_queue.hpp,
 // the test one tests/test_packet_queue.cpp.
@@ -152,25 +147,26 @@ public:
     Popped pop( Pkt& dst )
     {
         std::unique_lock<std::mutex> lk( mx_ );
-        for ( ;; )
-        {
-            cv_.wait( lk, [this] { return stopped_ || failed_ || ring_.n > 0; } );
-            if ( stopped_ )
-                return Popped { Pop::Stopped, ring_.n };
-            if ( failed_ )
-                return Popped { Pop::Failed, ring_.n };
-            Pkt& front = ring_.front();
-            if ( wait_key_ && !ops_.is_key( front ) )
+        // The predicate drains the key gate inline: after the wait, the
+        // front is a key packet (or the queue is stopped/failed).
+        cv_.wait( lk, [this] {
+            if ( stopped_ || failed_ )
+                return true;
+            while ( ring_.n > 0 && wait_key_ && !ops_.is_key( ring_.front() ) )
             {
-                ops_.unref( front );
+                ops_.unref( ring_.front() );
                 ring_.pop();
-                continue;
             }
-            wait_key_ = false;
-            ops_.move( dst, front );
-            ring_.pop();
-            return Popped { Pop::Packet, ring_.n };
-        }
+            return ring_.n > 0;
+        } );
+        if ( stopped_ )
+            return Popped { Pop::Stopped, ring_.n };
+        if ( failed_ )
+            return Popped { Pop::Failed, ring_.n };
+        wait_key_ = false;
+        ops_.move( dst, ring_.front() );
+        ring_.pop();
+        return Popped { Pop::Packet, ring_.n };
     }
 
     // Owner: wakes the consumer for good.

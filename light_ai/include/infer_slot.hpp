@@ -1,26 +1,23 @@
-// InferSlot: one cell of the inference pool -- the handoff of one frame
-// between the pipeline thread and the NPU worker that owns this slot.
+// InferSlot: one handoff cell between the pipeline thread and the NPU worker
+// that owns this slot.
 //
-// State machine (every transition under the slot mutex):
-//
-//     Free --submit()--> Queued --serve() done--> Done --take()--> Free
+//     Free --submit()--> Queued --run() done----> Done --take()--> Free
 //                          |                                ^
 //                          +--take()/reclaim() give up-->   |
-//                             Abandoned --serve() done------+
+//                             Abandoned --run() done--------+
 //
-// The rule the class exists to enforce: a slot whose job is still on the
-// NPU can only be freed by its worker. The pipeline thread may give up
-// waiting (take() or reclaim() time out on a wedged NPU), but then it
-// marks the slot Abandoned instead of freeing it: handing the tensor back
-// to RGA while rknn_run still reads it would corrupt that inference. The
-// worker frees an Abandoned slot when its job finishes.
+// A slot whose job is still on the NPU is freed only by its worker. When the
+// pipeline thread stops waiting (take()/reclaim() time out on a wedged NPU),
+// it marks the slot Abandoned, not Free: handing the tensor back to RGA while
+// rknn_run still reads it would corrupt that inference. The worker frees an
+// Abandoned slot when its job finishes.
 //
-// Data ownership follows the state, no lock needed for the payload:
-// - job_ is written by submit() (Free, pipeline thread) and read by the
-//   worker while Queued/Abandoned;
-// - out_ is written by the worker while Queued/Abandoned and read by
-//   take() once Done (pipeline thread).
-// The mutex acquire/release around each transition publishes them.
+// Payload follows the state, no lock needed:
+// - job_: written by submit() (Free, pipeline thread), read by the worker
+//   while Queued/Abandoned;
+// - out_: written by the worker while Queued/Abandoned, read by take() once
+//   Done (pipeline thread).
+// The mutex around each transition publishes both.
 
 #pragma once
 
@@ -28,7 +25,6 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
-#include <utility>
 
 #include "core/detection.hpp"  // DetList
 #include "core/geometry.hpp"   // LbGeom
@@ -153,7 +149,7 @@ public:
         return false;
     }
 
-    // Shutdown: releases every wait on this slot; serve() returns false.
+    // Shutdown: releases every wait on this slot; run() returns.
     void close()
     {
         {
@@ -165,26 +161,17 @@ public:
 
     // --- worker thread (one per slot) ------------------------------------
 
-    // Blocks until a job is queued, runs work( const InferJob&, InferOutput& )
-    // WITHOUT the lock (the pipeline thread's scans must not wait on
-    // rknn_run), then publishes the result: Queued -> Done, or
-    // Abandoned -> Free. Returns false once the slot is closed.
+    // The worker loop: blocks until a job is queued, runs work( const
+    // InferJob&, InferOutput& ) WITHOUT the lock (the pipeline thread's
+    // scans must not wait on rknn_run), then publishes the result:
+    // Queued -> Done, or Abandoned -> Free. Returns once close() is
+    // called (shutdown).
     template <typename Work>
-    bool serve( Work&& work )
+    void run( Work&& work )
     {
-        {
-            std::unique_lock<std::mutex> lk( mx_ );
-            cv_.wait( lk, [this] { return closed_ || st_ == State::Queued; } );
-            if ( closed_ )
-                return false;
-        }
-        std::forward<Work>( work )( static_cast<const InferJob&>( job_ ), out_ );
-        {
-            const std::lock_guard<std::mutex> lk( mx_ );
-            st_ = st_ == State::Abandoned ? State::Free : State::Done;
-        }
-        cv_.notify_all();
-        return true;
+        std::unique_lock<std::mutex> lk( mx_ );
+        while ( wait_for_job( lk ) )
+            do_job( work, lk );
     }
 
 private:
@@ -199,6 +186,25 @@ private:
     {
         if ( st_ == State::Queued )
             st_ = State::Abandoned;
+    }
+
+    // Worker: blocks until a job is queued. false: the slot is closed (shutdown).
+    bool wait_for_job( std::unique_lock<std::mutex>& lk )
+    {
+        cv_.wait( lk, [this] { return closed_ || st_ == State::Queued; } );
+        return !closed_;
+    }
+
+    // Worker, with the lock held: runs the job without the lock (rknn_run may
+    // take seconds), then publishes the result under the lock again.
+    template <typename Work>
+    void do_job( Work& work, std::unique_lock<std::mutex>& lk )
+    {
+        lk.unlock();
+        work( static_cast<const InferJob&>( job_ ), out_ );
+        lk.lock();
+        st_ = st_ == State::Abandoned ? State::Free : State::Done;
+        cv_.notify_all();
     }
 
 private:
