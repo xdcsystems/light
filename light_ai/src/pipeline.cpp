@@ -74,6 +74,38 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
 
     model_w_ = pool_.engine( 0 ).input_width();
     model_h_ = pool_.engine( 0 ).input_height();
+
+    // check_yolo_heads: the model outputs must be a 3-head yolov5 layout --
+    // one head per stride 8/16/32, ch == 255 -- before any frame runs. A
+    // violation is fatal here: decode would only warn and skip the head, and
+    // the run would show no detections at all.
+    {
+        const auto& outs = pool_.engine( 0 ).output_attrs();
+        int seen[3] = { 0, 0, 0 };
+        for ( size_t gi = 0; gi < outs.size(); ++gi )
+        {
+            const rknn_tensor_attr& attr = outs[gi];
+            if ( attr.n_dims != 4 )
+            {
+                log_.warn() << "pipeline: unexpected output tensor ndims=" << attr.n_dims << '\n';
+                throw std::runtime_error( "rknn: output tensor " + std::to_string( gi ) + " is not 4-D NCHW" );
+            }
+            const YoloHead probe { nullptr, static_cast<int>( attr.dims[1] ), static_cast<int>( attr.dims[2] ),
+                                   static_cast<int>( attr.dims[3] ) };
+            int stride = 0;
+            int head = -1;
+            if ( !yolo_head_shape( probe, static_cast<int>( gi ), model_w_, model_h_, log_, stride, head ) )
+                throw std::runtime_error( "rknn: output head " + std::to_string( gi ) + " is not a yolov5 head" );
+            if ( attr.dims[1] != 255 )  // 3 anchors x (4 box + 1 obj + 80 classes)
+                throw std::runtime_error( "rknn: output head " + std::to_string( gi ) + " ch " +
+                                          std::to_string( attr.dims[1] ) + ", expected 255" );
+            ++seen[head];
+        }
+        if ( outs.size() != 3 || seen[0] != 1 || seen[1] != 1 || seen[2] != 1 )
+            throw std::runtime_error( "rknn: expected 3 yolov5 heads (one per stride 8/16/32), got " +
+                                      std::to_string( outs.size() ) );
+    }
+
     cal_dumper_.init( cfg_.cal, model_w_, model_h_ );
 
     // Channels know their kind, node and the model geometry; no device is
