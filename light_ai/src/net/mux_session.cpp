@@ -56,11 +56,10 @@ void MuxSession::serve()
     TcpPullServer tcp( cfg_.port, 2 * 1024 * 1024, 15 );
     if ( tcp_pull )
     {
-        if ( Status st = tcp.listen(); !st.ok() )
-        {
-            log_.error() << "enc: tcp listener on port " << cfg_.port << ": " << st << '\n';
+        // The bind retries until it succeeds or stop() ends the thread;
+        // the run keeps going without a viewer (README, Run).
+        if ( Status st = retry_listen( [&] { return tcp.listen(); }, quit_, log_, "enc", cfg_.port ); !st.ok() )
             return;
-        }
         log_.info() << "enc: PULL mode: listening on tcp port " << cfg_.port << 
                      " (viewer: ffplay -fflags nobuffer tcp://<board-ip>:" << cfg_.port << ")\n";
     }
