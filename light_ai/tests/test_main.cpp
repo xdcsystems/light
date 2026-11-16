@@ -58,6 +58,7 @@ int main( int argc, char** argv )
         { "packet_queue_threads", &test_packet_queue_threads },
         { "session_gate", &test_session_gate },
         { "session_gate_threads", &test_session_gate_threads },
+        { "infer_slot_threads", &test_infer_slot_threads },
     };
     return run_suites( "light_ai_tests", suites, argc, argv, std::cout, std::cerr );
 }

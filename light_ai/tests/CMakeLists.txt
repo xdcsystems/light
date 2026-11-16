@@ -63,6 +63,7 @@ add_executable(light_ai_tests
     test_idle_plate.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
+    test_infer_slot_threads.cpp
     # modules under test
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
     ${LIGHT_AI_ROOT}/src/core/encoder_config.cpp
