@@ -47,7 +47,7 @@ public:
     // publish of a session resets the multi-view canvas gray; the session's
     // first frame is encoded once every source cell has a picture of this
     // session, or 200 ms after its start (core/session_warmup.hpp).
-    void publish( int tensor_fd, const LbGeom& band, int64_t ts_us = -1, int src_idx = 0 );
+    void publish( int tensor_fd, const LbGeom& band, int64_t ts_us = -1, int src_idx = 0 ) noexcept;
 
     // NO SIGNAL publish (idle): RGA-copies the pre-rendered idle canvas
     // (gray + the plate) into the ring slot / composite canvas cells of
@@ -56,7 +56,7 @@ public:
     // at least one configured tile has no live source; returns at once
     // without a session. Idle encodes share the pacer budget with live
     // ones and are NOT counted in --frames or the timing stats.
-    void publish_idle( int64_t ts_us, const bool* absent, int nabs );
+    void publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept;
 
     // True while the stream path is live (viewer connected in PULL
     // mode / UDP path open). The pipeline gates GPU box drawing on it:

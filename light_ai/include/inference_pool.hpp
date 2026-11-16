@@ -130,7 +130,7 @@ public:
     // Queues the frame whose pixels are already in tensor(k). false: the
     // frame is dropped (logged) -- the FIFO is full or slot k is not Free,
     // both caller bugs that the old PubFifo guards reported the same way.
-    bool submit( int k, const InferJob& job )
+    bool submit( int k, const InferJob& job ) noexcept
     {
         if ( full() )
         {
@@ -150,7 +150,7 @@ public:
     // true: `out` holds it and its slot is Free again. false: nothing was
     // pending, or the wait gave up (logged; the slot stays in flight until
     // its worker finishes) -- out.npu_ok is false either way.
-    bool collect( InferResult& out )
+    bool collect( InferResult& out ) noexcept
     {
         out.npu_ok = false;
         if ( fifo_.empty() )
@@ -239,7 +239,7 @@ private:
         }
     }
 
-    void worker_loop( int k )
+    void worker_loop( int k ) noexcept
     {
         if ( opts_.pin_workers )
             pin_current_thread_to_big_cores( "npu worker", log_ );

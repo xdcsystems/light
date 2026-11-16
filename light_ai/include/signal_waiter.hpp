@@ -57,7 +57,7 @@ public:
     };
 
 private:
-    void loop();
+    void loop() noexcept;
     void on_signal( int sig );
 
     const ProcessEnv& env_;

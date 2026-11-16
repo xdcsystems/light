@@ -94,7 +94,7 @@ public:
     void stop();   // ends and joins it; idempotent
 
 private:
-    void serve();
+    void serve() noexcept;
     void run_session( TcpPullServer& tcp, bool tcp_pull, const std::string& url );
     // Transport setup (accept + socket options / avio_open) and the
     // stream setup (new_stream + header + mpegts options).

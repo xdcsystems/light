@@ -89,7 +89,7 @@ public:
     // never while Live. hot: false = the Pipeline ctor (startup log texts, no warm-up).
     // why: the reason when the result is not Live (ok when Live).
     template <class Locator>
-    Attach attach( const NodeList& busy, Locator& loc, bool hot, Status& why )
+    Attach attach( const NodeList& busy, Locator& loc, bool hot, Status& why ) noexcept
     {
         const bool first = state_.load( std::memory_order_acquire ) == State::NeverAttached;
         why = {};
@@ -153,7 +153,7 @@ public:
     //   decode error -- does not consume the warm-up;
     //   warm-up      -- the first valid decodes after a hot attach may be partial
     //                   (mid-stream start): decoded, then discarded.
-    int decode( const EncodedFrame& f )
+    int decode( const EncodedFrame& f ) noexcept
     {
         int fd = -1;
         Status st;

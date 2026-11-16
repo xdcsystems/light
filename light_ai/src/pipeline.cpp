@@ -230,7 +230,7 @@ FrameStatus Pipeline::next_frame( EncodedFrame& f, int& ok )
 // give -1 for an empty packet, a decode error or a warm-up frame: such a frame
 // counts neither in ok nor in the timing statistics -- otherwise rare errors
 // would silently skew the averages.
-Pipeline::Step Pipeline::step( int& ok, Status& st )
+Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
 {
     st = Status {};
     const auto t0 = clk::now();
