@@ -219,7 +219,7 @@ void H264Encoder::request_idr()
     }
 }
 
-bool H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session& s, PacketQueue& queue )
+Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session& s, PacketQueue& queue )
 {
     // A new session (its first encode): the pts restart from zero with
     // the session's step, and its first frame is an IDR -- a TCP viewer
@@ -270,7 +270,7 @@ bool H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session
     if ( ret < 0 && ret != AVERROR( EAGAIN ) )
     {
         log_.error() << "enc: send_frame: " << av_err_str( ret ) << '\n';
-        return false;
+        return sdk_status( Errc::Failed, "send_frame", ret );
     }
     if ( !submitted )
     {
@@ -281,7 +281,7 @@ bool H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session
         log_.warn() << "enc: send_frame: input queue full, frame dropped, IDR next frame\n";
         force_idr_ = true;
         pts_.advance();
-        return true;
+        return {};
     }
 
     ret = avcodec_receive_packet( ctx_, pkt );
@@ -293,11 +293,11 @@ bool H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session
     if ( ret != AVERROR( EAGAIN ) && ret != AVERROR_EOF )
     {
         log_.error() << "enc: receive_packet: " << av_err_str( ret ) << '\n';
-        return false;
+        return sdk_status( Errc::Failed, "receive_packet", ret );
     }
     pts_.advance();
     ++frames_sent_;
-    return true;
+    return {};
 }
 
 // One finished encoder packet -> the queue for the serve thread to mux.

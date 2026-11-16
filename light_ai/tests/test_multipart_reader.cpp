@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -29,7 +30,9 @@ namespace
     MultipartReader reader( const std::string& boundary, size_t cap = kCap )
     {
         MultipartReader r( cap );
-        r.reset( boundary.data(), boundary.size() );
+        const Status rst = r.reset( boundary.data(), boundary.size() );
+        if ( !rst.ok() )  // a valid boundary by construction: an invariant, not a test assertion
+            throw std::runtime_error( "reader(): reset() failed" );
         return r;
     }
 
@@ -165,12 +168,12 @@ namespace
         // reset() rejects what HttpHead never hands over.
         {
             MultipartReader r( kCap );
-            CHECK( t, !r.reset( "", 0 ) );
+            CHECK( t, !r.reset( "", 0 ).ok() );
             const std::string too_long( 61, 'b' );
-            CHECK( t, !r.reset( too_long.data(), too_long.size() ) );
+            CHECK( t, !r.reset( too_long.data(), too_long.size() ).ok() );
             CHECK( t, !r.part_buffered( reinterpret_cast<const uint8_t*>( "--b\r\n\r\n" ), 7 ) );
             const std::string max( 60, 'b' );
-            CHECK( t, r.reset( max.data(), max.size() ) );
+            CHECK( t, r.reset( max.data(), max.size() ).ok() );
             CHECK( t, std::string( r.boundary() ) == max );
         }
     }

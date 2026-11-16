@@ -97,7 +97,7 @@ namespace
         // header (Content-Length: 64866). The body is not recorded: a stand-in
         // of that length completes the part.
         MultipartReader parts( 1 << 20 );
-        CHECK( t, parts.reset( r.boundary, r.boundary_len ) );
+        CHECK( t, parts.reset( r.boundary, r.boundary_len ).ok() );
         mjpeg_test::Bytes s( rec.begin() + static_cast<long>( r.len ), rec.end() );
         CHECK( t, !parts.part_buffered( s.data(), s.size() ) );
         s.resize( s.size() + 64866, 0x55 );
