@@ -7,10 +7,11 @@
 
 #include <sstream>
 #include <stdexcept>
+#include <string>
 
 #include "core/status.hpp"
 
-inline void throw_on( const Status& st, const char* context )
+inline void throw_on( const Status& st, const std::string& context )
 {
     if ( st.ok() )
         return;

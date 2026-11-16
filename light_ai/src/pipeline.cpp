@@ -116,9 +116,9 @@ void Pipeline::attach_sources()
         Status why;
         const Attach a = ch.attach( srcs_.busy_nodes( s ), locator_, false, why );
         if ( a == Attach::DecoderFailed )
-            throw std::runtime_error( "mpp decoder init failed for " + ch.node() );
+            throw_on( why, "mpp decoder init failed for " + ch.node() );
         if ( a == Attach::AuxFailed )
-            throw std::runtime_error( "pipeline: aux buffer alloc failed for source " + ch.node() );
+            throw_on( why, "pipeline: aux buffer alloc failed for source " + ch.node() );
         if ( a != Attach::Live )
         {
             log_.warn() << "source s" << s << ": not started at startup (" << why << ") - prober retries every 2 s\n";
@@ -198,17 +198,21 @@ FrameStatus Pipeline::next_frame( EncodedFrame& f, int& ok )
 // give -1 for an empty packet, a decode error or a warm-up frame: such a frame
 // counts neither in ok nor in the timing statistics -- otherwise rare errors
 // would silently skew the averages.
-Pipeline::Step Pipeline::step( int& ok )
+Pipeline::Step Pipeline::step( int& ok, Status& st )
 {
+    st = Status {};
     const auto t0 = clk::now();
     EncodedFrame f {};
-    const FrameStatus st = next_frame( f, ok );
-    if ( st != FrameStatus::Frame )
+    const FrameStatus fs = next_frame( f, ok );
+    if ( fs != FrameStatus::Frame )
     {
-        if ( st == FrameStatus::Stopped || stop_.requested() )
+        if ( fs == FrameStatus::Stopped || stop_.requested() )
             return Step::Stop;
-        if ( handle_source_failure( f ) != 0 )
+        if ( Status hst = handle_source_failure( f ); !hst.ok() )
+        {
+            st = hst;
             return Step::Fatal;
+        }
         srcs_.reset_stall_clocks( clk::now() );
         return Step::Skipped;
     }
@@ -236,7 +240,7 @@ Pipeline::Step Pipeline::step( int& ok )
     return Step::Dispatched;
 }
 
-int Pipeline::run()
+Status Pipeline::run()
 {
     int ok = 0;
     t0_ = clk::now();
@@ -252,9 +256,10 @@ int Pipeline::run()
     // frames == 0 (no --frames, the default): run until stop (Ctrl-C), then drain and report.
     for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.requested(); )
     {
-        const Step r = step( ok );
+        Status fst;
+        const Step r = step( ok, fst );
         if ( r == Step::Fatal )
-            return -1;
+            return fst;
         if ( r == Step::Stop )
             break;
         i += r == Step::Dispatched ? 1 : 0;
@@ -265,25 +270,26 @@ int Pipeline::run()
         ok += publish_oldest();
     t_.report_total();
     rep_.summary( ok, std::chrono::duration<double>( clk::now() - t0_ ).count(), reconnects_ );
-    return ok;
+    return {};
 }
 
 // Disconnect policy: ENODEV/EIO mean the source is gone (unplug, USB
 // hiccup, Wi-Fi drop) - the channel is detached and the SourceProber owns
 // the re-attach on its 2 s cadence (SourceChannel::attach, the same
 // path as at startup). Any other errno is a hard error and ends the run
-// with exit code 1 (run() returns -1, main() maps it to 1). The net
+// with exit code 1 (run() returns the failure Status, main() maps it
+// to 1). The net
 // source reports only these two classes by contract. The recovery
 // MECHANISM is the channel's attach(); the POLICY (cadence) is the
 // prober's. The old inline 20x1 s ladder is gone: it froze the frame
 // loop and starved any other live source for up to 20 s.
 
-int Pipeline::handle_source_failure( const EncodedFrame& f )
+Status Pipeline::handle_source_failure( const EncodedFrame& f )
 {
     const bool recoverable = f.st.code() == Errc::Lost;  // ENODEV / EIO (dequeue_status)
     log_.warn() << "source: " << f.st << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
     if ( !recoverable )
-        return -1;
+        return f.st;
     // M4: frames from the dead stream are never published - drop the
     // pending slots (their infer may still be in flight; the pool waits
     // for it, then frees without publishing). A no-op with one engine:
@@ -292,7 +298,7 @@ int Pipeline::handle_source_failure( const EncodedFrame& f )
     ++reconnects_;
     srcs_[f.src].detach();  // the prober owns the channel from here (SourceChannel thread rule)
     log_.info() << "source s" << f.src << ": detached - the prober will re-attach\n";
-    return 0;
+    return {};
 }
 
 // Claim-or-drain: a Free slot is NOT guaranteed here. After a give-up

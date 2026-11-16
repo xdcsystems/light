@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <fstream>
 #include <iomanip>
 #include <ios>
@@ -37,16 +38,21 @@ bool CalDumper::series_due( int frame_idx ) const
     return series_last_ < 0 || frame_idx - series_last_ >= cal_.interval;
 }
 
-bool CalDumper::write_ppm( const std::string& path, const uint8_t* data, size_t size ) const
+Status CalDumper::write_ppm( const std::string& path, const uint8_t* data, size_t size ) const
 {
     const size_t bytes = static_cast<size_t>( model_w_ ) * model_h_ * 3;
+    if ( size < bytes )
+        return make_status( Errc::Invalid, "tensor shorter than the model frame" );
+    errno = 0;  // ofstream does not clear errno on success: keep the sys() honest
     std::ofstream out( path, std::ios::binary );
-    if ( !out || size < bytes )
-        return false;
+    if ( !out )
+        return errno_status( Errc::Failed, "open failed", errno ? errno : EIO );
     out << "P6\n" << model_w_ << ' ' << model_h_ << "\n255\n";
     out.write( reinterpret_cast<const char*>( data ), static_cast<std::streamsize>( bytes ) );
     out.close();  // flushes: a failed final write (ENOSPC, EIO) sets failbit here, not in the destructor
-    return static_cast<bool>( out );
+    if ( out.fail() )
+        return errno_status( Errc::Failed, "write failed", errno ? errno : EIO );
+    return {};
 }
 
 void CalDumper::maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t size )
@@ -66,15 +72,15 @@ void CalDumper::maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t
     {
         single_done_ = true;
         const std::string path = cal_dump_path( cal_, CalKind::Single, frame_idx );
-        if ( write_ppm( path, data, size ) )
+        if ( Status st = write_ppm( path, data, size ); st.ok() )
             log_.info() << "calibration dump: " << path << " (" << model_w_ << 'x' << model_h_ << ")\n";
         else
-            log_.error() << "calibration dump failed: " << path << '\n';
+            log_.error() << "calibration dump failed: " << path << ": " << st << '\n';
     }
     if ( series )
     {
         const std::string path = cal_dump_path( cal_, CalKind::Series, frame_idx );
-        if ( write_ppm( path, data, size ) )
+        if ( Status st = write_ppm( path, data, size ); st.ok() )
         {
             ++series_saved_;
             series_last_ = frame_idx;
@@ -82,7 +88,7 @@ void CalDumper::maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t
         else
         {
             series_failed_ = true;
-            log_.error() << "calibration dump failed: " << path << '\n';
+            log_.error() << "calibration dump failed: " << path << ": " << st << '\n';
         }
     }
 }

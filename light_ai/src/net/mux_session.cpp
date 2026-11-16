@@ -56,9 +56,9 @@ void MuxSession::serve()
     TcpPullServer tcp( cfg_.port, 2 * 1024 * 1024, 15 );
     if ( tcp_pull )
     {
-        if ( !tcp.listen() )
+        if ( Status st = tcp.listen(); !st.ok() )
         {
-            log_.error() << "enc: tcp listener bind failed on port " << cfg_.port << '\n';
+            log_.error() << "enc: tcp listener on port " << cfg_.port << ": " << st << '\n';
             return;
         }
         log_.info() << "enc: PULL mode: listening on tcp port " << cfg_.port << 
@@ -179,12 +179,14 @@ MuxSession::FcGuard::~FcGuard()
 // (poll the listener, accept, socket options, custom AVIO over the
 // fd) or UDP push (avio_open, no handshake). The sleep on the UDP
 // failure path stays here, exactly where it was in run_session().
-bool MuxSession::open_transport( const std::string& url, AVFormatContext* fc, Transport& t )
+Status MuxSession::open_transport( const std::string& url, AVFormatContext* fc, Transport& t )
 {
     if ( t.tcp_pull )
     {
-        if ( !t.tcp || !t.tcp->accept_client( quit_ ) )
-            return false;
+        if ( !t.tcp )
+            return make_status( Errc::Invalid, "no transport" );
+        if ( Status ast = t.tcp->accept_client( quit_ ); !ast.ok() )
+            return ast;
 
         log_.info() << "enc: viewer connected (tcp)\n";  // its first frame: an IDR (H264Encoder::encode)
 
@@ -197,22 +199,23 @@ bool MuxSession::open_transport( const std::string& url, AVFormatContext* fc, Tr
     {
         log_.warn() << "enc: udp open failed: " << av_err_str( ret ) << '\n';
         std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
-        return false;
+        return sdk_status( Errc::Failed, "udp open failed", ret );
     }
     fc->pb = t.udp_pb;
-    return true;
+    return {};
 }
 
 // Stream setup, verbatim move out of run_session(): create the
 // stream, fill the codec parameters, write the header with the
 // live-stream mpegts options, derive the pts step and print the
-// session log lines. false = any of the three setup failures.
-bool MuxSession::setup_stream( AVFormatContext* fc, AVStream** st_out, int64_t* frame_step, bool tcp_pull )
+// session log lines. Status: NoMemory (avformat_new_stream), Failed
+// (write_header; the log and the pause stay here, before the return).
+Status MuxSession::setup_stream( AVFormatContext* fc, AVStream** st_out, int64_t* frame_step, bool tcp_pull )
 {
     const StreamLayout& lay = cfg_.layout;
     AVStream* st = avformat_new_stream( fc, nullptr );
     if ( !st )
-        return false;
+        return make_status( Errc::NoMemory, "avformat_new_stream failed" );
     // codecpar is allocated by avformat_new_stream itself
     //(libavformat/options.c: st->codecpar = 
     // avcodec_parameters_alloc(), with its own fail path):
@@ -238,7 +241,7 @@ bool MuxSession::setup_stream( AVFormatContext* fc, AVStream** st_out, int64_t* 
     {
         log_.error() << "enc: write_header failed: " << av_err_str( ret2 ) << '\n';
         std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
-        return false;
+        return sdk_status( Errc::Failed, "write_header failed", ret2 );
     }
     const AVRational tb = st->time_base;
     int64_t step = cfg_.vfr() ? 1 : av_rescale_q( 1, AVRational { 1, cfg_.fps }, tb );
@@ -258,7 +261,7 @@ bool MuxSession::setup_stream( AVFormatContext* fc, AVStream** st_out, int64_t* 
     }
     *st_out = st;
     *frame_step = step;
-    return true;
+    return {};
 }
 
 // One viewer-session iteration: allocate the muxer context, open the
@@ -291,12 +294,12 @@ void MuxSession::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
     Transport t;
     t.tcp = &tcp;
     t.tcp_pull = tcp_pull;
-    if ( !open_transport( url, fc.p, t ) )
+    if ( Status tst = open_transport( url, fc.p, t ); !tst.ok() )
         return;
 
     AVStream* st = nullptr;
     int64_t frame_step = 1;
-    if ( !setup_stream( fc.p, &st, &frame_step, tcp_pull ) )
+    if ( Status sst = setup_stream( fc.p, &st, &frame_step, tcp_pull ); !sst.ok() )
         return;
 
     // Session open order: the queue first (cleared, key gate armed, this

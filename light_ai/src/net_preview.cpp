@@ -81,9 +81,9 @@ NetPreview::~NetPreview()
 void NetPreview::serve()
 {
     TcpPullServer tcp( port_, 2 * 1024 * 1024, 5 );
-    if ( !tcp.listen() )
+    if ( Status st = tcp.listen(); !st.ok() )
     {
-        log_.error() << "net: tcp listener bind failed on port " << port_ << '\n';
+        log_.error() << "net: tcp listener on port " << port_ << ": " << st << '\n';
         error_.store( true );
         return;
     }
@@ -93,13 +93,16 @@ void NetPreview::serve()
     {
         error_.store( false );
 
-        if ( !tcp.accept_client( quit_ ) )
+        if ( Status ast = tcp.accept_client( quit_ ); !ast.ok() )
             continue;
 
         NutSessionGuard s( tcp );
-        AVStream* st = open_session( tcp, s.fc );
-        if ( !st )
+        AVStream* st = nullptr;
+        if ( Status ost = open_session( tcp, s.fc, st ); !ost.ok() )
+        {
+            log_.error() << "net: " << ost << '\n';
             continue;
+        }
         go_live( s.fc, st );
         wait_session_end();
         close_session( s.fc );
@@ -107,21 +110,19 @@ void NetPreview::serve()
 }
 
 // The muxer of one viewer: a NUT context over the client socket, one raw
-// RGB24 stream, the header written. nullptr = a step failed; serve()'s guard
-// frees fc and closes the client.
-AVStream* NetPreview::open_session( TcpPullServer& tcp, AVFormatContext*& fc )
+// RGB24 stream, the header written. The steps return their Status; the
+// caller logs it ("net: <st>"), serve()'s guard frees fc and closes the
+// client.
+Status NetPreview::open_session( TcpPullServer& tcp, AVFormatContext*& fc, AVStream*& st )
 {
-    if ( avformat_alloc_output_context2( &fc, nullptr, "nut", nullptr ) < 0 || !fc )
-    {
-        log_.error() << "net: avformat_alloc_output_context2 failed\n";
-        return nullptr;
-    }
-    if ( !tcp.attach_avio( fc ) )
-        return nullptr;
+    if ( const int r = avformat_alloc_output_context2( &fc, nullptr, "nut", nullptr ); r < 0 || !fc )
+        return sdk_status( Errc::Failed, "avformat_alloc_output_context2 failed", r );
+    if ( Status ast = tcp.attach_avio( fc ); !ast.ok() )
+        return ast;
 
-    AVStream* st = avformat_new_stream( fc, nullptr );
+    st = avformat_new_stream( fc, nullptr );
     if ( !st || !st->codecpar )
-        return nullptr;
+        return make_status( Errc::NoMemory, "avformat_new_stream failed" );
     st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
     st->codecpar->codec_id = AV_CODEC_ID_RAWVIDEO;
     st->codecpar->format = AV_PIX_FMT_RGB24;
@@ -133,11 +134,8 @@ AVStream* NetPreview::open_session( TcpPullServer& tcp, AVFormatContext*& fc )
 
     log_.info() << "net: write_header attempt, codec_tag=0x" << std::hex << st->codecpar->codec_tag << std::dec << "\n";
     if ( const int ret2 = avformat_write_header( fc, nullptr ); ret2 < 0 )
-    {
-        log_.error() << "net: write_header failed: " << av_err_str( ret2 ) << '\n';
-        return nullptr;
-    }
-    return st;
+        return sdk_status( Errc::Failed, "write_header failed", ret2 );
+    return {};
 }
 
 // The pts step in the time base the muxer chose, then the session goes

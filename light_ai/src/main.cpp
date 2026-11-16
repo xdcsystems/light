@@ -49,12 +49,12 @@ int main( int argc, char** argv )
         SignalWaiter waiter( env, stop );
         Pipeline p( cli.config(), stop, log );
         const SignalWaiter::Armed armed( waiter );
-        const int rc = p.run();
-        return rc > 0 ? 0 : 1;
+        const Status rst = p.run();
+        return rst.ok() ? 0 : 1;  // a runtime fatal -> 1; a clean end (even zero frames) -> 0
     }
     catch ( const std::exception& e )
     {
         log.error() << "Fatal: " << e.what() << '\n';
-        return 2;
+        return 3;  // startup failure; the CLI rejections above keep their 2
     }
 }
