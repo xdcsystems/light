@@ -18,9 +18,10 @@ namespace
     // The boundary parameter inside one Content-Type line value v[0, n).
     // RFC 7230 BWS around "=" and RFC 2046 quoted-string: many cameras emit
     // boundary="xyz" (some with a blank after the '='); the closing quote is
-    // a terminator, so the value is copied clean; boundary="" is empty.
-    // An over-long value fails loud instead of a silent truncation: a
-    // truncated pattern would desync the whole stream.
+    // a terminator so spaces and ';' inside quotes stay intact, whereas
+    // unquoted values trim trailing horizontal whitespace (' ' / '\t') before
+    // ';' or EOL. boundary="" is empty. An over-long value fails loud
+    // instead of a silent truncation: a truncated pattern desyncs the stream.
     HttpHead take_boundary( const uint8_t* v, size_t n )
     {
         const size_t bpos = line_scan::find_ci( v, n, "boundary=" );
@@ -29,11 +30,19 @@ namespace
         size_t s = bpos + 9;  // past "boundary="
         while ( s < n && ( v[s] == ' ' || v[s] == '\t' ) )
             ++s;
-        if ( s < n && v[s] == '"' )
+        const bool quoted = ( s < n && v[s] == '"' );
+        if ( quoted )
             ++s;
         size_t e = s;
-        while ( e < n && v[e] != '"' && v[e] != ';' )
+        while ( e < n && v[e] != '"' && ( quoted || v[e] != ';' ) )
             ++e;
+        if ( quoted && ( e >= n || v[e] != '"' ) )
+            return error( "unterminated multipart boundary" );
+        if ( !quoted )
+        {
+            while ( e > s && ( v[e - 1] == ' ' || v[e - 1] == '\t' ) )
+                --e;
+        }
         const size_t len = e - s;
         if ( len > static_cast<size_t>( HttpHead::kBoundaryMax ) )
             return error( "multipart boundary too long" );

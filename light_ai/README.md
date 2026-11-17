@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](#requirements--platform-constraints)
 [![Standard: C++17](https://img.shields.io/badge/C%2B%2B-17-orange.svg)](CMakeLists.txt)
-[![Tests: 54 suites / 7481 checks](https://img.shields.io/badge/Unit%20Tests-54%20suites%20%2F%207481%20checks-brightgreen.svg)](#tests)
+[![Tests: 54 suites / 7503 checks](https://img.shields.io/badge/Unit%20Tests-54%20suites%20%2F%207503%20checks-brightgreen.svg)](#tests)
 
 Zero-copy hardware-accelerated object detection, Kalman tracking, optional OSNet cross-camera Re-ID, and multi-camera H.264 streaming pipeline for Rockchip RK3588 (`V4L2` / HTTP MJPEG → `MPP` decode → `RGA3` letterbox & rotation → `RKNN` NPU + async Re-ID → `Mali G610` EGL/GLES box, EN/RU callout & trail overlay → `MPP` H.264 / MPEG-TS). Built in C++17 with no GStreamer, no OpenCV, no CPU pixel copies, and no virtual dispatch on the frame path.
 
@@ -147,7 +147,7 @@ The codebase contains **88 headers** under [`include/`](include/) and **55 trans
 
 ### Configuration, Source & Network Subdirectories
 
-- **`include/config/`, `src/config/`:** `config.hpp` (`Config`, `InferConfig`, `CalConfig`, `StreamConfig`, `LabelLang`), `option_registry.h` (25-entry `std::array` registry), `cli.hpp`, `config_file.h` (`inih`-backed INI loader).
+- **`include/config/`, `src/config/`:** `config.hpp` (`Config`, `InferConfig`, `CalConfig`, `StreamConfig`, `LabelLang`), `option_registry.h` (26-entry `std::array` registry), `cli.hpp`, `config_file.h` (`inih`-backed INI loader).
 - **`include/source/`, `src/source/`:** `source_types.hpp` (`SourceKind`, `SourceEndpoint` with `rot_deg`/`rot_auto`, `SourceGeom`), `source_channel.hpp` (`NeverAttached` / `Detached` / `Live`, `quarter_turn`, `needs_aux`), `source_set.hpp` (round-robin + `2 s` stall detection), `source_prober.hpp` (`2 s` background re-attach), `usb_node_locator.hpp` (USB + `device_caps` capture filtering), `buffered_socket.hpp`, `mjpeg_slot_pool.hpp`.
 - **`include/net/`, `src/net/`:** `network_init.hpp`, `encoder_frame_pool.hpp` (4-slot NV12 DRM ring), `frame_composer.hpp` (RGA tile/band compositor), `h264_encoder.hpp` (`h264_rkmpp` wrapper), `av_packet.hpp`, `av_packet_queue.hpp`, `mux_session.hpp`.
 
@@ -221,7 +221,7 @@ python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4
 
 [`tests/CMakeLists.txt`](tests/CMakeLists.txt) is an independent host CMake project requiring only a C++17 compiler and `pthread` (zero Rockchip/FFmpeg/EGL dependencies — runs identically on the board and on x86_64/arm64 hosts).
 
-- **Unit binary (`build/tests/light_ai_tests`):** **54 suites, 7,481 checks**.
+- **Unit binary (`build/tests/light_ai_tests`):** **54 suites, 7,503 checks**.
 - **ThreadSanitizer binary (`build/tests/light_ai_tests_tsan`, `-fsanitize=thread`):** **5 threaded suites, 22 checks** (`source_threads`, `source_prober_threads`, `packet_queue_threads`, `session_gate_threads`, `reid_worker_tsan`).
 - **Custom runner options ([`tests/suite_runner.hpp`](tests/suite_runner.hpp)):**
   ```bash
@@ -267,7 +267,7 @@ ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -analyzedurati
 
 ### CLI Options (`src/config/option_registry.cpp`)
 
-All **25 options** (plus `--help` / `-h`) are shared between the CLI parser and `--config` INI files (up to **4** video sources across `1×1`, `2×1`, or `2×2` grid). INI files (`key = value`) are applied **before** CLI flags so CLI flags always override. Missing camera nodes fall back via `UsbNodeLocator`; busy nodes stay `Detached` and are retried every `2 s` by `SourceProber`.
+All **26 options** (plus `--help` / `-h`) are shared between the CLI parser and `--config` INI files (up to **4** video sources across `1×1`, `2×1`, or `2×2` grid). INI files (`key = value`) are applied **before** CLI flags so CLI flags always override. Missing camera nodes fall back via `UsbNodeLocator`; busy nodes stay `Detached` and are retried every `2 s` by `SourceProber`.
 
 | Flag | Argument | Default | Description |
 |---|---|---|---|
@@ -280,6 +280,7 @@ All **25 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 | `--reid-model` | `<path>` | `./misc/osnet_x1_0_imagenet.rknn` | Re-ID RKNN model path for cross-camera global IDs (`none` or `off` disables) |
 | `--reid-thr` | `0.0..1.0` | `0.62` | Re-ID cosine similarity threshold |
 | `--label-lang` | `en\|ru` | `en` | Callout label language (`person N` vs. `человек N`) |
+| `--log-level` | `debug\|info\|warn\|error\|off` | `info` | Diagnostic log threshold (`debug`/`info` on `stdout`, `warn`/`error` on `stderr`) |
 | `--conf` | `0.0..1.0` | `0.25` | Detection confidence threshold |
 | `--iou` | `0.0..1.0` | `0.45` | NMS IoU threshold |
 | `--core` | `0\|1\|2\|3\|4\|7` | `0` | NPU core mask (`0` auto, `1/2/4` = core 0/1/2, `3` = 0+1, `7` = 0+1+2; ignored when `--pool > 1`) |
