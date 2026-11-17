@@ -28,13 +28,13 @@ Zero-copy hardware-accelerated object detection, Kalman tracking, and multi-came
 
 Sample output frames captured directly from the encoded H.264 preview stream on the RK3588 board (`yolov5s_relu_int8_mmse_v5.rknn`, `GpuBoxDrawer` + Kalman `Tracker` + `TrailWindow`):
 
-| Single Camera: Live Person Detection (`640×480`) | Single Camera: Walking Detection & Green Trail (`640×480`) |
+| Single Camera: Seated Person & Multi-Class (`640×480`) | Single Camera: Walking Detection & Green Trail (`640×480`) |
 |---|---|
-| ![Single camera crisp front-facing person and potted plant detection](docs/images/demo-single-walk.png) | ![Single camera person walking away with smooth green trail and chair box](docs/images/demo-single-trail.png) |
+| ![Single camera person seated at desk facing away with red detection box, chair, and plant](docs/images/demo-single-walk.png) | ![Single camera person walking away with smooth green trail and chair box](docs/images/demo-single-trail.png) |
 | **Dual Source `2×1`: Live Tracking + `NO SIGNAL` (`1280×480`)** | **Dual Source `2×1`: Mixed V4L2 + Portrait HTTP MJPEG (`1280×480`)** |
-| ![Dual source side-by-side layout with sharp person detection, cyan tracking trail, and NO SIGNAL plate](docs/images/demo-dual-track.png) | ![Dual source side-by-side landscape USB camera and portrait HTTP MJPEG stream](docs/images/demo-dual-mixed.png) |
-| **Dual Source `2×1`: `NO SIGNAL` Failover + Portrait Stream (`1280×480`)** | **Multi-View `2×2` Grid: 3 Active Mixed-Aspect Streams (`1280×960`)** |
-| ![Dual source showing NO SIGNAL idle plate on left slot and portrait person tracking on right slot](docs/images/demo-dual-nosignal.png) | ![Four-tile 2x2 grid with three live cameras detecting people simultaneously](docs/images/demo-grid-multi.png) |
+| ![Dual source showing NO SIGNAL idle plate on left slot and portrait live person tracking on right slot](docs/images/demo-dual-track.png) | ![Dual source side-by-side landscape USB camera and portrait HTTP MJPEG stream](docs/images/demo-dual-mixed.png) |
+| **Multi-View `2×2` Grid: `NO SIGNAL` Failover (`1280×960`)** | **Multi-View `2×2` Grid: 3 Active Mixed-Aspect Streams (`1280×960`)** |
+| ![Four-tile 2x2 grid showing NO SIGNAL failover on slot 0 and two active portrait person detections](docs/images/demo-grid-nosignal.png) | ![Four-tile 2x2 grid with three live cameras detecting people simultaneously](docs/images/demo-grid-multi.png) |
 
 ---
 
