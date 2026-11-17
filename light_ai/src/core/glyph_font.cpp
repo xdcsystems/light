@@ -7,7 +7,7 @@ namespace
     // 1-bpp 8x8 glyph table (bit c of row r is pixel col c, LSB-left).
     // Slot 0 is solid 0xFF for untextured GPU quads; 1..95 = ASCII 0x20..0x7E;
     // 96..127 = U+0410..U+042F; 128..159 = U+0430..U+044F; 160 = Yo; 161 = yo.
-    constexpr uint8_t kGlyphs[GlyphFont::kSlotCount][8] = {
+    constexpr uint8_t kGlyphs[glyph_font::kSlotCount][8] = {
         { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF },  // 0: solid
         { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },  // 1: U+0020
         { 0x18, 0x3C, 0x3C, 0x18, 0x18, 0x00, 0x18, 0x00 },  // 2: U+0021
@@ -218,14 +218,17 @@ namespace
 
 }  // namespace
 
-const uint8_t* GlyphFont::glyph_rows( int idx ) noexcept
+namespace glyph_font
+{
+
+const uint8_t* glyph_rows( int idx ) noexcept
 {
     if ( idx < 0 || idx >= kSlotCount )
         return kGlyphs['?' - 0x20 + 1];
     return kGlyphs[idx];
 }
 
-int GlyphFont::glyph_index( uint32_t cp ) noexcept
+int glyph_index( uint32_t cp ) noexcept
 {
     if ( cp >= 0x20u && cp <= 0x7Eu )
         return static_cast<int>( cp - 0x20u ) + 1;
@@ -240,7 +243,7 @@ int GlyphFont::glyph_index( uint32_t cp ) noexcept
     return ( '?' - 0x20 ) + 1;
 }
 
-uint32_t GlyphFont::next_utf8( const char* str, int len, int& pos ) noexcept
+uint32_t next_utf8( const char* str, int len, int& pos ) noexcept
 {
     if ( !str || pos < 0 || pos >= len )
         return 0;
@@ -283,7 +286,7 @@ uint32_t GlyphFont::next_utf8( const char* str, int len, int& pos ) noexcept
     return '?';
 }
 
-int GlyphFont::text_len( std::string_view text ) noexcept
+int text_len( std::string_view text ) noexcept
 {
     const int bytes = static_cast<int>( text.size() );
     int pos = 0;
@@ -296,7 +299,7 @@ int GlyphFont::text_len( std::string_view text ) noexcept
     return count;
 }
 
-void GlyphFont::build_atlas( std::array<uint8_t, kAtlasBytes>& atlas ) noexcept
+void build_atlas( std::array<uint8_t, kAtlasBytes>& atlas ) noexcept
 {
     atlas.fill( 0 );
     for ( int idx = 0; idx < kSlotCount; ++idx )
@@ -313,7 +316,7 @@ void GlyphFont::build_atlas( std::array<uint8_t, kAtlasBytes>& atlas ) noexcept
     }
 }
 
-void GlyphFont::glyph_uv( int idx, float& u0, float& v0, float& u1, float& v1 ) noexcept
+void glyph_uv( int idx, float& u0, float& v0, float& u1, float& v1 ) noexcept
 {
     const int safe = std::clamp( idx, 0, kSlotCount - 1 );
     const int col = safe % kAtlasCols;
@@ -326,13 +329,13 @@ void GlyphFont::glyph_uv( int idx, float& u0, float& v0, float& u1, float& v1 ) 
     v1 = ( y + static_cast<float>( kGlyphH ) ) / static_cast<float>( kAtlasH );
 }
 
-void GlyphFont::solid_uv( float& u, float& v ) noexcept
+void solid_uv( float& u, float& v ) noexcept
 {
     u = 4.0f / static_cast<float>( kAtlasW );
     v = 4.0f / static_cast<float>( kAtlasH );
 }
 
-int GlyphFont::format_person( char* dst, int dst_cap, int id, bool lang_ru ) noexcept
+int format_person( char* dst, int dst_cap, int id, bool lang_ru ) noexcept
 {
     if ( !dst || dst_cap <= 0 )
         return 0;
@@ -343,3 +346,5 @@ int GlyphFont::format_person( char* dst, int dst_cap, int id, bool lang_ru ) noe
     dst[len] = '\0';
     return len;
 }
+
+}  // namespace glyph_font

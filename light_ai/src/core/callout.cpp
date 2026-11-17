@@ -12,7 +12,7 @@ namespace
     constexpr int kMarginPx = 2;
     constexpr int kPadX = 4;
     constexpr int kPadY = 3;
-    constexpr int kPillH = GlyphFont::kGlyphH + 2 * kPadY;  // 14 px
+    constexpr int kPillH = glyph_font::kGlyphH + 2 * kPadY;  // 14 px
     constexpr int kMaxTracks = TrajList::cap;
 
     struct TrackCand
@@ -202,12 +202,12 @@ namespace
 
 }  // namespace
 
-void CalloutLayout::compute( const TrajList& trajs,
-                             const LbGeom& lb,
-                             float sx,
-                             float sy,
-                             const CalloutConfig& cfg,
-                             CalloutList& out ) noexcept
+void compute_callouts( const TrajList& trajs,
+                       const LbGeom& lb,
+                       float sx,
+                       float sy,
+                       const CalloutConfig& cfg,
+                       CalloutList& out ) noexcept
 {
     out.clear();
     const CalloutRect crop = make_even_bounds( lb );
@@ -234,9 +234,9 @@ void CalloutLayout::compute( const TrajList& trajs,
         const int disp_id = tr.display_id();
         CalloutItem item {};
         item.box = cands[i].box;
-        item.text_bytes = GlyphFont::format_person( item.text, GlyphFont::kLabelCap, disp_id, cfg.lang_ru );
-        const int ng = GlyphFont::text_len( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
-        const int pw = ng * GlyphFont::kGlyphW + 2 * kPadX;
+        item.text_bytes = glyph_font::format_person( item.text, glyph_font::kLabelCap, disp_id, cfg.lang_ru );
+        const int ng = glyph_font::text_len( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
+        const int pw = ng * glyph_font::kGlyphW + 2 * kPadX;
         // Guard before std::clamp: degenerate narrow crops must never trigger lo > hi UB.
         if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < kPillH )
             continue;

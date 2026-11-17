@@ -160,7 +160,7 @@ private:
     bool load_entry_points();
     // Config (with the fallback), ES3 context then ES2, made current.
     bool create_context();
-    // Uploads static GL_ALPHA glyph + solid-slot atlas once during init().
+    // Uploads GL_ALPHA glyph + solid-slot atlas texture once during init().
     void create_atlas();
     // The batch VBO, and the VAO on ES3. Cannot fail.
     void create_buffers();

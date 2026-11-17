@@ -38,7 +38,7 @@ void test_callout_layout( TestRun& t )
         TrackState t1 { 2, TRACK_TENT, 400.0f, 320.0f, 0.0f, 0.0f, 90.0f, 180.0f, 1, 99 };
         trajs.push( t1 );
         CalloutList out {};
-        CalloutLayout::compute( trajs, lb, sx, sy, { false }, out );
+        compute_callouts( trajs, lb, sx, sy, { false }, out );
         CHECK( t, out.n == 1 );
         CHECK( t, std::string( out.d[0].text ) == "person 99" );
         CHECK( t, inside_even( out.d[0].pill, lb ) );
@@ -55,7 +55,7 @@ void test_callout_layout( TestRun& t )
             trajs.push( TrackState { i + 1, TRACK_CONF, cx, cy, 0.0f, 0.0f, 100.0f, 180.0f, 4 } );
         }
         CalloutList out {};
-        CalloutLayout::compute( trajs, lb, sx, sy, { true }, out );
+        compute_callouts( trajs, lb, sx, sy, { true }, out );
         CHECK( t, out.n == 8 );
         bool pills_ok = true;
         for ( int i = 0; i < out.n; ++i )
@@ -73,7 +73,7 @@ void test_callout_layout( TestRun& t )
         TrajList trajs {};
         trajs.push( TrackState { 1, TRACK_CONF, 50.0f, 50.0f, 0.0f, 0.0f, 30.0f, 30.0f, 2 } );
         CalloutList out {};
-        CalloutLayout::compute( trajs, tiny, 0.1f, 0.1f, { true }, out );
+        compute_callouts( trajs, tiny, 0.1f, 0.1f, { true }, out );
         CHECK( t, out.n == 0 );
     }
 
@@ -83,7 +83,7 @@ void test_callout_layout( TestRun& t )
         TrajList trajs {};
         trajs.push( TrackState { 5, TRACK_CONF, 20.0f, 10.0f, 0.0f, 0.0f, 40.0f, 40.0f, 2 } );
         CalloutList out {};
-        CalloutLayout::compute( trajs, odd, 0.5f, 0.5f, { false }, out );
+        compute_callouts( trajs, odd, 0.5f, 0.5f, { false }, out );
         CHECK( t, out.n == 1 && inside_even( out.d[0].pill, odd ) );
     }
 }

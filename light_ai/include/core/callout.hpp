@@ -6,9 +6,9 @@
 #include <cstdint>
 
 #include "core/geometry.hpp"    // LbGeom
-#include "core/glyph_font.hpp"  // GlyphFont::kLabelCap
-#include "pod_list.hpp"    // PodList
+#include "core/glyph_font.hpp"  // glyph_font::kLabelCap
 #include "core/track.hpp"       // TrajList
+#include "pod_list.hpp"         // PodList
 
 // Half-open integer tensor-pixel rectangle [x0, x1) x [y0, y1).
 struct CalloutRect
@@ -30,7 +30,7 @@ struct CalloutItem
     uint8_t r = 255;
     uint8_t g = 255;
     uint8_t b = 255;
-    char text[GlyphFont::kLabelCap] {};
+    char text[glyph_font::kLabelCap] {};
     int text_bytes = 0;
 };
 
@@ -41,15 +41,11 @@ struct CalloutConfig
     bool lang_ru = false;
 };
 
-class CalloutLayout
-{
-public:
-    // Computes non-overlapping callout pills and L-connectors for active tracks
-    // inside lb_even (even crop matching FrameComposer::compose) minus 2 px margin.
-    static void compute( const TrajList& trajs,
-                         const LbGeom& lb,
-                         float sx,
-                         float sy,
-                         const CalloutConfig& cfg,
-                         CalloutList& out ) noexcept;
-};
+// Computes non-overlapping callout pills and L-connectors for active tracks
+// inside lb_even (even crop matching FrameComposer::compose) minus 2 px margin.
+void compute_callouts( const TrajList& trajs,
+                       const LbGeom& lb,
+                       float sx,
+                       float sy,
+                       const CalloutConfig& cfg,
+                       CalloutList& out ) noexcept;

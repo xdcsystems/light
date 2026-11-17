@@ -106,15 +106,15 @@ namespace
     void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, int gx, int gy, int glyph_idx,
                          uint8_t r, uint8_t g, uint8_t b ) noexcept
     {
-        const uint8_t* rows = GlyphFont::glyph_rows( glyph_idx );
-        for ( int row = 0; row < GlyphFont::kGlyphH; ++row )
+        const uint8_t* rows = glyph_font::glyph_rows( glyph_idx );
+        for ( int row = 0; row < glyph_font::kGlyphH; ++row )
         {
             const int py = gy + row;
             if ( py < 0 || py >= h )
                 continue;
             const uint8_t bits = rows[row];
             uint8_t* line = rgb + static_cast<size_t>( py ) * stride;
-            for ( int col = 0; col < GlyphFont::kGlyphW; ++col )
+            for ( int col = 0; col < glyph_font::kGlyphW; ++col )
             {
                 if ( ( ( bits >> col ) & 1u ) == 0u )
                     continue;
@@ -144,11 +144,11 @@ namespace
             int pos = 0;
             while ( pos < c.text_bytes )
             {
-                const uint32_t cp = GlyphFont::next_utf8( c.text, c.text_bytes, pos );
+                const uint32_t cp = glyph_font::next_utf8( c.text, c.text_bytes, pos );
                 if ( cp == 0 )
                     break;
-                draw_glyph_cpu( rgb, w, h, stride, gx, c.text_y, GlyphFont::glyph_index( cp ), 255, 255, 255 );
-                gx += GlyphFont::kGlyphW;
+                draw_glyph_cpu( rgb, w, h, stride, gx, c.text_y, glyph_font::glyph_index( cp ), 255, 255, 255 );
+                gx += glyph_font::kGlyphW;
             }
         }
     }
@@ -263,7 +263,7 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
     boxes_.clear();
     mapper_.fill( dets, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
     callouts_.clear();
-    CalloutLayout::compute( trajs, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callouts_ );
+    compute_callouts( trajs, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callouts_ );
     if ( boxes_.n <= 0 && callouts_.n <= 0 )
         return false;
 

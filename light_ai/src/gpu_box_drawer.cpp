@@ -143,20 +143,20 @@ namespace
         int pos = 0;
         while ( pos < c.text_bytes )
         {
-            const uint32_t cp = GlyphFont::next_utf8( c.text, c.text_bytes, pos );
+            const uint32_t cp = glyph_font::next_utf8( c.text, c.text_bytes, pos );
             if ( cp == 0 )
                 break;
-            const int gi = GlyphFont::glyph_index( cp );
+            const int gi = glyph_font::glyph_index( cp );
             float u0 = 0.0f;
             float v0 = 0.0f;
             float u1 = 0.0f;
             float v1 = 0.0f;
-            GlyphFont::glyph_uv( gi, u0, v0, u1, v1 );
+            glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
             const float fx = static_cast<float>( gx );
             const float fy = static_cast<float>( c.text_y );
-            emit_quad( qt, fx, fy, fx + static_cast<float>( GlyphFont::kGlyphW ),
-                       fy + static_cast<float>( GlyphFont::kGlyphH ), u0, v0, u1, v1, 255, 255, 255, 255 );
-            gx += GlyphFont::kGlyphW;
+            emit_quad( qt, fx, fy, fx + static_cast<float>( glyph_font::kGlyphW ),
+                       fy + static_cast<float>( glyph_font::kGlyphH ), u0, v0, u1, v1, 255, 255, 255, 255 );
+            gx += glyph_font::kGlyphW;
         }
     }
 
@@ -451,8 +451,8 @@ bool GpuBoxDrawer::create_context()
 
 void GpuBoxDrawer::create_atlas()
 {
-    std::array<uint8_t, GlyphFont::kAtlasBytes> atlas {};
-    GlyphFont::build_atlas( atlas );
+    std::array<uint8_t, glyph_font::kAtlasBytes> atlas {};
+    glyph_font::build_atlas( atlas );
     glGenTextures( 1, &st_.atlas_tex );
     glActiveTexture( GL_TEXTURE0 );
     glBindTexture( GL_TEXTURE_2D, st_.atlas_tex );
@@ -461,7 +461,7 @@ void GpuBoxDrawer::create_atlas()
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-    glTexImage2D( GL_TEXTURE_2D, 0, GL_ALPHA, GlyphFont::kAtlasW, GlyphFont::kAtlasH, 0,
+    glTexImage2D( GL_TEXTURE_2D, 0, GL_ALPHA, glyph_font::kAtlasW, glyph_font::kAtlasH, 0,
                   GL_ALPHA, GL_UNSIGNED_BYTE, atlas.data() );
     glBindTexture( GL_TEXTURE_2D, 0 );
 }
@@ -591,7 +591,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const Callou
     // around y = h/2).
     float su = 0.0f;
     float sv = 0.0f;
-    GlyphFont::solid_uv( su, sv );
+    glyph_font::solid_uv( su, sv );
     QuadTarget qt { st_.vstage.data(), 0, 2.0f / static_cast<float>( st_.w ), 2.0f / static_cast<float>( st_.h ), su, sv };
     if ( have_boxes )
         append_boxes_quads( qt, boxes, n );
