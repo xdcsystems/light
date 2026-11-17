@@ -25,21 +25,21 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   and if git refuses the checkout because of them, ask. Never stash, reset or discard.
 - Stage explicit paths inside `light_ai/` (paths relative to this directory: `git add src/x.cpp`),
   never `git add -A` / `git add .` from the git root / `git commit -a`.
-- Base branch: `fix/audit-p0`. One branch per task/stage; PR into `fix/audit-p0`
-  with `gh pr create --base fix/audit-p0`. The user reviews and merges.
-- PRs into `fix/audit-p0` do not auto-close issues (`Closes #N` fires only on the default branch).
+- Base branch: `fix/audit-p1` (`fix/audit-p0` was merged into `master` in PR #73). One branch per task/stage; PR into `fix/audit-p1`
+  with `gh pr create --base fix/audit-p1`. The user reviews and merges.
+- PRs into `fix/audit-p1` do not auto-close issues (`Closes #N` fires only on the default branch).
   After the user merges the LAST PR of an issue, close the issue with
-  `gh issue close N --reason completed --comment "Done in #PR..., merged into fix/audit-p0."`.
-- Never push to `fix/audit-p0` directly, never force-push, never rewrite pushed history.
+  `gh issue close N --reason completed --comment "Done in #PR..., merged into fix/audit-p1."`.
+- Never push to `fix/audit-p1` or `master` directly, never force-push, never rewrite pushed history.
 - Before a PR, the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
-  (CMake build + 49 unit suites + 4 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
+  (CMake build + 53 unit suites + 5 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
   `SKIP_TSAN=1` / `SKIP_TIDY=1` to narrow intermediate iterations).
   Two-pass tidy gate: `main` = system `clang-tidy-11` (`.clang-tidy`, `tests/.clang-tidy`),
   `cognitive` = pinned `clang-tidy==23.1.4` in `venv/` (`scripts/tidy_cognitive.yaml`, Threshold 20).
   Per-file logs: `build/tidy/{src,tests}/<path>.log` and `build/tidy/cognitive/{src,tests}/<path>.log`.
   Result cache: `build/tidy-cache` (`TIDY_NO_CACHE=1` disables it). See [README.md](README.md#build--static-analysis).
-- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 49 suites / 7,307 checks + 4 TSan suites / 19 checks).
+- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 53 suites / 7,446 checks + 5 TSan suites / 22 checks).
   Single suite / flake hunt: `./build/tests/light_ai_tests [substr...] [--repeat N]` (also `light_ai_tests_tsan`;
   exit 2 on bad args).
 - Live run:
@@ -95,7 +95,7 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   sleeps; with viewer, online sources run full path and absent sources show `NO SIGNAL`.
 - Comments match the code and docs; max line length `140` (`.clang-format`).
 
-## Completed refactoring stages (0–7, `fix/audit-p0` @ `3ccd8ae`)
+## Completed refactoring stages (0–7, `fix/audit-p0` @ `3ccd8ae`, merged in PR #73)
 Full milestone history and A/B records live in [docs/roadmap.md](docs/roadmap.md) and [docs/state.md](docs/state.md).
 
 - [x] **0 — Safety net (PR #6, #32):** `core/` domain types, host unit tests, Layer A (`misc/ref_evening.mjpeg` + `reference/ref_evening.csv`), Layer B (`reference_chain`).
@@ -106,3 +106,11 @@ Full milestone history and A/B records live in [docs/roadmap.md](docs/roadmap.md
 - [x] **5 — `NetMjpegSource` (#28, PRs #29–#30):** `ByteWindow`, `HttpUrl`, `HttpHead`, `MultipartReader`, `BufferedSocket`, `MjpegSlotPool`, loopback tests. *(Open minor item: unquoted boundary preserves trailing spaces per #29 review.)*
 - [x] **6 — Complexity & 2-pass tidy (#34, #39, #42, #43, #48, #51, #55, #37):** `YoloDecoder`, `KalmanAxis`, `Associator`, `TrailWindow`, `BoxMapper`, `ConsoleReporter` + `fixed_fmt.hpp`, 2-pass `clang-tidy-11` + `clang-tidy-23` (`Threshold: 20`), NVMe checkout enforcement.
 - [x] **7 — Unified errors & `noexcept` (#61, PRs #62–#71):** `Status` / `Errc` / `ErrnoText`, exit codes `0..3`, `retry_listen()` busy-port recovery, startup 3-head `yolo_head_shape` check, `noexcept` frame path and thread bodies (`49` unit suites / `7,307` checks + `4` TSan suites / `19` checks).
+
+## Completed hardening & Re-ID stages (1–6, `fix/audit-p1`, `3411069`..`8c6b879`)
+- [x] **Stage 1 (PR #74):** `bitmap_font` ASCII bounds guard, `RknnEngine` NHWC/NCHW dim/size/lifecycle safety, `YoloDecoder`/`Associator` NaN/cap guards, expired `TRACK_TENT` directly to `TRACK_FREE`.
+- [x] **Stage 2 (PR #75):** `StopFlag` wakeup in `NetMjpegSource` / `BufferedSocket`, `TcpPullServer::abort_client()` teardown (`~4.2 s` vs `19 s`), epoch-guarded `SessionGate`, `kDecErrMax` recovery, `EINTR`/`bytesused==0` V4L2 fixes.
+- [x] **Stage 3 (PR #76):** `H264Encoder::drain()` `LOW_DELAY` + `AVDictionary` CBR/IDR, `SessionPtsFilter` reconnect PTS rebase, real `stride_bytes` (`TensorRef`), targeted `DmaSync`, grow-only `MppDecoder::pkt_buf_`.
+- [x] **Stage 4 (PR #77):** `usb_cap_capture_streaming` (`device_caps`), `Tracker` `kMaxMiss = 6` + round-2 `anchor_clipped` + `kHpDecayStreak`, `YoloDecoder` band recall + `Box::seq` NMS, `BoxSmoother` skips `cls == 0`, Layer A/B re-baseline.
+- [x] **Stage 5 (PR #78):** `GlyphFont` (8x8 ASCII+Cyrillic `128x96` `GL_ALPHA` atlas, free functions), `compute_callouts` non-overlapping EN/RU labels (`--label-lang`), `GpuBoxDrawer` batching + CPU parity.
+- [x] **Stage 6 (`8c6b879`, PR #79):** `GlobalTrackTable` (`<= 32` global IDs, `45 s` TTL), `BasicReidQueue` + `ReidWorker` (4 slots, `FP32`/`FP16`/`INT8`/`UINT8`), `RgaResizer::crop_resize` (`RGA2` RGB888) + `--src-rot 0|90|180|270` (`RGA3`), `--reid-model`, `--reid-thr` (`0.62`), `4` sources (`2x2` grid), `53` unit suites / `7,446` checks + `5` TSan suites / `22` checks.
