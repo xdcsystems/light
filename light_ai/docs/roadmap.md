@@ -82,10 +82,8 @@ under `README.md`. References map to [Platform constraints](../README.md#require
       night bias. v2 superseded by v3 for night scenes, file kept
       for reference. Fallback (path A) never needed for v3.
 
-- [ ] M2.4-b: model-optimization backlog (reconstructed 2026-10-28;
-      the original deferred-step list lived only in the 2026-10-26
-      session chat and the Colab notebooks — git carries no other
-      trace): (a) DONE 2026-11-01: formal day A/B for v3 (see the
+- [x] M2.4-b: model-optimization backlog (reconstructed 2026-10-28;
+      CLOSED 2026-11-17): (a) DONE 2026-11-01: formal day A/B for v3 (see the
       v3-vs-fp16 day A/B in state.md; the prod delta is +34%: 29.5 vs 22.06 verified 2026-11-01); (b) MMSE
       re-quant with a larger sample budget — 50 samples fit the
       Colab 12 GB, 200 OOM (see the M2.4 recipe; an mmse model exists and is the working
@@ -94,8 +92,15 @@ under `README.md`. References map to [Platform constraints](../README.md#require
       50 frames, but the composition changed — int8_mmse_v5 is
       mmse on a mixed 30-night + 20-day set and is the working
       model since 2026-11-01 (v4-vs-v5 A/B record in
-      docs/state.md, INT8 build history); (c) further
-      deferred steps: transcribe from the Colab notebooks.
+      docs/state.md, INT8 build history); (c) DONE 2026-11-17:
+      transcribed `artifacts/Untitled2.ipynb` (cells 0..33 cover
+      Miniconda `rknn-toolkit2==2.5.0` setup, `convert.py` /
+      `rebuild_int8.py` / `build_int8.py`, x86 simulator
+      `accuracy_analysis` in `analyze.py`, and `onnxruntime` FP32
+      `ref_eval.py` -> `ref_preds.csv`; cell 33 confirms no
+      `runs/train` or `best.pt` exists — see `docs/state.md`,
+      INT8 build history). Future labeled night-scene retraining
+      would be a separate training milestone.
 
 - [x] M2.5: multi-core NPU infer (--core, rknn_set_core_mask) — measured.
       Daytime A/B, 300 frames each, steady state (first 60-frame warmup
