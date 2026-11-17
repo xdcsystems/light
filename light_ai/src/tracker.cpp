@@ -30,6 +30,8 @@ void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
             continue;
         if ( !trk_taken[i] )
             age( t, ts_us );
+        if ( t.life == TRACK_FREE )
+            continue;
         out.push( state_of( t ) );
     }
 }
@@ -215,7 +217,8 @@ float Tracker::anchor_clipped( Track& t, float cy, float bh ) const
 // Unmatched person detections spawn tentative tracks (slot space permitting).
 void Tracker::spawn_unmatched( const DetList& dets, const DetTrack& det_trk, int64_t ts_us )
 {
-    for ( int k = 0; k < dets.n; ++k )
+    const int nd = std::min( dets.n, static_cast<int>( DetList::cap ) );
+    for ( int k = 0; k < nd; ++k )
     {
         if ( det_trk[k] >= 0 || dets.d[k].cls != 0 )
             continue;
@@ -302,7 +305,13 @@ void Tracker::age( Track& t, int64_t ts_us ) const
     t.fy.damp( drop );
     const bool tent_expired = t.life == TRACK_TENT &&
         ( ts_us - t.ts_last_match_us ) > static_cast<int64_t>( kTentMaxAgeMs ) * 1000;
-    if ( tent_expired || ( t.life == TRACK_CONF && t.miss > kMaxMiss ) )
+    if ( tent_expired )
+    {
+        t.life = TRACK_FREE;
+        t.trail = TrailWindow{};
+        return;
+    }
+    if ( t.life == TRACK_CONF && t.miss > kMaxMiss )
         t.life = TRACK_DEAD;
 }
 

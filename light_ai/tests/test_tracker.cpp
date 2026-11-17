@@ -48,6 +48,29 @@ namespace
         CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
         CHECK( t, out.d[0].n_pts >= 2 );
     }
+
+    // A tentative track expires straight to FREE (never enters TRACK_DEAD or hogs a slot).
+    void check_tent_expiry( TestRun& t )
+    {
+        Tracker trk;
+        TrajList out;
+        trk.update( one( person( 500, 400, 100, 200 ) ), 0, out );
+        trk.update( DetList {}, 1000000, out );
+        CHECK( t, out.n == 1 && out.d[0].state == TRACK_TENT );
+        trk.update( DetList {}, 1040000, out );
+        CHECK( t, out.n == 0 );
+
+        // 8 transient 1-frame false positives must not starve a 9th person after 1.04 s.
+        DetList crowd;
+        for ( int i = 0; i < 8; ++i )
+            crowd.push( person( 100.0f + static_cast<float>( i ) * 120.0f, 300.0f, 60.0f, 120.0f ) );
+        trk.update( crowd, 2000000, out );
+        CHECK( t, out.n == 8 );
+        trk.update( DetList {}, 3040000, out );
+        CHECK( t, out.n == 0 );
+        trk.update( one( person( 600, 400, 100, 200 ) ), 3080000, out );
+        CHECK( t, out.n == 1 && out.d[0].state == TRACK_TENT );
+    }
 }  // namespace
 
 void test_tracker( TestRun& t )
@@ -113,16 +136,7 @@ void test_tracker( TestRun& t )
         stand( trk, out, 1, ts + 2 * kFrameUs );
         CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
     }
-    // A tentative track dies by wall clock: alive at exactly 1 s without a match, dead after.
-    {
-        Tracker trk;
-        TrajList out;
-        trk.update( one( person( 500, 400, 100, 200 ) ), 0, out );
-        trk.update( DetList {}, 1000000, out );
-        CHECK( t, out.n == 1 && out.d[0].state == TRACK_TENT );
-        trk.update( DetList {}, 1040000, out );
-        CHECK( t, out.n == 1 && out.d[0].state == TRACK_DEAD );
-    }
+    check_tent_expiry( t );
     // Constant-velocity walk (100 px/s): one stable id, the filter follows
     // position and velocity, the trail grows oldest-first.
     {

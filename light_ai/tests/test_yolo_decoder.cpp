@@ -19,6 +19,8 @@ namespace
     constexpr int kPer = 7;  // 4 box + 1 obj + 2 classes
     constexpr int kCh = 3 * kPer;
     constexpr uint16_t kNaN = 0x7E00;
+    constexpr uint16_t kPosInf = 0x7C00;
+    constexpr uint16_t kNegInf = 0xFC00;
 
     // float -> fp16 for values exact in fp16 (normal range or zero); the test
     // values are all of that kind.
@@ -159,6 +161,26 @@ namespace
         put_reference( nan_size );
         nan_size.at( 3, 4, 0, 3 ) = kNaN;
         CHECK( t, run( nan_size ) == 0 );
+
+        Head inf_obj( 8, 8 );
+        put_reference( inf_obj );
+        inf_obj.at( 3, 4, 0, 4 ) = kPosInf;
+        CHECK( t, run( inf_obj ) == 0 );
+
+        Head inf_cls( 8, 8 );
+        put_reference( inf_cls );
+        inf_cls.at( 3, 4, 0, 5 ) = kPosInf;
+        CHECK( t, run( inf_cls ) == 0 );
+
+        Head inf_xy( 8, 8 );
+        put_reference( inf_xy );
+        inf_xy.at( 3, 4, 0, 0 ) = kNegInf;
+        CHECK( t, run( inf_xy ) == 0 );
+
+        Head inf_size( 8, 8 );
+        put_reference( inf_size );
+        inf_size.at( 3, 4, 0, 2 ) = kPosInf;
+        CHECK( t, run( inf_size ) == 0 );
 
         Head bar( 8, 8 );  // cy = (1 - 0.5 + 0) * 8 = 4: above the band [16, 48)
         bar.set( 3, 0, 0, 0.5f, 0.5f, 0.5f, 0.5f, 0.75f, 1.0f, 0.0f );
