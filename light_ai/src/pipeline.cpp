@@ -386,36 +386,35 @@ void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int
     LbGeom& band = tensor_band_[static_cast<size_t>( slot )];
     const auto t3 = clk::now();
 
-    // Stale-line drop before the RGA rewrite: see cache_drop().
-    // Full tensor: draws and preview reads from previous frames
-    // may have left resident lines anywhere in it.
-
-    // tn.data != nullptr: the InferencePool constructor throws when setup_io()
-    // fails, so a live slot always has its tensor mapped; the check states the
-    // invariant for the analyzer, like the null guard inside cache_drop().
     const SourceChannel& ch = srcs_[src];
     const SourceGeom& ss = ch.geom();  // Live: the frame thread owns it
+    // tn.data != nullptr: the InferencePool constructor throws when setup_io()
+    // fails, so a live slot always has its tensor mapped. Clear stale letterbox
+    // bars only when the band geometry changed, then flush CPU lines to DRAM.
     if ( tn.data != nullptr && band.w > 0
          && ( band.left != ss.lb.left || band.top != ss.lb.top || band.w != ss.lb.w || band.h != ss.lb.h ) )
     {
-        dma::DmaSync wr( tn.fd, true );
-        std::memset( tn.data, 128, tn.size );
+        dma::fill_and_flush( tn.fd, tn.data, 128, tn.size );
+        band = {};
     }
-    dma::cache_drop( tn.data, tn.size );
     LbGeom lg {};
     const Status rga_st =
             rga_.resize( fd_src, ss.w, ss.h, tn.fd, model_w_, model_h_, ss.aux_fd, ss.w / 2, ss.h / 2, &lg,
                     ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
-    cal_dumper_.maybe( frame_idx, tn.fd, static_cast<const uint8_t*>( tn.data ), tn.size );
-    const auto t3b = clk::now();
-    // Cross-check RGA geometry against the owning source's (warn once).
-    if ( !lb_warned_ && ( lg.left != ss.lb.left || lg.top != ss.lb.top || lg.w != ss.lb.w || lg.h != ss.lb.h ) )
+    if ( rga_st.ok() )
     {
-        lb_warned_ = true;
-        log_.warn() << "pipeline: RGA letterbox drift (src " << src << "): x=" << lg.left << " top=" << lg.top
-                    << " w=" << lg.w << " h=" << lg.h
-                    << " vs x=" << ss.lb.left << " top=" << ss.lb.top << " w=" << ss.lb.w << " h=" << ss.lb.h << '\n';
+        cal_dumper_.maybe( frame_idx, tn.fd, static_cast<const uint8_t*>( tn.data ), tn.size );
+        // Cross-check RGA geometry against the owning source's (warn once).
+        if ( !lb_warned_ && ( lg.left != ss.lb.left || lg.top != ss.lb.top || lg.w != ss.lb.w || lg.h != ss.lb.h ) )
+        {
+            lb_warned_ = true;
+            log_.warn() << "pipeline: RGA letterbox drift (src " << src << "): x=" << lg.left << " top=" << lg.top
+                        << " w=" << lg.w << " h=" << lg.h
+                        << " vs x=" << ss.lb.left << " top=" << ss.lb.top << " w=" << ss.lb.w << " h=" << ss.lb.h << '\n';
+        }
+        band = ss.lb;
     }
+    const auto t3b = clk::now();
 
     InferJob job {};
     job.src_idx = src;
@@ -428,7 +427,6 @@ void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int
     job.tr.cam = cam_ms;
     job.tr.dec = dec_ms;
     job.tr.rga = ms( t3, t3b );
-    band = ss.lb;
     static_cast<void>( pool_.submit( slot, job ) );  // false: logged by the pool, frame dropped
 }
 

@@ -88,6 +88,7 @@ namespace
         int input_fd() const { return fd_; }
         void* input_data() const { return nullptr; }
         uint32_t input_size() const { return 0; }
+        uint32_t input_stride_bytes() const noexcept { return 1984; }
 
     private:
         FakeNpu* npu_;
@@ -153,6 +154,7 @@ namespace
             FakeNpu npu;
             const Pool p( pool_cfg( 0 ), FakeDecode {}, log, fast_opts(), &npu );
             CHECK( t, p.size() == 1 && npu.masks.empty() );  // AUTO: no core-mask call
+            CHECK( t, p.tensor( 0 ).stride_bytes == 1984 );
         }
         {
             FakeNpu npu;

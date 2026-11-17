@@ -23,17 +23,17 @@ public:
 
     // New viewer session: the CFR counter and the VFR base restart from zero.
     // frame_step < 1 is taken as 1.
-    void restart( int64_t frame_step );
+    void restart( int64_t frame_step ) noexcept;
 
     // Codec pts of the frame about to be encoded. ts_us < 0 = no timestamp.
     // frames_sent: frames encoded so far (the VFR fallback grid).
-    int64_t next( int64_t ts_us, uint64_t frames_sent );
+    int64_t next( int64_t ts_us, uint64_t frames_sent ) noexcept;
 
     // Codec pts -> the muxer time base.
-    int64_t packet_ts( int64_t pts ) const { return pts * frame_step_; }
+    int64_t packet_ts( int64_t pts ) const noexcept { return pts * frame_step_; }
 
     // One frame consumed a CFR slot (encoded, or dropped on a full input queue).
-    void advance() { ++counter_; }
+    void advance() noexcept { ++counter_; }
 
 private:
     bool vfr_;
@@ -43,5 +43,38 @@ private:
     int64_t frame_step_ = 1;  // muxer ticks per codec pts
 };
 
+// Session-aware codec->muxer PTS filter for persistent encoders: shifts each
+// viewer session's codec PTS above all earlier submissions so leftover async
+// packets from prior sessions are rejected deterministically before the forced
+// IDR arrives, and guarantees strictly monotonic muxer PTS/DTS.
+class SessionPtsFilter
+{
+public:
+    explicit SessionPtsFilter( bool vfr ) noexcept : pts_( vfr ) {}
+
+    // Starts a new viewer session: rebases codec PTS past prior submissions
+    // and arms awaiting_key_ until the new session's forced IDR arrives.
+    void on_epoch( int64_t frame_step ) noexcept;
+
+    // Computes session-relative fpts and monotonic AVFrame::pts for encode().
+    int64_t next_frame_pts( int64_t ts_us, uint64_t frames_sent, int64_t& session_fpts ) noexcept;
+
+    // Forwards CFR counter advance when a frame is submitted or dropped on EAGAIN.
+    void advance() noexcept { pts_.advance(); }
+
+    // Filters/stamps one packet from avcodec_receive_packet(). Returns false when
+    // the packet belongs to an earlier session or precedes the first session IDR
+    // (caller must av_packet_unref and discard).
+    bool stamp_packet( bool has_pts, int64_t raw_pkt_pts, bool is_key, int64_t session_fpts,
+                       int64_t& mux_pts_out ) noexcept;
+
+private:
+    PtsClock pts_;
+    int64_t epoch_base_pts_ = 0;
+    int64_t last_submitted_pts_ = -1;
+    int64_t last_pkt_pts_ = -1;
+    bool awaiting_key_ = true;
+};
+
 // us -> 1/90000 ticks, rounded like av_rescale (AV_ROUND_NEAR_INF).
-int64_t us_to_90k( int64_t us );
+int64_t us_to_90k( int64_t us ) noexcept;

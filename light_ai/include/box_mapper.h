@@ -33,7 +33,7 @@ public:
 
     // Fills boxes (cleared at entry) from the detections and the tracks.
     void fill( const DetList& dets, const TrajList& trajs, const Tracker& tracker,
-               GpuBoxList& boxes, const LbGeom& lb, float sx, float sy, int64_t now_us );
+               GpuBoxList& boxes, const LbGeom& lb, float sx, float sy, int64_t now_us ) noexcept;
 
 private:
     // The letterbox band in tensor pixels, with the scene -> tensor scale.
@@ -50,14 +50,14 @@ private:
         bool set = false;
     };
 
-    bool band_box( float x, float y, float w, float h, const Band& b, GpuBox& out ) const;
-    void det_boxes( const DetList& dets, const Band& b, GpuBoxList& boxes ) const;
-    void track_box( const TrackState& t, const Band& b, GpuBoxList& boxes ) const;
-    void trail_points( const Tracker& tracker, const TrackState& t, int64_t now_us, const Band& b, GpuBoxList& boxes );
-    bool trail_dot( const TrajPoint& pt, const Band& b, PrevDot& prev, float& px, float& py ) const;
-    int trail_alpha( int64_t age_us, int64_t max_age_us, int j, int ns ) const;
-    void det_color( int cls, GpuBox& b ) const;
-    void trail_color( int id, GpuBox& b ) const;
+    bool band_box( float x, float y, float w, float h, const Band& b, GpuBox& out ) const noexcept;
+    void det_boxes( const DetList& dets, const Band& b, GpuBoxList& boxes ) const noexcept;
+    void track_box( const TrackState& t, const Band& b, GpuBoxList& boxes ) const noexcept;
+    void trail_points( const Tracker& tracker, const TrackState& t, int64_t now_us, const Band& b, GpuBoxList& boxes ) noexcept;
+    bool trail_dot( const TrajPoint& pt, const Band& b, PrevDot& prev, float& px, float& py ) const noexcept;
+    int trail_alpha( int64_t age_us, int64_t max_age_us, int j, int ns ) const noexcept;
+    void det_color( int cls, GpuBox& b ) const noexcept;
+    void trail_color( int id, GpuBox& b ) const noexcept;
 
 private:
     std::array<TrajPoint, kTrailSamples> samp_ {};  // one track's trail sample, refilled per track

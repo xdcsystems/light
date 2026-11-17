@@ -3,13 +3,13 @@
 #include "tracker.hpp"
 #include "core/box_math.hpp"
 
-void Tracker::reset()
+void Tracker::reset() noexcept
 {
     tracks_ = {};
     next_id_ = 1;
 }
 
-void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out )
+void Tracker::update( const DetList& dets, int64_t ts_us, TrajList& out ) noexcept
 {
     out.clear();
     predict_all( ts_us );
@@ -330,7 +330,7 @@ TrackState Tracker::state_of( const Track& t ) const
     return s;
 }
 
-int Tracker::recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) const
+int Tracker::recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) const noexcept
 {
     if ( stride <= 0 || dst == nullptr || dst_cap <= 0 )
         return 0;

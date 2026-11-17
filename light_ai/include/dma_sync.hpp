@@ -89,8 +89,8 @@ inline void cache_clean( const void* p, size_t len )
 #endif
 }
 
-// Cache DROP (clean+invalidate) for the NPU input tensor, executed
-// right before the RGA DMA rewrite of the NEXT frame (patch 002).
+// Cache DROP (clean+invalidate) for the NPU input tensor before CPU reads/writes
+// of DMA-written pixels (draw_boxes_cpu, CalDumper::maybe, OverlaySink preview).
 // cache_clean() (CVAC) fixes the write side, but a cleaned line
 // REMAINS VALID in the CPU cache: RGA's next-frame write updates
 // DRAM only, and a draw_boxes_cpu store that hits the resident

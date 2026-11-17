@@ -70,7 +70,7 @@ void YoloDecoder::decode( const YoloHead* heads, int n_heads, const YoloFrame& f
 // Letterbox geometry must fit the model input: the band is rows
 // [lb_top, lb_top + lb_h) of the model frame. A violation here would
 // silently misplace every detection, so it is a hard error.
-bool YoloDecoder::band_fits( const YoloFrame& f ) const
+bool YoloDecoder::band_fits( const YoloFrame& f ) const noexcept
 {
     const float lb_left = static_cast<float>( f.lb.left );
     const float lb_w = static_cast<float>( f.lb.w );
@@ -133,7 +133,7 @@ int YoloDecoder::anchor_set( const YoloHead& hd, int gi, int mw, int mh, int& st
 // Stage 1/2: decode one head into candidate boxes. The tensor is
 // channel-major fp16: element (c, gy, gx) lives at c*h*w + gy*w + gx,
 // the anchor slot is k*per*cell_hw further.
-void YoloDecoder::collect_head( const HeadScan& s, const Band& b )
+void YoloDecoder::collect_head( const HeadScan& s, const Band& b ) noexcept
 {
     for ( int gy = 0; gy < s.h; ++gy )
     {
@@ -153,7 +153,7 @@ void YoloDecoder::collect_head( const HeadScan& s, const Band& b )
 
 // One anchor of one cell -> a candidate, or false. The obj pre-check stays
 // before the class scan - that order is the confidence shortcut.
-bool YoloDecoder::decode_anchor( const HeadScan& s, size_t off, int k, int gx, int gy, const Band& b, Box& out ) const
+bool YoloDecoder::decode_anchor( const HeadScan& s, size_t off, int k, int gx, int gy, const Band& b, Box& out ) const noexcept
 {
     const size_t cell_hw = s.cell_hw;
     const float obj = fp16_to_float( s.data[off + 4 * cell_hw] );
@@ -198,7 +198,7 @@ bool YoloDecoder::decode_anchor( const HeadScan& s, size_t off, int k, int gx, i
 
 // The best class channel of one anchor: its score, the channel index in best
 // (the class id is best - 5). 0 when no channel beats zero.
-float YoloDecoder::best_class( const HeadScan& s, size_t off, int& best ) const
+float YoloDecoder::best_class( const HeadScan& s, size_t off, int& best ) const noexcept
 {
     float best_cls = 0.0f;
     for ( int c = 5; c < s.per; ++c )
@@ -212,7 +212,7 @@ float YoloDecoder::best_class( const HeadScan& s, size_t off, int& best ) const
     return best_cls;
 }
 
-void YoloDecoder::push_candidate( const Box& box )
+void YoloDecoder::push_candidate( const Box& box ) noexcept
 {
     if ( nc_ < kMaxCand )
         cand_[nc_++] = box;
@@ -222,7 +222,7 @@ void YoloDecoder::push_candidate( const Box& box )
 
 // Stage 2/2, part 1: class-aware greedy NMS over the candidates (standard
 // yolov5 behaviour: boxes of different classes never suppress each other).
-void YoloDecoder::suppress()
+void YoloDecoder::suppress() noexcept
 {
     std::sort( cand_.begin(), cand_.begin() + nc_, []( const Box& a, const Box& b ) {
         return a.conf > b.conf;
@@ -246,7 +246,7 @@ void YoloDecoder::suppress()
 
 // Stage 2/2, part 2: the survivors, in confidence order, back to camera
 // pixels and into the preallocated detector list.
-void YoloDecoder::emit( const YoloFrame& f, const Band& b, DetList& out ) const
+void YoloDecoder::emit( const YoloFrame& f, const Band& b, DetList& out ) const noexcept
 {
     // Axial mapping: scene = (det - band origin) * cam / band size.
     // Landscape: the band fills the tensor width (lb_left = 0, lb_w = model_w)

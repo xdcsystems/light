@@ -37,6 +37,7 @@ public:
       , in_w_( o.in_w_ )
       , in_h_( o.in_h_ )
       , in_c_( o.in_c_ )
+      , in_stride_bytes_( o.in_stride_bytes_ )
       , log_( o.log_ )
     {
         o.ctx_ = 0;
@@ -45,6 +46,7 @@ public:
         o.in_w_ = 0;
         o.in_h_ = 0;
         o.in_c_ = 0;
+        o.in_stride_bytes_ = 0;
     }
 
     RknnEngine& operator=( RknnEngine&& ) = delete;
@@ -60,6 +62,7 @@ public:
     void* input_data() const { return in_mem_ ? in_mem_->virt_addr : nullptr; }
     int input_fd() const { return in_mem_ ? in_mem_->fd : -1; }
     uint32_t input_size() const { return in_mem_ ? in_mem_->size : 0; }
+    uint32_t input_stride_bytes() const noexcept { return in_stride_bytes_; }
 
     const rknn_tensor_attr& input_attr() const { return in_attr_; }
     // Model input geometry -- parsed from the native tensor layout (NHWC or NCHW);
@@ -92,5 +95,6 @@ private:
     int in_w_ = 0;
     int in_h_ = 0;
     int in_c_ = 0;
+    uint32_t in_stride_bytes_ = 0;
     const Log& log_;  // owned by main(); outlives every engine
 };

@@ -63,4 +63,5 @@ private:
     GpuBoxList boxes_ {};
     int model_w_ = 0;
     int model_h_ = 0;
+    uint32_t stride_bytes_ = 0;
 };

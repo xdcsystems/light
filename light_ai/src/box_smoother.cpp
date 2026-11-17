@@ -18,7 +18,7 @@ void BoxSmoother::set_log( const std::string& path, const Log& log )
 // the leftovers. All pairs are collected, sorted by IoU (descending)
 // and assigned best-first - the standard greedy bipartite matching.
 // Semantics otherwise unchanged: warm-up pass-through, miss expiry, out order.
-void BoxSmoother::update( const DetList& in, DetList& out )
+void BoxSmoother::update( const DetList& in, DetList& out ) noexcept
 {
     out.clear();
     for ( auto& t : tracks_ )
@@ -148,7 +148,7 @@ void BoxSmoother::log_frame( int frame, const DetList& raw, const DetList& smoot
     }
 }
 
-float BoxSmoother::iou( const BoxTrack& t, const Detection& d ) const
+float BoxSmoother::iou( const BoxTrack& t, const Detection& d ) const noexcept
 {
     // Delegates to the shared xywh IoU: BoxTrack and Detection are both
     // top-left + size boxes (box_math.hpp). No semantic change.

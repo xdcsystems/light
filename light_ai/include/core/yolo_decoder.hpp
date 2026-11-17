@@ -99,14 +99,14 @@ private:
         int anchors; // the anchor set: 0 / 1 / 2 = P3 / P4 / P5
     };
 
-    bool band_fits( const YoloFrame& f ) const;
+    bool band_fits( const YoloFrame& f ) const noexcept;
     int anchor_set( const YoloHead& hd, int gi, int mw, int mh, int& stride ) const;
-    void collect_head( const HeadScan& s, const Band& b );
-    bool decode_anchor( const HeadScan& s, size_t off, int k, int gx, int gy, const Band& b, Box& out ) const;
-    float best_class( const HeadScan& s, size_t off, int& best ) const;
-    void push_candidate( const Box& box );
-    void suppress();
-    void emit( const YoloFrame& f, const Band& b, DetList& out ) const;
+    void collect_head( const HeadScan& s, const Band& b ) noexcept;
+    bool decode_anchor( const HeadScan& s, size_t off, int k, int gx, int gy, const Band& b, Box& out ) const noexcept;
+    float best_class( const HeadScan& s, size_t off, int& best ) const noexcept;
+    void push_candidate( const Box& box ) noexcept;
+    void suppress() noexcept;
+    void emit( const YoloFrame& f, const Band& b, DetList& out ) const noexcept;
 
 private:
     float conf_thr_;

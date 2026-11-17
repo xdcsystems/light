@@ -68,6 +68,8 @@ void CalDumper::maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t
         return;
 
     const dma::DmaSync rd( tensor_fd, false );
+    // Invalidate CPU cache lines only on dumped frames instead of every frame.
+    dma::cache_drop( data, size );
     if ( single )
     {
         single_done_ = true;
