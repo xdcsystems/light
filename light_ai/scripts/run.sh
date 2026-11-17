@@ -39,7 +39,8 @@ if [ "${SKIP_GOVERNORS:-0}" != "1" ]; then
     done
     if [ "$need_gov" -eq 1 ]; then
         if [ "$(id -u)" -eq 0 ]; then
-            bash "$PROJ_ROOT/scripts/set_governors.sh" >/dev/null
+            bash "$PROJ_ROOT/scripts/set_governors.sh" >/dev/null || \
+                echo "run.sh: warning: failed to set performance governors (continuing)" >&2
         elif command -v sudo >/dev/null 2>&1; then
             sudo -n bash "$PROJ_ROOT/scripts/set_governors.sh" >/dev/null || \
                 echo "run.sh: warning: failed to set performance governors (continuing)" >&2
@@ -52,7 +53,9 @@ if [ "$has_config" -eq 0 ]; then
     CFG="${LIGHT_AI_CONFIG:-$DEFAULT_CFG}"
     if [ ! -f "$CFG" ]; then
         echo "run.sh: config not found: $CFG" >&2
-        echo "run.sh: copy template first: cp scripts/light_ai.ini.example build/light_ai.ini" >&2
+        if [ "$CFG" = "$DEFAULT_CFG" ]; then
+            echo "run.sh: copy template first: cp scripts/light_ai.ini.example build/light_ai.ini" >&2
+        fi
         exit 2
     fi
     CFG_ARGS=(--config "$CFG")

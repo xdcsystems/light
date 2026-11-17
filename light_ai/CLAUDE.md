@@ -25,12 +25,9 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   and if git refuses the checkout because of them, ask. Never stash, reset or discard.
 - Stage explicit paths inside `light_ai/` (paths relative to this directory: `git add src/x.cpp`),
   never `git add -A` / `git add .` from the git root / `git commit -a`.
-- Base branch: `fix/audit-p1` (`fix/audit-p0` was merged into `master` in PR #73). One branch per task/stage; PR into `fix/audit-p1`
-  with `gh pr create --base fix/audit-p1`. The user reviews and merges.
-- PRs into `fix/audit-p1` do not auto-close issues (`Closes #N` fires only on the default branch).
-  After the user merges the LAST PR of an issue, close the issue with
-  `gh issue close N --reason completed --comment "Done in #PR..., merged into fix/audit-p1."`.
-- Never push to `fix/audit-p1` or `master` directly, never force-push, never rewrite pushed history.
+- Base branch: `master` (`fix/audit-p0` merged in PR #73, `fix/audit-p1` merged in PR #81). One branch per task/stage; PR into `master`
+  with `gh pr create --base master`. The user reviews and merges.
+- Never push to `master` directly, never force-push, never rewrite pushed history.
 - Before a PR, the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
   (CMake build + 54 unit suites + 5 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /

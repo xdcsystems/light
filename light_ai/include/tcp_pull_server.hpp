@@ -16,6 +16,13 @@ struct AVIOContext;
 class TcpPullServer
 {
 public:
+    struct WriteCtx
+    {
+        std::atomic<int> cfd { -1 };
+        const int sndtimeo_sec;
+        explicit WriteCtx( int to ) noexcept : sndtimeo_sec( to ) {}
+    };
+
     TcpPullServer( int port, int sndbuf_bytes, int sndtimeo_sec );
     ~TcpPullServer();
     TcpPullServer( const TcpPullServer& ) = delete;
@@ -57,7 +64,7 @@ private:
     int lfd_ = -1;
     std::mutex cfd_mx_;
     bool aborted_ = false;
-    std::atomic<int> cfd_ { -1 };
+    WriteCtx write_ctx_;
     uint8_t* iobuf_ = nullptr;
     AVIOContext* pb_ = nullptr;
 };

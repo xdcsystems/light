@@ -1,6 +1,6 @@
 # Contributing to `light_ai`
 
-This guide documents the project's coding rules, error model, comment style, and verification gates. Keep changes strictly scoped to `light_ai/` and target the `fix/audit-p1` branch via pull requests.
+This guide documents the project's coding rules, error model, comment style, and verification gates. Keep changes strictly scoped to `light_ai/` and target `master` via pull requests.
 
 ## Coding Rules
 
@@ -11,7 +11,7 @@ This guide documents the project's coding rules, error model, comment style, and
 - **Header layout:** Within each visibility section (`public:` / `private:`), member functions and data members live in separate blocks — functions first, then a fresh visibility label for data. Reference: [`include/camera_v4l2.hpp`](include/camera_v4l2.hpp).
 - **Header extensions:** New C++ headers use `.hpp`. Nine legacy headers still use `.h` (`box_mapper.h`, `box_smoother.h`, `coco_names.h`, `console_reporter.h`, `frame_trace.h`, `net_encoder.h`, `rga_resizer.h`, `config/config_file.h`, `config/option_registry.h`); keep existing names unchanged unless refactoring the module.
 - **No manual heap allocation:** No `new`/`delete`, no `std::unique_ptr`/`std::shared_ptr`, no heap allocations in recovery or frame paths. Data lives in fixed-size members (`std::vector`/`std::string` are permitted only as startup RAII containers). Reference: [`include/pod_list.hpp`](include/pod_list.hpp).
-- **No statics:** No static data members, no static member functions, no function-local statics. Shared state belongs to the owning layer as a regular member; file-local helpers belong in an anonymous namespace inside the `.cpp`. Compile-time class constants use an unscoped `enum`.
+- **No statics:** No static data members, no static member functions, no function-local statics. Shared state belongs to the owning layer as a regular member; file-local helpers belong in an anonymous namespace inside the `.cpp`. Compile-time class constants use an unscoped `enum`; block- and namespace-scope constants use plain `constexpr` without `static`.
   - *Exceptions:* disposable probes in `tools/` and vendored header-only libraries in `externals/` (`stb_easy_font.h`, `font8x8_basic.h`), which must only be included from `.cpp` files (e.g. [`src/core/bitmap_font.cpp`](src/core/bitmap_font.cpp)), never from a project header.
 - **No virtuals or inheritance:** Zero vtables and zero dynamic polymorphism. Layer boundaries use composition of concrete members; static polymorphism uses templates (e.g. [`PodList<T, N>`](include/pod_list.hpp), [`PodRing<T, N>`](include/pod_ring.hpp), [`InferencePool`](include/inference_pool.hpp)).
 - **`const` by default:** Non-mutating methods are `const`; read-only parameters are passed by `const&`; hot-path outputs go through out-parameters (e.g. `YoloDecoder::decode` fills `DetList& out`).
@@ -39,7 +39,7 @@ This guide documents the project's coding rules, error model, comment style, and
 
 ## Pre-PR Verification Gate
 
-Every PR targeting `fix/audit-p1` must pass the full board gate:
+Every PR targeting `master` must pass the full board gate:
 
 ```bash
 ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log

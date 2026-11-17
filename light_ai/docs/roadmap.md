@@ -527,8 +527,8 @@ under `README.md`. References map to [Platform constraints](../README.md#require
       timeouts, socket close in the encoder destructor.
       Open leftovers: the `mpp_meta` `put_meta` negative `ref_count` at
   shutdown was CLOSED 2026-11-09 (`reset_and_strip` in `MppDecoder`,
-  see `state.md`, `Shutdown observations`); only the `static`-`constexpr`
-  rule clarification remains (owner: deferred).
+  see `state.md`, `Shutdown observations`); `CONTRIBUTING.md`
+  clarifies plain `constexpr` vs `enum` (`No statics`).
 
 - [ ] M4: pipelining (async RGA), NPU/DDR governor = performance. Only pays
       off once the source delivers more than 30 FPS (infer headroom analysis:
@@ -638,7 +638,7 @@ under `README.md`. References map to [Platform constraints](../README.md#require
       clean EOF drain), mixed-source V4L2 + net-src run (both
       use_camera/use_net branches, round-robin s0/s1, per-source
       tracks, Traj wraparound at pts=300, multi-view enc).
-      Pending: the camera replug drill -- next session.
+      Closed: live M5 `light-usb-replug` drill verified (`s0` detached -> `s1` uninterrupted -> `s0` re-attached).
 - [x] PodRing<T, N> ring generalization (proposal 3.2, recorded &
       closed 2026-11-10): include/pod_ring.hpp, the ring twin of
       PodList<T, N> (push/pop/front/clear/size/empty/full, back(k)
@@ -650,9 +650,7 @@ under `README.md`. References map to [Platform constraints](../README.md#require
       overflow policy unchanged verbatim: full-queue flush + forced
       IDR). Verified: build green, tidy 0 findings (all 21 .cpp),
       live smoke 2x900 frames (trails render, late-join wait_key_
-      path, clean EOF drain, \~20 FPS unchanged). Pending: the
-      encoder overflow probe (STOP/CONT on the viewer) -- next
-      session.
+      path, clean EOF drain, \~20 FPS unchanged). Closed: stalled-viewer probe confirmed `PacketQueue` overflow flush + forced IDR recovery.
 - [x] Typed vstage in GpuBoxDrawer (proposal 3.3, recorded &
       closed 2026-11-10): State::vstage becomes
       std::array<BatchVert, GpuBoxList::cap * kVertsPerBox>.
