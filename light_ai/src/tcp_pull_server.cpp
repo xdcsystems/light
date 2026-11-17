@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <cerrno>
+#include <chrono>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -25,30 +26,62 @@ namespace
         kPollMs = 200
     };
 
+    int send_errno_to_av( int err ) noexcept
+    {
+        if ( err == EPIPE || err == ECONNRESET || err == ESHUTDOWN || err == ENOTCONN )
+            return AVERROR( EPIPE );
+        if ( err == EAGAIN || err == EWOULDBLOCK )
+            return AVERROR( ETIMEDOUT );
+        return AVERROR( EIO );
+    }
+
+    int wait_writable( int fd, std::chrono::steady_clock::time_point deadline ) noexcept
+    {
+        for ( ;; )
+        {
+            const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now() ).count();
+            if ( rem <= 0 )
+                return AVERROR( ETIMEDOUT );
+            pollfd pf { fd, POLLOUT, 0 };
+            const int pr = ::poll( &pf, 1, static_cast<int>( rem ) );
+            if ( pr > 0 )
+                return 0;
+            if ( pr == 0 )
+                return AVERROR( ETIMEDOUT );
+            if ( errno != EINTR )
+                return AVERROR( EIO );
+        }
+    }
+
     int write_packet( void* opaque, const uint8_t* buf, int buf_size )
     {
-        const int fd = static_cast<const std::atomic<int>*>( opaque )->load( std::memory_order_acquire );
+        const auto* ctx = static_cast<const TcpPullServer::WriteCtx*>( opaque );
+        const int fd = ctx->cfd.load( std::memory_order_acquire );
         if ( fd < 0 )
             return AVERROR( EPIPE );
         // Drain-the-chunk send: a partial return here is silent data loss --
         // flush_buffer (libavformat/aviobuf.c) checks only < 0 and resets
         // buf_ptr = buf_ptr_max = buffer, the unsent tail is never retried.
-        // Partial sends are reachable: the accepted socket is blocking with
-        // SO_SNDTIMEO, and send() returns the bytes already copied into the
-        // kernel buffer when the 15 s window expires mid-chunk.
+        // A partial send at SO_SNDTIMEO expiry returns n > 0 rather than -1,
+        // so retries enforce a single chunk-wide deadline via wait_writable().
+        const bool has_to = ctx->sndtimeo_sec > 0;
+        const auto deadline = has_to ? ( std::chrono::steady_clock::now() + std::chrono::seconds( ctx->sndtimeo_sec ) )
+                                     : std::chrono::steady_clock::time_point {};
         size_t sent = 0;
         while ( sent < static_cast<size_t>( buf_size ) )
         {
+            if ( sent > 0 && has_to )
+            {
+                if ( const int wr = wait_writable( fd, deadline ); wr < 0 )
+                    return wr;
+            }
             const ssize_t n = ::send( fd, buf + sent, static_cast<size_t>( buf_size ) - sent, MSG_NOSIGNAL );
             if ( n < 0 )
             {
                 if ( errno == EINTR )
                     continue;
-                if ( errno == EPIPE || errno == ECONNRESET || errno == ESHUTDOWN || errno == ENOTCONN )
-                    return AVERROR( EPIPE );
-                if ( errno == EAGAIN || errno == EWOULDBLOCK )
-                    return AVERROR( ETIMEDOUT );
-                return AVERROR( EIO );
+                return send_errno_to_av( errno );
             }
             if ( n == 0 )
                 return AVERROR_EOF;  // errno is stale after a zero return: never read it here
@@ -72,7 +105,7 @@ namespace
 }  // namespace
 
 TcpPullServer::TcpPullServer( int port, int sndbuf_bytes, int sndtimeo_sec )
-  : port_( port ), sndbuf_bytes_( sndbuf_bytes ), sndtimeo_sec_( sndtimeo_sec )
+  : port_( port ), sndbuf_bytes_( sndbuf_bytes ), sndtimeo_sec_( sndtimeo_sec ), write_ctx_( sndtimeo_sec )
 {}
 
 TcpPullServer::~TcpPullServer()
@@ -140,7 +173,7 @@ Status TcpPullServer::accept_client( const std::atomic<bool>& quit )
         if ( errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR )
             return errno_status( Errc::Failed, "accept", errno );
     }
-    const int cfd = cfd_.load( std::memory_order_acquire );
+    const int cfd = write_ctx_.cfd.load( std::memory_order_acquire );
     if ( quit.load() || cfd < 0 )
         return make_status( Errc::Timeout, "no viewer" );
 
@@ -156,18 +189,18 @@ bool TcpPullServer::adopt_client( int cfd ) noexcept
         ::close( cfd );
         return false;
     }
-    cfd_.store( cfd, std::memory_order_release );
+    write_ctx_.cfd.store( cfd, std::memory_order_release );
     return true;
 }
 
 Status TcpPullServer::attach_avio( AVFormatContext* fc )
 {
-    if ( cfd_.load( std::memory_order_acquire ) < 0 || !fc )
+    if ( write_ctx_.cfd.load( std::memory_order_acquire ) < 0 || !fc )
         return make_status( Errc::Invalid, "no client" );
     iobuf_ = static_cast<uint8_t*>( av_malloc( kIoBufBytes ) );
     if ( !iobuf_ )
         return make_status( Errc::NoMemory, "avio buffer alloc failed" );
-    pb_ = avio_alloc_context( iobuf_, kIoBufBytes, 1, &cfd_, nullptr, write_packet, nullptr );
+    pb_ = avio_alloc_context( iobuf_, kIoBufBytes, 1, &write_ctx_, nullptr, write_packet, nullptr );
     if ( !pb_ )
     {
         av_freep( &iobuf_ );
@@ -193,7 +226,7 @@ void TcpPullServer::close_client() noexcept
     int fd = -1;
     {
         const std::lock_guard<std::mutex> lk( cfd_mx_ );
-        fd = cfd_.exchange( -1, std::memory_order_acq_rel );
+        fd = write_ctx_.cfd.exchange( -1, std::memory_order_acq_rel );
     }
     if ( fd >= 0 )
         ::close( fd );
@@ -203,7 +236,7 @@ void TcpPullServer::abort_client() noexcept
 {
     const std::lock_guard<std::mutex> lk( cfd_mx_ );
     aborted_ = true;
-    const int fd = cfd_.load( std::memory_order_acquire );
+    const int fd = write_ctx_.cfd.load( std::memory_order_acquire );
     if ( fd >= 0 )
         ::shutdown( fd, SHUT_RDWR );
 }

@@ -410,9 +410,7 @@ Open items:
   median + p90; viewer is networked — ping stability check first,
   see conversation notes). Re-measure after M5 to verify the
   predicted \~+100 ms.
-- bench_npu_pool.cpp: currently built ad hoc; either promote to a
-  CMake tool target or keep as disposable (decide on next tools/
-  pass).
+- bench_npu_pool.cpp: kept as disposable ad-hoc probe under `tools/` (consistent with `tools/bench_npu.c`).
 
 ## Pool oracle verification (2026-11-01): M5 pool correctness vs RKNNLite
 
@@ -1173,12 +1171,9 @@ by weakening the scan; comments rot like includes. 13e: the
 post-guard surfaced pipeline.cpp (a real transitive consumer of
 videodev2.h) BEFORE the write, exactly as predicted.
 
-Open:
-- Live verification of the [timing] output byte-for-byte vs the
-  pre-refactor format (the gate does not exercise the report path)
-  -- next live run.
-- The gl2ext.h candidate and the box_mapper/box_smoother body
-  extraction stay in the backlog.
+Closed:
+- Live `[timing]` format verified across post-refactor runs.
+- `BoxMapper` and `BoxSmoother` bodies extracted into `src/box_mapper.cpp` and `src/box_smoother.cpp`; `<GLES2/gl2ext.h>` in `include/gpu_box_drawer.hpp` is required for `GLeglImageOES` (`/usr/include/GLES2/gl2ext.h:258`).
 
 ## 2026-11-09 -- Full P0/P1/P2 audit pass (fix/audit-p0)
 
@@ -1469,3 +1464,9 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
 - **OSNet Re-ID model finding (`misc/`):** `misc/osnet_x1_0_imagenet.rknn` (`3,162,950` B, `~6.1 ms/crop`) separates same-person (`0.659..0.688`) vs. different-person (`0.491..0.543`) embeddings cleanly at `--reid-thr 0.62`, whereas `misc/osnet_x0_25_market.rknn` (`959,386` B) collapses pairs into `0.896..0.933` under INT8 quantization.
 - **Post-Stage-6 polish (PR #80 on `fix/audit-p1`):** Set default `--reid-model` to `./misc/osnet_x1_0_imagenet.rknn` (`none`/`off`/empty disables); added `AutoOrient` (`include/core/auto_orient.hpp`, EXIF `0x0112` + 4-angle YOLOv5/aspect scoring + `Watch` 1/16 probe) with `--src-rot` as explicit override; added per-camera `CalloutHistory` slot hysteresis (`include/core/callout.hpp`) eliminating left/right flip-flops; tightened `NetMjpegSource` header comments.
 - **Current verification baseline (PR #80):** `54` unit test suites (`7,481` checks), `5` ThreadSanitizer suites (`source_threads`, `source_prober_threads`, `packet_queue_threads`, `session_gate_threads`, `reid_worker_tsan` — `22` checks), 2-pass `clang-tidy` (`0` findings across `108` TUs), Layer A replay with defaults PASS (`1063/1063` cmp-identical, `auto-rot 0 deg`), live 2-cam (`USB + rotated phone`) with defaults PASS (`53.643 FPS`, `auto-rot 270 deg` / `0 deg`, `0` errors).
+## Post-P1 Operational Hardening & Track A Verification (2026-11-17, PRs #82–#83 & `fix/track-a-polish`)
+
+- **PR #82 (`61cdb38`):** Added `--log-level <debug|info|warn|error|off>` (`Log::Level`, `kOptionCount = 26`, CLI/INI `log_level`; `main()` keeps `Info` threshold for option/INI validation and applies `cfg.log_level` to `Pipeline` and `Fatal`); trimmed trailing horizontal whitespace on unquoted `Content-Type` `boundary=` values in `HttpHead::take_boundary()` and rejected unclosed opening quotes with `"unterminated multipart boundary"`.
+- **PR #83 (`265f2ad`):** Added `scripts/light_ai.ini.example` (2-camera production profile) and `scripts/run.sh` (unprivileged `linaro` launch with `performance` governor check and `--config build/light_ai.ini` default); verified `build/light_ai` runs cleanly without `sudo` (`video` + `render` groups).
+- **`TcpPullServer::write_packet()` chunk-wide deadline fix (`fix/track-a-polish`):** A live slow-viewer drill with `SO_RCVBUF = 65536` (`131072` kernel) and a `23 s` client read pause revealed `mux_write stalled 21740 ms` without dropping the viewer because a partial `::send()` at `SO_SNDTIMEO` expiry returns `n > 0`, causing the drain loop to restart a fresh `15 s` kernel timeout. Added `TcpPullServer::WriteCtx` + `wait_writable()` (`::poll` against a single chunk-wide `deadline`). Re-test PASS: `enc: mux_write stalled 15742 ms` -> `enc: viewer stalled (send timeout), session ends` -> `enc: viewer gone, waiting for the next one`, followed by clean `s2` reconnect (`1,171,952` B over `3 s`) and `1098` frames (`24.622 FPS`, `enc = 0.1 ms`).
+- **Additional live resilience drills (2026-11-17):** `PacketQueue` overflow (`12`–`16` flushes of `32 pkts` + `IDR next frame`, pipeline steady at `~25 FPS`); multi-source `light-usb-replug cycle /dev/video20 5` (`s0` detached -> `s1` loopback HTTP MJPEG uninterrupted -> `s0` re-attached `1280x960` + `auto-rot 0 deg` -> `1580 frames` at `39.896 FPS`, `camera disconnects recovered: 1`, clean EOF drain).
