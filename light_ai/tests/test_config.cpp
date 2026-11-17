@@ -284,6 +284,17 @@ void test_config( TestRun& t )
         CHECK( t, lines == 2 + OptionRegistry::kOptionCount );
         CHECK( t, text.find( "  --net-src <value> - " ) != std::string::npos );
         CHECK( t, text.find( "  --cpu-draw - " ) != std::string::npos );
+        CHECK( t, text.find( "  --label-lang <value> - " ) != std::string::npos );
+    }
+    {
+        Cli en;
+        CHECK( t, parse( en, {} ) == Status::Run && en.config().stream.label_lang == LabelLang::En );
+        Cli ru;
+        CHECK( t, parse( ru, { "--label-lang", "ru" } ) == Status::Run && ru.config().stream.label_lang == LabelLang::Ru );
+        CHECK( t, rejected( { "--label-lang", "fr" } ) );
+        const TempIni ru_ini( "label_lang = ru\n" );
+        Cli ini_cli;
+        CHECK( t, parse( ini_cli, { "--config", ru_ini.path() } ) == Status::Run && ini_cli.config().stream.label_lang == LabelLang::Ru );
     }
 
     // Config file: flat key = value through the same registry; '_' and '-' are equivalent.

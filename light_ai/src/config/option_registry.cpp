@@ -119,6 +119,24 @@ namespace
         return true;
     }
 
+    bool apply_label_lang( Config& c, const char* v )
+    {
+        if ( !v )
+            return false;
+        const std::string_view sv( v );
+        if ( sv == "en" )
+        {
+            c.stream.label_lang = LabelLang::En;
+            return true;
+        }
+        if ( sv == "ru" )
+        {
+            c.stream.label_lang = LabelLang::Ru;
+            return true;
+        }
+        return false;
+    }
+
     bool apply_net_src( Config& c, const char* v )
     {
         if ( !v || std::strncmp( v, "http://", 7 ) != 0 )
@@ -161,6 +179,8 @@ OptionRegistry::OptionRegistry( const Log& log )
                               +[]( Config& c, const char* v ) { return set_int( v, 1, INT_MAX, c.frames ); } } },
         { "--iou",          { true, "NMS IoU threshold 0.0..1.0", "0.0..1.0",
                               +[]( Config& c, const char* v ) { return set_float_01( v, c.infer.iou_thr ); } } },
+        { "--label-lang",   { true, "callout label language (en|ru; default en)", "en|ru",
+                              &apply_label_lang } },
         { "--model",        { true, "RKNN model path", nullptr,
                               +[]( Config& c, const char* v ) { return set_str( v, c.infer.model ); } } },
         { "--net",          { false, "network preview (raw rgb24 or --net-h264)", nullptr,

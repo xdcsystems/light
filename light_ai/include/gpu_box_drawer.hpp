@@ -24,6 +24,7 @@
 #undef CursorShape
 #undef RevertToParent
 
+#include "core/callout.hpp"  // CalloutList
 #include "core/gpu_box.hpp"  // GpuBox, GpuBoxList
 #include "core/status.hpp"
 
@@ -52,18 +53,21 @@ class GpuBoxDrawer
     using P_GbmCreateDevice = void *( * )( int );
     using P_GbmDestroyDevice = void ( * )( void * );
 
-    // Batched VBO vertex layout (moved out of gpu_box_drawer.cpp: the
-    // draw() staging buffer is typed by it). r/g/b/a fields are GL
-    // component order; GL red lands in memory byte2 (the dma-buf reads
-    // as BGR -- probe calibration), so the TENSOR R is stored in the
-    // field named 'b'. 12 bytes, natural align 4: no padding, no alignas.
+    // Batched VBO vertex layout: xy + uv + rgba (20 bytes, align 4).
+    // GL red lands in memory byte2 (BGR dma-buf), so tensor R goes in .b.
 public:
     struct BatchVert
     {
         float x, y;
+        float u, v;
         uint8_t r, g, b, a;
     };
-    enum { kVertsPerBox = 4 * 6 };  // 4 quads x 6 vertices per box
+    enum
+    {
+        kVertsPerBox = 4 * 6,
+        kVertsPerCallout = 192,
+        kMaxVerts = GpuBoxList::cap * kVertsPerBox + CalloutList::cap * kVertsPerCallout
+    };
 
 private:
     // GL/EGL state by value: no heap, no pimpl.
@@ -71,16 +75,14 @@ private:
     {
         EGLDisplay dpy = EGL_NO_DISPLAY;
         EGLContext ctx = nullptr;
-        GLuint prog = 0, vbo = 0, vao = 0;
-        GLint apos = -1, acol = -1;
+        GLuint prog = 0, vbo = 0, vao = 0, atlas_tex = 0;
+        GLint apos = -1, auv = -1, acol = -1, utex = -1;
         bool es3 = false;  // ES3 context with VAO entry points
         int w = 0, h = 0;
         uint32_t stride = 0;
 
-        // Preallocated draw() staging buffer, not a per-call stack array.
-        // Typed: one slot per vertex of the batched VBO
-        // (GpuBoxList cap x kVertsPerBox; see BatchVert above).
-        std::array<BatchVert, static_cast<std::size_t>( GpuBoxList::cap ) * kVertsPerBox> vstage {};
+        // Preallocated draw() staging buffer (128 boxes + 8 callouts).
+        std::array<BatchVert, kMaxVerts> vstage {};
 
         // Per-slot import cache. Geometry (w/h/stride) is shared across
         // slots, only the dma-buf fd differs.
@@ -132,10 +134,10 @@ public:
     // (batched VBO, per-vertex color), alpha-blended
     // (Porter-Duff over; the trail fade of BoxMapper is the alpha source).
     // Switching FBOs between slots is the only added cost vs the single-tensor path.
-    void draw_slot( int slot, const GpuBox *boxes, int n );
-    void draw( const GpuBox *boxes, int n )
+    void draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts = nullptr );
+    void draw( const GpuBox *boxes, int n, const CalloutList *callouts = nullptr )
     {
-        draw_slot( 0, boxes, n );
+        draw_slot( 0, boxes, n, callouts );
     }
     // Blocks until all GPU writes from draw() are visible to CPU/RGA.
     // Native fence (EGL_ANDROID_native_fence_sync) when available, glFinish() otherwise.
@@ -158,6 +160,8 @@ private:
     bool load_entry_points();
     // Config (with the fallback), ES3 context then ES2, made current.
     bool create_context();
+    // Uploads static GL_ALPHA glyph + solid-slot atlas once during init().
+    void create_atlas();
     // The batch VBO, and the VAO on ES3. Cannot fail.
     void create_buffers();
     void destroy_gbm_device( void *dev ) const;

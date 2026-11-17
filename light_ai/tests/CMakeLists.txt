@@ -61,6 +61,8 @@ add_executable(light_ai_tests
     test_encode_pacer.cpp
     test_session_warmup.cpp
     test_idle_plate.cpp
+    test_glyph_font.cpp
+    test_callout_layout.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
     test_infer_slot_threads.cpp
@@ -72,6 +74,8 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/encode_pacer.cpp
     ${LIGHT_AI_ROOT}/src/core/session_warmup.cpp
     ${LIGHT_AI_ROOT}/src/core/bitmap_font.cpp
+    ${LIGHT_AI_ROOT}/src/core/glyph_font.cpp
+    ${LIGHT_AI_ROOT}/src/core/callout.cpp
     ${LIGHT_AI_ROOT}/src/core/idle_plate.cpp
     ${LIGHT_AI_ROOT}/src/core/status.cpp
     ${LIGHT_AI_ROOT}/src/core/http_url.cpp

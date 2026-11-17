@@ -28,6 +28,8 @@ void test_kalman_axis( TestRun& t );
 void test_associator( TestRun& t );
 void test_trail_window( TestRun& t );
 void test_tracker( TestRun& t );
+void test_glyph_font( TestRun& t );
+void test_callout_layout( TestRun& t );
 void test_box_mapper( TestRun& t );
 void test_reference_chain( TestRun& t );
 void test_config( TestRun& t );
