@@ -74,6 +74,9 @@ private:
     Status apply_info_change( MppFrame f, MppTask task );
     Status frame_fd( MppFrame f, int& fd ) const;
 
+    // Allocates/grows the persistent pkt_buf_ to at least `size` bytes.
+    Status ensure_pkt_buf( size_t size );
+
     // One-shot teardown of the objects created before a failed init step:
     // the same release order as the dtor, but only the members that may
     // exist at that point.
@@ -99,6 +102,8 @@ private:
     MppBufferGroup out_group_ = nullptr;
     MppFrame out_frame_ = nullptr;
     MppPacket pkt_ = nullptr;
+    MppBuffer pkt_buf_ = nullptr;
+    size_t pkt_buf_cap_ = 0;
     MppBufferGroup pkt_group_ = nullptr;
     MppBuffer aux_ = nullptr;
 

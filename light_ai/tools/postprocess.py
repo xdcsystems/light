@@ -67,5 +67,7 @@ def nms(pred, iou_thres):
         area_i = (pred[i, 2] - pred[i, 0]) * (pred[i, 3] - pred[i, 1])
         area_r = (pred[rest, 2] - pred[rest, 0]) * (pred[rest, 3] - pred[rest, 1])
         iou = inter / (area_i + area_r - inter + 1e-9)
-        order = rest[iou < iou_thres]
+        # Class-aware NMS matching C++ YoloDecoder::suppress().
+        same_cls = (pred[rest, 5] == pred[i, 5])
+        order = rest[(~same_cls) | (iou < iou_thres)]
     return pred[keep]

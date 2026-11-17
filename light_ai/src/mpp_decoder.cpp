@@ -145,6 +145,12 @@ MppDecoder::~MppDecoder()
         mpp_packet_deinit( &pkt_ );
         pkt_ = nullptr;
     }
+    if ( pkt_buf_ )
+    {
+        mpp_buffer_put( pkt_buf_ );
+        pkt_buf_ = nullptr;
+        pkt_buf_cap_ = 0;
+    }
     if ( out_frame_ )
     {
         mpp_frame_deinit( &out_frame_ );
@@ -234,17 +240,45 @@ Status MppDecoder::make_packet( const uint8_t* data, size_t size )
     // decoder provably holds no reference (no enqueue has happened).
     drop_packet();
 
-    MppBuffer pbuf = nullptr;
-    const MPP_RET rg = mpp_buffer_get( pkt_group_, &pbuf, size );
-    if ( rg != MPP_OK )
+    // Safe to overwrite pkt_buf_ unconditionally: decode() is synchronous and every
+    // Timeout/Failed path calls reset_and_strip() + drop_packet(), so MPP holds no ref here.
+    if ( Status bst = ensure_pkt_buf( size ); !bst.ok() )
+        return bst;
+    void* ptr = mpp_buffer_get_ptr( pkt_buf_ );
+    if ( !ptr )
+    {
+        log_.error() << "dec: mpp_buffer_get_ptr returned null (" << size << ")\n";
+        mpp_buffer_put( pkt_buf_ );
+        pkt_buf_ = nullptr;
+        pkt_buf_cap_ = 0;
+        return make_status( Errc::Failed, "mpp_buffer_get_ptr failed" );
+    }
+    std::memcpy( ptr, data, size );
+    mpp_packet_init_with_buffer( &pkt_, pkt_buf_ );  // pkt_ holds its own ref while pkt_buf_ stays cached
+    mpp_packet_set_size( pkt_, size );
+    mpp_packet_set_length( pkt_, size );
+    mpp_packet_set_pts( pkt_, ++pts_ );
+    return {};
+}
+
+Status MppDecoder::ensure_pkt_buf( size_t size )
+{
+    if ( pkt_buf_ && size <= pkt_buf_cap_ )
+        return {};
+    if ( pkt_buf_ )
+    {
+        mpp_buffer_put( pkt_buf_ );
+        pkt_buf_ = nullptr;
+        pkt_buf_cap_ = 0;
+    }
+    const MPP_RET rg = mpp_buffer_get( pkt_group_, &pkt_buf_, size );
+    if ( rg != MPP_OK || !pkt_buf_ )
     {
         log_.error() << "dec: pkt buffer alloc failed (" << size << ")\n";
+        pkt_buf_ = nullptr;
         return sdk_status( Errc::NoMemory, "mpp_buffer_get failed", rg );
     }
-    memcpy( mpp_buffer_get_ptr( pbuf ), data, size );
-    mpp_packet_init_with_buffer( &pkt_, pbuf );  // the packet holds its own reference
-    mpp_buffer_put( pbuf );                      // release ours
-    mpp_packet_set_pts( pkt_, ++pts_ );
+    pkt_buf_cap_ = size;
     return {};
 }
 

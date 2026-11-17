@@ -117,23 +117,23 @@ public:
     // Trail point lifetime in microseconds, exposed for consumers:
     // the overlay fade uses the same constant as the eviction, so a
     // point's alpha reaches zero exactly when the tracker removes it.
-    int64_t trail_max_age_us() const
+    int64_t trail_max_age_us() const noexcept
     {
         return static_cast<int64_t>( kTrailMaxAgeMs ) * 1000;
     }
 
     // Re-init in place: the run loop calls it on restart.
-    void reset();
+    void reset() noexcept;
 
     // Consumes the person detections (cls==0 only, others ignored),
     // predicts, associates, updates the filters and the trajectories,
     // ages unmatched tracks; fills out with all alive tracks.
-    void update( const DetList& dets, int64_t ts_us, TrajList& out );
+    void update( const DetList& dets, int64_t ts_us, TrajList& out ) noexcept;
 
     // Copies every `stride`-th point of track `id`'s ring into
     // dst, oldest first, newest always included; at most dst_cap points.
     // Unknown/free id -> returns 0.
-    int recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) const;
+    int recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) const noexcept;
 
 private:
     // update(), in order:

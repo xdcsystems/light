@@ -91,7 +91,7 @@ public:
     TensorRef tensor( int k ) const
     {
         const Engine& e = engine( k );
-        return { e.input_fd(), e.input_data(), e.input_size() };
+        return { e.input_fd(), e.input_data(), e.input_size(), e.input_stride_bytes() };
     }
     TensorSet tensors() const
     {

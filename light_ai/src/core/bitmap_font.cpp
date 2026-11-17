@@ -21,7 +21,7 @@ namespace
 
     enum
     {
-        kTextCap = 64
+        kTextCap = 32
     };
 
     // The lib API is char*-based (legacy C): copy into a fixed buffer --
@@ -90,6 +90,7 @@ int BitmapFont::width( const char* s, int scale ) const
         return 0;
     char txt[kTextCap];
     font_txt( txt, kTextCap, s );
+    stb_easy_font_spacing( 0 );  // match stamp() default spacing
     return stb_easy_font_width( txt ) * scale;
 }
 

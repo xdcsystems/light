@@ -115,22 +115,31 @@ ByteSpan ParamSetCache::prepare( uint8_t* data, size_t size )
     const ByteSpan as_is { data, size };
     if ( !annexb::is_idr( data, size ) )
         return as_is;
-    if ( hdr_.empty() )
+    if ( hdr_len_ == 0 )
     {
         const size_t hl = annexb::header_len( data, size );
         if ( hl > 0 )
         {
-            hdr_.assign( data, data + hl );
-            log_.info() << "enc: h264 header captured: " << hdr_.size() << " bytes, repeating on every IDR\n";
+            if ( hl <= kHdrCap )
+            {
+                std::memcpy( hdr_.data(), data, hl );
+                hdr_len_ = hl;
+                log_.info() << "enc: h264 header captured: " << hdr_len_ << " bytes, repeating on every IDR\n";
+            }
+            else if ( !oversized_logged_ )
+            {
+                oversized_logged_ = true;
+                log_.warn() << "enc: h264 header too large to cache (" << hl << " > " << static_cast<size_t>( kHdrCap ) << ")\n";
+            }
         }
         return as_is;
     }
     if ( annexb::has_param_sets( data, size ) )
         return as_is;
-    const size_t total = hdr_.size() + size;
+    const size_t total = hdr_len_ + size;
     idr_buf_.resize( total );
-    std::memcpy( idr_buf_.data(), hdr_.data(), hdr_.size() );
-    std::memcpy( idr_buf_.data() + hdr_.size(), data, size );
+    std::memcpy( idr_buf_.data(), hdr_.data(), hdr_len_ );
+    std::memcpy( idr_buf_.data() + hdr_len_, data, size );
     if ( !repeat_logged_ )
     {
         log_.info() << "enc: header repeat active\n";

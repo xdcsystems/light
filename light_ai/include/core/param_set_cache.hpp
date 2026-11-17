@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -49,11 +50,19 @@ public:
     // until the next call). Anything else: the input span, unchanged.
     ByteSpan prepare( uint8_t* data, size_t size );
 
-    size_t header_size() const { return hdr_.size(); }
+    size_t header_size() const noexcept { return hdr_len_; }
+
+private:
+    enum
+    {
+        kHdrCap = 256
+    };
 
 private:
     const Log& log_;
-    std::vector<uint8_t> hdr_;
+    std::array<uint8_t, kHdrCap> hdr_ {};
+    size_t hdr_len_ = 0;
     std::vector<uint8_t> idr_buf_;
     bool repeat_logged_ = false;
+    bool oversized_logged_ = false;
 };

@@ -104,14 +104,19 @@ void OverlaySink::init( const StreamConfig& stream,
 {
     model_w_ = model_w;
     model_h_ = model_h;
+    const uint32_t fallback_stride = static_cast<uint32_t>( model_w_ ) * 3;
+    stride_bytes_ = ( tensors.n > 0 && tensors.d[0].stride_bytes > 0 ) ? tensors.d[0].stride_bytes : fallback_stride;
     if ( !stream.enabled )
         return;
 
-    // The input tensor is allocated with size_with_stride bytes when the
-    // runtime reports one, else size (rknn_engine.cpp): a mismatch with the
-    // packed RGB888 size means padded rows.
+    // Compare allocated mem against stride_bytes * model_h_ (avoiding tn.size / model_h_
+    // which overestimates when native model input is FP16).
+    const uint64_t expected_bytes = static_cast<uint64_t>( stride_bytes_ ) * static_cast<uint64_t>( model_h_ );
     log_.info() << "net: tensor stride check: input mem=" << tensors.d[0].size
-                << " vs " << model_w_ * model_h_ * 3 << "\n";
+                << " stride=" << stride_bytes_ << " expected=" << expected_bytes << "\n";
+    if ( stride_bytes_ != fallback_stride )
+        log_.warn() << "net: non-packed input tensor stride (" << stride_bytes_ << " != " << fallback_stride
+                    << "); RGA producers assume packed RGB888\n";
 
     if ( stream.h264 )
     {
@@ -126,7 +131,7 @@ void OverlaySink::init( const StreamConfig& stream,
     }
     else
     {
-        preview_.emplace( model_w_, model_h_, model_w_ * 3, stream.fps, stream.port, log_ );
+        preview_.emplace( model_w_, model_h_, static_cast<int>( stride_bytes_ ), stream.fps, stream.port, log_ );
         log_.info() << "net: preview server on port " << stream.port << "\n";
     }
 
@@ -151,8 +156,10 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
 
     Status drew_st = drawer_->init();
     for ( int k = 0; drew_st.ok() && k < tensors.n; ++k )
-        drew_st = drawer_->attach_slot( k, tensors.d[k].fd, model_w_, model_h_,
-                static_cast<uint32_t>( model_w_ ) * 3 );
+    {
+        const uint32_t slot_stride = tensors.d[k].stride_bytes > 0 ? tensors.d[k].stride_bytes : stride_bytes_;
+        drew_st = drawer_->attach_slot( k, tensors.d[k].fd, model_w_, model_h_, slot_stride );
+    }
 
     if ( !drew_st.ok() )
     {
@@ -181,6 +188,7 @@ double OverlaySink::draw_and_publish( const FrameView& frame,
     const float sy = frame.lb.h / static_cast<float>( frame.src_h );
     boxes_.clear();
     mapper_.fill( dets, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
+    const bool cpu_drew = ( boxes_.n > 0 && !drawer_ );
     if ( boxes_.n > 0 )
     {
         if ( drawer_ )
@@ -192,8 +200,9 @@ double OverlaySink::draw_and_publish( const FrameView& frame,
         {
             dma::DmaSync wr( tn.fd, true );
             dma::cache_drop( tn.data, tn.size );
+            const int row_stride = static_cast<int>( tn.stride_bytes > 0 ? tn.stride_bytes : stride_bytes_ );
             draw_boxes_cpu( static_cast<uint8_t*>( tn.data ),
-                            model_w_, model_h_, model_w_ * 3, boxes_.d.data(), boxes_.n );
+                            model_w_, model_h_, row_stride, boxes_.d.data(), boxes_.n );
             dma::cache_clean( tn.data, tn.size );
         }
     }
@@ -202,7 +211,9 @@ double OverlaySink::draw_and_publish( const FrameView& frame,
     {
         const auto t5 = clk::now();
         dma::DmaSync rd( tn.fd, false );
-        if ( drawer_ )
+        // Whenever CPU draw did not invalidate cache lines this frame (GPU draw OR
+        // --cpu-draw with 0 boxes), drop stale lines before CPU reads RGA DRAM output.
+        if ( !cpu_drew )
             dma::cache_drop( tn.data, tn.size );
         preview_->publish( static_cast<const uint8_t*>( tn.data ) );
         enc_ms += ms( t5, clk::now() );

@@ -1,5 +1,5 @@
 // H264Encoder: the h264_rkmpp codec -- opened with the stream geometry,
-// rate and GOP of EncoderConfig, CBR forced through MPP, DRM_PRIME input
+// rate and GOP of EncoderConfig, rc_mode=CBR option, DRM_PRIME input
 // (the dma-buf frames of EncoderFramePool: no CPU pixel copies).
 //
 // encode() sends one frame and queues every packet the codec returns. It
@@ -58,7 +58,6 @@ public:
 
 private:
     void enqueue( int stream_index, int64_t fpts, PacketQueue& queue );  // pkt_ -> the queue
-    void request_idr();                                                  // MPP_ENC_SET_IDR_FRAME
     // EOF flush at exit (the destructor only): send_eof(), collect_pending(), the summary line.
     void drain();
     void send_eof();               // EOF into the codec; a full input queue -> pull one packet, retry
@@ -68,7 +67,7 @@ private:
     const Log& log_;
     AVCodecContext* ctx_ = nullptr;  // h264_rkmpp
     AvPacket pkt_;                   // the packet being received
-    PtsClock pts_;                   // restarted on a new session epoch
+    SessionPtsFilter pts_;           // rebased per session epoch, filters stale packets
     bool force_idr_ = false;         // the next encode becomes an IDR
     uint32_t seen_epoch_ = 0;        // the session the state above belongs to
     // Frames encoded; gates the destructor drain in both modes (the CFR

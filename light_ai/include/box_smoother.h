@@ -48,11 +48,11 @@ public:
     // Opens the --box-log CSV (empty path: no log); a failure is reported
     // through log and disables the CSV.
     void set_log( const std::string& path, const Log& log );
-    void update( const DetList& in, DetList& out );
+    void update( const DetList& in, DetList& out ) noexcept;
     void log_frame( int frame, const DetList& raw, const DetList& smooth );
 
 private:
-    float iou( const BoxTrack& t, const Detection& d ) const;
+    float iou( const BoxTrack& t, const Detection& d ) const noexcept;
     int collect_pairs( const DetList& in );
     void apply_matches( const DetList& in, int na );
     void expire();

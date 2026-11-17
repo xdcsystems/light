@@ -11,6 +11,7 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <algorithm>
+#include <cstddef>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <initializer_list>
@@ -88,9 +89,18 @@ void GpuBoxDrawer::make_current()  // NOLINT(readability-make-member-function-co
 bool GpuBoxDrawer::make_program()
 {
     GLuint vs = glCreateShader( GL_VERTEX_SHADER );
+    GLuint fs = glCreateShader( GL_FRAGMENT_SHADER );
+    if ( vs == 0 || fs == 0 )
+    {
+        log_.warn() << "gpu_draw: glCreateShader failed\n";
+        if ( vs != 0 )
+            glDeleteShader( vs );
+        if ( fs != 0 )
+            glDeleteShader( fs );
+        return false;
+    }
     glShaderSource( vs, 1, &kVS, nullptr );
     glCompileShader( vs );
-    GLuint fs = glCreateShader( GL_FRAGMENT_SHADER );
     glShaderSource( fs, 1, &kFS, nullptr );
     glCompileShader( fs );
 
@@ -102,6 +112,13 @@ bool GpuBoxDrawer::make_program()
     }
 
     st_.prog = glCreateProgram();
+    if ( st_.prog == 0 )
+    {
+        log_.warn() << "gpu_draw: glCreateProgram failed\n";
+        glDeleteShader( vs );
+        glDeleteShader( fs );
+        return false;
+    }
     glAttachShader( st_.prog, vs );
     glAttachShader( st_.prog, fs );
     glLinkProgram( st_.prog );
@@ -147,7 +164,8 @@ void GpuBoxDrawer::setup_attribs() const
     if ( st_.acol >= 0 )
     {
         glEnableVertexAttribArray( st_.acol );
-        glVertexAttribPointer( st_.acol, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof( BatchVert ), reinterpret_cast<void *>( 8 ) );
+        glVertexAttribPointer( st_.acol, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof( BatchVert ),
+                               reinterpret_cast<void *>( offsetof( BatchVert, r ) ) );
     }
 }
 
@@ -271,7 +289,7 @@ bool GpuBoxDrawer::load_entry_points()
     st_.del_vao = reinterpret_cast<P_DeleteVertexArrays>( eglGetProcAddress( "glDeleteVertexArrays" ) );
     st_.bind_vao = reinterpret_cast<P_BindVertexArray>( eglGetProcAddress( "glBindVertexArray" ) );
 
-    if ( !st_.create_image || !st_.image_target_tex )
+    if ( !st_.create_image || !st_.destroy_image || !st_.image_target_tex )
     {
         log_.warn() << "drawer: image entry points missing\n";
         return false;
@@ -302,7 +320,11 @@ bool GpuBoxDrawer::create_context()
     if ( !eglChooseConfig( st_.dpy, cattr, &cfg, 1, &n ) || n < 1 )
     {
         const EGLint cattr2[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE };
-        eglChooseConfig( st_.dpy, cattr2, &cfg, 1, &n );
+        if ( !eglChooseConfig( st_.dpy, cattr2, &cfg, 1, &n ) || n < 1 )
+        {
+            log_.warn() << "drawer: eglChooseConfig failed (0x" << std::hex << eglGetError() << std::dec << ")\n";
+            return false;
+        }
     }
     const EGLint c3[] = { EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 1, EGL_NONE };
     const EGLint c2[] = { EGL_CONTEXT_MAJOR_VERSION, 2, EGL_NONE };
@@ -375,6 +397,7 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
         log_.warn() << "drawer: import tensor failed (slot " << slot << ", 0x" << std::hex << eglGetError() << std::dec << ")\n";
         return make_status( Errc::Failed, "drawer: import tensor failed" );
     }
+    for ( int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i ) {}  // bounded clear of prior GL errors
     glGenTextures( 1, &si.tex );
     glBindTexture( GL_TEXTURE_2D, si.tex );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
@@ -383,14 +406,26 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     glGenFramebuffers( 1, &si.fbo );
     glBindFramebuffer( GL_FRAMEBUFFER, si.fbo );
     glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, si.tex, 0 );
+    const GLenum gl_err = glGetError();
+    if ( gl_err != GL_NO_ERROR )
+    {
+        log_.warn() << "drawer: GL error attaching slot " << slot << " (0x" << std::hex << gl_err << std::dec << ")\n";
+        glBindTexture( GL_TEXTURE_2D, 0 );
+        glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+        release_slot( slot );
+        return make_status( Errc::Failed, "drawer: GL attach error" );
+    }
     const GLenum fst = glCheckFramebufferStatus( GL_FRAMEBUFFER );
     if ( fst != GL_FRAMEBUFFER_COMPLETE )
     {
         log_.warn() << "drawer: FBO incomplete (slot " << slot << ", status 0x" << std::hex << fst << std::dec << ")\n";
+        glBindTexture( GL_TEXTURE_2D, 0 );
         glBindFramebuffer( GL_FRAMEBUFFER, 0 );
         release_slot( slot );
         return make_status( Errc::Failed, "drawer: FBO incomplete" );
     }
+    glBindTexture( GL_TEXTURE_2D, 0 );
+    glBindFramebuffer( GL_FRAMEBUFFER, 0 );
     if ( st_.w == 0 )
     {
         st_.w = w;
@@ -401,7 +436,6 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     {
         log_.warn() << "drawer: slot " << slot << " geometry mismatch: " << w << 'x' << h << " stride=" << stride
                   << " vs " << st_.w << 'x' << st_.h << " stride=" << st_.stride << '\n';
-        glBindFramebuffer( GL_FRAMEBUFFER, 0 );
         release_slot( slot );
         return make_status( Errc::Failed, "drawer: slot geometry mismatch" );
     }

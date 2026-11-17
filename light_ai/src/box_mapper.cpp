@@ -4,7 +4,7 @@
 #include "box_mapper.h"
 
 void BoxMapper::fill( const DetList& dets, const TrajList& trajs, const Tracker& tracker,
-                      GpuBoxList& boxes, const LbGeom& lb, float sx, float sy, int64_t now_us )
+                      GpuBoxList& boxes, const LbGeom& lb, float sx, float sy, int64_t now_us ) noexcept
 {
     boxes.clear();
     const Band b { static_cast<float>( lb.left ), static_cast<float>( lb.top ), static_cast<float>( lb.left + lb.w ),
@@ -30,7 +30,7 @@ void BoxMapper::fill( const DetList& dets, const TrajList& trajs, const Tracker&
 // exact band bounds. The GPU path clips silently, but draw_boxes_cpu would
 // draw an out-of-bounds box as a line squeezed onto the edge -- one geometry
 // for det and track boxes, no second notion of "inside".
-bool BoxMapper::band_box( float x, float y, float w, float h, const Band& b, GpuBox& out ) const
+bool BoxMapper::band_box( float x, float y, float w, float h, const Band& b, GpuBox& out ) const noexcept
 {
     out.x0 = x * b.sx + b.left;
     out.y0 = y * b.sy + b.top;
@@ -52,7 +52,7 @@ bool BoxMapper::band_box( float x, float y, float w, float h, const Band& b, Gpu
 // the Kalman posterior (track_box): an EMA detection box next to the
 // track box showed two boxes per person, jitting independently of the trail
 // (audit: double draw / box-trail mismatch).
-void BoxMapper::det_boxes( const DetList& dets, const Band& b, GpuBoxList& boxes ) const
+void BoxMapper::det_boxes( const DetList& dets, const Band& b, GpuBoxList& boxes ) const noexcept
 {
     for ( int k = 0; k < dets.n; ++k )
     {
@@ -74,7 +74,7 @@ void BoxMapper::det_boxes( const DetList& dets, const Band& b, GpuBoxList& boxes
 // stability concept, not a visibility gate. Same transform as the det boxes.
 // A DEAD track draws no box: a standing rectangle reads as "a person is
 // here" -- only the trail is allowed to linger as path history.
-void BoxMapper::track_box( const TrackState& t, const Band& b, GpuBoxList& boxes ) const
+void BoxMapper::track_box( const TrackState& t, const Band& b, GpuBoxList& boxes ) const noexcept
 {
     GpuBox tb {};
     if ( !band_box( t.cx - t.bw * 0.5f, t.cy - t.bh * 0.5f, t.bw, t.bh, b, tb ) )
@@ -87,7 +87,7 @@ void BoxMapper::track_box( const TrackState& t, const Band& b, GpuBoxList& boxes
 }
 
 // Trail dots for CONF tracks and DEAD ghosts (see the state gate in fill).
-void BoxMapper::trail_points( const Tracker& tracker, const TrackState& t, int64_t now_us, const Band& b, GpuBoxList& boxes )
+void BoxMapper::trail_points( const Tracker& tracker, const TrackState& t, int64_t now_us, const Band& b, GpuBoxList& boxes ) noexcept
 {
     // stride 1: the ring is already thinned by the tracker-side
     // step gate (TrailWindow), so every stored point is an honest
@@ -131,7 +131,7 @@ void BoxMapper::trail_points( const Tracker& tracker, const TrackState& t, int64
 // not fit the band, or one closer than 4 px to the previous drawn dot of the
 // track. A dot that passes becomes the new previous one -- even when its alpha
 // later turns out to be zero.
-bool BoxMapper::trail_dot( const TrajPoint& pt, const Band& b, PrevDot& prev, float& px, float& py ) const
+bool BoxMapper::trail_dot( const TrajPoint& pt, const Band& b, PrevDot& prev, float& px, float& py ) const noexcept
 {
     px = pt.x * b.sx + b.left;
     py = pt.y * b.sy + b.top;
@@ -158,7 +158,7 @@ bool BoxMapper::trail_dot( const TrajPoint& pt, const Band& b, PrevDot& prev, fl
 // made stale points sit at the floor and then pop out
 // abruptly. No floor: fully transparent == already evicted.
 // Returns 0..255; 0 = do not draw.
-int BoxMapper::trail_alpha( int64_t age_us, int64_t max_age_us, int j, int ns ) const
+int BoxMapper::trail_alpha( int64_t age_us, int64_t max_age_us, int j, int ns ) const noexcept
 {
     if ( age_us < 0 )
         age_us = 0;
@@ -184,7 +184,7 @@ int BoxMapper::trail_alpha( int64_t age_us, int64_t max_age_us, int j, int ns ) 
     return a;
 }
 
-void BoxMapper::det_color( int cls, GpuBox& b ) const
+void BoxMapper::det_color( int cls, GpuBox& b ) const noexcept
 {
     switch ( cls )
     {
@@ -206,7 +206,7 @@ void BoxMapper::det_color( int cls, GpuBox& b ) const
     }
 }
 
-void BoxMapper::trail_color( int id, GpuBox& b ) const
+void BoxMapper::trail_color( int id, GpuBox& b ) const noexcept
 {
     constexpr uint8_t pal[8][3] = {
         { 255, 255, 0 }, { 0, 255, 255 }, { 255, 0, 255 }, { 255, 128, 0 },

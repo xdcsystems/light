@@ -91,6 +91,7 @@ void RknnEngine::release_io()
             rknn_destroy_mem( ctx_, m );
     }
     out_mems_.clear();
+    in_stride_bytes_ = 0;
 }
 
 Status RknnEngine::setup_outputs()
@@ -166,6 +167,10 @@ Status RknnEngine::setup_io()
         release_io();
         return st;
     }
+
+    in_stride_bytes_ = in_attr_.w_stride > 0
+                               ? in_attr_.w_stride * static_cast<uint32_t>( in_c_ )
+                               : static_cast<uint32_t>( in_w_ ) * static_cast<uint32_t>( in_c_ );
 
     log_.info() << "model input: " << in_w_ << 'x' << in_h_ << ' '
                 << get_type_string( in_attr_.type ) << " zp=" << in_attr_.zp << " scale=" << in_attr_.scale
