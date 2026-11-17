@@ -31,8 +31,8 @@ Versions in misc/ (build lineage):
   7c5656dd6aace3d186cc832c1501d8a8, verified on the board).
   The full A/B record vs v4 lives in Status below.
 
-v4 recipe (build_v4.py; Colab notebook Untitled2.ipynb, a copy is
-saved as colab_v4_recipe.ipynb in artifacts): mean [0,0,0],
+v4 recipe (build_v4.py; Colab notebook copy saved as
+`artifacts/Untitled2.ipynb`): mean [0,0,0],
 std [255,255,255], quant_img_RGB2BGR=False,
 quantized_method='channel', quantized_algorithm='mmse',
 target_platform='rk3588', optimization_level=3,
@@ -60,6 +60,14 @@ Toolkit facts (Colab side):
   files: postprocess.py (YOLOv5 decode: anchors 80/40/20,
   strides 8/16/32, NMS; input = 3 maps (255,H,W) post-sigmoid)
   and build_v4.py.
+- Transcribed `artifacts/Untitled2.ipynb` (`M2.4-b (c)` closed
+  2026-11-17, 34 code cells): Miniconda `rknn-toolkit2==2.5.0`
+  (`numpy==1.26.4`, `onnx==1.16.1`, `protobuf==4.25.4`),
+  `convert.py` / `rebuild_int8.py` / `build_int8.py` (`mmse`
+  INT8 builds), `analyze.py` (`rknn.accuracy_analysis` on
+  `n1_cal_0000.png` and `n2_cal_0040.png`), and `ref_eval.py`
+  (`onnxruntime` FP32 -> `ref_preds.csv`); cell 33 confirms
+  zero `runs/train` / `best.pt` weights.
 
 Status (2026-10-30, updated 2026-11-01): v3-vs-v4 A/B
 - Day (dataset_day2, 50 frames): conf 0.25 — 101 vs 101
