@@ -319,7 +319,7 @@ int CameraV4L2::wait_clean( v4l2_buffer& buf, int timeout_ms )
                 continue;
             return errno;
         }
-        if ( !( buf.flags & V4L2_BUF_FLAG_ERROR ) )
+        if ( !( buf.flags & V4L2_BUF_FLAG_ERROR ) && buf.bytesused > 0 )
             return 0;
         requeue( static_cast<int>( buf.index ) );
         // the streak survives dequeue() calls
@@ -362,7 +362,12 @@ void CameraV4L2::requeue( int index )  // NOLINT(readability-make-member-functio
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
     buf.index = index;
-    if ( ioctl( fd_, VIDIOC_QBUF, &buf ) < 0 )
+    int r = 0;
+    do
+    {
+        r = ioctl( fd_, VIDIOC_QBUF, &buf );
+    } while ( r < 0 && errno == EINTR );
+    if ( r < 0 )
     {
         // A failed QBUF silently removes the buffer from rotation;
         // without this log the symptom is only a mysterious cam-time growth.

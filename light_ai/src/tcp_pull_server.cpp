@@ -27,7 +27,9 @@ namespace
 
     int write_packet( void* opaque, const uint8_t* buf, int buf_size )
     {
-        const int fd = *static_cast<const int*>( opaque );
+        const int fd = static_cast<const std::atomic<int>*>( opaque )->load( std::memory_order_acquire );
+        if ( fd < 0 )
+            return AVERROR( EPIPE );
         // Drain-the-chunk send: a partial return here is silent data loss --
         // flush_buffer (libavformat/aviobuf.c) checks only < 0 and resets
         // buf_ptr = buf_ptr_max = buffer, the unsent tail is never retried.
@@ -42,7 +44,7 @@ namespace
             {
                 if ( errno == EINTR )
                     continue;
-                if ( errno == EPIPE || errno == ECONNRESET )
+                if ( errno == EPIPE || errno == ECONNRESET || errno == ESHUTDOWN || errno == ENOTCONN )
                     return AVERROR( EPIPE );
                 if ( errno == EAGAIN || errno == EWOULDBLOCK )
                     return AVERROR( ETIMEDOUT );
@@ -53,6 +55,19 @@ namespace
             sent += static_cast<size_t>( n );
         }
         return static_cast<int>( sent );
+    }
+
+    void configure_client_socket( int cfd, int sndbuf_bytes, int sndtimeo_sec ) noexcept
+    {
+        int one = 1;
+        ::setsockopt( cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );
+        if ( sndbuf_bytes > 0 )
+            ::setsockopt( cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf_bytes, sizeof( sndbuf_bytes ) );
+        if ( sndtimeo_sec > 0 )
+        {
+            const timeval tv { sndtimeo_sec, 0 };
+            ::setsockopt( cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
+        }
     }
 }  // namespace
 
@@ -118,32 +133,36 @@ Status TcpPullServer::accept_client( const std::atomic<bool>& quit )
         const int cfd = ::accept4( lfd_, nullptr, nullptr, SOCK_CLOEXEC );
         if ( cfd >= 0 )
         {
-            cfd_ = cfd;
+            if ( !adopt_client( cfd ) )
+                return make_status( Errc::Timeout, "no viewer" );
             break;
         }
         if ( errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR )
             return errno_status( Errc::Failed, "accept", errno );
     }
-    if ( quit.load() || cfd_ < 0 )
+    const int cfd = cfd_.load( std::memory_order_acquire );
+    if ( quit.load() || cfd < 0 )
         return make_status( Errc::Timeout, "no viewer" );
-    const int cfd = cfd_;
 
-    int one = 1;
-    ::setsockopt( cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );
-    if ( sndbuf_bytes_ > 0 )
-        ::setsockopt( cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf_bytes_, sizeof( sndbuf_bytes_ ) );
-    if ( sndtimeo_sec_ > 0 )
-    {
-        const timeval tv { sndtimeo_sec_, 0 };
-        ::setsockopt( cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
-    }
-    cfd_ = cfd;
+    configure_client_socket( cfd, sndbuf_bytes_, sndtimeo_sec_ );
     return {};
+}
+
+bool TcpPullServer::adopt_client( int cfd ) noexcept
+{
+    const std::lock_guard<std::mutex> lk( cfd_mx_ );
+    if ( aborted_ )
+    {
+        ::close( cfd );
+        return false;
+    }
+    cfd_.store( cfd, std::memory_order_release );
+    return true;
 }
 
 Status TcpPullServer::attach_avio( AVFormatContext* fc )
 {
-    if ( cfd_ < 0 || !fc )
+    if ( cfd_.load( std::memory_order_acquire ) < 0 || !fc )
         return make_status( Errc::Invalid, "no client" );
     iobuf_ = static_cast<uint8_t*>( av_malloc( kIoBufBytes ) );
     if ( !iobuf_ )
@@ -171,11 +190,22 @@ void TcpPullServer::close_client() noexcept
     {
         av_freep( &iobuf_ );
     }
-    if ( cfd_ >= 0 )
+    int fd = -1;
     {
-        ::close( cfd_ );
-        cfd_ = -1;
+        const std::lock_guard<std::mutex> lk( cfd_mx_ );
+        fd = cfd_.exchange( -1, std::memory_order_acq_rel );
     }
+    if ( fd >= 0 )
+        ::close( fd );
+}
+
+void TcpPullServer::abort_client() noexcept
+{
+    const std::lock_guard<std::mutex> lk( cfd_mx_ );
+    aborted_ = true;
+    const int fd = cfd_.load( std::memory_order_acquire );
+    if ( fd >= 0 )
+        ::shutdown( fd, SHUT_RDWR );
 }
 
 void TcpPullServer::close_all() noexcept

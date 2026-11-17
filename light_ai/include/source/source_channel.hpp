@@ -41,6 +41,7 @@ class BasicSourceChannel
     {
         kWarmupFrames = 3,  // valid decodes discarded after a hot attach (mid-stream start)
         kAuxRatio = 8,      // over 8x the model input: the two-pass RGA path needs the aux buffer
+        kDecErrMax = 4,     // consecutive decoder failures before detaching
     };
 
 public:
@@ -86,6 +87,11 @@ public:
             src_.use_camera();
     }
 
+    void set_cancel( const std::atomic<bool>* stop, const std::atomic<bool>* prober_quit ) noexcept
+    {
+        src_.set_cancel( stop, prober_quit );
+    }
+
     // The one attach path (startup, hot attach, re-attach), attaching thread only,
     // never while Live. hot: false = the Pipeline ctor (startup log texts, no warm-up).
     // why: the reason when the result is not Live (ok when Live).
@@ -107,6 +113,7 @@ public:
             return a;
         }
         warmup_left_ = hot ? kWarmupFrames : 0;
+        dec_err_streak_ = 0;
         last_ok_.store( clk::now() );
         state_.store( State::Live, std::memory_order_release );  // LAST: publishes every field above
         if ( !hot )
@@ -117,10 +124,12 @@ public:
         return Attach::Live;
     }
 
-    // Frame thread, after a Detached/Fatal poll: hands the channel back to the prober.
+    // Frame thread, after a Detached/Fatal poll: closes the source and hands back to prober.
     void detach()
     {
         warmup_left_ = 0;
+        dec_err_streak_ = 0;
+        src_.teardown();
         state_.store( State::Detached, std::memory_order_release );
     }
 
@@ -154,7 +163,7 @@ public:
     //   decode error -- does not consume the warm-up;
     //   warm-up      -- the first valid decodes after a hot attach may be partial
     //                   (mid-stream start): decoded, then discarded.
-    int decode( const EncodedFrame& f ) noexcept
+    int decode( const EncodedFrame& f, Status* err = nullptr ) noexcept
     {
         int fd = -1;
         Status st;
@@ -163,8 +172,16 @@ public:
         else
             log_.warn() << "source s" << idx_ << ": zero-size frame skipped\n";
         src_.requeue( f.buf );
-        if ( !st.ok() || fd < 0 )
+        if ( !st.ok() )
+        {
+            ++dec_err_streak_;
+            if ( err != nullptr && ( st.code() == Errc::NoMemory || dec_err_streak_ >= kDecErrMax ) )
+                *err = Status( Errc::Lost, st.what(), st.kind(), st.sys() );
             return -1;
+        }
+        if ( fd < 0 )
+            return -1;
+        dec_err_streak_ = 0;
         if ( warmup_left_ > 0 )
         {
             --warmup_left_;
@@ -267,6 +284,7 @@ private:
     int model_h_ = 0;
     SourceGeom geom_ {};
     int warmup_left_ = 0;
+    int dec_err_streak_ = 0;
     bool dec_ready_ = false;  // decoder initialized (replaces the old w = h = 0 rollbacks)
     int dec_w_ = 0;
     int dec_h_ = 0;  // the geometry the decoder was initialized for

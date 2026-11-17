@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 
 #include "core/log.hpp"
 #include "core/status.hpp"
@@ -40,15 +41,23 @@ public:
     // keeps the listening socket open for the next viewer session.
     void close_client() noexcept;
 
+    // Shuts down any active client socket to unblock a stalled send() on stop.
+    void abort_client() noexcept;
+
     // Closes both the client session and the listening socket.
     void close_all() noexcept;
+
+private:
+    bool adopt_client( int cfd ) noexcept;
 
 private:
     const int port_;
     const int sndbuf_bytes_;
     const int sndtimeo_sec_;
     int lfd_ = -1;
-    int cfd_ = -1;
+    std::mutex cfd_mx_;
+    bool aborted_ = false;
+    std::atomic<int> cfd_ { -1 };
     uint8_t* iobuf_ = nullptr;
     AVIOContext* pb_ = nullptr;
 };

@@ -67,6 +67,8 @@ private:
     std::atomic<bool> error_ { false };
     std::atomic<int64_t> next_send_us_ { 0 };
 
+    std::mutex tcp_mx_;
+    TcpPullServer* active_tcp_ = nullptr;
     std::mutex mx_;
     std::condition_variable cv_;
     AVFormatContext* fc_ = nullptr;  // ready for writes

@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -85,6 +86,10 @@ public:
     // Full connect path for an http://host[:port]/path URL. Non-throwing: not
     // ok tears down and says why (the url, connect, send, head and first-frame
     // reasons; Absent = nobody there, so the prober retries).
+    void set_cancel( const std::atomic<bool>* stop, const std::atomic<bool>* prober_quit = nullptr ) noexcept
+    {
+        sock_.set_cancel( stop, prober_quit );
+    }
     Status setup_device( const std::string& url );
     void teardown();
     // Drains frames accumulated in the TCP socket during Pipeline init

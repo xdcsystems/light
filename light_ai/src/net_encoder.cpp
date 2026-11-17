@@ -84,9 +84,8 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     if ( !do_enc )
         return;
 
-    // No session any more (viewer dropped while cropping): the frame is
-    // dropped with it. A send failure ends the session it was sent into.
-    gate_.run( [this]( const SessionGate::Session& s ) {
+    // No session or epoch changed while cropping: drop the stale frame.
+    gate_.run( epoch, [this]( const SessionGate::Session& s ) {
         if ( Status est = codec_.encode( ring_.frame( ring_.current() ), ts_us_, s, queue_ ); !est.ok() )
             queue_.fail( s.epoch );
     } );
@@ -137,7 +136,7 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noe
         queue_.fail( epoch );  // see publish()
         return;
     }
-    gate_.run( [this]( const SessionGate::Session& s ) {  // see publish()
+    gate_.run( epoch, [this]( const SessionGate::Session& s ) {  // see publish()
         if ( Status est = codec_.encode( ring_.frame( ring_.current() ), ts_us_, s, queue_ ); !est.ok() )
             queue_.fail( s.epoch );
     } );

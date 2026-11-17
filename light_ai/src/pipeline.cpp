@@ -111,6 +111,7 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
     // Channels know their kind, node and the model geometry; no device is
     // opened yet (attach_sources, last).
     srcs_.configure( cfg_.sources, model_w_, model_h_ );
+    srcs_.set_stop( &stop_.raw() );
 
     // Canonical letterbox band: 4:3 of the model input. The canvas is
     // source-independent -- absent sources show the NO SIGNAL idle
@@ -249,10 +250,20 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
         return Step::Skipped;
     }
     const auto t1 = clk::now();
-    const int fd_src = srcs_[f.src].decode( f );
+    Status dec_st;
+    const int fd_src = srcs_[f.src].decode( f, &dec_st );
     const auto t2 = clk::now();
     if ( fd_src < 0 )
+    {
+        if ( !dec_st.ok() )
+        {
+            EncodedFrame df = f;
+            df.st = dec_st;
+            static_cast<void>( handle_source_failure( df ) );
+            srcs_.reset_stall_clocks( clk::now() );
+        }
         return Step::Skipped;
+    }
 
     // ---- unified path: every frame goes through the InferencePool ----
     // pool 1 == ring of one: dispatch, then publish immediately -- the
