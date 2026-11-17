@@ -101,6 +101,8 @@ add_executable(light_ai
     src/core/encode_pacer.cpp
     src/core/session_warmup.cpp
     src/core/bitmap_font.cpp
+    src/core/glyph_font.cpp
+    src/core/callout.cpp
     src/core/idle_plate.cpp
     src/core/status.cpp
     src/core/http_url.cpp

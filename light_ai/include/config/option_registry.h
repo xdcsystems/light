@@ -33,7 +33,7 @@ public:
 
     enum
     {
-        kOptionCount = 21
+        kOptionCount = 22
     };
 
     explicit OptionRegistry( const Log& log );

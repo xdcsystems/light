@@ -33,6 +33,8 @@ int main( int argc, char** argv )
         { "associator", &test_associator },
         { "trail_window", &test_trail_window },
         { "tracker", &test_tracker },
+        { "glyph_font", &test_glyph_font },
+        { "callout_layout", &test_callout_layout },
         { "box_mapper", &test_box_mapper },
         { "reference_chain", &test_reference_chain },
         { "config", &test_config },

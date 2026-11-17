@@ -59,6 +59,12 @@ struct CalConfig
     std::string dir;  // --cal-dir: overrides the series directory (default: dataset/) and the --dump-cal one (build/)
 };
 
+enum class LabelLang : uint8_t
+{
+    En,
+    Ru
+};
+
 struct StreamConfig
 {
     bool enabled = false;  // --net: preview server (raw rgb24 NUT, or h264 with --net-h264)
@@ -70,7 +76,8 @@ struct StreamConfig
     bool h264 = false;         // --net-h264: h264_rkmpp + MPEG-TS instead of raw NUT
     int bitrate_kbps = 12000;  // --net-bitrate
     std::string host;          // --net-host: UDP push destination; empty = TCP pull on port
-    bool cpu_draw = false;     // --cpu-draw: force the CPU box-drawing path (A/B vs the GPU drawer)
+    bool cpu_draw = false;                // --cpu-draw: force the CPU box-drawing path (A/B vs the GPU drawer)
+    LabelLang label_lang = LabelLang::En; // --label-lang: callout text language (en | ru)
 };
 
 struct Config
