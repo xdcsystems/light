@@ -24,13 +24,13 @@
 // Pipeline is destroyed.
 int main( int argc, char** argv )
 {
-    // Diagnostics: info -> stdout, warnings/errors -> stderr, as before.
-    // Declared first, outside the try block: CliOptions reports its
-    // rejections through it, and so does the catch below. There is no
-    // log-level option yet, so the Log does not depend on the parse.
-    const Log log( std::cout, std::cerr );
+    // Diagnostics: info/debug -> stdout, warnings/errors -> stderr.
+    // Declared first, outside the try block: CliOptions uses Info threshold
+    // (so option/INI errors on stderr and "config: loaded" print before
+    // --log-level is known); afterwards log applies cfg.log_level.
+    const Log cli_log( std::cout, std::cerr );
 
-    CliOptions cli( log );
+    CliOptions cli( cli_log );
     switch ( cli.parse( argc, argv ) )
     {
         case CliOptions::ParseStatus::Help:
@@ -41,6 +41,8 @@ int main( int argc, char** argv )
         case CliOptions::ParseStatus::Run:
             break;
     }
+
+    const Log log( std::cout, std::cerr, cli.config().log_level );
 
     try
     {

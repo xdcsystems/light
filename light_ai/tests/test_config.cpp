@@ -195,10 +195,50 @@ namespace
         CHECK( t, parse( man0_cli, { "--device", "/dev/video0", "--src-rot", "0" } ) == Status::Run );
         CHECK( t, !man0_cli.config().sources[0].rot_auto && man0_cli.config().sources[0].rot_deg == 0 );
     }
+
+    void check_log_level( TestRun& t )
+    {
+        using Status = CliOptions::ParseStatus;
+        Cli def;
+        CHECK( t, parse( def, {} ) == Status::Run && def.config().log_level == Log::Level::Info );
+        struct Case
+        {
+            const char* arg;
+            Log::Level level;
+        };
+        constexpr Case cases[5] = {
+            { "debug", Log::Level::Debug },
+            { "info", Log::Level::Info },
+            { "warn", Log::Level::Warn },
+            { "error", Log::Level::Error },
+            { "off", Log::Level::Off },
+        };
+        for ( const Case& c : cases )
+        {
+            Cli cli;
+            CHECK( t, parse( cli, { "--log-level", c.arg } ) == Status::Run && cli.config().log_level == c.level );
+        }
+        const TempIni ini( "log_level = warn\n" );
+        Cli ini_cli;
+        CHECK( t, parse( ini_cli, { "--config", ini.path() } ) == Status::Run
+                  && ini_cli.config().log_level == Log::Level::Warn );
+        Cli over_cli;
+        CHECK( t, parse( over_cli, { "--config", ini.path(), "--log-level", "error" } ) == Status::Run
+                  && over_cli.config().log_level == Log::Level::Error );
+        CHECK( t, error_text( { "--log-level", "trace" },
+                              "invalid value for --log-level: 'trace' (expected debug|info|warn|error|off)\n" ) );
+        Cli rep_cli;
+        CHECK( t, parse( rep_cli, { "--log-level", "debug", "--log-level", "off" } ) == Status::Run
+                  && rep_cli.config().log_level == Log::Level::Off );
+        CHECK( t, rejected( { "--log-level" } ) );
+        CHECK( t, rejected( { "--log-level", "" } ) );
+        CHECK( t, rejected( { "--log-level", "INFO" } ) );
+    }
 }  // namespace
 
 void test_config( TestRun& t )
 {
+    check_log_level( t );
     check_stage6_options( t );
     texts( t );
 
@@ -313,6 +353,7 @@ void test_config( TestRun& t )
         CHECK( t, text.find( "  --net-src <value> - " ) != std::string::npos );
         CHECK( t, text.find( "  --cpu-draw - " ) != std::string::npos );
         CHECK( t, text.find( "  --label-lang <value> - " ) != std::string::npos );
+        CHECK( t, text.find( "  --log-level <value> - " ) != std::string::npos );
     }
     {
         Cli en;

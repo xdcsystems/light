@@ -5,9 +5,10 @@
 // The rejection text is built in one place, OptionRegistry::apply, from the
 // row's name and `expected`.
 
-#include <cerrno>
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cerrno>
 #include <charconv>
 #include <climits>
 #include <cmath>
@@ -137,6 +138,34 @@ namespace
         return false;
     }
 
+    bool apply_log_level( Config& c, const char* v )
+    {
+        if ( !v )
+            return false;
+        struct LevelMap
+        {
+            const char* name;
+            Log::Level level;
+        };
+        constexpr std::array<LevelMap, 5> levels { {
+            { "debug", Log::Level::Debug },
+            { "info", Log::Level::Info },
+            { "warn", Log::Level::Warn },
+            { "error", Log::Level::Error },
+            { "off", Log::Level::Off },
+        } };
+        const std::string_view sv( v );
+        for ( const LevelMap& m : levels )
+        {
+            if ( sv == m.name )
+            {
+                c.log_level = m.level;
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool apply_reid_model( Config& c, const char* v )
     {
         if ( !v )
@@ -209,6 +238,8 @@ OptionRegistry::OptionRegistry( const Log& log )
                               +[]( Config& c, const char* v ) { return set_float_01( v, c.infer.iou_thr ); } } },
         { "--label-lang",   { true, "callout label language (en|ru; default en)", "en|ru",
                               &apply_label_lang } },
+        { "--log-level",    { true, "diagnostic verbosity: debug|info|warn|error|off (default info)",
+                              "debug|info|warn|error|off", &apply_log_level } },
         { "--model",        { true, "RKNN model path", nullptr,
                               +[]( Config& c, const char* v ) { return set_str( v, c.infer.model ); } } },
         { "--net",          { false, "network preview (raw rgb24 or --net-h264)", nullptr,

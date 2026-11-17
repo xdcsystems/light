@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 
+#include "core/log.hpp"
+
 enum class SourceKind : uint8_t
 {
     V4L2,
@@ -95,6 +97,8 @@ struct Config
     CalConfig cal;
     StreamConfig stream;
 
+    // Diagnostic log verbosity threshold (--log-level); default Info.
+    Log::Level log_level = Log::Level::Info;
     // 0 (the default) = run until Ctrl-C: SignalWaiter sets the stop
     // flag, run() drains and reports normally. An explicit --frames N
     // (>= 1) bounds the run; values < 1 are rejected loudly in cli.cpp.

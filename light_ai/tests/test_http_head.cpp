@@ -83,6 +83,22 @@ namespace
         CHECK( t, error_is( parse( drip.substr( 0, HttpHead::kHeadMax ) ), "response headers oversized" ) );
     }
 
+    void unquoted_boundary_ws( TestRun& t )
+    {
+        CHECK( t, boundary_is( parse( head( "Content-Type: multipart/x-mixed-replace;boundary=frame   \t" ) ), "frame" ) );
+        CHECK( t, boundary_is( parse( head( "Content-Type: multipart/x-mixed-replace; boundary=frame \t ; x=1" ) ), "frame" ) );
+        CHECK( t, boundary_is( parse( head( "Content-Type: multipart/x-mixed-replace; boundary=\"frame \"" ) ), "frame " ) );
+        CHECK( t, boundary_is( parse( head( "Content-Type: multipart/x-mixed-replace; boundary=\"a;b\"" ) ), "a;b" ) );
+        CHECK( t, error_is( parse( head( "Content-Type: multipart/x-mixed-replace; boundary=   ; x=1" ) ),
+                            "empty multipart boundary" ) );
+        CHECK( t, error_is( parse( head( "Content-Type: multipart/x-mixed-replace; boundary=   " ) ),
+                            "empty multipart boundary" ) );
+        CHECK( t, error_is( parse( head( "Content-Type: multipart/x-mixed-replace; boundary=\"abc " ) ),
+                            "unterminated multipart boundary" ) );
+        CHECK( t, error_is( parse( head( "Content-Type: multipart/x-mixed-replace; boundary=\"abc; x=1" ) ),
+                            "unterminated multipart boundary" ) );
+    }
+
     // The phone's real response head (IP Webcam), recorded once: see tests/data/README.
     void recorded( TestRun& t )
     {
@@ -111,6 +127,7 @@ namespace
 void test_http_head( TestRun& t )
 {
     heads( t );
+    unquoted_boundary_ws( t );
     need_more( t );
     recorded( t );
 }

@@ -5,13 +5,16 @@
 // the head ends at the first empty line. Ok needs:
 //   - the status line containing " 200 ";
 //   - a Content-Type field with boundary=<value> (case-insensitive name;
-//     optional blanks after '='; an optional opening quote; the value ends
-//     at '"', ';' or the line end; 1..kBoundaryMax characters).
+//     optional blanks after '='; either a quoted-string "..." with a
+//     closing '"' keeping internal spaces and ';', or an unquoted value
+//     ending at ';' or the line end with trailing ' '/'\t' trimmed;
+//     1..kBoundaryMax characters).
 // NeedMore: no end of head in the bytes yet and fewer than kHeadMax of them.
 // Error: err holds the reason (Errc::Invalid):
 //   "response headers oversized" (kHeadMax bytes without an end of head),
 //   "server did not answer 200", "no multipart boundary in Content-Type",
-//   "multipart boundary too long", "empty multipart boundary".
+//   "unterminated multipart boundary", "multipart boundary too long",
+//   "empty multipart boundary".
 
 #pragma once
 

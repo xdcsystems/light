@@ -39,7 +39,7 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   `cognitive` = pinned `clang-tidy==23.1.4` in `venv/` (`scripts/tidy_cognitive.yaml`, Threshold 20).
   Per-file logs: `build/tidy/{src,tests}/<path>.log` and `build/tidy/cognitive/{src,tests}/<path>.log`.
   Result cache: `build/tidy-cache` (`TIDY_NO_CACHE=1` disables it). See [README.md](README.md#build--static-analysis).
-- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 54 suites / 7,481 checks + 5 TSan suites / 22 checks).
+- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 54 suites / 7,503 checks + 5 TSan suites / 22 checks).
   Single suite / flake hunt: `./build/tests/light_ai_tests [substr...] [--repeat N]` (also `light_ai_tests_tsan`;
   exit 2 on bad args).
 - Live run:
@@ -99,11 +99,11 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 Full milestone history and A/B records live in [docs/roadmap.md](docs/roadmap.md) and [docs/state.md](docs/state.md).
 
 - [x] **0 — Safety net (PR #6, #32):** `core/` domain types, host unit tests, Layer A (`misc/ref_evening.mjpeg` + `reference/ref_evening.csv`), Layer B (`reference_chain`).
-- [x] **1 — Global state (PRs #7–#9, #51):** `ProcessEnv`, `SignalWaiter`, grouped `Config`, `Log` injection across all modules. *(Open minor item: no `--log-level` CLI flag yet.)*
+- [x] **1 — Global state (PRs #7–#9, #51):** `ProcessEnv`, `SignalWaiter`, grouped `Config`, `Log` injection across all modules. *(Closed: `--log-level` CLI/INI flag added.)*
 - [x] **2 — `InferencePool` (PR #10):** `InferSlot`, worker threads, ordered FIFO, core masks, `OverlaySink` taking `FrameView`.
 - [x] **3 — Sources (#15, PRs #16–#17):** `SourceChannel` state machine, `UsbNodeLocator`, `SourceProber`, `SourceSet`, `Pipeline::run()` simplified.
 - [x] **4 — `NetEncoder` (#19, PRs #20–#22, #23, #24):** decomposed into `EncoderConfig`, `StreamLayout`, `ParamSetCache`, `PtsClock`, `EncodePacer`, `BitmapFont`, `IdlePlate`, `EncoderFramePool`, `FrameComposer`, `PacketQueue`, `SessionGate`, `MuxSession`, `H264Encoder`, `NetworkInit`, `SessionWarmup` (`= default` destructor).
-- [x] **5 — `NetMjpegSource` (#28, PRs #29–#30):** `ByteWindow`, `HttpUrl`, `HttpHead`, `MultipartReader`, `BufferedSocket`, `MjpegSlotPool`, loopback tests. *(Open minor item: unquoted boundary preserves trailing spaces per #29 review.)*
+- [x] **5 — `NetMjpegSource` (#28, PRs #29–#30):** `ByteWindow`, `HttpUrl`, `HttpHead`, `MultipartReader`, `BufferedSocket`, `MjpegSlotPool`, loopback tests. *(Closed: `HttpHead` trims trailing horizontal whitespace on unquoted boundaries.)*
 - [x] **6 — Complexity & 2-pass tidy (#34, #39, #42, #43, #48, #51, #55, #37):** `YoloDecoder`, `KalmanAxis`, `Associator`, `TrailWindow`, `BoxMapper`, `ConsoleReporter` + `fixed_fmt.hpp`, 2-pass `clang-tidy-11` + `clang-tidy-23` (`Threshold: 20`), NVMe checkout enforcement.
 - [x] **7 — Unified errors & `noexcept` (#61, PRs #62–#71):** `Status` / `Errc` / `ErrnoText`, exit codes `0..3`, `retry_listen()` busy-port recovery, startup 3-head `yolo_head_shape` check, `noexcept` frame path and thread bodies (`49` unit suites / `7,307` checks + `4` TSan suites / `19` checks).
 
