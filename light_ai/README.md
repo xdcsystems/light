@@ -259,6 +259,11 @@ sudo -n ./build/light_ai \
     --reid-model ./misc/osnet_x1_0_imagenet.rknn --reid-thr 0.62 \
     --label-lang ru --pool 3 --net --net-h264 --net-fps 0 --net-bitrate 3000 --frames 3000
 
+# Production profile via INI config (copy template once; CLI flags override INI):
+cp scripts/light_ai.ini.example build/light_ai.ini
+./scripts/run.sh
+./scripts/run.sh --log-level warn --frames 600
+
 # Viewers:
 ffplay -fflags nobuffer tcp://<board-ip>:1234
 # Legacy UDP push viewer (explicit IPv4 bind required on Windows):
@@ -356,6 +361,7 @@ All **26 options** (plus `--help` / `-h`) are shared between the CLI parser and 
   - [`scripts/tidy_run.sh`](scripts/tidy_run.sh), [`scripts/tidy_cache.py`](scripts/tidy_cache.py), [`scripts/tidy_cognitive.yaml`](scripts/tidy_cognitive.yaml) — 2-pass `clang-tidy` runner & cache.
   - [`scripts/storage_guard.sh`](scripts/storage_guard.sh) — warns (non-fatally) if build output targets `/` or internal eMMC (`/dev/mmcblk*`) to help protect flash endurance on eMMC boards.
   - [`scripts/install_rknn.sh`](scripts/install_rknn.sh) — downloads & verifies `rknn_toolkit_lite2==2.5.0` wheel.
+  - [`scripts/run.sh`](scripts/run.sh), [`scripts/light_ai.ini.example`](scripts/light_ai.ini.example) — wrapper launcher (applies `performance` governors if needed and loads `build/light_ai.ini` by default) and INI profile template.
   - [`scripts/set_governors.sh`](scripts/set_governors.sh) — pins CPU/NPU/DDR governors to `performance` (`sudo`).
   - [`scripts/usb_replug.sh`](scripts/usb_replug.sh) — sysfs USB camera power-cycle helper (installed at `/usr/local/sbin/light-usb-replug`).
   - [`scripts/collect_state.sh`](scripts/collect_state.sh), [`scripts/collect_project.sh`](scripts/collect_project.sh) — collects board state / source snapshots under `build/`.
