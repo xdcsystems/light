@@ -1,0 +1,28 @@
+# light_ai production profile template (flat key = value; no [sections]).
+# Copy to build/light_ai.ini and launch via: ./scripts/run.sh [cli-overrides]
+# Flags are opt-in only (true/yes/on/1); comment out a flag line to disable it.
+# Any CLI flag overrides this file; passing --device/--net-src on the CLI
+# replaces the entire source list defined below.
+
+# Video sources (up to 4 total; AutoOrient detects rotated streams automatically)
+device = /dev/video20
+net_src = http://192.168.1.2:8080/video
+
+# NPU inference & cross-camera Re-ID
+model = ./misc/yolov5s_relu_int8_mmse_v5.rknn
+reid_model = ./misc/osnet_x1_0_imagenet.rknn
+reid_thr = 0.62
+conf = 0.25
+iou = 0.45
+pool = 3
+
+# Preview stream (H.264/MPEG-TS TCP pull; output sleeps until a viewer connects)
+net = true
+net_h264 = true
+net_port = 1234
+net_fps = 0
+net_bitrate = 3000
+label_lang = ru
+
+# Diagnostics (debug | info | warn | error | off)
+log_level = info
