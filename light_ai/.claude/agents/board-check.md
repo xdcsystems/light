@@ -12,22 +12,22 @@ You measure the working tree as it is: the main session switches branches and
 fixes code -- you never edit files and never run git commands that change
 anything (checkout, merge, commit, push, stash, reset).
 
-## Commands (run from light_ai/)
-- Full gate (build + unit tests + clang-tidy):
+## Commands (run from /mnt/nvme_data/linaro/Projects/light/light_ai)
+- Full gate (build + unit tests + TSan + clang-tidy):
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?
-- Narrower: SKIP_TIDY=1 and/or SKIP_TESTS=1 in front of ./scripts/build.sh.
-- Unit tests only: bash scripts/test.sh > build/test.log 2>&1; echo rc=$?
+- Narrower: SKIP_TIDY=1, SKIP_TSAN=1, and/or SKIP_TESTS=1 in front of ./scripts/build.sh.
+- Unit tests + TSan only: bash scripts/test.sh > build/test.log 2>&1; echo rc=$?
 - Live run (the main session gives the flags; default below):
       sudo -n timeout -s INT 90 ./build/light_ai --device /dev/video20 --pool 3 --frames 600 > build/run_<name>.log 2>&1; echo rc=$?
   timeout must run inside sudo (sudo does not relay SIGINT from its own process group).
-  rc 0 or 124 (stopped by the timer) is normal; a SIGINT test needs a timeout shorter than the run.
+  rc 0 or 124 (stopped by the timer) is normal; a SIGINT test needs a timeout shorter than the run (e.g. 15 s).
 - Camera unplug/replug during a run: never ask the user to pull the cable. Run the whole
   sequence in ONE Bash call (raise the Bash tool timeout, up to 10 min), the run as a
   shell job, the replug from the same shell, then `wait` on the job's PID:
       sudo -n timeout -s INT 120 ./build/light_ai ... > build/run_<name>.log 2>&1 & P=$!
       sleep 15; sudo -n /usr/local/sbin/light-usb-replug cycle /dev/video20 5
       wait $P; echo rc=$?
-  and check the run log for the detach and the re-attach (CLAUDE.md, "USB camera tests"). One heavy job at a time: never run
+  and check the run log for the detach and the re-attach (CLAUDE.md, "Workflow"). One heavy job at a time: never run
   a build while a live run measures FPS (3.8 GB RAM).
 
 ## Shells and processes (nothing of yours may outlive your report)
@@ -43,7 +43,7 @@ anything (checkout, merge, commit, push, stash, reset).
 ## Reading logs
 Logs are long: use tail and grep, never read a whole log.
 - Build/gate: `tail -n 40 build/gate.log`; on failure grep for `error:` / `FAILED`
-  and show the FIRST error with ~15 lines of context.
+  and show the FIRST error with \~15 lines of context.
 - Tidy: two passes (main = clang-tidy 11, cognitive = clang-tidy 23 with cognitive complexity
   only), each with its block "---- <pass>: findings by check ----" in build/gate.log; per-file
   details in build/tidy/{src,tests}/<path>.log (main) and build/tidy/cognitive/{src,tests}/<path>.log, e.g.
