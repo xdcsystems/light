@@ -1,8 +1,8 @@
 # Roadmap (light_ai)
 
 The milestone plan and the closed-milestone history that used to live
-under README.md. Pointers like [Platform constraints], [Run], [Viewer]
-refer to README.md sections (../README.md).
+under `README.md`. References map to [Platform constraints](../README.md#requirements--platform-constraints),
+[Run & CLI Reference](../README.md#run--cli-reference), and [Windows Viewer Notes](viewer.md).
 
 ## Roadmap
 
@@ -679,3 +679,25 @@ refer to README.md sections (../README.md).
       header. Verified: build green, tidy 0 findings (all 21 .cpp),
       live smoke 900 frames V4L2 (boxes, colors, trails rendered
       identically, clean EOF drain).
+
+## Architectural Refactoring (Stages 0–7, 2026-11-12..17)
+
+Completed on `fix/audit-p0` (up to `3ccd8ae`, PR #71). See [CLAUDE.md](../CLAUDE.md) and [state.md](state.md) for verification details.
+
+- [x] **Stage 0 — Safety net & reference chain (PR #6, issue #32):**
+      Extracted SDK-free domain types into `include/core/` and `src/core/`, added standalone host unit tests (`tests/CMakeLists.txt`), Layer A MJPEG replay (`misc/ref_evening.mjpeg` + `reference/ref_evening.csv`), and Layer B golden regression (`tests/test_reference_chain.cpp`).
+- [x] **Stage 1 — Global state removal (PRs #7–#9, #51):**
+      Replaced globals with `ProcessEnv` and `SignalWaiter` (`StopFlag`), grouped `Config` by consumer (`sources`, `InferConfig`, `CalConfig`, `StreamConfig`), and injected `const Log&` across all components (leaving `std::cout`/`std::cerr` ownership only in `src/main.cpp`).
+- [x] **Stage 2 — `InferencePool` & `InferSlot` (PR #10):**
+      Extracted NPU workers, per-core masks, ordered result FIFO, and `Abandoned` slot handoff out of `Pipeline`; `OverlaySink` consumes `FrameView` (`include/core/frame_view.hpp`).
+- [x] **Stage 3 — Modular sources (issue #15, PRs #16–#17):**
+      Introduced `SourceChannel` (`NeverAttached` / `Detached` / `Live`), `UsbNodeLocator` (USB-filtered `/dev/video*` probe), `SourceProber` (dedicated `2 s` re-attach thread), and `SourceSet` (round-robin + `2 s` stall recovery).
+- [x] **Stage 4 — `NetEncoder` decomposition (issue #19, PRs #20–#22, #23, #24):**
+      Decomposed the monolithic encoder into `EncoderConfig`, `StreamLayout`, `ParamSetCache`, `PtsClock`, `EncodePacer`, `BitmapFont`, `IdlePlate`, `EncoderFramePool` (4-slot NV12 DRM ring), `FrameComposer`, `PacketQueue`, `SessionGate`, `MuxSession`, `H264Encoder`, `NetworkInit`, and `SessionWarmup` (`~NetEncoder() = default`), plus IDR-on-session-start (#23) and `200 ms` multi-view `SessionWarmup` (#24).
+- [x] **Stage 5 — `NetMjpegSource` modularization (issue #28, PRs #29–#30):**
+      Split HTTP MJPEG pull into `ByteWindow`, `HttpUrl`, `HttpHead`, `MultipartReader` (`core/`), `BufferedSocket`, and `MjpegSlotPool` (`source/`), verified end-to-end over loopback and network drop drills.
+- [x] **Stage 6 — Complexity reduction & two-pass tidy gate (issues #34, #39, #42, #43, #48, #51, #55, #37):**
+      Extracted `YoloDecoder`, `KalmanAxis`, `Associator`, `TrailWindow`, `BoxMapper`, and `fixed_fmt.hpp`; enforced `readability-function-cognitive-complexity` (`Threshold: 20`) via two-pass `scripts/tidy_run.sh` (`clang-tidy-11` + `clang-tidy==23.1.4` with `build/tidy-cache`); enforced NVMe build storage guard (#48); fixed independent `--dump-cal`/`--cal` (#55) and aged-out `TrailWindow` restart (#37).
+- [x] **Stage 7 — Unified `Status` error model & `noexcept` frame path (issue #61, PRs #62–#71):**
+      Added `Status` / `Errc` / `ErrnoText` (`include/core/status.hpp`), startup-only `throw_on` (`include/throw_on.hpp`), exit codes `0..3`, `retry_listen()` busy-port recovery, startup 3-head `yolo_head_shape` check, and `noexcept` enforcement on frame paths and thread bodies (`49` unit suites / `7,307` checks + `4` TSan suites / `19` checks).
+

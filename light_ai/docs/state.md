@@ -1,9 +1,10 @@
 # State notes (light_ai)
 
-The accumulating record that used to live at the end of README.md:
-INT8 build history, INT8 vs FP32 validation and the night-session
-findings (incl. the dataset map). Pointers like [Platform constraints],
-Section pointers like [Platform constraints] or [INT8 build history] refer to README.md sections (../README.md); milestone IDs like [M2.4] or [M2.6] live in roadmap.md alongside this file.
+The accumulating engineering record that used to live at the end of `README.md`:
+INT8 build history, INT8 vs. FP32 validation, night-session findings (incl. the dataset map),
+and refactoring verification logs. Section links map to
+[Platform constraints](../README.md#requirements--platform-constraints),
+[INT8 build history](#int8-build-history-rknn-toolkit2-250-colab), and [roadmap.md](roadmap.md).
 
 ## INT8 build history (rknn-toolkit2 2.5.0, Colab)
 
@@ -424,7 +425,7 @@ to scene coordinates and matches the box-log "raw" lines of the SAME run.
 Calibration chain (each link verified independently):
 - feed recipe: raw uint8 + img[None], NO data_format kwarg (the
   save_board_csv.py path); RKNNLite silently returns None on a 3-dim
-  input or a rejected kwarg — see README [Platform constraints],
+  input or a rejected kwarg — see [Platform constraints](../README.md#requirements--platform-constraints),
   RKNNLite note.
 - harness anchor: the CAL variant (v2 + gamma 2.0 on a dataset_mix
   frame) reproduces misc/board_preds.csv to the 4th decimal
@@ -1443,3 +1444,14 @@ Patch-scripting lessons (extends the 2026-11-08 series):
   anchor transcribed from the chat paste dropped the closing paren of
   the file tail ("slot 1." vs the actual "slot 1)."). Chats/pastes are
   NOT the file; only actual bytes anchor.
+
+## Stages 4–7 Architecture & Verification Summary (2026-11-13..17, `fix/audit-p0` @ `3ccd8ae`)
+
+Following the 2026-11-12 audit round (`455cd08`), architectural refactoring stages 4 through 7 were completed and merged into `fix/audit-p0` (through PR #71):
+
+- **Stage 4 (`NetEncoder` decomposition, #19 / #23 / #24):** Split the encoder into single-purpose `core/` and `net/` components (`EncoderConfig`, `StreamLayout`, `ParamSetCache`, `PtsClock`, `EncodePacer`, `BitmapFont`, `IdlePlate`, `EncoderFramePool`, `FrameComposer`, `PacketQueue`, `SessionGate`, `MuxSession`, `H264Encoder`, `NetworkInit`, `SessionWarmup`) with deterministic reverse-member teardown (`= default` destructor), IDR on every session start (#23), and `200 ms` multi-view `SessionWarmup` (#24).
+- **Stage 5 (`NetMjpegSource`, #28):** Replaced monolithic HTTP MJPEG handling with `ByteWindow`, `HttpUrl`, `HttpHead`, `MultipartReader`, `BufferedSocket`, and `MjpegSlotPool`, covered by host loopback integration tests.
+- **Stage 6 (Complexity & 2-pass tidy gate, #34 / #39 / #42 / #43 / #48 / #51 / #55 / #37):** Decomposed `YoloDecoder`, `KalmanAxis`, `Associator`, `TrailWindow`, `BoxMapper`, and `ConsoleReporter` (`fixed_fmt.hpp`); introduced the parallel cached two-pass tidy gate (`clang-tidy-11` + `clang-tidy==23.1.4` cognitive complexity threshold `20`); enforced NVMe build paths (`storage_guard.sh`).
+- **Stage 7 (`Status` error model & `noexcept`, #61, PRs #62–#71):** Unified runtime error reporting on `Status` (`include/core/status.hpp`), constrained exceptions (`throw_on`) to startup only, standardized exit codes `0..3`, added `retry_listen()` (`2 s` busy-port retry without halting recognition), enforced startup 3-head `yolo_head_shape` validation, and marked frame paths and thread bodies `noexcept`.
+- **Current verification baseline (`3ccd8ae`):** `49` unit test suites (`7,307` checks) and `4` ThreadSanitizer suites (`source_threads`, `source_prober_threads`, `packet_queue_threads`, `session_gate_threads` — `19` checks) pass on host and board.
+
