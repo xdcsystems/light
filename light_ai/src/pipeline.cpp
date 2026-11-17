@@ -274,6 +274,9 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
     // pipeline thread blocks until the worker is done, exactly the legacy
     // synchronous semantics. pool 3 keeps publish-before-reuse: with the FIFO
     // full, the oldest frame is published first.
+    update_auto_orient( f.src, fd_src, ok );
+    if ( stop_.requested() )
+        return Step::Stop;
     drain_done_slots( ok );
     if ( pool_.full() )
         ok += publish_oldest();
@@ -384,52 +387,168 @@ int Pipeline::acquire_slot( int& ok )
 // cross-check of the RGA letterbox geometry against the single-owner
 // one, then the job goes to the pool.
 
-void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms )
+void Pipeline::prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept
 {
     const TensorRef tn = pool_.tensor( slot );
     LbGeom& band = tensor_band_[static_cast<size_t>( slot )];
-    const auto t3 = clk::now();
-
-    const SourceChannel& ch = srcs_[src];
-    const SourceGeom& ss = ch.geom();  // Live: the frame thread owns it
-    // tn.data != nullptr: the InferencePool constructor throws when setup_io()
-    // fails, so a live slot always has its tensor mapped. Clear stale letterbox
-    // bars only when the band geometry changed, then flush CPU lines to DRAM.
-    if ( tn.data != nullptr && band.w > 0
-         && ( band.left != ss.lb.left || band.top != ss.lb.top || band.w != ss.lb.w || band.h != ss.lb.h ) )
+    if ( tn.data != nullptr && band.w > 0 &&
+         ( band.left != eff_lb.left || band.top != eff_lb.top || band.w != eff_lb.w || band.h != eff_lb.h ) )
     {
         dma::fill_and_flush( tn.fd, tn.data, 128, tn.size );
         band = {};
     }
-    LbGeom lg {};
+}
+
+bool Pipeline::submit_orient_probe( int src, int fd_src, int rot, int job_idx, int& ok ) noexcept
+{
+    const int slot = acquire_slot( ok );
+    if ( slot < 0 )
+        return false;
+    const SourceChannel& ch = srcs_[src];
+    const SourceGeom& ss = ch.geom();
     const int raw_w = ss.raw_w > 0 ? ss.raw_w : ss.w;
     const int raw_h = ss.raw_h > 0 ? ss.raw_h : ss.h;
+    int ew = 0;
+    int eh = 0;
+    auto_orient::oriented_dims( raw_w, raw_h, rot, ew, eh );
+    const LbGeom elb = band_geom( ew, eh, model_w_, model_h_ );
+    prepare_tensor_band( slot, elb );
+
+    const TensorRef tn = pool_.tensor( slot );
+    LbGeom lg {};
+    const int yuv_fmt = ( ch.out_fmt() == MPP_FMT_YUV420SP ) ? 0 : 1;
+    const Status rga_st = rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd,
+                                       raw_w / 2, raw_h / 2, &lg, yuv_fmt, rot );
+    if ( rga_st.ok() )
+        tensor_band_[static_cast<size_t>( slot )] = elb;
+    InferJob job { src, ew, eh, job_idx, -1, rga_st.ok(), elb, {} };
+    return pool_.submit( slot, job );
+}
+
+bool Pipeline::probe_rot_batch( int src, int fd_src, const int* rots, int n_rots, float* scores, int& ok ) noexcept
+{
+    while ( !pool_.empty() && !stop_.requested() )
+        ok += publish_oldest();
+    if ( stop_.requested() )
+        return false;
+
+    for ( int off = 0; off < n_rots && !stop_.requested(); )
+    {
+        const int batch = std::min( pool_.size(), n_rots - off );
+        int sent = 0;
+        for ( int b = 0; b < batch; ++b )
+        {
+            if ( submit_orient_probe( src, fd_src, rots[off + b], off + b, ok ) )
+                ++sent;
+        }
+        for ( int c = 0; c < sent; ++c )
+        {
+            InferResult pr {};
+            if ( pool_.collect( pr ) && pr.npu_ok && pr.job.frame >= 0 && pr.job.frame < n_rots )
+                scores[pr.job.frame] = auto_orient::score_detections( pr.dets );
+        }
+        off += batch;
+    }
+    return !stop_.requested();
+}
+
+void Pipeline::update_auto_orient( int src, int fd_src, int& ok ) noexcept
+{
+    const SourceChannel& ch = srcs_[src];
+    SourceAnalytics& sa = an_[src];
+    const uint32_t seq = ch.attach_seq();
+    if ( seq != sa.seen_attach_seq )
+    {
+        const SourceGeom& ss = ch.geom();
+        sa.orient.reset( ch.rot_auto(), ch.rot_deg(), ss.raw_h > ss.raw_w );
+        sa.seen_attach_seq = seq;
+        sa.cur_rot = sa.orient.active_rot();
+    }
+    if ( !sa.orient.enabled() || sa.orient.locked() )
+        return;
+    const int exif_rot = ch.exif_rot();
+    if ( exif_rot >= 0 )
+    {
+        sa.orient.set_exif_hint( exif_rot );
+        sa.cur_rot = sa.orient.active_rot();
+    }
+
+    const AutoOrient::Action act = sa.orient.next_action( sa.frames );
+    if ( act == AutoOrient::Action::None )
+        return;
+    if ( act == AutoOrient::Action::ProbeSingle )
+    {
+        const int single_rot = sa.orient.watch_angle();
+        float single_score = 0.0f;
+        if ( !probe_rot_batch( src, fd_src, &single_rot, 1, &single_score, ok ) ||
+             !sa.orient.observe_single( single_rot, single_score ) )
+            return;
+    }
+
+    constexpr std::array<int, 4> rots { 0, 90, 180, 270 };
+    std::array<float, 4> scores {};
+    if ( !probe_rot_batch( src, fd_src, rots.data(), 4, scores.data(), ok ) )
+        return;
+    const AutoOrient::Result res = sa.orient.commit_all4( scores.data() );
+    sa.cur_rot = res.rot_deg;
+    if ( res.changed )
+    {
+        sa.tracker.reset();
+        sa.smoother.reset();
+        trajs_.clear();
+        const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( clk::now() - t0_ ).count();
+        global_tracks_.sync_cam( src, trajs_, ts_us );
+    }
+    if ( res.changed || res.locked )
+    {
+        log_.info() << "source s" << src << ": auto-rot " << res.rot_deg << " deg (score="
+                    << res.best_score << " vs " << res.second_score
+                    << ( res.locked ? ", locked)\n" : ", voting)\n" );
+    }
+}
+
+void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms )
+{
+    const auto t3 = clk::now();
+    const SourceChannel& ch = srcs_[src];
+    const SourceGeom& ss = ch.geom();  // Live: the frame thread owns it
+    const int rot = an_[src].cur_rot;
+    const int raw_w = ss.raw_w > 0 ? ss.raw_w : ss.w;
+    const int raw_h = ss.raw_h > 0 ? ss.raw_h : ss.h;
+    int eff_w = 0;
+    int eff_h = 0;
+    auto_orient::oriented_dims( raw_w, raw_h, rot, eff_w, eff_h );
+    const LbGeom eff_lb = ( rot == ss.rot_deg ) ? ss.lb : band_geom( eff_w, eff_h, model_w_, model_h_ );
+    prepare_tensor_band( slot, eff_lb );
+
+    const TensorRef tn = pool_.tensor( slot );
+    LbGeom lg {};
     const Status rga_st =
             rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd, raw_w / 2, raw_h / 2, &lg,
-                         ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1, ss.rot_deg );
+                         ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1, rot );
     if ( rga_st.ok() )
     {
         cal_dumper_.maybe( frame_idx, tn.fd, static_cast<const uint8_t*>( tn.data ), tn.size );
         // Cross-check RGA geometry against the owning source's (warn once).
-        if ( !lb_warned_ && ( lg.left != ss.lb.left || lg.top != ss.lb.top || lg.w != ss.lb.w || lg.h != ss.lb.h ) )
+        if ( !lb_warned_ && ( lg.left != eff_lb.left || lg.top != eff_lb.top || lg.w != eff_lb.w || lg.h != eff_lb.h ) )
         {
             lb_warned_ = true;
             log_.warn() << "pipeline: RGA letterbox drift (src " << src << "): x=" << lg.left << " top=" << lg.top
                         << " w=" << lg.w << " h=" << lg.h
-                        << " vs x=" << ss.lb.left << " top=" << ss.lb.top << " w=" << ss.lb.w << " h=" << ss.lb.h << '\n';
+                        << " vs x=" << eff_lb.left << " top=" << eff_lb.top << " w=" << eff_lb.w << " h=" << eff_lb.h << '\n';
         }
-        band = ss.lb;
+        tensor_band_[static_cast<size_t>( slot )] = eff_lb;
     }
     const auto t3b = clk::now();
 
     InferJob job {};
     job.src_idx = src;
-    job.src_w = ss.w;
-    job.src_h = ss.h;
+    job.src_w = eff_w;
+    job.src_h = eff_h;
     job.frame = frame_idx;
     job.ts_us = ts_us;
     job.rga_ok = rga_st.ok();
-    job.lb = ss.lb;
+    job.lb = eff_lb;
     job.tr.cam = cam_ms;
     job.tr.dec = dec_ms;
     job.tr.rga = ms( t3, t3b );

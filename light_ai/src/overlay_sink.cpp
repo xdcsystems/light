@@ -263,7 +263,10 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
     boxes_.clear();
     mapper_.fill( dets, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
     callouts_.clear();
-    compute_callouts( trajs, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callouts_ );
+    if ( frame.src_idx >= 0 && frame.src_idx < reid_cfg::kMaxSources )
+        compute_callouts( trajs, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callout_hist_[frame.src_idx], callouts_ );
+    else
+        compute_callouts( trajs, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callouts_ );
     if ( boxes_.n <= 0 && callouts_.n <= 0 )
         return false;
 

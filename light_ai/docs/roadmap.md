@@ -679,7 +679,7 @@ under `README.md`. References map to [Platform constraints](../README.md#require
       stay out of unit scope — live-run territory. Open sub-questions:
       the exact .clang-format profile (reference files: gpu_box_drawer
       style per project rules) and the first covered module.
-      *(Update 2026-11-17: `.clang-format` and 53 host unit-test suites + 5 TSan suites under `tests/` have landed across Stages 0–7 and `fix/audit-p1` Stages 1–6.)*
+      *(Update 2026-11-17: `.clang-format` and 54 host unit-test suites + 5 TSan suites under `tests/` have landed across Stages 0–7 and `fix/audit-p1` Stages 1–6.)*
 
 ## Architectural Refactoring (Stages 0–7, 2026-11-12..17)
 
@@ -716,4 +716,4 @@ Completed on `fix/audit-p0` (up to `3ccd8ae`, PR #71; merged into `master` in PR
 - [x] **Stage 5 — Non-overlapping EN/RU track callouts (`17ede94` + `b518c76`, PR #78):**
       Added `GlyphFont` (8x8 ASCII+Cyrillic `128x96` `GL_ALPHA` atlas, free functions) and `compute_callouts()` 14-candidate pill placer with `--label-lang en|ru`; batched `GpuBoxDrawer` (`4608` verts) and matched CPU fallback (`draw_callouts_cpu`); added `TrackState::global_id` (`display_id()`).
 - [x] **Stage 6 — Cross-camera Re-ID, RGA rotation & 4-source grid (`8c6b879`, PR #79):**
-      Added SDK-free `GlobalTrackTable` (`32` tracks, `45 s` TTL) + async `BasicReidQueue`/`ReidWorker` (4 zero-copy RKNN slots, `FP32`/`FP16`/`INT8`/`UINT8`); added per-call `RGA2` `crop_resize()` alongside `RGA3` `--src-rot 0|90|180|270`; raised `kMaxSources` to `4` (`2x2` grid); added `--reid-model`, `--reid-thr` (`0.62`), and `id=G(L...)` logging (`53` unit suites / `7,446` checks + `5` TSan suites / `22` checks).
+      Added SDK-free `GlobalTrackTable` (`32` tracks, `45 s` TTL) + async `BasicReidQueue`/`ReidWorker` (4 zero-copy RKNN slots, `FP32`/`FP16`/`INT8`/`UINT8`); added per-call `RGA2` `crop_resize()` alongside `RGA3` `--src-rot 0|90|180|270` (plus `AutoOrient` auto-detection override); raised `kMaxSources` to `4` (`2x2` grid); defaulted `--reid-model` to `./misc/osnet_x1_0_imagenet.rknn` (`--reid-thr 0.62`), added `CalloutHistory` hysteresis, and logged `id=G(L...)` (`54` unit suites / `7,481` checks + `5` TSan suites / `22` checks).

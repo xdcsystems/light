@@ -26,6 +26,7 @@ void test_net_mjpeg_source( TestRun& t );
 void test_box_smoother( TestRun& t );
 void test_kalman_axis( TestRun& t );
 void test_associator( TestRun& t );
+void test_auto_orient( TestRun& t );
 void test_trail_window( TestRun& t );
 void test_tracker( TestRun& t );
 void test_glyph_font( TestRun& t );

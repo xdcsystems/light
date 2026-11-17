@@ -33,13 +33,13 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 - Never push to `fix/audit-p1` or `master` directly, never force-push, never rewrite pushed history.
 - Before a PR, the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
-  (CMake build + 53 unit suites + 5 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
+  (CMake build + 54 unit suites + 5 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
   `SKIP_TSAN=1` / `SKIP_TIDY=1` to narrow intermediate iterations).
   Two-pass tidy gate: `main` = system `clang-tidy-11` (`.clang-tidy`, `tests/.clang-tidy`),
   `cognitive` = pinned `clang-tidy==23.1.4` in `venv/` (`scripts/tidy_cognitive.yaml`, Threshold 20).
   Per-file logs: `build/tidy/{src,tests}/<path>.log` and `build/tidy/cognitive/{src,tests}/<path>.log`.
   Result cache: `build/tidy-cache` (`TIDY_NO_CACHE=1` disables it). See [README.md](README.md#build--static-analysis).
-- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 53 suites / 7,446 checks + 5 TSan suites / 22 checks).
+- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 54 suites / 7,481 checks + 5 TSan suites / 22 checks).
   Single suite / flake hunt: `./build/tests/light_ai_tests [substr...] [--repeat N]` (also `light_ai_tests_tsan`;
   exit 2 on bad args).
 - Live run:
@@ -113,4 +113,4 @@ Full milestone history and A/B records live in [docs/roadmap.md](docs/roadmap.md
 - [x] **Stage 3 (PR #76):** `H264Encoder::drain()` `LOW_DELAY` + `AVDictionary` CBR/IDR, `SessionPtsFilter` reconnect PTS rebase, real `stride_bytes` (`TensorRef`), targeted `DmaSync`, grow-only `MppDecoder::pkt_buf_`.
 - [x] **Stage 4 (PR #77):** `usb_cap_capture_streaming` (`device_caps`), `Tracker` `kMaxMiss = 6` + round-2 `anchor_clipped` + `kHpDecayStreak`, `YoloDecoder` band recall + `Box::seq` NMS, `BoxSmoother` skips `cls == 0`, Layer A/B re-baseline.
 - [x] **Stage 5 (PR #78):** `GlyphFont` (8x8 ASCII+Cyrillic `128x96` `GL_ALPHA` atlas, free functions), `compute_callouts` non-overlapping EN/RU labels (`--label-lang`), `GpuBoxDrawer` batching + CPU parity.
-- [x] **Stage 6 (`8c6b879`, PR #79):** `GlobalTrackTable` (`<= 32` global IDs, `45 s` TTL), `BasicReidQueue` + `ReidWorker` (4 slots, `FP32`/`FP16`/`INT8`/`UINT8`), `RgaResizer::crop_resize` (`RGA2` RGB888) + `--src-rot 0|90|180|270` (`RGA3`), `--reid-model`, `--reid-thr` (`0.62`), `4` sources (`2x2` grid), `53` unit suites / `7,446` checks + `5` TSan suites / `22` checks.
+- [x] **Stage 6 (`8c6b879`, PR #79):** `GlobalTrackTable` (`<= 32` global IDs, `45 s` TTL), `BasicReidQueue` + `ReidWorker` (4 slots, `FP32`/`FP16`/`INT8`/`UINT8`), `RgaResizer::crop_resize` (`RGA2` RGB888) + `--src-rot 0|90|180|270` (`RGA3`), `--reid-model`, `--reid-thr` (`0.62`), `4` sources (`2x2` grid), `54` unit suites / `7,481` checks + `5` TSan suites / `22` checks (plus post-merge `AutoOrient`, default `--reid-model`, and `CalloutHistory` hysteresis in PR #80).

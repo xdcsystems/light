@@ -30,6 +30,7 @@
 #include "core/geometry.hpp"
 #include "core/log.hpp"
 #include "core/status.hpp"
+#include "jpeg_probe.hpp"
 #include "source/source_types.hpp"
 
 template <class Src, class Dec>
@@ -79,6 +80,7 @@ public:
         kind_ = ep.kind;
         node_ = ep.uri;
         rot_deg_ = ep.rot_deg;
+        rot_auto_ = ep.rot_auto;
         model_w_ = model_w;
         model_h_ = model_h;
         
@@ -115,6 +117,8 @@ public:
         }
         warmup_left_ = hot ? kWarmupFrames : 0;
         dec_err_streak_ = 0;
+        exif_rot_.store( -1, std::memory_order_relaxed );
+        attach_seq_.fetch_add( 1u, std::memory_order_relaxed );
         last_ok_.store( clk::now() );
         state_.store( State::Live, std::memory_order_release );  // LAST: publishes every field above
         if ( !hot )
@@ -130,6 +134,7 @@ public:
     {
         warmup_left_ = 0;
         dec_err_streak_ = 0;
+        exif_rot_.store( -1, std::memory_order_relaxed );
         src_.teardown();
         state_.store( State::Detached, std::memory_order_release );
     }
@@ -169,7 +174,11 @@ public:
         int fd = -1;
         Status st;
         if ( f.size > 0 )
-            st = dec_.decode( static_cast<const uint8_t*>( src_.buffer( f.buf ) ), f.size, fd );
+        {
+            const auto* jpg = static_cast<const uint8_t*>( src_.buffer( f.buf ) );
+            maybe_probe_exif( jpg, f.size );
+            st = dec_.decode( jpg, f.size, fd );
+        }
         else
             log_.warn() << "source s" << idx_ << ": zero-size frame skipped\n";
         src_.requeue( f.buf );
@@ -199,6 +208,10 @@ public:
     int index() const { return idx_; }
     // Frame thread while Live (see the thread rule).
     const SourceGeom& geom() const { return geom_; }
+    uint32_t attach_seq() const noexcept { return attach_seq_.load( std::memory_order_acquire ); }
+    int exif_rot() const noexcept { return exif_rot_.load( std::memory_order_relaxed ); }
+    bool rot_auto() const noexcept { return rot_auto_; }
+    int rot_deg() const noexcept { return rot_deg_; }
     auto out_fmt() const { return dec_.out_fmt(); }
     // Attaching thread only.
     const std::string& node() const { return node_; }
@@ -229,6 +242,15 @@ private:
         return {};
     }
 
+    void maybe_probe_exif( const uint8_t* jpg, uint32_t size ) noexcept
+    {
+        if ( !rot_auto_ || jpg == nullptr || exif_rot_.load( std::memory_order_relaxed ) != -1 )
+            return;
+        JpegSofInfo sof {};
+        if ( probe_jpeg_sof( jpg, size, sof ) )
+            exif_rot_.store( sof.exif_rot_deg >= 0 ? sof.exif_rot_deg : -2, std::memory_order_relaxed );
+    }
+
     bool quarter_turn() const noexcept
     {
         return rot_deg_ == 90 || rot_deg_ == 270;
@@ -238,7 +260,7 @@ private:
     {
         if ( w > kAuxRatio * model_w_ || h > kAuxRatio * model_h_ )
             return true;
-        return quarter_turn() && ( h > kAuxRatio * model_w_ || w > kAuxRatio * model_h_ );
+        return ( rot_auto_ || quarter_turn() ) && ( h > kAuxRatio * model_w_ || w > kAuxRatio * model_h_ );
     }
 
     // Decoder (first attach only), geometry guard, aux buffer, letterbox.
@@ -293,11 +315,14 @@ private:
     Dec dec_;
     std::atomic<State> state_ { State::NeverAttached };
     std::atomic<clk::time_point> last_ok_ {};  // last good dequeue: the stall detector's clock
+    std::atomic<uint32_t> attach_seq_ { 0 };
+    std::atomic<int> exif_rot_ { -1 };
 
     SourceKind kind_ = SourceKind::V4L2;
     std::string node_;  // V4L2 node or URL; discovery may adopt another node
     int idx_ = 0;
     int rot_deg_ = 0;
+    bool rot_auto_ = true;
     int model_w_ = 0;
     int model_h_ = 0;
     SourceGeom geom_ {};

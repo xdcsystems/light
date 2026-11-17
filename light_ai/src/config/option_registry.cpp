@@ -137,6 +137,20 @@ namespace
         return false;
     }
 
+    bool apply_reid_model( Config& c, const char* v )
+    {
+        if ( !v )
+            return false;
+        const std::string_view sv( v );
+        if ( sv.empty() || sv == "none" || sv == "off" )
+        {
+            c.infer.reid_model.clear();
+            return true;
+        }
+        c.infer.reid_model = v;
+        return true;
+    }
+
     bool apply_src_rot( Config& c, const char* v )
     {
         int deg = -1;
@@ -147,6 +161,7 @@ namespace
         if ( c.sources.empty() )
             return false;
         c.sources.back().rot_deg = deg;
+        c.sources.back().rot_auto = false;
         return true;
     }
 
@@ -212,12 +227,12 @@ OptionRegistry::OptionRegistry( const Log& log )
                               &apply_net_src } },
         { "--pool",         { true, "NPU context pool: 0|1 = single context (baseline), 3 = one engine per core", "0|1|3",
                               &apply_pool } },
-        { "--reid-model",   { true, "optional Re-ID RKNN model path for cross-camera global IDs", nullptr,
-                              +[]( Config& c, const char* v ) { return set_str( v, c.infer.reid_model ); } } },
+        { "--reid-model",   { true, "Re-ID RKNN model path (default ./misc/osnet_x1_0_imagenet.rknn; 'none' disables)",
+                              nullptr, &apply_reid_model } },
         { "--reid-thr",     { true, "Re-ID cosine similarity threshold 0.0..1.0 (default 0.62)", "0.0..1.0",
                               +[]( Config& c, const char* v ) { return set_float_01( v, c.infer.reid_thr ); } } },
-        { "--src-rot",      { true, "rotate preceding source via RGA: 0|90|180|270 degrees", "0|90|180|270",
-                              &apply_src_rot } },
+        { "--src-rot",      { true, "override auto rotation for preceding source via RGA: 0|90|180|270 degrees",
+                              "0|90|180|270", &apply_src_rot } },
     } }
   , log_( log )
 {

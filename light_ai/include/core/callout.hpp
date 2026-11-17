@@ -41,8 +41,29 @@ struct CalloutConfig
     bool lang_ru = false;
 };
 
+struct CalloutPrevSlot
+{
+    int id = 0;    // TrackState::display_id()
+    int slot = -1; // last winning proposal index [0..13]
+};
+
+struct CalloutHistory
+{
+    PodList<CalloutPrevSlot, TrajList::cap> entries {};
+};
+
 // Computes non-overlapping callout pills and L-connectors for active tracks
 // inside lb_even (even crop matching FrameComposer::compose) minus 2 px margin.
+// When hist is provided, keeps each track's prior slot across frames unless an overlap
+// or edge clamp forces a move (prevents left/right flip-flop on 1-px box jitter).
+void compute_callouts( const TrajList& trajs,
+                       const LbGeom& lb,
+                       float sx,
+                       float sy,
+                       const CalloutConfig& cfg,
+                       CalloutHistory& hist,
+                       CalloutList& out ) noexcept;
+
 void compute_callouts( const TrajList& trajs,
                        const LbGeom& lb,
                        float sx,

@@ -111,6 +111,7 @@ add_executable(light_ai
     src/core/multipart_reader.cpp
     src/core/yolo_decoder.cpp
     src/core/associator.cpp
+    src/core/auto_orient.cpp
     src/core/global_track.cpp
     src/core/trail_window.cpp
     src/source/buffered_socket.cpp

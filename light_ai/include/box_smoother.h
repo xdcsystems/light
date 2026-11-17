@@ -49,6 +49,7 @@ public:
     // Opens the --box-log CSV (empty path: no log); a failure is reported
     // through log and disables the CSV.
     void set_log( const std::string& path, const Log& log );
+    void reset() noexcept;
     void update( const DetList& in, DetList& out ) noexcept;
     void log_frame( int frame, const DetList& raw, const DetList& smooth );
 

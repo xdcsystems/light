@@ -31,6 +31,7 @@ int main( int argc, char** argv )
         { "box_smoother", &test_box_smoother },
         { "kalman_axis", &test_kalman_axis },
         { "associator", &test_associator },
+        { "auto_orient", &test_auto_orient },
         { "trail_window", &test_trail_window },
         { "tracker", &test_tracker },
         { "glyph_font", &test_glyph_font },

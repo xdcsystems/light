@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](#requirements--platform-constraints)
 [![Standard: C++17](https://img.shields.io/badge/C%2B%2B-17-orange.svg)](CMakeLists.txt)
-[![Tests: 53 suites / 7446 checks](https://img.shields.io/badge/Unit%20Tests-53%20suites%20%2F%207446%20checks-brightgreen.svg)](#tests)
+[![Tests: 54 suites / 7481 checks](https://img.shields.io/badge/Unit%20Tests-54%20suites%20%2F%207481%20checks-brightgreen.svg)](#tests)
 
 Zero-copy hardware-accelerated object detection, Kalman tracking, optional OSNet cross-camera Re-ID, and multi-camera H.264 streaming pipeline for Rockchip RK3588 (`V4L2` / HTTP MJPEG → `MPP` decode → `RGA3` letterbox & rotation → `RKNN` NPU + async Re-ID → `Mali G610` EGL/GLES box, EN/RU callout & trail overlay → `MPP` H.264 / MPEG-TS). Built in C++17 with no GStreamer, no OpenCV, no CPU pixel copies, and no virtual dispatch on the frame path.
 
@@ -43,7 +43,7 @@ Sample output frames captured directly from the encoded H.264 preview stream on 
 Run from `light_ai/` inside your repository checkout on an RK3588 board *(on boards booting from eMMC with an external NVMe or USB SSD attached, keep the checkout on the external drive to avoid eMMC flash wear)*:
 
 ```bash
-# 1. Build + run host unit tests (53 suites) + TSan (5 suites) + 2-pass clang-tidy
+# 1. Build + run host unit tests (54 suites) + TSan (5 suites) + 2-pass clang-tidy
 ./scripts/build.sh
 
 # 2. Run host unit tests + ThreadSanitizer suites standalone
@@ -108,7 +108,7 @@ flowchart TB
 
 ## Modules & Headers
 
-The codebase contains **87 headers** under [`include/`](include/) and **54 translation units** under [`src/`](src/) + [`externals/inih/ini.c`](externals/inih/ini.c).
+The codebase contains **88 headers** under [`include/`](include/) and **55 translation units** under [`src/`](src/) + [`externals/inih/ini.c`](externals/inih/ini.c).
 
 ### Top-Level Pipeline & Hardware Modules (`include/`, `src/`)
 
@@ -130,7 +130,7 @@ The codebase contains **87 headers** under [`include/`](include/) and **54 trans
 | `gpu_box_drawer.hpp` | Mali G610 EGL/GBM + GLES2/3 batched box, trail & `GL_ALPHA` callout label renderer (with CPU fallback) |
 | `net_encoder.h`, `net_preview.hpp` | `h264_rkmpp` MPEG-TS encoder facade (`= default` dtor) and raw RGB24 NUT preview server |
 | `tcp_pull_server.hpp`, `av_common.hpp`, `muxer_teardown.hpp` | Single-viewer TCP pull transport (`TCP_NODELAY`, `2 MiB` `SO_SNDBUF`, `15 s` `SO_SNDTIMEO`, `abort_client()`), FFmpeg helpers, RAII muxer teardown |
-| `cal_dumper.hpp`, `jpeg_probe.hpp` | `--dump-cal` / `--cal` PPM writer and JPEG `SOFn` dimension/subsampling probe |
+| `cal_dumper.hpp`, `jpeg_probe.hpp` | `--dump-cal` / `--cal` PPM writer and JPEG `SOFn` + EXIF `Orientation` probe |
 | `console_reporter.h`, `timings.hpp`, `frame_trace.h` | Throttled detection/track reporter (`id=G(L...)` when Re-ID remaps) and per-stage `avg/60` + `TOTAL` timing accumulator |
 | `cpu_affinity.hpp`, `process_env.hpp`, `signal_waiter.hpp` | Cortex-A76 affinity pinning, signal mask + `SIGPIPE` setup, `sigtimedwait` → `StopFlag` bridge |
 | `pod_list.hpp`, `pod_ring.hpp`, `throw_on.hpp` | Zero-heap fixed-capacity containers (`PodList<T, N>`, `PodRing<T, N>`) and startup `Status` → exception bridge |
@@ -141,14 +141,14 @@ The codebase contains **87 headers** under [`include/`](include/) and **54 trans
 
 - **Primitives & Errors:** `status.hpp` (`Status`, `Errc`, `Sys`, `ErrnoText`), `log.hpp` (`Log`, thread-safe RAII `Line`), `stop_flag.hpp` (`StopFlag`, `sleep_interruptible`), `fixed_fmt.hpp`, `line_scan.hpp`.
 - **Geometry & Detection:** `geometry.hpp` (`LbGeom`, `band_geom`), `detection.hpp` (`Detection`, `DetList`), `frame_view.hpp` (`TensorRef` with `stride_bytes`, `TensorSet`, `FrameView`), `fp16.hpp` (`fp16_to_float`), `box_math.hpp` (`box_iou`, `box_iou_corners`, `greedy_iou_match`), `yolo_decoder.hpp` (`YoloDecoder`, `yolo_head_shape`, `Box::seq` NMS ordering).
-- **Tracking, Re-ID & Overlay:** `track.hpp` (`TrackLife`, `TrajPoint`, `TrackState`, `TrajList`), `kalman_axis.hpp`, `associator.hpp`, `trail_window.hpp`, `gpu_box.hpp` (`GpuBox`, `GpuBoxList`), `glyph_font.hpp` (ASCII + Cyrillic `128×96` atlas, zero-heap UTF-8), `callout.hpp` (`compute_callouts`), `global_track.hpp` (`GlobalTrackTable`, crop scheduler), `reid_queue.hpp` (`BasicReidQueue`).
+- **Tracking, Re-ID & Overlay:** `track.hpp` (`TrackLife`, `TrajPoint`, `TrackState`, `TrajList`), `kalman_axis.hpp`, `associator.hpp`, `trail_window.hpp`, `gpu_box.hpp` (`GpuBox`, `GpuBoxList`), `glyph_font.hpp` (ASCII + Cyrillic `128×96` atlas, zero-heap UTF-8), `callout.hpp` (`compute_callouts` with per-camera `CalloutHistory` hysteresis), `auto_orient.hpp` (`AutoOrient` EXIF + 4-angle scoring), `global_track.hpp` (`GlobalTrackTable`, crop scheduler), `reid_queue.hpp` (`BasicReidQueue`).
 - **HTTP/MJPEG Parsing:** `byte_window.hpp`, `http_url.hpp`, `http_head.hpp`, `multipart_reader.hpp`.
 - **Encoder/Stream State:** `encoder_config.hpp`, `param_set_cache.hpp`, `pts_clock.hpp` (`PtsClock`, `SessionPtsFilter`), `encode_pacer.hpp`, `session_warmup.hpp`, `bitmap_font.hpp`, `idle_plate.hpp`, `packet_queue.hpp`, `session_gate.hpp`.
 
 ### Configuration, Source & Network Subdirectories
 
 - **`include/config/`, `src/config/`:** `config.hpp` (`Config`, `InferConfig`, `CalConfig`, `StreamConfig`, `LabelLang`), `option_registry.h` (25-entry `std::array` registry), `cli.hpp`, `config_file.h` (`inih`-backed INI loader).
-- **`include/source/`, `src/source/`:** `source_types.hpp` (`SourceKind`, `SourceEndpoint` with `rot_deg`, `SourceGeom`), `source_channel.hpp` (`NeverAttached` / `Detached` / `Live`, `quarter_turn`, `needs_aux`), `source_set.hpp` (round-robin + `2 s` stall detection), `source_prober.hpp` (`2 s` background re-attach), `usb_node_locator.hpp` (USB + `device_caps` capture filtering), `buffered_socket.hpp`, `mjpeg_slot_pool.hpp`.
+- **`include/source/`, `src/source/`:** `source_types.hpp` (`SourceKind`, `SourceEndpoint` with `rot_deg`/`rot_auto`, `SourceGeom`), `source_channel.hpp` (`NeverAttached` / `Detached` / `Live`, `quarter_turn`, `needs_aux`), `source_set.hpp` (round-robin + `2 s` stall detection), `source_prober.hpp` (`2 s` background re-attach), `usb_node_locator.hpp` (USB + `device_caps` capture filtering), `buffered_socket.hpp`, `mjpeg_slot_pool.hpp`.
 - **`include/net/`, `src/net/`:** `network_init.hpp`, `encoder_frame_pool.hpp` (4-slot NV12 DRM ring), `frame_composer.hpp` (RGA tile/band compositor), `h264_encoder.hpp` (`h264_rkmpp` wrapper), `av_packet.hpp`, `av_packet_queue.hpp`, `mux_session.hpp`.
 
 ---
@@ -221,7 +221,7 @@ python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4
 
 [`tests/CMakeLists.txt`](tests/CMakeLists.txt) is an independent host CMake project requiring only a C++17 compiler and `pthread` (zero Rockchip/FFmpeg/EGL dependencies — runs identically on the board and on x86_64/arm64 hosts).
 
-- **Unit binary (`build/tests/light_ai_tests`):** **53 suites, 7,446 checks**.
+- **Unit binary (`build/tests/light_ai_tests`):** **54 suites, 7,481 checks**.
 - **ThreadSanitizer binary (`build/tests/light_ai_tests_tsan`, `-fsanitize=thread`):** **5 threaded suites, 22 checks** (`source_threads`, `source_prober_threads`, `packet_queue_threads`, `session_gate_threads`, `reid_worker_tsan`).
 - **Custom runner options ([`tests/suite_runner.hpp`](tests/suite_runner.hpp)):**
   ```bash
@@ -230,10 +230,10 @@ python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4
   ```
   Exits `0` on pass, `1` on check failure, `2` on invalid runner argument.
 
-### Covered Test Suites (53 Total in `tests/test_main.cpp`)
+### Covered Test Suites (54 Total in `tests/test_main.cpp`)
 
 - **Core & Containers:** `check_harness`, `pod_containers`, `geometry`, `fp16`, `box_math`, `status`, `stop_flag`, `log`, `timings`
-- **Detection, Tracking, Labels, Re-ID & Reference:** `yolo_decoder`, `yolo_head_shape`, `box_smoother`, `kalman_axis`, `associator`, `trail_window`, `tracker`, `glyph_font`, `callout_layout`, `box_mapper`, `global_track`, `reid_worker_tsan` *(TSan)*, `reference_chain` (Layer B golden check; see [`tests/data/README`](tests/data/README))
+- **Detection, Tracking, Labels, Re-ID & Reference:** `yolo_decoder`, `yolo_head_shape`, `box_smoother`, `kalman_axis`, `associator`, `auto_orient`, `trail_window`, `tracker`, `glyph_font`, `callout_layout`, `box_mapper`, `global_track`, `reid_worker_tsan` *(TSan)*, `reference_chain` (Layer B golden check; see [`tests/data/README`](tests/data/README))
 - **Config, CLI & Signals:** `config`, `signals`, `console_reporter`, `cal_dumper`
 - **Inference Pool:** `inference_pool`, `infer_slot_threads`
 - **Sources & HTTP MJPEG:** `jpeg_probe`, `byte_window`, `http_url`, `http_head`, `multipart_reader`, `buffered_socket`, `mjpeg_slot_pool`, `net_mjpeg_source`, `usb_node_locator`, `source_channel`, `source_threads` *(TSan)*, `source_set`, `source_prober`, `source_prober_threads` *(TSan)*
@@ -275,9 +275,9 @@ All **25 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 | `--config` | `<path>` | *(none)* | Load flat `key = value` INI config before CLI flags |
 | `--device` | `<path>` | `/dev/video20` | V4L2 camera device (repeatable up to 4 total sources; accumulates into `Config::sources`) |
 | `--net-src` | `<url>` | *(none)* | HTTP MJPEG pull source (`http://host:port/path`; repeatable up to 4 total sources) |
-| `--src-rot` | `0\|90\|180\|270` | `0` | Rotate the preceding source via RGA before inference/overlay (`0`, `90`, `180`, `270` degrees) |
+| `--src-rot` | `0\|90\|180\|270` | `auto` | Override automatic source orientation detection (`0`, `90`, `180`, `270` degrees via RGA) |
 | `--model` | `<path>` | `./misc/yolov5s_relu_int8_mmse_v5.rknn` | RKNN model path |
-| `--reid-model` | `<path>` | `""` *(off)* | Optional Re-ID RKNN model path for cross-camera global IDs (e.g. `./misc/osnet_x1_0_imagenet.rknn`) |
+| `--reid-model` | `<path>` | `./misc/osnet_x1_0_imagenet.rknn` | Re-ID RKNN model path for cross-camera global IDs (`none` or `off` disables) |
 | `--reid-thr` | `0.0..1.0` | `0.62` | Re-ID cosine similarity threshold |
 | `--label-lang` | `en\|ru` | `en` | Callout label language (`person N` vs. `человек N`) |
 | `--conf` | `0.0..1.0` | `0.25` | Detection confidence threshold |
