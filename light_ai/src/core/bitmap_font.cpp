@@ -21,7 +21,7 @@ namespace
 
     enum
     {
-        kTextCap = 64
+        kTextCap = 32
     };
 
     // The lib API is char*-based (legacy C): copy into a fixed buffer --
@@ -29,10 +29,15 @@ namespace
     // cppcoreguidelines-pro-type-const-cast on).
     void font_txt( char* dst, int cap, const char* s )
     {
-        const int n = static_cast<int>( std::strlen( s ) );
-        const int m = n < cap - 1 ? n : cap - 1;
-        std::memcpy( dst, s, static_cast<size_t>( m ) );
-        dst[m] = 0;
+        if ( cap <= 0 )
+            return;
+        int i = 0;
+        for ( ; i < cap - 1 && s[i] != '\0'; ++i )
+        {
+            const unsigned char uc = static_cast<unsigned char>( s[i] );
+            dst[i] = ( uc == '\n' || ( uc >= 32 && uc <= 126 ) ) ? static_cast<char>( uc ) : ' ';
+        }
+        dst[i] = '\0';
     }
 
     // A pixel rectangle [x0, x1) x [y0, y1), already clipped to the plane
@@ -85,6 +90,7 @@ int BitmapFont::width( const char* s, int scale ) const
         return 0;
     char txt[kTextCap];
     font_txt( txt, kTextCap, s );
+    stb_easy_font_spacing( 0 );  // match stamp() default spacing
     return stb_easy_font_width( txt ) * scale;
 }
 

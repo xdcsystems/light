@@ -184,11 +184,15 @@ MultipartReader::Step MultipartReader::on_body_scan( Cursor& c, const uint8_t* d
     Form f = c.form;
     size_t p = 0;
     size_t end = 0;
-    if ( find_delimiter( d, n, off, false, f, p, end ) )
+    if ( find_delimiter( d, n, off, c.got == 0, f, p, end ) )
     {
-        size_t lb = p - 1;  // the LF before the delimiter
-        if ( lb > off && d[lb - 1] == '\r' )
-            --lb;
+        size_t lb = p;
+        if ( p > off )
+        {
+            lb = p - 1;  // the LF before the delimiter
+            if ( lb > off && d[lb - 1] == '\r' )
+                --lb;
+        }
         const size_t len = lb - off;
         if ( c.got + len > cap_ )
             return make_step( Event::Desync, off );

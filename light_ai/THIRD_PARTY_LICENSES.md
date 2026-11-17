@@ -8,14 +8,14 @@
 |---|---|---|---|---|
 | **Project source** | `light_ai` (`include/`, `src/`, `tests/`, `scripts/`, `tools/`) | **MIT** | Yes | Retain copyright and MIT permission notice ([LICENSE](LICENSE)) |
 | **Vendored C/C++** | [`externals/inih`](externals/inih/LICENSE.txt) (`ini.c`, `ini.h`) | **BSD-3-Clause** (New BSD) | Yes | Retain Ben Hoyt copyright notice and BSD-3 disclaimer |
-| **Vendored fonts** | [`externals/fonts/font8x8_basic.h`](externals/fonts/font8x8_basic.h) | **Public Domain** | Yes | No restrictions; attribution retained in header |
+| **Vendored fonts** | [`externals/fonts/font8x8_basic.h`](externals/fonts/font8x8_basic.h) | **Public Domain** | Yes | Retained in tree (unused at runtime; [`src/core/glyph_font.cpp`](src/core/glyph_font.cpp) embeds a built-in MIT 8×8 ASCII+Cyrillic table) |
 | **Vendored fonts** | [`externals/fonts/stb_easy_font.h`](externals/fonts/stb_easy_font.h) | **MIT or Unlicense** (dual) | Yes | Either MIT notice or public domain terms apply |
 | **System SDK (OS)** | `rockchip_mpp` (`rk_mpi.h`) | **Apache-2.0** | No (system lib) | Apache-2.0 notice and patent grant |
 | **System SDK (OS)** | `librga` (`im2d.h`, `rga.h`) | **Apache-2.0** | No (system lib) | Apache-2.0 notice and patent grant |
 | **System Media** | `FFmpeg` (`libavformat`, `libavcodec`, `libavutil`) | **LGPL-2.1+** *(or GPL-2.0+/3.0+)* | No (system lib) | **See FFmpeg Compliance Note below** |
 | **System GPU** | `EGL`, `GLESv2`, `libgbm` (Mali / Mesa) | **Vendor / Khronos / MIT** | No (system lib) | Dynamically linked / `dlopen`ed at runtime |
 | **NPU Runtime** | Rockchip `rknnrt` (`librknnrt.so`, `rknn_api.h`) | **Proprietary** (Rockchip) | No (SDK runtime) | Rockchip Electronics Co., Ltd. All rights reserved |
-| **Models (`.rknn`)** | YOLOv5s weights & model files (`misc/*.rknn`) | **AGPL-3.0** *(Ultralytics)* / **Apache-2.0** *(rknn_model_zoo)* | No (`.gitignore`d) | Not tracked in Git; user-supplied at runtime (`--model`) |
+| **Models (`.rknn`)** | YOLOv5s detector & OSNet Re-ID models (`misc/*.rknn`) | **AGPL-3.0** *(Ultralytics YOLOv5)* / **Apache-2.0** *(rknn_model_zoo)* / **MIT** *(OSNet / torchreid)* | No (`.gitignore`d) | Not tracked in Git; user-supplied at runtime (`--model`, `--reid-model`) |
 | **Class labels** | [`include/coco_names.h`](include/coco_names.h) | **CC BY 4.0** (MS COCO taxonomy) | Yes | Standard 80 COCO class name strings |
 
 ---
@@ -35,6 +35,7 @@
 ### Neural Network Models (`.rknn`)
 - Pre-converted `.rknn` models and calibration image datasets are excluded from Git via [`.gitignore`](.gitignore).
 - If you export or redistribute YOLOv5 weights derived from Ultralytics YOLOv5, note that Ultralytics YOLOv5 is dual-licensed under **AGPL-3.0** and a commercial Ultralytics license. Rockchip `rknn_model_zoo` conversion scripts are **Apache-2.0**.
+- Pretrained OSNet Re-ID weights (`osnet_x1_0_imagenet`, `osnet_x0_25_market` from `deep-person-reid` / `torchreid`) are licensed under **MIT**.
 
 ### Unit Test Target (`light_ai_tests`)
 - The host unit-test project ([`tests/CMakeLists.txt`](tests/CMakeLists.txt)) links only against the C++17 standard library and POSIX threads (`pthread`), with zero SDK, FFmpeg, or proprietary dependencies.

@@ -149,6 +149,32 @@ namespace
         CHECK( t, r == Fill::Interrupted && s.is_open() );
         ::close( srv );
     }
+
+    void cancel_flag( TestRun& t )
+    {
+        // Pre-cancelled connect fails immediately; cancel during fill_until wakes promptly.
+        std::atomic<bool> stop { true };
+        BufferedSocket s;
+        s.set_cancel( &stop );
+        const Status cst = s.connect( "127.0.0.1", 1 );
+        CHECK( t, !cst.ok() && cst.code() == Errc::Timeout );
+
+        stop.store( false );
+        Listener l;
+        CHECK( t, s.connect( "127.0.0.1", l.port() ).ok() );
+        const int srv = l.accept();
+        std::thread waker( [&stop] {
+            std::this_thread::sleep_for( std::chrono::milliseconds( 60 ) );
+            stop.store( true );
+        } );
+        const auto t0 = std::chrono::steady_clock::now();
+        const Fill r = s.fill_until( 2000, 50 );
+        const auto el = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0 ).count();
+        waker.join();
+        CHECK( t, r == Fill::Interrupted && el < 1000 );
+        ::close( srv );
+    }
 }  // namespace
 
 void test_buffered_socket( TestRun& t )
@@ -157,4 +183,5 @@ void test_buffered_socket( TestRun& t )
     full_window( t );
     connect_failures( t );
     interrupted( t );
+    cancel_flag( t );
 }

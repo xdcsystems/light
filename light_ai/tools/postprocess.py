@@ -52,7 +52,8 @@ def decode_outputs(outputs, conf_thres=0.25, iou_thres=0.45):
 
 def nms(pred, iou_thres):
     keep = []
-    order = pred[:, 4].argsort()[::-1]
+    # Match C++ YoloDecoder std::stable_sort descending confidence order cleanly.
+    order = np.argsort(-pred[:, 4], kind='stable')
     while order.size:
         i = order[0]
         keep.append(i)
@@ -67,5 +68,7 @@ def nms(pred, iou_thres):
         area_i = (pred[i, 2] - pred[i, 0]) * (pred[i, 3] - pred[i, 1])
         area_r = (pred[rest, 2] - pred[rest, 0]) * (pred[rest, 3] - pred[rest, 1])
         iou = inter / (area_i + area_r - inter + 1e-9)
-        order = rest[iou < iou_thres]
+        # Class-aware NMS matching C++ YoloDecoder::suppress().
+        same_cls = (pred[rest, 5] == pred[i, 5])
+        order = rest[(~same_cls) | (iou < iou_thres)]
     return pred[keep]

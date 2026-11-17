@@ -31,8 +31,11 @@ int main( int argc, char** argv )
         { "box_smoother", &test_box_smoother },
         { "kalman_axis", &test_kalman_axis },
         { "associator", &test_associator },
+        { "auto_orient", &test_auto_orient },
         { "trail_window", &test_trail_window },
         { "tracker", &test_tracker },
+        { "glyph_font", &test_glyph_font },
+        { "callout_layout", &test_callout_layout },
         { "box_mapper", &test_box_mapper },
         { "reference_chain", &test_reference_chain },
         { "config", &test_config },
@@ -59,6 +62,8 @@ int main( int argc, char** argv )
         { "session_gate", &test_session_gate },
         { "session_gate_threads", &test_session_gate_threads },
         { "infer_slot_threads", &test_infer_slot_threads },
+        { "global_track", &test_global_track },
+        { "reid_worker_tsan", &test_reid_worker_tsan },
     };
     return run_suites( "light_ai_tests", suites, argc, argv, std::cout, std::cerr );
 }

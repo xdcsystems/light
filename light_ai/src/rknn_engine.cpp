@@ -30,6 +30,7 @@ RknnEngine::RknnEngine( const char* model_path, const Log& log ) : log_( log )
         ctx_ = 0;
         throw std::runtime_error( "rknn_query INPUT_ATTR failed" );
     }
+    parse_input_dims();
 
     out_attrs_.resize( io_num.n_output );
     for ( uint32_t i = 0; i < io_num.n_output; ++i )
@@ -49,52 +50,82 @@ RknnEngine::~RknnEngine()
 {
     if ( !ctx_ )
         return;
-    if ( in_mem_ )
-        rknn_destroy_mem( ctx_, in_mem_ );
+    release_io();
+    rknn_destroy( ctx_ );
+    ctx_ = 0;
+}
+
+void RknnEngine::parse_input_dims()
+{
+    in_w_ = 0;
+    in_h_ = 0;
+    in_c_ = 0;
+    if ( in_attr_.n_dims != 4 )
+        return;
+    if ( in_attr_.fmt == RKNN_TENSOR_NHWC )
+    {
+        in_h_ = static_cast<int>( in_attr_.dims[1] );
+        in_w_ = static_cast<int>( in_attr_.dims[2] );
+        in_c_ = static_cast<int>( in_attr_.dims[3] );
+    }
+    else if ( in_attr_.fmt == RKNN_TENSOR_NCHW )
+    {
+        in_c_ = static_cast<int>( in_attr_.dims[1] );
+        in_h_ = static_cast<int>( in_attr_.dims[2] );
+        in_w_ = static_cast<int>( in_attr_.dims[3] );
+    }
+}
+
+void RknnEngine::release_io()
+{
+    if ( !ctx_ )
+        return;
+    for ( auto* m : in_mems_ )
+    {
+        if ( m )
+            rknn_destroy_mem( ctx_, m );
+    }
+    in_mems_.clear();
     for ( auto* m : out_mems_ )
     {
         if ( m )
             rknn_destroy_mem( ctx_, m );
     }
-    rknn_destroy( ctx_ );
-    ctx_ = 0;
+    out_mems_.clear();
+    in_stride_bytes_ = 0;
 }
 
-Status RknnEngine::setup_io()
+namespace
 {
-    if ( !ctx_ )
-        return make_status( Errc::Failed, "engine not initialized" );
-
-    in_attr_.fmt = RKNN_TENSOR_NHWC;
-    in_attr_.type = RKNN_TENSOR_UINT8;
-    in_attr_.pass_through = 0;
-    in_attr_.w_stride = 0;
-    in_attr_.h_stride = 0;
-
-    const uint32_t in_size = in_attr_.size_with_stride ? in_attr_.size_with_stride : in_attr_.size;
-    in_mem_ = rknn_create_mem( ctx_, in_size );
-    if ( !in_mem_ )
+    uint32_t tensor_elem_bytes( rknn_tensor_type tp ) noexcept
     {
-        log_.error() << "rknn_create_mem (input) failed\n";
-        return make_status( Errc::NoMemory, "rknn_create_mem failed" );
+        switch ( tp )
+        {
+            case RKNN_TENSOR_FLOAT32:
+                return sizeof( float );
+            case RKNN_TENSOR_FLOAT16:
+                return sizeof( uint16_t );
+            default:
+                return 1;
+        }
     }
+}  // namespace
 
-    if ( const int rc = rknn_set_io_mem( ctx_, in_mem_, &in_attr_ ); rc != RKNN_SUCC )
-    {
-        log_.error() << "rknn_set_io_mem (input) failed\n";
-        return sdk_status( Errc::Failed, "rknn_set_io_mem failed", rc );
-    }
-
-    // The output buffers are sized exactly as the model expects. For an INT8
-    // output this is n_elems bytes, not n_elems * sizeof(float) — the old
-    // x4 over-allocation worked only by luck of the runtime accepting it.
+Status RknnEngine::setup_outputs( bool keep_native_outputs )
+{
     out_mems_.assign( out_attrs_.size(), nullptr );
     for ( size_t i = 0; i < out_attrs_.size(); ++i )
     {
-        if ( out_attrs_[i].type != RKNN_TENSOR_FLOAT16 )
+        if ( !keep_native_outputs && out_attrs_[i].type != RKNN_TENSOR_FLOAT16 )
         {
             out_attrs_[i].type = RKNN_TENSOR_FLOAT16;
             out_attrs_[i].size = out_attrs_[i].n_elems * sizeof( uint16_t );
+        }
+        else if ( keep_native_outputs )
+        {
+            const uint32_t need = out_attrs_[i].n_elems * tensor_elem_bytes( out_attrs_[i].type );
+            if ( out_attrs_[i].size < need )
+                out_attrs_[i].size = need;
         }
         out_mems_[i] = rknn_create_mem( ctx_, out_attrs_[i].size );
         if ( !out_mems_[i] )
@@ -108,11 +139,69 @@ Status RknnEngine::setup_io()
             return sdk_status( Errc::Failed, "rknn_set_io_mem failed", rc );
         }
     }
+    return {};
+}
 
-    // NHWC: dims = {N, H, W, C}; print W x H honestly.
-    log_.info() << "model input: " << in_attr_.dims[in_attr_.n_dims - 2] << 'x' << in_attr_.dims[in_attr_.n_dims - 3] << ' '
-              << get_type_string( in_attr_.type ) << " zp=" << in_attr_.zp << " scale=" << in_attr_.scale
-              << ", outputs: " << out_attrs_.size() << "\n";
+Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
+{
+    if ( !ctx_ )
+        return make_status( Errc::Failed, "engine not initialized" );
+    if ( input_slots <= 0 )
+        return make_status( Errc::Invalid, "input_slots must be >= 1" );
+    release_io();
+
+    if ( in_attr_.n_dims != 4 || in_w_ <= 0 || in_h_ <= 0 || in_c_ <= 0 )
+    {
+        log_.warn() << "rknn: unsupported input tensor ndims=" << in_attr_.n_dims << " fmt=" << in_attr_.fmt << "\n";
+        return make_status( Errc::Unsupported, "input tensor is not 4-D NHWC/NCHW" );
+    }
+
+    const rknn_tensor_type native_type = in_attr_.type;
+    in_attr_.fmt = RKNN_TENSOR_NHWC;
+    in_attr_.type = RKNN_TENSOR_UINT8;
+    in_attr_.pass_through = 0;
+    in_attr_.w_stride = 0;
+    in_attr_.h_stride = 0;
+
+    const uint32_t packed_u8 = static_cast<uint32_t>( in_w_ ) * static_cast<uint32_t>( in_h_ ) * static_cast<uint32_t>( in_c_ );
+    const uint32_t raw_sz = in_attr_.size_with_stride ? in_attr_.size_with_stride : in_attr_.size;
+    const uint32_t in_size = ( native_type == RKNN_TENSOR_UINT8 || native_type == RKNN_TENSOR_INT8 )
+                                 ? ( raw_sz >= packed_u8 ? raw_sz : packed_u8 )
+                                 : packed_u8;
+    in_attr_.size = in_size;
+
+    in_mems_.assign( static_cast<size_t>( input_slots ), nullptr );
+    for ( int s = 0; s < input_slots; ++s )
+    {
+        in_mems_[s] = rknn_create_mem( ctx_, in_size );
+        if ( !in_mems_[s] )
+        {
+            log_.error() << "rknn_create_mem (input " << s << ") failed\n";
+            release_io();
+            return make_status( Errc::NoMemory, "rknn_create_mem failed" );
+        }
+    }
+
+    if ( Status st = bind_input_slot( 0 ); !st.ok() )
+    {
+        log_.error() << "rknn_set_io_mem (input) failed\n";
+        release_io();
+        return st;
+    }
+
+    if ( Status st = setup_outputs( keep_native_outputs ); !st.ok() )
+    {
+        release_io();
+        return st;
+    }
+
+    in_stride_bytes_ = in_attr_.w_stride > 0
+                               ? in_attr_.w_stride * static_cast<uint32_t>( in_c_ )
+                               : static_cast<uint32_t>( in_w_ ) * static_cast<uint32_t>( in_c_ );
+
+    log_.info() << "model input: " << in_w_ << 'x' << in_h_ << ' '
+                << get_type_string( in_attr_.type ) << " zp=" << in_attr_.zp << " scale=" << in_attr_.scale
+                << ", outputs: " << out_attrs_.size() << "\n";
     for ( size_t i = 0; i < out_attrs_.size(); ++i )
     {
         log_.info() << "  out[" << i << "]: " << out_attrs_[i].n_elems << " elems, " << get_type_string( out_attrs_[i].type ) << "\n";
@@ -121,8 +210,31 @@ Status RknnEngine::setup_io()
     return {};
 }
 
+Status RknnEngine::bind_input_slot( int slot ) noexcept
+{
+    if ( !ctx_ || slot < 0 || slot >= static_cast<int>( in_mems_.size() ) || !in_mems_[slot] )
+        return make_status( Errc::Invalid, "invalid input slot" );
+    const int rc = rknn_set_io_mem( ctx_, in_mems_[slot], &in_attr_ );
+    return rc == RKNN_SUCC ? Status {} : sdk_status( Errc::Failed, "rknn_set_io_mem failed", rc );
+}
+
+TensorRef RknnEngine::input_tensor( int slot ) const noexcept
+{
+    if ( slot < 0 || slot >= static_cast<int>( in_mems_.size() ) || !in_mems_[slot] )
+        return {};
+    return { in_mems_[slot]->fd, in_mems_[slot]->virt_addr, in_mems_[slot]->size, in_stride_bytes_ };
+}
+
+void RknnEngine::sync_output( size_t i ) const noexcept
+{
+    if ( ctx_ && i < out_mems_.size() && out_mems_[i] )
+        rknn_mem_sync( ctx_, out_mems_[i], RKNN_MEMORY_SYNC_FROM_DEVICE );
+}
+
 Status RknnEngine::run() const
 {
+    if ( !ctx_ )
+        return make_status( Errc::Failed, "engine not initialized" );
     const int rc = rknn_run( ctx_, nullptr );
     return rc == RKNN_SUCC ? Status{} : sdk_status( Errc::Failed, "rknn_run failed", rc );
 }

@@ -156,7 +156,7 @@ namespace
     struct Coverage
     {
         int dt_clamps = 0;     // a predict across a gap above the clamp
-        int tent_deaths = 0;   // TENT in one frame, DEAD in the next
+        int tent_deaths = 0;   // TENT in one frame, expired directly to FREE in the next
         int ghosts = 0;        // DEAD track states served
         int evictions = 0;     // a track's n_pts went down: trail points aged out
     };
@@ -176,6 +176,12 @@ namespace
             any_alive = any_alive || prev.d[k].state == TRACK_TENT || prev.d[k].state == TRACK_CONF;
         if ( any_alive && dt_us > kDtClampUs )
             ++c.dt_clamps;
+        for ( int k = 0; k < prev.n; ++k )
+        {
+            const TrackState& p = prev.d[k];
+            if ( p.state == TRACK_TENT && find_track( cur, p.id ) == nullptr )
+                ++c.tent_deaths;
+        }
         for ( int k = 0; k < cur.n; ++k )
         {
             const TrackState& s = cur.d[k];
@@ -183,7 +189,6 @@ namespace
             c.ghosts += s.state == TRACK_DEAD ? 1 : 0;
             if ( p == nullptr )
                 continue;
-            c.tent_deaths += ( p->state == TRACK_TENT && s.state == TRACK_DEAD ) ? 1 : 0;
             c.evictions += s.n_pts < p->n_pts ? 1 : 0;
         }
     }
@@ -376,7 +381,7 @@ namespace
     // size on the same center -- size ratio 220 % (above kSizeMax 200, within
     // kSizeMaxWeak 300), IoU 0.21 (below kIoUGate 0.30, above kIoUGateWeak 0.15):
     // only round 2 can match it. Without round 2 the track misses, dies after
-    // kMaxMiss (4) and the blob spawns a new id. Asserts: every blob frame meets the
+    // kMaxMiss (6) and the blob spawns a new id (kFrames covers 12 blob frames > 6). Asserts: every blob frame meets the
     // weak-only conditions, and the track survives under the same id, alone.
     // A blob frame of run_weak against the confirmed track p: the size ratio within the weak band
     // (200..300 %) and the IoU within [kIoUGateWeak, kIoUGate). 1 when it holds, 0 when not.

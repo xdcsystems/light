@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -10,42 +11,37 @@
 
 class Log;
 
-// HTTP MJPEG pull source (IP Webcam / any multipart/x-mixed-replace server).
-// Media stays JPEG end to end: the MPP decoder consumes these
-// packets exactly like the USB camera's MJPEG buffers -- no transcode anywhere.
-// The only cost vs V4L2 is one memcpy per frame (socket -> slot);
-// V4L2 hands the dma-buf zero-copy, HTTP cannot.
+// HTTP MJPEG pull source (any multipart/x-mixed-replace server, e.g. IP Webcam).
+// Frames stay JPEG end-to-end: the MPP decoder consumes them like the USB
+// camera's MJPEG buffers -- no transcode. Only cost vs V4L2 is one memcpy
+// per frame (socket -> slot); V4L2 gives zero-copy via dma-buf.
 //
-// The TCP client and its receive window (source/buffered_socket.hpp), the response
-// head and the multipart framing as pure parsers over that window
-// (core/http_head.hpp, core/multipart_reader.hpp), the frame slots (source/mjpeg_slot_pool.hpp).
-// This class keeps the source contract of MediaSource: connect + prime,
-// the start() drain, the latest-frame skip, the frame check
-// (jpeg_frame_check), the corrupt-frame streak and the dequeue ladder (dequeue_status).
+// Built from independent parts: the TCP client + receive window
+// (source/buffered_socket.hpp), the HTTP head and multipart framing as pure
+// parsers (core/http_head.hpp, core/multipart_reader.hpp), the frame slots
+// (source/mjpeg_slot_pool.hpp). This class keeps the MediaSource contract:
+// connect + prime, the start() drain, latest-frame skip, jpeg_frame_check,
+// corrupt-frame streak, dequeue ladder (dequeue_status).
 //
-// Thread rule (the Src of SourceChannel, source/source_channel.hpp: one
-// owner at a time, the channel state is the hand-over):
-//   call                                         thread                        when
-//   ctor                                         the Pipeline ctor             SourceChannel::configure()
-//   setup_device + start (MediaSource::open),    the attaching thread: the     channel state != Live
-//     width / height, teardown after a failed      Pipeline ctor, then
-//     decoder attach                               SourceProber
-//   dequeue, requeue, buffer                     the frame thread              channel Live
-//   dtor                                         the Pipeline dtor             the prober joined
-// No field is shared: SourceChannel::attach() stores Live last (release),
-// detach() stores Detached (release), both sides load it acquire. The class
-// has no lock and no atomic of its own. The ctor throws (a failed frame-pool
-// mmap): it runs only from configure() on the startup path -- a throw on the
-// prober thread would terminate the process. detach() does not close the
-// socket: it stays open (unread) until the next open() on the attaching
-// thread tears it down.
+// Threading (SourceChannel, source/source_channel.hpp: single owner, channel
+// state is the hand-over):
+//   ctor            -> Pipeline ctor thread      (SourceChannel::configure())
+//   setup_device, start/open, teardown -> the attaching thread (Pipeline ctor
+//                       or SourceProber), channel state != Live
+//   dequeue/requeue/buffer -> frame thread       (channel Live)
+//   dtor            -> Pipeline dtor             (prober joined)
+// No shared fields: SourceChannel::attach() stores Live last (release),
+// detach() stores Detached (release); both sides load acquire. No locks or
+// atomics of its own. The ctor throws (failed frame-pool mmap) only from
+// configure() on the startup path -- a throw on the prober thread would kill
+// the process. detach() leaves the socket open (unread) until the next
+// open() on the attaching thread tears it down.
 //
-// Slot 0 reuse in dequeue(): SourceChannel::decode() decodes synchronously
-// (MppDecoder::decode copies the JPEG into its own MPP buffer) and requeues
-// right after, on the frame thread, so at most one slot is in flight and
-// "all buffers in flight" is unreachable; if a caller ever broke the
-// contract, no decode could be reading slot 0 at that point -- the only
-// reader is the frame thread itself, inside dequeue().
+// Slot 0 reuse: SourceChannel::decode() runs synchronously on the frame
+// thread (MppDecoder::decode copies the JPEG into its own MPP buffer) and
+// requeues immediately, so at most one slot is in flight and "all buffers
+// in flight" is unreachable. Even if a caller broke the contract, the only
+// slot-0 reader is the frame thread itself inside dequeue().
 
 class NetMjpegSource
 {
@@ -85,6 +81,10 @@ public:
     // Full connect path for an http://host[:port]/path URL. Non-throwing: not
     // ok tears down and says why (the url, connect, send, head and first-frame
     // reasons; Absent = nobody there, so the prober retries).
+    void set_cancel( const std::atomic<bool>* stop, const std::atomic<bool>* prober_quit = nullptr ) noexcept
+    {
+        sock_.set_cancel( stop, prober_quit );
+    }
     Status setup_device( const std::string& url );
     void teardown();
     // Drains frames accumulated in the TCP socket during Pipeline init

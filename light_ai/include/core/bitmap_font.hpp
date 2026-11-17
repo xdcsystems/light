@@ -7,7 +7,7 @@
 // is included only from src/core/bitmap_font.cpp, never from this header
 // (README, rules: the externals exception).
 //
-// Text is copied into a 64-byte buffer (the library API is char*-based);
+// Text is copied into a 32-byte buffer (the library API is char*-based);
 // longer strings are cut. Characters outside the font render as blanks.
 // The caller owns any DMA cache sync of the plane.
 
@@ -27,7 +27,9 @@ class BitmapFont
 {
     enum
     {
-        kVertexBytes = 8192  // 128 quads of 4 vertices: enough for any short label
+        // Aligned with kTextCap=32: worst-case glyphs produce <= 12 quads/char,
+        // 31 chars * 12 quads * 4 verts * 16 bytes = 23808 <= 24576 (384 quads).
+        kVertexBytes = 24576
     };
 
 public:

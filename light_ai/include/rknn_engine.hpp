@@ -6,6 +6,7 @@
 
 #include <rknn_api.h>
 
+#include "core/frame_view.hpp"
 #include "core/log.hpp"
 #include "core/status.hpp"
 
@@ -30,20 +31,30 @@ public:
     // so a stray move can never double-destroy an NPU context.
     RknnEngine( RknnEngine&& o ) noexcept
       : ctx_( o.ctx_ )
-      , in_mem_( o.in_mem_ )
+      , in_mems_( std::move( o.in_mems_ ) )
       , out_mems_( std::move( o.out_mems_ ) )
       , in_attr_( o.in_attr_ )
       , out_attrs_( std::move( o.out_attrs_ ) )
+      , in_w_( o.in_w_ )
+      , in_h_( o.in_h_ )
+      , in_c_( o.in_c_ )
+      , in_stride_bytes_( o.in_stride_bytes_ )
       , log_( o.log_ )
     {
         o.ctx_ = 0;
-        o.in_mem_ = nullptr;
+        o.in_mems_.clear();
         o.out_mems_.clear();
+        o.in_w_ = 0;
+        o.in_h_ = 0;
+        o.in_c_ = 0;
+        o.in_stride_bytes_ = 0;
     }
 
     RknnEngine& operator=( RknnEngine&& ) = delete;
 
-    Status setup_io();
+    Status setup_io( bool keep_native_outputs = false, int input_slots = 1 );
+    Status bind_input_slot( int slot ) noexcept;
+    void sync_output( size_t i ) const noexcept;
     Status run() const;
 
     // Pin inference to NPU core(s) via rknn_set_core_mask.
@@ -51,16 +62,18 @@ public:
     // flags of rknn_api.h, used by the pool), 3 = cores 0+1, 7 = 0+1+2.
     Status set_core_mask( unsigned mask ) const;
 
-    void* input_data() const { return in_mem_ ? in_mem_->virt_addr : nullptr; }
-    int input_fd() const { return in_mem_ ? in_mem_->fd : -1; }
-    uint32_t input_size() const { return in_mem_ ? in_mem_->size : 0; }
+    void* input_data() const { return ( !in_mems_.empty() && in_mems_[0] ) ? in_mems_[0]->virt_addr : nullptr; }
+    int input_fd() const { return ( !in_mems_.empty() && in_mems_[0] ) ? in_mems_[0]->fd : -1; }
+    uint32_t input_size() const { return ( !in_mems_.empty() && in_mems_[0] ) ? in_mems_[0]->size : 0; }
+    int input_slot_count() const noexcept { return static_cast<int>( in_mems_.size() ); }
+    TensorRef input_tensor( int slot ) const noexcept;
+    uint32_t input_stride_bytes() const noexcept { return in_stride_bytes_; }
 
     const rknn_tensor_attr& input_attr() const { return in_attr_; }
-    // Model input geometry -- the single source of truth for it (no CLI
-    // flag can desynchronize RGA from the tensor). NHWC: dims = {N, H, W, C},
-    // so W is dims[n-2] and H is dims[n-3]; 0 when the tensor is not 4-D.
-    int input_width() const { return in_attr_.n_dims >= 4 ? static_cast<int>( in_attr_.dims[in_attr_.n_dims - 2] ) : 0; }
-    int input_height() const { return in_attr_.n_dims >= 4 ? static_cast<int>( in_attr_.dims[in_attr_.n_dims - 3] ) : 0; }
+    // Model input geometry -- parsed from the native tensor layout (NHWC or NCHW);
+    // 0 when the tensor is not 4-D.
+    int input_width() const { return in_w_; }
+    int input_height() const { return in_h_; }
     const std::vector<rknn_tensor_attr>& output_attrs() const { return out_attrs_; }
     // Output i as raw model-type bytes (int8_t here is just a byte view;
     // the real type is out_attrs_[i].type -- the model yields fp16).
@@ -74,10 +87,19 @@ public:
     }
 
 private:
+    void parse_input_dims();
+    void release_io();
+    Status setup_outputs( bool keep_native_outputs );
+
+private:
     rknn_context ctx_ = 0;
-    rknn_tensor_mem* in_mem_ = nullptr;
+    std::vector<rknn_tensor_mem*> in_mems_;
     std::vector<rknn_tensor_mem*> out_mems_;
     rknn_tensor_attr in_attr_ {};
     std::vector<rknn_tensor_attr> out_attrs_;
+    int in_w_ = 0;
+    int in_h_ = 0;
+    int in_c_ = 0;
+    uint32_t in_stride_bytes_ = 0;
     const Log& log_;  // owned by main(); outlives every engine
 };

@@ -176,4 +176,30 @@ void test_source_channel( TestRun& t )
         CHECK( t, r.dev.net );
         CHECK( t, r.attach( false ) == Attach::Live && r.dev.opened == "http://cam:8080/video" && r.dev.trials.empty() );
     }
+    // detach() tears down the source immediately; consecutive decoder errors surface Errc::Lost.
+    {
+        Rig r;
+        CHECK( t, r.attach( false ) == Attach::Live );
+        const int before = r.dev.teardowns;
+        r.ch.detach();
+        CHECK( t, r.dev.teardowns == before + 1 );
+
+        CHECK( t, r.attach( true ) == Attach::Live );
+        EncodedFrame f {};
+        Status err;
+        r.dec.decode_rc = 1;  // Timeout
+        for ( int k = 0; k < 3; ++k )
+        {
+            CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Frame );
+            CHECK( t, r.ch.decode( f, &err ) == -1 && err.ok() );
+        }
+        CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Frame );
+        CHECK( t, r.ch.decode( f, &err ) == -1 && err.code() == Errc::Lost );
+
+        // NoMemory triggers Lost immediately.
+        r.dec.decode_rc = 2;
+        err = {};
+        CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Frame );
+        CHECK( t, r.ch.decode( f, &err ) == -1 && err.code() == Errc::Lost );
+    }
 }

@@ -19,6 +19,7 @@ struct JpegSofInfo
     int w = 0;
     int h = 0;
     bool yuv420 = false;
+    int exif_rot_deg = -1;  // -1 = absent; otherwise 0, 90, 180, or 270 CW from EXIF Orientation
 };
 
 namespace detail
@@ -89,6 +90,57 @@ inline bool read_marker( const uint8_t* data, size_t len, size_t& pos, uint8_t& 
 // pos just past marker m, which carries a length-delimited segment:
 // checks the length, parses the FIRST SOF (a second one is a corrupt
 // header), pos ends past the segment. False on any structural error.
+inline uint16_t exif_u16( const uint8_t* p, bool le )
+{
+    return le ? static_cast<uint16_t>( p[0] | ( static_cast<uint16_t>( p[1] ) << 8 ) )
+              : static_cast<uint16_t>( ( static_cast<uint16_t>( p[0] ) << 8 ) | p[1] );
+}
+
+inline uint32_t exif_u32( const uint8_t* p, bool le )
+{
+    return le ? ( static_cast<uint32_t>( p[0] ) | ( static_cast<uint32_t>( p[1] ) << 8 ) |
+                  ( static_cast<uint32_t>( p[2] ) << 16 ) | ( static_cast<uint32_t>( p[3] ) << 24 ) )
+              : ( ( static_cast<uint32_t>( p[0] ) << 24 ) | ( static_cast<uint32_t>( p[1] ) << 16 ) |
+                  ( static_cast<uint32_t>( p[2] ) << 8 ) | static_cast<uint32_t>( p[3] ) );
+}
+
+inline int exif_orient_to_deg( uint16_t orient )
+{
+    switch ( orient )
+    {
+        case 1: return 0;
+        case 3: return 180;
+        case 6: return 90;
+        case 8: return 270;
+        default: return -1;
+    }
+}
+
+inline int parse_exif_orient( const uint8_t* seg, size_t seglen )
+{
+    if ( seglen < 16 || seg[2] != 'E' || seg[3] != 'x' || seg[4] != 'i' || seg[5] != 'f' || seg[6] != 0 || seg[7] != 0 )
+        return -1;
+    const uint8_t* tiff = seg + 8;
+    const size_t tiff_len = seglen - 8;
+    bool le = false;
+    if ( tiff[0] == 'I' && tiff[1] == 'I' && tiff[2] == 0x2A && tiff[3] == 0x00 )
+        le = true;
+    else if ( tiff[0] != 'M' || tiff[1] != 'M' || tiff[2] != 0x00 || tiff[3] != 0x2A )
+        return -1;
+    const size_t ifd_off = exif_u32( tiff + 4, le );
+    if ( ifd_off + 2 > tiff_len )
+        return -1;
+    const size_t n_ent = exif_u16( tiff + ifd_off, le );
+    const size_t entries_start = ifd_off + 2;
+    for ( size_t i = 0; i < n_ent && entries_start + ( i + 1 ) * 12 <= tiff_len; ++i )
+    {
+        const uint8_t* e = tiff + entries_start + i * 12;
+        if ( exif_u16( e, le ) == 0x0112 && exif_u16( e + 2, le ) == 3 && exif_u32( e + 4, le ) == 1 )
+            return exif_orient_to_deg( exif_u16( e + 8, le ) );
+    }
+    return -1;
+}
+
 inline bool take_segment( const uint8_t* data, size_t len, size_t& pos, uint8_t m, bool& seen_sof, JpegSofInfo& out )
 {
     if ( pos + 2 > len )
@@ -96,6 +148,12 @@ inline bool take_segment( const uint8_t* data, size_t len, size_t& pos, uint8_t 
     const size_t seglen = ( static_cast<size_t>( data[pos] ) << 8 ) | data[pos + 1];
     if ( seglen < 2 || pos + seglen > len )
         return false;
+    if ( m == 0xE1 && out.exif_rot_deg < 0 )
+    {
+        const int rot = parse_exif_orient( data + pos, seglen );
+        if ( rot >= 0 )
+            out.exif_rot_deg = rot;
+    }
     if ( is_sof_marker( m ) )
     {
         if ( seen_sof || !parse_sof_segment( data + pos, seglen, out ) )

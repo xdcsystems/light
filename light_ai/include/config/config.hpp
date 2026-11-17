@@ -28,12 +28,16 @@ enum class SourceKind : uint8_t
 struct SourceEndpoint
 {
     SourceKind kind = SourceKind::V4L2;
-    std::string uri;  // V4L2 node (/dev/videoN) or http://host:port/path
+    std::string uri;       // V4L2 node (/dev/videoN) or http://host:port/path
+    int rot_deg = 0;       // hardware RGA rotation: 0, 90, 180, or 270 degrees
+    bool rot_auto = true;  // true = auto-detect orientation unless --src-rot explicitly overrides
 };
 
 struct InferConfig
 {
-    std::string model = "./misc/yolov5s_relu_int8_mmse_v5.rknn";  // --model
+    std::string model = "./misc/yolov5s_relu_int8_mmse_v5.rknn";         // --model
+    std::string reid_model = "./misc/osnet_x1_0_imagenet.rknn";           // --reid-model ('none'/'off'/'' = local IDs)
+    float reid_thr = 0.62f;  // --reid-thr: cross-camera cosine similarity threshold
     // Detection thresholds, CLI-tunable via --conf / --iou.
     float conf_thr = 0.25f;
     float iou_thr = 0.45f;
@@ -59,6 +63,12 @@ struct CalConfig
     std::string dir;  // --cal-dir: overrides the series directory (default: dataset/) and the --dump-cal one (build/)
 };
 
+enum class LabelLang : uint8_t
+{
+    En,
+    Ru
+};
+
 struct StreamConfig
 {
     bool enabled = false;  // --net: preview server (raw rgb24 NUT, or h264 with --net-h264)
@@ -70,7 +80,8 @@ struct StreamConfig
     bool h264 = false;         // --net-h264: h264_rkmpp + MPEG-TS instead of raw NUT
     int bitrate_kbps = 12000;  // --net-bitrate
     std::string host;          // --net-host: UDP push destination; empty = TCP pull on port
-    bool cpu_draw = false;     // --cpu-draw: force the CPU box-drawing path (A/B vs the GPU drawer)
+    bool cpu_draw = false;                // --cpu-draw: force the CPU box-drawing path (A/B vs the GPU drawer)
+    LabelLang label_lang = LabelLang::En; // --label-lang: callout text language (en | ru)
 };
 
 struct Config

@@ -131,6 +131,17 @@ namespace
         CHECK( t, s.data == p.data() );
         CHECK( t, count( out.str(), "captured" ) == 1 );
         CHECK( t, err.str().empty() );
+
+        // Oversized header > kHdrCap (256) logs a warning without overflowing or capturing.
+        std::ostringstream out2;
+        std::ostringstream err2;
+        const Log log2( out2, err2 );
+        ParamSetCache c2( log2 );
+        Bytes big_hdr = cat( { nal( kSps, true, 260 ), nal( kIdr, true, 8 ) } );
+        const ByteSpan bs = c2.prepare( big_hdr.data(), big_hdr.size() );
+        CHECK( t, bs.data == big_hdr.data() && c2.header_size() == 0 );
+        const ByteSpan bs2 = c2.prepare( big_hdr.data(), big_hdr.size() );
+        CHECK( t, bs2.data == big_hdr.data() && count( err2.str(), "too large" ) == 1 );
     }
 }  // namespace
 

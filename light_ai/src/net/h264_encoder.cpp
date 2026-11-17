@@ -1,5 +1,4 @@
 #include <chrono>
-#include <cstddef>  // offsetof
 #include <cstdint>
 #include <stdexcept>
 #include <thread>
@@ -7,13 +6,10 @@
 extern "C"
 {
 #include <libavcodec/avcodec.h>
+#include <libavutil/dict.h>
 #include <libavutil/error.h>
 #include <libavutil/pixfmt.h>
 }
-
-// Same include form as mpp_decoder.hpp: <rockchip/rk_mpi.h> resolves to
-// the self-built /usr/local/include/rockchip headers.
-#include <rockchip/rk_mpi.h>
 
 #include "av_common.hpp"  // av_err_str
 #include "core/log.hpp"
@@ -21,27 +17,16 @@ extern "C"
 
 namespace
 {
-    // Mirror of RKMPPEncContext (ffmpeg-rockchip, libavcodec/rkmppenc.h):
-    // the rkmpp wrapper keeps the raw MppCtx/MppApi handles in its private
-    // context. We reach them to force an IDR for a late-joining viewer
-    // (MPP_ENC_SET_IDR_FRAME) without patching ffmpeg or MPP. Field order
-    // is pinned by the wrapper AVOptions OFFSET() table, so the asserts
-    // catch any layout drift at compile time.
-    struct RKMPPPriv
+    // RAII guard for avcodec_open2 option dictionary.
+    struct AvDictGuard
     {
-        const AVClass* av_class;
-        MppApi* mapi;
-        MppCtx mctx;
-        AVBufferRef* hwdevice;
-        AVBufferRef* hwframe;
-        MppEncCfg mcfg;
+        AvDictGuard() = default;
+        ~AvDictGuard() { av_dict_free( &d ); }
+        AvDictGuard( const AvDictGuard& ) = delete;
+        AvDictGuard& operator=( const AvDictGuard& ) = delete;
+
+        AVDictionary* d = nullptr;
     };
-    static_assert( offsetof( RKMPPPriv, av_class ) == 0, "rkmpp priv layout drift" );
-    static_assert( offsetof( RKMPPPriv, mapi ) == 8, "rkmpp priv layout drift" );
-    static_assert( offsetof( RKMPPPriv, mctx ) == 16, "rkmpp priv layout drift" );
-    static_assert( offsetof( RKMPPPriv, hwdevice ) == 24, "rkmpp priv layout drift" );
-    static_assert( offsetof( RKMPPPriv, hwframe ) == 32, "rkmpp priv layout drift" );
-    static_assert( offsetof( RKMPPPriv, mcfg ) == 40, "rkmpp priv layout drift" );
 }  // namespace
 
 H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log ), pts_( cfg.vfr() )
@@ -79,34 +64,19 @@ H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log
     // a captured stream shows I-frames every 26 for GOP 25.
     ctx->gop_size = cfg.gop();  // 1 s: a late joiner waits at most one GOP
     ctx->max_b_frames = 0;  // no reorder: minimal latency
-    // Rate control: this ffmpeg-rockchip build has no rc_mode AVOption
-    // -- a generic rc_mode option here is silently ignored, and the
-    // encoder runs with the MPP default (VBR).
-    // The real knob is the wrapper's own MppEncCfg, reachable through its
-    // private context (RKMPPPriv above, the same channel as the forced-IDR
-    // path); CBR is applied after avcodec_open2 below.
-    if ( avcodec_open2( ctx, codec, nullptr ) < 0 )
+    // Rate control: pass standard AVOption rc_mode=CBR to h264_rkmpp (no private
+    // ABI mirror needed). Unconsumed options stay in opts and are logged cleanly.
+    AvDictGuard opts;
+    const bool rc_opt_set = ( av_dict_set( &opts.d, "rc_mode", "CBR", 0 ) >= 0 );
+    if ( avcodec_open2( ctx, codec, &opts.d ) < 0 )
     {
         avcodec_free_context( &ctx_ );
         throw std::runtime_error( "net encoder: avcodec_open2(h264_rkmpp) failed" );
     }
-    // Force CBR through MPP: see the rate-control comment above. At this
-    // point mpp_init has run and nothing has been encoded yet, so a
-    // re-issued MPP_ENC_SET_CFG is safe. Non-fatal on any mismatch.
-    RKMPPPriv* rc_priv = static_cast< RKMPPPriv* >( ctx->priv_data );
-    if ( rc_priv && rc_priv->mctx && rc_priv->mapi && rc_priv->mcfg )
-    {
-        mpp_enc_cfg_set_s32( rc_priv->mcfg, "rc:mode", MPP_ENC_RC_MODE_CBR );
-        const MPP_RET rc_set = rc_priv->mapi->control( rc_priv->mctx, MPP_ENC_SET_CFG, rc_priv->mcfg );
-        if ( rc_set == MPP_OK )
-            log_.info() << "enc: rc mode CBR applied via MPP_ENC_SET_CFG\n";
-        else
-            log_.info() << "enc: rc mode CBR rejected by MPP (rc " << rc_set << "), encoder default stays\n";
-    }
+    if ( rc_opt_set && av_dict_get( opts.d, "rc_mode", nullptr, 0 ) == nullptr )
+        log_.info() << "enc: rc mode CBR applied via rc_mode option\n";
     else
-    {
-        log_.info() << "enc: rkmpp priv unavailable, encoder default rc stays\n";
-    }
+        log_.info() << "enc: rc_mode=CBR unavailable or unconsumed, encoder default stays\n";
     log_.info() << "enc: h264_rkmpp open: " << cfg.layout.w << 'x' << cfg.layout.h << ", " << cfg.kbps() << " kbps, gop "
                 << ctx->gop_size << '\n';
     if ( cfg.vfr() )
@@ -135,6 +105,11 @@ void H264Encoder::drain()
     // MPP pool ("invalid mem pool ptr" at exit, idle-run case).
     if ( frames_sent_ == 0 )
         return;
+    // Blocking drain in rkmppenc (AV_CODEC_FLAG_LOW_DELAY -> MPP_TIMEOUT_BLOCK)
+    // so every queued frame is reclaimed before avcodec_free_context() tears down pools.
+    // Note: collect_pending()'s 512x1 ms EAGAIN bound assumes MPP responds rather than
+    // wedges indefinitely, which is accepted here at teardown once frames were sent.
+    ctx_->flags |= AV_CODEC_FLAG_LOW_DELAY;
     send_eof();
     // Telemetry: pulled / eof / eagains make the drain outcome
     // visible for the shutdown-print investigation.
@@ -206,19 +181,6 @@ H264Encoder::DrainTally H264Encoder::collect_pending()
     return tally;
 }
 
-// 7c forced-IDR: the rkmpp wrapper ignores frame->key_frame, so reach MPP
-// through its private context (RKMPPPriv above).
-void H264Encoder::request_idr()
-{
-    RKMPPPriv* priv = static_cast<RKMPPPriv*>( ctx_->priv_data );
-    if ( priv && priv->mctx && priv->mapi )
-    {
-        const MPP_RET rc = priv->mapi->control( priv->mctx, MPP_ENC_SET_IDR_FRAME, nullptr );
-        if ( rc != MPP_OK )
-            log_.warn() << "enc: MPP_ENC_SET_IDR_FRAME failed: " << rc << '\n';
-    }
-}
-
 Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session& s, PacketQueue& queue )
 {
     // A new session (its first encode): the pts restart from zero with
@@ -228,21 +190,22 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Sessi
     if ( s.epoch != seen_epoch_ )
     {
         seen_epoch_ = s.epoch;
-        pts_.restart( s.frame_step );
+        pts_.on_epoch( s.frame_step );
         force_idr_ = true;
     }
-    const int64_t fpts = pts_.next( ts_us, frames_sent_ );
-    fr->pts = fpts;
+    int64_t fpts = 0;
+    fr->pts = pts_.next_frame_pts( ts_us, frames_sent_, fpts );
 
-    // 7c forced-IDR: a fresh session forces the next encoded frame to be
-    // an IDR, so a late join (TCP) or a reopen (UDP) starts within a frame
-    // or two instead of waiting for the GOP boundary. The rkmpp wrapper ignores
-    // frame->key_frame, so reach MPP through its private context
-    // (RKMPPPriv above).
+    // Force an IDR frame through standard FFmpeg AVFrame::pict_type
+    // (handled directly by h264_rkmpp via MPP_ENC_SET_IDR_FRAME).
     if ( force_idr_ )
     {
         force_idr_ = false;
-        request_idr();
+        fr->pict_type = AV_PICTURE_TYPE_I;
+    }
+    else
+    {
+        fr->pict_type = AV_PICTURE_TYPE_NONE;
     }
 
     // EAGAIN from send = the rkmpp input queue is full (3-deep task
@@ -307,8 +270,16 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Sessi
 void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
 {
     AVPacket* pkt = pkt_.get();
+    int64_t ts = 0;
+    const bool has_pts = ( pkt->pts != AV_NOPTS_VALUE );
+    const bool is_key = ( pkt->flags & AV_PKT_FLAG_KEY ) != 0;
+    if ( !pts_.stamp_packet( has_pts, pkt->pts, is_key, fpts, ts ) )
+    {
+        av_packet_unref( pkt );
+        return;
+    }
     pkt->stream_index = stream_index;
-    pkt->pts = pkt->dts = pts_.packet_ts( fpts );
+    pkt->pts = pkt->dts = ts;
     // Overflow = serve() stalled (slow viewer / Wi-Fi burst): the queue
     // flushed itself and re-armed its key gate (core/packet_queue.hpp);
     // an IDR on the next frame makes the gap one frame, not a full GOP.

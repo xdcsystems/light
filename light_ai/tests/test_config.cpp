@@ -116,8 +116,8 @@ namespace
                               "  frame series (default dataset/) and for the single-shot\n"
                               "  --dump-cal (default build/cal.ppm), e.g.:\n"
                               "    light_ai --cal 5 --cal-interval 60 --cal-dir build/calrun\n" ) );
-        CHECK( t, error_text( { "--device", "a", "--device", "b", "--device", "c", "--device", "d" },
-                              "too many video sources (4): at most 3 sources are supported (one per NPU core)\n" ) );
+        CHECK( t, error_text( { "--device", "a", "--device", "b", "--device", "c", "--device", "d", "--device", "e" },
+                              "too many video sources (5): at most 4 sources are supported (2x2 grid max)\n" ) );
 
         // --help: parse() prints nothing; main() prints the usage on stdout through print_usage.
         {
@@ -164,10 +164,42 @@ namespace
         }
         CHECK( t, error_text( { "--config", "light_ai_tests_missing.ini" }, "config: cannot open file: light_ai_tests_missing.ini\n" ) );
     }
+    void check_stage6_options( TestRun& t )
+    {
+        using Status = CliOptions::ParseStatus;
+        Cli four;
+        CHECK( t, parse( four, { "--device", "/dev/video0", "--device", "/dev/video1", "--net-src", "http://c/s",
+                                 "--src-rot", "90", "--net-src", "http://d/s", "--src-rot", "270",
+                                 "--reid-model", "misc/osnet_x0_25_market.rknn", "--reid-thr", "0.65" } )
+                  == Status::Run );
+        CHECK( t, four.config().sources.size() == 4 );
+        CHECK( t, four.config().sources[0].rot_auto && four.config().sources[1].rot_auto );
+        CHECK( t, !four.config().sources[2].rot_auto && !four.config().sources[3].rot_auto );
+        CHECK( t, four.config().sources[2].rot_deg == 90 && four.config().sources[3].rot_deg == 270 );
+        CHECK( t, four.config().infer.reid_model == "misc/osnet_x0_25_market.rknn" );
+        CHECK_NEAR( t, four.config().infer.reid_thr, 0.65f, 1e-6f );
+        CHECK( t, rejected( { "--src-rot", "90" } ) );
+        CHECK( t, rejected( { "--net-src", "http://c/s", "--src-rot", "45" } ) );
+        CHECK( t, rejected( { "--reid-thr", "1.5" } ) );
+
+        Cli def_cli;
+        CHECK( t, parse( def_cli, {} ) == Status::Run );
+        CHECK( t, def_cli.config().infer.reid_model == "./misc/osnet_x1_0_imagenet.rknn" );
+        CHECK( t, def_cli.config().sources[0].rot_auto && def_cli.config().sources[0].rot_deg == 0 );
+
+        Cli off_cli;
+        CHECK( t, parse( off_cli, { "--reid-model", "none" } ) == Status::Run );
+        CHECK( t, off_cli.config().infer.reid_model.empty() );
+
+        Cli man0_cli;
+        CHECK( t, parse( man0_cli, { "--device", "/dev/video0", "--src-rot", "0" } ) == Status::Run );
+        CHECK( t, !man0_cli.config().sources[0].rot_auto && man0_cli.config().sources[0].rot_deg == 0 );
+    }
 }  // namespace
 
 void test_config( TestRun& t )
 {
+    check_stage6_options( t );
     texts( t );
 
     using Status = CliOptions::ParseStatus;
@@ -240,14 +272,10 @@ void test_config( TestRun& t )
     CHECK( t, rejected( { "--net-h264" } ) );                   // transport without the preview
     CHECK( t, rejected( { "--cal-dir", "light_ai_tests_cal" } ) );  // directory without the series or --dump-cal
     CHECK( t, rejected( { "--device", "/dev/video0", "--device", "/dev/video1", "--device", "/dev/video2", "--device",
-                          "/dev/video3" } ) );                  // at most 3 sources
+                          "/dev/video3", "--device", "/dev/video4" } ) );  // at most 4 sources
     {
         Cli cli;
         CHECK( t, parse( cli, { "--net", "--net-h264" } ) == Status::Run );
-        Cli three;
-        CHECK( t, parse( three, { "--device", "/dev/video0", "--device", "/dev/video1", "--net-src", "http://c/s" } )
-                  == Status::Run );
-        CHECK( t, three.config().sources.size() == 3 );
     }
     // --cal-dir with the single-shot --dump-cal alone: accepted, the directory
     // is created and write-probed at startup (relative to the test cwd, build/tests).
@@ -284,6 +312,17 @@ void test_config( TestRun& t )
         CHECK( t, lines == 2 + OptionRegistry::kOptionCount );
         CHECK( t, text.find( "  --net-src <value> - " ) != std::string::npos );
         CHECK( t, text.find( "  --cpu-draw - " ) != std::string::npos );
+        CHECK( t, text.find( "  --label-lang <value> - " ) != std::string::npos );
+    }
+    {
+        Cli en;
+        CHECK( t, parse( en, {} ) == Status::Run && en.config().stream.label_lang == LabelLang::En );
+        Cli ru;
+        CHECK( t, parse( ru, { "--label-lang", "ru" } ) == Status::Run && ru.config().stream.label_lang == LabelLang::Ru );
+        CHECK( t, rejected( { "--label-lang", "fr" } ) );
+        const TempIni ru_ini( "label_lang = ru\n" );
+        Cli ini_cli;
+        CHECK( t, parse( ini_cli, { "--config", ru_ini.path() } ) == Status::Run && ini_cli.config().stream.label_lang == LabelLang::Ru );
     }
 
     // Config file: flat key = value through the same registry; '_' and '-' are equivalent.

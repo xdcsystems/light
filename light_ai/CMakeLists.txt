@@ -75,6 +75,7 @@ add_executable(light_ai
     src/camera_v4l2.cpp
     src/mpp_decoder.cpp
     src/rga_resizer.cpp
+    src/reid_worker.cpp
     src/rknn_engine.cpp
     src/yolo_postprocess.cpp
     src/pipeline.cpp
@@ -101,6 +102,8 @@ add_executable(light_ai
     src/core/encode_pacer.cpp
     src/core/session_warmup.cpp
     src/core/bitmap_font.cpp
+    src/core/glyph_font.cpp
+    src/core/callout.cpp
     src/core/idle_plate.cpp
     src/core/status.cpp
     src/core/http_url.cpp
@@ -108,6 +111,8 @@ add_executable(light_ai
     src/core/multipart_reader.cpp
     src/core/yolo_decoder.cpp
     src/core/associator.cpp
+    src/core/auto_orient.cpp
+    src/core/global_track.cpp
     src/core/trail_window.cpp
     src/source/buffered_socket.cpp
     src/source/mjpeg_slot_pool.cpp

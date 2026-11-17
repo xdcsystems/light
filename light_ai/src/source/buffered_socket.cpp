@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <string>
 #include <fcntl.h>
 #include <netdb.h>
@@ -12,22 +14,69 @@
 namespace
 {
     // A failed connect() / SO_ERROR: nobody there is Absent (the prober retries).
+    enum
+    {
+        kConnectSliceMs = 100
+    };
+
     Status connect_error( int e )
     {
         const bool absent = e == ECONNREFUSED || e == EHOSTUNREACH || e == ENETUNREACH || e == EHOSTDOWN;
         return errno_status( absent ? Errc::Absent : Errc::Failed, "connect", e );
     }
+
+    int resolve_ipv4( const std::string& host, const std::string& port_str, addrinfo*& res ) noexcept
+    {
+        addrinfo hints {};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_flags = AI_NUMERICHOST;
+        if ( ::getaddrinfo( host.c_str(), port_str.c_str(), &hints, &res ) == 0 && res != nullptr )
+            return 0;
+        hints.ai_flags = 0;
+        return ::getaddrinfo( host.c_str(), port_str.c_str(), &hints, &res );
+    }
 }  // namespace
+
+bool BufferedSocket::cancelled() const noexcept
+{
+    return ( stop_ != nullptr && stop_->load( std::memory_order_acquire ) ) ||
+           ( prober_quit_ != nullptr && prober_quit_->load( std::memory_order_acquire ) );
+}
+
+Status BufferedSocket::wait_connect() noexcept
+{
+    using clk = std::chrono::steady_clock;
+    const auto deadline = clk::now() + std::chrono::milliseconds( kConnectMs );
+    while ( !cancelled() )
+    {
+        const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>( deadline - clk::now() ).count();
+        if ( rem <= 0 )
+            return make_status( Errc::Timeout, "connect: timeout" );
+        const int slice = static_cast<int>( std::min<long long>( rem, kConnectSliceMs ) );
+        pollfd p { fd_, POLLOUT, 0 };
+        const int pr = ::poll( &p, 1, slice );
+        if ( pr == 0 || ( pr < 0 && errno == EINTR ) )
+            continue;
+        if ( pr < 0 )
+            return errno_status( Errc::Failed, "connect: poll", errno );
+        int so_err = 0;
+        socklen_t slen = sizeof( so_err );
+        if ( ::getsockopt( fd_, SOL_SOCKET, SO_ERROR, &so_err, &slen ) != 0 )
+            return errno_status( Errc::Failed, "connect: getsockopt", errno );
+        return so_err == 0 ? Status {} : connect_error( so_err );
+    }
+    return make_status( Errc::Timeout, "connect: cancelled" );
+}
 
 Status BufferedSocket::connect( const std::string& host, int port )
 {
     close();
-    addrinfo hints {};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
+    if ( cancelled() )
+        return make_status( Errc::Timeout, "connect: cancelled" );
     const std::string port_str = std::to_string( port );  // named: c_str() must outlive getaddrinfo
     addrinfo* res = nullptr;
-    if ( getaddrinfo( host.c_str(), port_str.c_str(), &hints, &res ) != 0 || res == nullptr )
+    if ( resolve_ipv4( host, port_str, res ) != 0 || res == nullptr )
         return make_status( Errc::Absent, "addr resolution failed" );
     // SOCK_CLOEXEC: this fd must not leak into a fork()/exec() (this app
     // never forks, but a library or deploy wrapper might). The flag belongs
@@ -60,14 +109,10 @@ Status BufferedSocket::connect( const std::string& host, int port )
     }
     if ( cr != 0 )
     {
-        pollfd p { fd_, POLLOUT, 0 };
-        const int pr = ::poll( &p, 1, kConnectMs );
-        int so_err = 0;
-        socklen_t slen = sizeof( so_err );
-        if ( pr <= 0 || ::getsockopt( fd_, SOL_SOCKET, SO_ERROR, &so_err, &slen ) != 0 || so_err != 0 )
+        if ( Status wst = wait_connect(); !wst.ok() )
         {
             close();
-            return pr <= 0 ? make_status( Errc::Timeout, "connect: timeout" ) : connect_error( so_err );
+            return wst;
         }
     }
     if ( ::fcntl( fd_, F_SETFL, fl ) != 0 )  // a socket left non-blocking would break the poll + recv contract
@@ -128,6 +173,30 @@ BufferedSocket::Fill BufferedSocket::fill( int timeout_ms )
         return Fill::Closed;  // 0 = EOF, -1 = error: the connection is gone either way
     win_.commit( static_cast<size_t>( n ) );
     return Fill::Data;
+}
+
+BufferedSocket::Fill BufferedSocket::fill_until( int total_ms, int slice_ms )
+{
+    using clk = std::chrono::steady_clock;
+    const auto deadline = clk::now() + std::chrono::milliseconds( total_ms );
+    const int step_ms = slice_ms > 0 ? slice_ms : 200;
+    while ( !cancelled() )
+    {
+        const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>( deadline - clk::now() ).count();
+        if ( rem <= 0 )
+            return Fill::Timeout;
+        const Fill r = fill( static_cast<int>( std::min<long long>( rem, step_ms ) ) );
+        if ( r == Fill::Timeout )
+            continue;
+        if ( r == Fill::Interrupted )
+        {
+            if ( cancelled() )
+                return Fill::Interrupted;
+            continue;
+        }
+        return r;
+    }
+    return Fill::Interrupted;
 }
 
 void BufferedSocket::close()

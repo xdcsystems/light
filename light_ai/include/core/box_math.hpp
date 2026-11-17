@@ -16,7 +16,7 @@
 //     (the old yolo_postprocess guard, moved here verbatim).
 
 inline float box_iou( float ax, float ay, float aw, float ah,
-                      float bx, float by, float bw, float bh )
+                      float bx, float by, float bw, float bh ) noexcept
 {
     const float x0 = ax > bx ? ax : bx;
     const float y0 = ay > by ? ay : by;
@@ -32,7 +32,7 @@ inline float box_iou( float ax, float ay, float aw, float ah,
 }
 
 inline float box_iou_corners( float ax1, float ay1, float ax2, float ay2,
-                              float bx1, float by1, float bx2, float by2 )
+                              float bx1, float by1, float bx2, float by2 ) noexcept
 {
     const float ix1 = ax1 > bx1 ? ax1 : bx1;
     const float iy1 = ay1 > by1 ? ay1 : by1;

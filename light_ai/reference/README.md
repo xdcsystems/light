@@ -45,9 +45,9 @@ SOF 1280x960) and `ffprobe -v error -count_packets -show_entries stream=nb_read_
 ## The reference run
 | | |
 |---|---|
-| CSV | `reference/ref_evening.csv`, 279636 bytes, 1063 frame blocks |
-| CSV sha256 | `2eec90af478ba900b4193f832f122ef52267834907a4a102a25fc5c7920e5566` |
-| commit | `f3c5a7f` (fix/audit-p0 after stage 5) |
+| CSV | `reference/ref_evening.csv`, 279560 bytes, 1063 frame blocks |
+| CSV sha256 | `f86d3d7873959289019994ae490eca19cd2f5b3b9aa5a5385f31f60b6fce7bc7` |
+| commit | `feat/stage4-accuracy-tracking` (Stage 4: `YoloDecoder` edge tolerance + `stable_sort` NMS, `BoxSmoother` skipping `cls == 0`) |
 | model | `misc/yolov5s_relu_int8_mmse_v5.rknn` (the working model, the default `--model`) |
 | model sha256 | `8fe20029429248ce07556c28820a46b7d342445bd6b2eb9a47e6fd089861b085` |
 | thresholds | `--conf 0.25 --iou 0.45` (the defaults) |
@@ -84,3 +84,6 @@ Decode warm-up does not apply: the source is up at startup (no hot attach).
 takes one connection -- then the timer), the log has no source-trouble line
 (`net-src: corrupt`, `detached`, `dequeue failed`, `no frame in`), the server sent
 every frame, and the CSV holds 1063 frame blocks numbered 0..1062 in order.
+
+Stage 6 Re-ID check on the same clip (`--reid-model ./misc/osnet_x1_0_imagenet.rknn --pool 3`):
+leaves detector/tracker local geometry unchanged while mapping all 6 re-entries (`L1..L6`) of the subject to `global_id = 1` (`29.615 FPS`, `1063` frames, `0` errors).

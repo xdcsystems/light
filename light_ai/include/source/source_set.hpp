@@ -19,6 +19,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
@@ -80,6 +81,19 @@ public:
         // 1280x720 net) are supported.
         for ( std::size_t s = 0; s < eps.size(); ++s )
             ch_[s].configure( static_cast<int>( s ), eps[s], model_w, model_h );
+        apply_cancel();
+    }
+
+    void set_stop( const std::atomic<bool>* stop ) noexcept
+    {
+        stop_ = stop;
+        apply_cancel();
+    }
+
+    void set_prober_quit( const std::atomic<bool>* prober_quit ) noexcept
+    {
+        prober_quit_ = prober_quit;
+        apply_cancel();
     }
 
     int size() const { return n_; }
@@ -180,8 +194,17 @@ public:
     }
 
 private:
+    void apply_cancel() noexcept
+    {
+        for ( int s = 0; s < n_; ++s )
+            ch_[static_cast<std::size_t>( s )].set_cancel( stop_, prober_quit_ );
+    }
+
+private:
     const Log& log_;
     std::array<Chan, N> ch_;
+    const std::atomic<bool>* stop_ = nullptr;
+    const std::atomic<bool>* prober_quit_ = nullptr;
     int n_ = 0;       // configured channels (<= N), fixed after configure()
     int cursor_ = 0;  // frame thread: the source of the last frame or failure
 };

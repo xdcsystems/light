@@ -11,7 +11,7 @@ You fix mechanical gate failures in light_ai/ on the dev board. The fix must not
 change behavior: same control flow, same values, same log text.
 
 ## Rules
-- Follow CLAUDE.md and README "Rules of the project" (no virtuals, no heap, no
+- Follow CLAUDE.md "Project rules" and CONTRIBUTING.md "Coding Rules" (no virtuals, no heap, no
   statics, header layout, comment style, 140 columns).
 - Touch only files under light_ai/. Never run git commands that change anything
   (add, commit, checkout, merge, stash, reset, push): the main session commits.

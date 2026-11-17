@@ -232,6 +232,37 @@ namespace
         CHECK( t, jpeg_frame_check( r.parts[2].data(), n, info ) && info.w == 16 && info.h == 16 );
     }
 
+    void zero_byte_body( TestRun& t, const Bytes& a )
+    {
+        // P2-3: 0-byte body without Content-Length followed immediately by the next delimiter.
+        for ( const char* eol : { "\r\n", "\n" } )
+        {
+            Bytes s;
+            for ( int part = 0; part < 2; ++part )
+            {
+                put( s, "--frame" );
+                put( s, eol );
+                put( s, "Content-Type: image/jpeg" );
+                put( s, eol );
+                put( s, eol );
+            }
+            s.insert( s.end(), a.begin(), a.end() );
+            put( s, eol );
+            put( s, "--frame" );
+            put( s, eol );
+
+            MultipartReader r = reader( "frame" );
+            CHECK( t, r.part_buffered( s.data(), s.size() ) );
+            Bytes dst( kCap );
+            const MultipartReader::Step st1 = r.feed( s.data(), s.size(), dst.data() );
+            CHECK( t, st1.ev == Event::Part && st1.size == 0 );
+            CHECK( t, r.part_buffered( s.data() + st1.consumed, s.size() - st1.consumed ) );
+            const MultipartReader::Step st2 = r.feed( s.data() + st1.consumed, s.size() - st1.consumed, dst.data() );
+            CHECK( t, st2.ev == Event::Part && st2.size == a.size() );
+            CHECK( t, std::memcmp( dst.data(), a.data(), a.size() ) == 0 );
+        }
+    }
+
     void desync_and_resync( TestRun& t, const Bytes& a, const Bytes& b )
     {
         for ( const Chunks m : kModes )
@@ -365,6 +396,7 @@ void test_multipart_reader( TestRun& t )
     boundary_forms( t, a, b );
     cut_streams( t, a );
     broken_jpegs( t, a );
+    zero_byte_body( t, a );
     desync_and_resync( t, a, b );
     queued_parts( t, a, b );
 }

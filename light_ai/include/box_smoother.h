@@ -8,8 +8,9 @@
 #include "core/detection.hpp"  // Detection, DetList
 #include "core/log.hpp"
 
-// EMA smoothing of detection boxes.
-// Filtering lives in Pipeline; YoloDecoder stays free of history (one frame in, one list out).
+// EMA smoothing of non-person (cls != 0) detection boxes. Persons (cls == 0) pass
+// through unsmoothed without consuming track slots, since BoxMapper draws persons
+// solely from Tracker while Tracker consumes raw detections directly.
 // Global greedy IoU matching: pairs sorted by IoU, best-first;
 // class must match. Tuning constants live in the class.
 // A missed detection keeps the track (and its filtered coords) for up to 2 frames,
@@ -48,11 +49,12 @@ public:
     // Opens the --box-log CSV (empty path: no log); a failure is reported
     // through log and disables the CSV.
     void set_log( const std::string& path, const Log& log );
-    void update( const DetList& in, DetList& out );
+    void reset() noexcept;
+    void update( const DetList& in, DetList& out ) noexcept;
     void log_frame( int frame, const DetList& raw, const DetList& smooth );
 
 private:
-    float iou( const BoxTrack& t, const Detection& d ) const;
+    float iou( const BoxTrack& t, const Detection& d ) const noexcept;
     int collect_pairs( const DetList& in );
     void apply_matches( const DetList& in, int na );
     void expire();

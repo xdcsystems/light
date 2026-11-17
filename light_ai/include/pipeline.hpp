@@ -2,6 +2,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "box_smoother.h"
@@ -9,11 +10,14 @@
 #include "core/status.hpp"
 #include "config/config.hpp"
 #include "console_reporter.h"
+#include "core/auto_orient.hpp"
 #include "core/log.hpp"
 #include "core/stop_flag.hpp"
 #include "frame_trace.h"
+#include "core/global_track.hpp"
 #include "inference_pool.hpp"
 #include "overlay_sink.hpp"
+#include "reid_worker.hpp"
 #include "rga_resizer.h"
 #include "rknn_engine.hpp"
 #include "source/source_prober.hpp"
@@ -26,7 +30,7 @@
 
 class Pipeline
 {
-    enum { kMaxSources = 3 };
+    enum { kMaxSources = reid_cfg::kMaxSources };
     using NpuPool = InferencePool<RknnEngine, YoloDecode>;
     using SourceSet = BasicSourceSet<SourceChannel, kMaxSources>;
     using SourceProber = BasicSourceProber<SourceSet, UsbNodeLocator>;
@@ -46,6 +50,9 @@ class Pipeline
     {
         BoxSmoother smoother {};
         Tracker tracker {};
+        AutoOrient orient {};
+        uint32_t seen_attach_seq = 0;
+        int cur_rot = 0;
         int frames = 0;  // frames dispatched from this source (the cal/box-log frame index)
     };
 
@@ -76,6 +83,7 @@ private:
     FrameStatus next_frame( EncodedFrame& f, int& ok );
     void drain_done_slots( int& ok );
     int publish_oldest();                // collect -> analytics -> output; 1 if the frame was valid
+    void run_reid_stage( const FrameView& view ) noexcept;
 
     // NO SIGNAL idle publish: gray plate tiles for absent sources at a
     // fixed pace; not counted in --frames or the timing stats.
@@ -83,6 +91,10 @@ private:
     Status handle_source_failure( const EncodedFrame& f );  // the fatal reason; Ok = recovered
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
 
+    void prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept;
+    bool submit_orient_probe( int src, int fd_src, int rot, int job_idx, int& ok ) noexcept;
+    bool probe_rot_batch( int src, int fd_src, const int* rots, int n_rots, float* scores, int& ok ) noexcept;
+    void update_auto_orient( int src, int fd_src, int& ok ) noexcept;
     // RGA into the slot's tensor, then submit to the pool.
     void frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms );
 
@@ -115,6 +127,8 @@ private:
     OverlaySink sink_;
     ConsoleReporter rep_;  // throttled reports + final summary
     TrajList trajs_;
+    std::optional<ReidWorker> reid_worker_ {};
+    GlobalTrackTable global_tracks_ {};
 
     // Per-frame buffers: preallocated members, reused each frame --
     // zero heap traffic in the steady-state path.

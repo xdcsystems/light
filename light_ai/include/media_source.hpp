@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <variant>
@@ -32,6 +33,11 @@ public:
     // Throws on a failed frame-pool mmap (startup only; the variant is left
     // valueless and only destroyed).
     void use_net() { src_.emplace<NetMjpegSource>( log_ ); }
+    void set_cancel( const std::atomic<bool>* stop, const std::atomic<bool>* prober_quit ) noexcept
+    {
+        if ( auto* net = std::get_if<NetMjpegSource>( &src_ ) )
+            net->set_cancel( stop, prober_quit );
+    }
 
     // Starts streaming from id, tearing down whatever was open:
     //   camera -- reconnect(): teardown + full setup + STREAMON;

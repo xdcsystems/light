@@ -7,13 +7,17 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 
-#include "box_mapper.h"         // BoxMapper
-#include "core/detection.hpp"   // DetList
-#include "core/frame_view.hpp"  // FrameView, TensorSet
-#include "core/track.hpp"       // TrajList
+#include "box_mapper.h"          // BoxMapper
+#include "config/config.hpp"     // LabelLang
+#include "core/callout.hpp"      // CalloutHistory, CalloutList
+#include "core/detection.hpp"    // DetList
+#include "core/frame_view.hpp"   // FrameView, TensorSet
+#include "core/global_track.hpp" // reid_cfg::kMaxSources
+#include "core/track.hpp"        // TrajList
 #include "gpu_box_drawer.hpp"
 #include "net_encoder.h"
 #include "net_preview.hpp"
@@ -53,6 +57,10 @@ public:
 
 private:
     void init_gpu_drawer( bool cpu_draw, const TensorSet& tensors );
+    bool draw_overlay_into_tensor( const FrameView& frame,
+                                   const DetList& dets,
+                                   const TrajList& trajs,
+                                   const Tracker& tracker ) noexcept;
 
 private:
     const Log& log_;
@@ -61,6 +69,10 @@ private:
     std::optional<GpuBoxDrawer> drawer_ {};
     BoxMapper mapper_ {};
     GpuBoxList boxes_ {};
+    CalloutList callouts_ {};
+    std::array<CalloutHistory, reid_cfg::kMaxSources> callout_hist_ {};
+    LabelLang label_lang_ = LabelLang::En;
     int model_w_ = 0;
     int model_h_ = 0;
+    uint32_t stride_bytes_ = 0;
 };

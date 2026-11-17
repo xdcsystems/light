@@ -31,14 +31,19 @@ struct TrajPoint
 // Snapshot of one track, filled by Tracker::update() into TrajList.
 struct TrackState
 {
-    int id;           // stable track id, monotonically growing
-    TrackLife state;  // TRACK_TENT / TRACK_CONF
-    float cx, cy;     // filtered center (predicted position when unmatched)
-    float vx, vy;     // filtered velocity, px/s
-    float bw, bh;     // last matched box size (EMA)
-    int n_pts;        // trajectory points collected so far
-                      // state may also be TRACK_DEAD: no box, only
-                      // the trail keeps drawing (fading, path history)
+    int id = 0;                 // stable track id, monotonically growing
+    TrackLife state = TRACK_FREE;  // TRACK_TENT / TRACK_CONF
+    float cx = 0.0f, cy = 0.0f; // filtered center (predicted position when unmatched)
+    float vx = 0.0f, vy = 0.0f; // filtered velocity, px/s
+    float bw = 0.0f, bh = 0.0f; // last matched box size (EMA)
+    int n_pts = 0;              // trajectory points collected so far
+                                // state may also be TRACK_DEAD: no box, only
+                                // the trail keeps drawing (fading, path history)
+    int global_id = 0;          // cross-camera Re-ID id (Stage 6); 0 = use local id
+    uint32_t gen = 0;           // monotonic track slot generation for async Re-ID safety
+    float hp = 0.0f;            // height prior snapshot for Re-ID clipping filter
+
+    int display_id() const noexcept { return global_id > 0 ? global_id : id; }
 };
 
 using TrajList = PodList<TrackState, 8>;

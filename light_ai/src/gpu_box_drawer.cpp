@@ -11,6 +11,7 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <algorithm>
+#include <cstddef>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <initializer_list>
@@ -21,6 +22,7 @@
 #include <drm/drm_fourcc.h>
 
 #include "gpu_box_drawer.hpp"
+#include "core/glyph_font.hpp"
 #include "core/log.hpp"
 
 #ifndef EGL_PLATFORM_GBM_KHR
@@ -44,20 +46,119 @@ namespace
     // uniform: that is what allows all boxes to be batched into ONE draw
     // call. Channel order is GL semantics — see the r/b swap note in draw().
     constexpr const char *kVS =
-            "attribute vec2 a_pos; attribute vec4 a_col; varying vec4 v_col; "
-            "void main(){ gl_Position=vec4(a_pos,0.,1.); v_col=a_col; }";
+            "attribute vec2 a_pos; attribute vec2 a_uv; attribute vec4 a_col; "
+            "varying vec2 v_uv; varying vec4 v_col; "
+            "void main(){ gl_Position=vec4(a_pos,0.,1.); v_uv=a_uv; v_col=a_col; }";
     constexpr const char *kFS =
-            "precision mediump float; varying vec4 v_col; "
-            "void main(){ gl_FragColor=v_col; }";
+            "precision mediump float; uniform sampler2D u_tex; "
+            "varying vec2 v_uv; varying vec4 v_col; "
+            "void main(){ gl_FragColor=vec4(v_col.rgb, v_col.a * texture2D(u_tex, v_uv).a); }";
 
-    // PodList<GpuBox, 128> hard cap (mirrors the header type). One VBO for
-    // the whole session: 4 quads x 6 vertices per box, allocated once in
-    // init(); draw() only uploads — zero reallocations.
-    // BatchVert + kVertsPerBox live in the header: State::vstage is typed
-    // by them (std::array), the reinterpret_cast is gone.
+    // One VBO for boxes (128 * 24) + callouts (8 * 192), allocated once in init().
     constexpr GLsizeiptr kVboBytes =
-            static_cast<GLsizeiptr>( GpuBoxList::cap ) * GpuBoxDrawer::kVertsPerBox *
+            static_cast<GLsizeiptr>( GpuBoxDrawer::kMaxVerts ) *
             static_cast<GLsizeiptr>( sizeof( GpuBoxDrawer::BatchVert ) );
+
+    struct QuadTarget
+    {
+        GpuBoxDrawer::BatchVert *v;
+        int cnt;
+        float xs;
+        float ys;
+        float solid_u;
+        float solid_v;
+    };
+
+    void emit_quad( QuadTarget& qt,
+                    float x0, float y0, float x1, float y1,
+                    float u0, float v0, float u1, float v1,
+                    uint8_t r, uint8_t g, uint8_t b, uint8_t a ) noexcept
+    {
+        if ( x1 <= x0 || y1 <= y0 || qt.cnt + 6 > GpuBoxDrawer::kMaxVerts )
+            return;
+        const float nx0 = x0 * qt.xs - 1.0f;
+        const float ny0 = y0 * qt.ys - 1.0f;
+        const float nx1 = x1 * qt.xs - 1.0f;
+        const float ny1 = y1 * qt.ys - 1.0f;
+        const float pos[6][4] = {
+            { nx0, ny0, u0, v0 },
+            { nx1, ny0, u1, v0 },
+            { nx0, ny1, u0, v1 },
+            { nx1, ny0, u1, v0 },
+            { nx1, ny1, u1, v1 },
+            { nx0, ny1, u0, v1 },
+        };
+        // BGR dma-buf swap: tensor R lands in GL blue channel.
+        for ( const auto& p : pos )
+        {
+            GpuBoxDrawer::BatchVert& dst = qt.v[qt.cnt++];
+            dst.x = p[0];
+            dst.y = p[1];
+            dst.u = p[2];
+            dst.v = p[3];
+            dst.r = b;
+            dst.g = g;
+            dst.b = r;
+            dst.a = a;
+        }
+    }
+
+    void emit_solid_rect( QuadTarget& qt, const CalloutRect& r, uint8_t cr, uint8_t cg, uint8_t cb, uint8_t ca ) noexcept
+    {
+        emit_quad( qt,
+                   static_cast<float>( r.x0 ), static_cast<float>( r.y0 ),
+                   static_cast<float>( r.x1 ), static_cast<float>( r.y1 ),
+                   qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v,
+                   cr, cg, cb, ca );
+    }
+
+    void append_boxes_quads( QuadTarget& qt, const GpuBox *boxes, int n ) noexcept
+    {
+        constexpr float t = 1.0f;
+        for ( int i = 0; i < n; ++i )
+        {
+            const GpuBox& b = boxes[i];
+            if ( b.x1 - b.x0 < 1.0f || b.y1 - b.y0 < 1.0f )
+                continue;
+            emit_quad( qt, b.x0, b.y0, b.x1, b.y0 + t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            emit_quad( qt, b.x0, b.y1 - t, b.x1, b.y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            emit_quad( qt, b.x0, b.y0, b.x0 + t, b.y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            emit_quad( qt, b.x1 - t, b.y0, b.x1, b.y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+        }
+    }
+
+    void append_callout_quads( QuadTarget& qt, const CalloutItem& c ) noexcept
+    {
+        for ( int s = 0; s < c.n_segs; ++s )
+            emit_solid_rect( qt, c.segs[s], c.r, c.g, c.b, 255 );
+
+        const CalloutRect fill { c.pill.x0 + 1, c.pill.y0 + 1, c.pill.x1 - 1, c.pill.y1 - 1 };
+        emit_solid_rect( qt, fill, 16, 16, 20, 200 );
+        emit_solid_rect( qt, { c.pill.x0, c.pill.y0, c.pill.x1, c.pill.y0 + 1 }, c.r, c.g, c.b, 255 );
+        emit_solid_rect( qt, { c.pill.x0, c.pill.y1 - 1, c.pill.x1, c.pill.y1 }, c.r, c.g, c.b, 255 );
+        emit_solid_rect( qt, { c.pill.x0, c.pill.y0 + 1, c.pill.x0 + 1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255 );
+        emit_solid_rect( qt, { c.pill.x1 - 1, c.pill.y0 + 1, c.pill.x1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255 );
+
+        int gx = c.text_x;
+        int pos = 0;
+        while ( pos < c.text_bytes )
+        {
+            const uint32_t cp = glyph_font::next_utf8( c.text, c.text_bytes, pos );
+            if ( cp == 0 )
+                break;
+            const int gi = glyph_font::glyph_index( cp );
+            float u0 = 0.0f;
+            float v0 = 0.0f;
+            float u1 = 0.0f;
+            float v1 = 0.0f;
+            glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
+            const float fx = static_cast<float>( gx );
+            const float fy = static_cast<float>( c.text_y );
+            emit_quad( qt, fx, fy, fx + static_cast<float>( glyph_font::kGlyphW ),
+                       fy + static_cast<float>( glyph_font::kGlyphH ), u0, v0, u1, v1, 255, 255, 255, 255 );
+            gx += glyph_font::kGlyphW;
+        }
+    }
 
     // Compile/link diagnostics: libmali returns non-zero handles even for
     // failed shaders — without these checks a broken program degrades
@@ -88,9 +189,18 @@ void GpuBoxDrawer::make_current()  // NOLINT(readability-make-member-function-co
 bool GpuBoxDrawer::make_program()
 {
     GLuint vs = glCreateShader( GL_VERTEX_SHADER );
+    GLuint fs = glCreateShader( GL_FRAGMENT_SHADER );
+    if ( vs == 0 || fs == 0 )
+    {
+        log_.warn() << "gpu_draw: glCreateShader failed\n";
+        if ( vs != 0 )
+            glDeleteShader( vs );
+        if ( fs != 0 )
+            glDeleteShader( fs );
+        return false;
+    }
     glShaderSource( vs, 1, &kVS, nullptr );
     glCompileShader( vs );
-    GLuint fs = glCreateShader( GL_FRAGMENT_SHADER );
     glShaderSource( fs, 1, &kFS, nullptr );
     glCompileShader( fs );
 
@@ -102,6 +212,13 @@ bool GpuBoxDrawer::make_program()
     }
 
     st_.prog = glCreateProgram();
+    if ( st_.prog == 0 )
+    {
+        log_.warn() << "gpu_draw: glCreateProgram failed\n";
+        glDeleteShader( vs );
+        glDeleteShader( fs );
+        return false;
+    }
     glAttachShader( st_.prog, vs );
     glAttachShader( st_.prog, fs );
     glLinkProgram( st_.prog );
@@ -124,30 +241,40 @@ bool GpuBoxDrawer::make_program()
     glDeleteShader( fs );
 
     st_.apos = glGetAttribLocation( st_.prog, "a_pos" );
+    st_.auv = glGetAttribLocation( st_.prog, "a_uv" );
     st_.acol = glGetAttribLocation( st_.prog, "a_col" );
+    st_.utex = glGetUniformLocation( st_.prog, "u_tex" );
 
-    if ( st_.apos < 0 || st_.acol < 0 )
+    if ( st_.apos < 0 || st_.auv < 0 || st_.acol < 0 || st_.utex < 0 )
     {
-        log_.warn() << "gpu_draw: a_pos/a_col missing from linked program\n";
+        log_.warn() << "gpu_draw: shader attrib/uniform missing from linked program\n";
         glDeleteProgram( st_.prog );
         st_.prog = 0;
         return false;
     }
+    glUseProgram( st_.prog );
+    glUniform1i( st_.utex, 0 );
 
     return st_.prog != 0;
 }
 
-// Attribute setup for the batched vertex layout (12-byte stride).
-// The color field offset is fixed: 2 x sizeof(float) = 8 bytes.
+// Attribute setup for the batched vertex layout (20-byte stride: pos, uv, rgba).
 void GpuBoxDrawer::setup_attribs() const
 {
     glBindBuffer( GL_ARRAY_BUFFER, st_.vbo );
     glEnableVertexAttribArray( st_.apos );
     glVertexAttribPointer( st_.apos, 2, GL_FLOAT, GL_FALSE, sizeof( BatchVert ), nullptr );
+    if ( st_.auv >= 0 )
+    {
+        glEnableVertexAttribArray( st_.auv );
+        glVertexAttribPointer( st_.auv, 2, GL_FLOAT, GL_FALSE, sizeof( BatchVert ),
+                               reinterpret_cast<void *>( offsetof( BatchVert, u ) ) );
+    }
     if ( st_.acol >= 0 )
     {
         glEnableVertexAttribArray( st_.acol );
-        glVertexAttribPointer( st_.acol, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof( BatchVert ), reinterpret_cast<void *>( 8 ) );
+        glVertexAttribPointer( st_.acol, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof( BatchVert ),
+                               reinterpret_cast<void *>( offsetof( BatchVert, r ) ) );
     }
 }
 
@@ -179,6 +306,7 @@ Status GpuBoxDrawer::init()
         log_.warn() << "drawer: program failed\n";
         return fail( "drawer: shader program" );
     }
+    create_atlas();
     create_buffers();
     ready_ = true;
     return {};
@@ -271,7 +399,7 @@ bool GpuBoxDrawer::load_entry_points()
     st_.del_vao = reinterpret_cast<P_DeleteVertexArrays>( eglGetProcAddress( "glDeleteVertexArrays" ) );
     st_.bind_vao = reinterpret_cast<P_BindVertexArray>( eglGetProcAddress( "glBindVertexArray" ) );
 
-    if ( !st_.create_image || !st_.image_target_tex )
+    if ( !st_.create_image || !st_.destroy_image || !st_.image_target_tex )
     {
         log_.warn() << "drawer: image entry points missing\n";
         return false;
@@ -302,7 +430,11 @@ bool GpuBoxDrawer::create_context()
     if ( !eglChooseConfig( st_.dpy, cattr, &cfg, 1, &n ) || n < 1 )
     {
         const EGLint cattr2[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE };
-        eglChooseConfig( st_.dpy, cattr2, &cfg, 1, &n );
+        if ( !eglChooseConfig( st_.dpy, cattr2, &cfg, 1, &n ) || n < 1 )
+        {
+            log_.warn() << "drawer: eglChooseConfig failed (0x" << std::hex << eglGetError() << std::dec << ")\n";
+            return false;
+        }
     }
     const EGLint c3[] = { EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 1, EGL_NONE };
     const EGLint c2[] = { EGL_CONTEXT_MAJOR_VERSION, 2, EGL_NONE };
@@ -315,6 +447,23 @@ bool GpuBoxDrawer::create_context()
         return false;
     }
     return true;
+}
+
+void GpuBoxDrawer::create_atlas()
+{
+    std::array<uint8_t, glyph_font::kAtlasBytes> atlas {};
+    glyph_font::build_atlas( atlas );
+    glGenTextures( 1, &st_.atlas_tex );
+    glActiveTexture( GL_TEXTURE0 );
+    glBindTexture( GL_TEXTURE_2D, st_.atlas_tex );
+    glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+    glTexImage2D( GL_TEXTURE_2D, 0, GL_ALPHA, glyph_font::kAtlasW, glyph_font::kAtlasH, 0,
+                  GL_ALPHA, GL_UNSIGNED_BYTE, atlas.data() );
+    glBindTexture( GL_TEXTURE_2D, 0 );
 }
 
 void GpuBoxDrawer::create_buffers()
@@ -375,6 +524,7 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
         log_.warn() << "drawer: import tensor failed (slot " << slot << ", 0x" << std::hex << eglGetError() << std::dec << ")\n";
         return make_status( Errc::Failed, "drawer: import tensor failed" );
     }
+    for ( int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i ) {}  // bounded clear of prior GL errors
     glGenTextures( 1, &si.tex );
     glBindTexture( GL_TEXTURE_2D, si.tex );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
@@ -383,14 +533,26 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     glGenFramebuffers( 1, &si.fbo );
     glBindFramebuffer( GL_FRAMEBUFFER, si.fbo );
     glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, si.tex, 0 );
+    const GLenum gl_err = glGetError();
+    if ( gl_err != GL_NO_ERROR )
+    {
+        log_.warn() << "drawer: GL error attaching slot " << slot << " (0x" << std::hex << gl_err << std::dec << ")\n";
+        glBindTexture( GL_TEXTURE_2D, 0 );
+        glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+        release_slot( slot );
+        return make_status( Errc::Failed, "drawer: GL attach error" );
+    }
     const GLenum fst = glCheckFramebufferStatus( GL_FRAMEBUFFER );
     if ( fst != GL_FRAMEBUFFER_COMPLETE )
     {
         log_.warn() << "drawer: FBO incomplete (slot " << slot << ", status 0x" << std::hex << fst << std::dec << ")\n";
+        glBindTexture( GL_TEXTURE_2D, 0 );
         glBindFramebuffer( GL_FRAMEBUFFER, 0 );
         release_slot( slot );
         return make_status( Errc::Failed, "drawer: FBO incomplete" );
     }
+    glBindTexture( GL_TEXTURE_2D, 0 );
+    glBindFramebuffer( GL_FRAMEBUFFER, 0 );
     if ( st_.w == 0 )
     {
         st_.w = w;
@@ -401,7 +563,6 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     {
         log_.warn() << "drawer: slot " << slot << " geometry mismatch: " << w << 'x' << h << " stride=" << stride
                   << " vs " << st_.w << 'x' << st_.h << " stride=" << st_.stride << '\n';
-        glBindFramebuffer( GL_FRAMEBUFFER, 0 );
         release_slot( slot );
         return make_status( Errc::Failed, "drawer: slot geometry mismatch" );
     }
@@ -410,13 +571,15 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     return {};
 }
 
-void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
+void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts )
 {
-    if ( !ready_ || boxes == nullptr || n <= 0 )
+    const bool have_boxes = boxes != nullptr && n > 0;
+    const bool have_callouts = callouts != nullptr && callouts->n > 0;
+    if ( !ready_ || ( !have_boxes && !have_callouts ) )
         return;
     if ( slot < 0 || slot >= State::kSlots || st_.slot[slot].fbo == 0 )
         return;
-    n = std::min( n, static_cast<int>( GpuBoxList::cap ) );
+    n = have_boxes ? std::min( n, static_cast<int>( GpuBoxList::cap ) ) : 0;
     make_current();
 
     // Batched quads in tensor coordinates. The viewport clips anything
@@ -426,47 +589,19 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
     // green-band test sat at the center row, which is symmetric under a
     // flip and could not catch this; a live frame did (boxes were mirrored
     // around y = h/2).
-    BatchVert* v = st_.vstage.data();
-    int cnt = 0;
-    const float xs = 2.0f / static_cast<float>( st_.w );
-    const float ys = 2.0f / static_cast<float>( st_.h );
-    const float t = 1.0f;  // outline thickness, tensor px
-
-    auto push = [&]( float x0, float y0, float x1, float y1, const GpuBox &b ) {
-        if ( x1 - x0 < 1.0f || y1 - y0 < 1.0f )
-            return;
-        if ( cnt + 6 > GpuBoxList::cap * kVertsPerBox )
-            return;
-
-        const float q[6][2] = {
-                { x0 * xs - 1.0f, y0 * ys - 1.0f },
-                { x1 * xs - 1.0f, y0 * ys - 1.0f },
-                { x0 * xs - 1.0f, y1 * ys - 1.0f },
-                { x1 * xs - 1.0f, y0 * ys - 1.0f },
-                { x1 * xs - 1.0f, y1 * ys - 1.0f },
-                { x0 * xs - 1.0f, y1 * ys - 1.0f },
-        };
-        // The dma-buf reads as BGR to the GPU: the tensor R must go into
-        // the GL blue channel (probe calibration) — see BatchVert.
-        for ( const auto &p : q )
-        {
-            v[cnt].x = p[0];
-            v[cnt].y = p[1];
-            v[cnt].r = b.b;
-            v[cnt].g = b.g;
-            v[cnt].b = b.r;
-            v[cnt].a = b.a;
-            ++cnt;
-        }
-    };
-    for ( int i = 0; i < n; ++i )
+    float su = 0.0f;
+    float sv = 0.0f;
+    glyph_font::solid_uv( su, sv );
+    QuadTarget qt { st_.vstage.data(), 0, 2.0f / static_cast<float>( st_.w ), 2.0f / static_cast<float>( st_.h ), su, sv };
+    if ( have_boxes )
+        append_boxes_quads( qt, boxes, n );
+    if ( have_callouts )
     {
-        const GpuBox &b = boxes[i];
-        push( b.x0, b.y0, b.x1, b.y0 + t, b );  // top edge
-        push( b.x0, b.y1 - t, b.x1, b.y1, b );  // bottom edge
-        push( b.x0, b.y0, b.x0 + t, b.y1, b );  // left edge
-        push( b.x1 - t, b.y0, b.x1, b.y1, b );  // right edge
+        for ( int k = 0; k < callouts->n; ++k )
+            append_callout_quads( qt, callouts->d[k] );
     }
+    const int cnt = qt.cnt;
+    BatchVert* v = qt.v;
     if ( cnt == 0 )
         return;
 
@@ -475,6 +610,9 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
     glBindFramebuffer( GL_FRAMEBUFFER, st_.slot[slot].fbo );
     glViewport( 0, 0, st_.w, st_.h );
     glUseProgram( st_.prog );
+    glActiveTexture( GL_TEXTURE0 );
+    glBindTexture( GL_TEXTURE_2D, st_.atlas_tex );
+    glUniform1i( st_.utex, 0 );
     glDisable( GL_DEPTH_TEST );
     // Alpha blending: the per-vertex alpha was uploaded
     // but ignored (blend disabled, the RGB888 FBO stores no alpha).
@@ -547,6 +685,9 @@ void GpuBoxDrawer::done()
     if ( st_.dpy != EGL_NO_DISPLAY )
     {
         make_current();
+        if ( st_.atlas_tex )
+            glDeleteTextures( 1, &st_.atlas_tex );
+        st_.atlas_tex = 0;
         if ( st_.vbo )
             glDeleteBuffers( 1, &st_.vbo );
         st_.vbo = 0;

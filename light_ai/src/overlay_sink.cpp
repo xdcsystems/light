@@ -9,6 +9,7 @@
 #include "box_mapper.h"
 #include "config/config.hpp"  // StreamConfig
 #include "core/frame_view.hpp"
+#include "core/glyph_font.hpp"
 #include "core/log.hpp"
 #include "core/status.hpp"
 #include "dma_sync.hpp"
@@ -73,6 +74,85 @@ namespace
         }
     }
 
+    void blend_px( uint8_t* px, uint8_t r, uint8_t g, uint8_t b, unsigned a ) noexcept
+    {
+        if ( a >= 255u )
+        {
+            px[0] = r;
+            px[1] = g;
+            px[2] = b;
+            return;
+        }
+        px[0] = static_cast<uint8_t>( ( r * a + px[0] * ( 255u - a ) + 127u ) / 255u );
+        px[1] = static_cast<uint8_t>( ( g * a + px[1] * ( 255u - a ) + 127u ) / 255u );
+        px[2] = static_cast<uint8_t>( ( b * a + px[2] * ( 255u - a ) + 127u ) / 255u );
+    }
+
+    void fill_rect_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutRect& rect,
+                        uint8_t r, uint8_t g, uint8_t b, unsigned a ) noexcept
+    {
+        const int x0 = std::max( rect.x0, 0 );
+        const int y0 = std::max( rect.y0, 0 );
+        const int x1 = std::min( rect.x1, w );
+        const int y1 = std::min( rect.y1, h );
+        for ( int y = y0; y < y1; ++y )
+        {
+            uint8_t* row = rgb + static_cast<size_t>( y ) * stride;
+            for ( int x = x0; x < x1; ++x )
+                blend_px( row + static_cast<std::ptrdiff_t>( x ) * 3, r, g, b, a );
+        }
+    }
+
+    void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, int gx, int gy, int glyph_idx,
+                         uint8_t r, uint8_t g, uint8_t b ) noexcept
+    {
+        const uint8_t* rows = glyph_font::glyph_rows( glyph_idx );
+        for ( int row = 0; row < glyph_font::kGlyphH; ++row )
+        {
+            const int py = gy + row;
+            if ( py < 0 || py >= h )
+                continue;
+            const uint8_t bits = rows[row];
+            uint8_t* line = rgb + static_cast<size_t>( py ) * stride;
+            for ( int col = 0; col < glyph_font::kGlyphW; ++col )
+            {
+                if ( ( ( bits >> col ) & 1u ) == 0u )
+                    continue;
+                const int px = gx + col;
+                if ( px >= 0 && px < w )
+                    blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, 255u );
+            }
+        }
+    }
+
+    void draw_callouts_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutList& list ) noexcept
+    {
+        for ( int i = 0; i < list.n; ++i )
+        {
+            const CalloutItem& c = list.d[i];
+            for ( int s = 0; s < c.n_segs; ++s )
+                fill_rect_cpu( rgb, w, h, stride, c.segs[s], c.r, c.g, c.b, 255u );
+
+            const CalloutRect fill { c.pill.x0 + 1, c.pill.y0 + 1, c.pill.x1 - 1, c.pill.y1 - 1 };
+            fill_rect_cpu( rgb, w, h, stride, fill, 16, 16, 20, 200u );
+            fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y0, c.pill.x1, c.pill.y0 + 1 }, c.r, c.g, c.b, 255u );
+            fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y1 - 1, c.pill.x1, c.pill.y1 }, c.r, c.g, c.b, 255u );
+            fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y0 + 1, c.pill.x0 + 1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255u );
+            fill_rect_cpu( rgb, w, h, stride, { c.pill.x1 - 1, c.pill.y0 + 1, c.pill.x1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255u );
+
+            int gx = c.text_x;
+            int pos = 0;
+            while ( pos < c.text_bytes )
+            {
+                const uint32_t cp = glyph_font::next_utf8( c.text, c.text_bytes, pos );
+                if ( cp == 0 )
+                    break;
+                draw_glyph_cpu( rgb, w, h, stride, gx, c.text_y, glyph_font::glyph_index( cp ), 255, 255, 255 );
+                gx += glyph_font::kGlyphW;
+            }
+        }
+    }
+
     // StreamConfig -> EncoderConfig, field by field by name (core/ may not
     // include config/config.hpp). nsrc beyond the 2x2 grid is clamped by
     // make_stream_layout(); the warning is logged here.
@@ -102,16 +182,22 @@ void OverlaySink::init( const StreamConfig& stream,
                         const LbGeom& primary_band,
                         int nsrc )
 {
+    label_lang_ = stream.label_lang;
     model_w_ = model_w;
     model_h_ = model_h;
+    const uint32_t fallback_stride = static_cast<uint32_t>( model_w_ ) * 3;
+    stride_bytes_ = ( tensors.n > 0 && tensors.d[0].stride_bytes > 0 ) ? tensors.d[0].stride_bytes : fallback_stride;
     if ( !stream.enabled )
         return;
 
-    // The input tensor is allocated with size_with_stride bytes when the
-    // runtime reports one, else size (rknn_engine.cpp): a mismatch with the
-    // packed RGB888 size means padded rows.
+    // Compare allocated mem against stride_bytes * model_h_ (avoiding tn.size / model_h_
+    // which overestimates when native model input is FP16).
+    const uint64_t expected_bytes = static_cast<uint64_t>( stride_bytes_ ) * static_cast<uint64_t>( model_h_ );
     log_.info() << "net: tensor stride check: input mem=" << tensors.d[0].size
-                << " vs " << model_w_ * model_h_ * 3 << "\n";
+                << " stride=" << stride_bytes_ << " expected=" << expected_bytes << "\n";
+    if ( stride_bytes_ != fallback_stride )
+        log_.warn() << "net: non-packed input tensor stride (" << stride_bytes_ << " != " << fallback_stride
+                    << "); RGA producers assume packed RGB888\n";
 
     if ( stream.h264 )
     {
@@ -126,7 +212,7 @@ void OverlaySink::init( const StreamConfig& stream,
     }
     else
     {
-        preview_.emplace( model_w_, model_h_, model_w_ * 3, stream.fps, stream.port, log_ );
+        preview_.emplace( model_w_, model_h_, static_cast<int>( stride_bytes_ ), stream.fps, stream.port, log_ );
         log_.info() << "net: preview server on port " << stream.port << "\n";
     }
 
@@ -151,8 +237,10 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
 
     Status drew_st = drawer_->init();
     for ( int k = 0; drew_st.ok() && k < tensors.n; ++k )
-        drew_st = drawer_->attach_slot( k, tensors.d[k].fd, model_w_, model_h_,
-                static_cast<uint32_t>( model_w_ ) * 3 );
+    {
+        const uint32_t slot_stride = tensors.d[k].stride_bytes > 0 ? tensors.d[k].stride_bytes : stride_bytes_;
+        drew_st = drawer_->attach_slot( k, tensors.d[k].fd, model_w_, model_h_, slot_stride );
+    }
 
     if ( !drew_st.ok() )
     {
@@ -163,6 +251,40 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
     {
         log_.info() << "net: gpu box drawing active (Mali G610, EGL/GBM)\n";
     }
+}
+
+bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
+                                            const DetList& dets,
+                                            const TrajList& trajs,
+                                            const Tracker& tracker ) noexcept
+{
+    const float sx = frame.lb.w / static_cast<float>( frame.src_w );
+    const float sy = frame.lb.h / static_cast<float>( frame.src_h );
+    boxes_.clear();
+    mapper_.fill( dets, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
+    callouts_.clear();
+    if ( frame.src_idx >= 0 && frame.src_idx < reid_cfg::kMaxSources )
+        compute_callouts( trajs, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callout_hist_[frame.src_idx], callouts_ );
+    else
+        compute_callouts( trajs, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callouts_ );
+    if ( boxes_.n <= 0 && callouts_.n <= 0 )
+        return false;
+
+    if ( drawer_ )
+    {
+        drawer_->draw_slot( frame.tensor_idx, boxes_.d.data(), boxes_.n, &callouts_ );
+        drawer_->sync_cpu();
+        return false;
+    }
+    const TensorRef& tn = frame.tensor;
+    dma::DmaSync wr( tn.fd, true );
+    dma::cache_drop( tn.data, tn.size );
+    const int row_stride = static_cast<int>( tn.stride_bytes > 0 ? tn.stride_bytes : stride_bytes_ );
+    uint8_t* rgb = static_cast<uint8_t*>( tn.data );
+    draw_boxes_cpu( rgb, model_w_, model_h_, row_stride, boxes_.d.data(), boxes_.n );
+    draw_callouts_cpu( rgb, model_w_, model_h_, row_stride, callouts_ );
+    dma::cache_clean( tn.data, tn.size );
+    return true;
 }
 
 double OverlaySink::draw_and_publish( const FrameView& frame,
@@ -177,32 +299,15 @@ double OverlaySink::draw_and_publish( const FrameView& frame,
         return enc_ms;
 
     const TensorRef& tn = frame.tensor;
-    const float sx = frame.lb.w / static_cast<float>( frame.src_w );
-    const float sy = frame.lb.h / static_cast<float>( frame.src_h );
-    boxes_.clear();
-    mapper_.fill( dets, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
-    if ( boxes_.n > 0 )
-    {
-        if ( drawer_ )
-        {
-            drawer_->draw_slot( frame.tensor_idx, boxes_.d.data(), boxes_.n );
-            drawer_->sync_cpu();
-        }
-        else
-        {
-            dma::DmaSync wr( tn.fd, true );
-            dma::cache_drop( tn.data, tn.size );
-            draw_boxes_cpu( static_cast<uint8_t*>( tn.data ),
-                            model_w_, model_h_, model_w_ * 3, boxes_.d.data(), boxes_.n );
-            dma::cache_clean( tn.data, tn.size );
-        }
-    }
+    const bool cpu_drew = draw_overlay_into_tensor( frame, dets, trajs, tracker );
 
     if ( prev_live )
     {
         const auto t5 = clk::now();
         dma::DmaSync rd( tn.fd, false );
-        if ( drawer_ )
+        // Whenever CPU draw did not invalidate cache lines this frame (GPU draw OR
+        // --cpu-draw with 0 boxes), drop stale lines before CPU reads RGA DRAM output.
+        if ( !cpu_drew )
             dma::cache_drop( tn.data, tn.size );
         preview_->publish( static_cast<const uint8_t*>( tn.data ) );
         enc_ms += ms( t5, clk::now() );

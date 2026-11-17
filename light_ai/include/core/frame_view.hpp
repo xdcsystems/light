@@ -14,9 +14,10 @@
 // One model-input tensor (a dma-buf, RGB888, model_w x model_h).
 struct TensorRef
 {
-    int fd = -1;            // dma-buf fd (RGA, GPU import, encoder copy)
-    void* data = nullptr;   // CPU mapping (CPU box drawing, raw preview)
-    uint32_t size = 0;      // bytes, including any row stride
+    int fd = -1;                 // dma-buf fd (RGA, GPU import, encoder copy)
+    void* data = nullptr;        // CPU mapping (CPU box drawing, raw preview)
+    uint32_t size = 0;           // bytes, including any row stride
+    uint32_t stride_bytes = 0;   // row stride in bytes (w_stride * c or w * c)
 };
 
 // The pool's tensors in slot order: tensor k belongs to pool slot k.

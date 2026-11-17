@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -44,6 +45,7 @@ public:
 
     void use_camera() { d_.net = false; }
     void use_net() { d_.net = true; }
+    void set_cancel( const std::atomic<bool>*, const std::atomic<bool>* ) noexcept {}
     Status open( const std::string& id )
     {
         ++d_.opens;
@@ -82,6 +84,7 @@ private:
 struct FakeDecoderCtl
 {
     int init_rc = 0;
+    int decode_rc = 0;  // 0: Ok, 1: Timeout, 2: NoMemory
     int decode_fd = 7;  // < 0: decode error
     int aux_rc = 9;     // aux fd, -1 = alloc failure
     int inits = 0;
@@ -101,6 +104,10 @@ public:
     Status decode( const uint8_t*, size_t, int& fd )
     {
         ++c_.decodes;
+        if ( c_.decode_rc == 1 )
+            return make_status( Errc::Timeout, "fake decode timeout" );
+        if ( c_.decode_rc == 2 )
+            return make_status( Errc::NoMemory, "fake decode oom" );
         fd = c_.decode_fd;
         return {};
     }

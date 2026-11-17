@@ -46,7 +46,10 @@ void ConsoleReporter::report_tracks( int frame, const TrajList& trajs, int src_i
     for ( int k = 0; k < trajs.n && k < kMaxEntries; ++k )
     {
         const TrackState& t = trajs.d[k];
-        line << "  id=" << t.id << life_tag( t.state ) << " c=(" << Fixed { t.cx, 1 } << ',' << Fixed { t.cy, 1 } << ") v=("
+        line << "  id=" << t.display_id();
+        if ( t.global_id > 0 )
+            line << "(L" << t.id << ')';
+        line << life_tag( t.state ) << " c=(" << Fixed { t.cx, 1 } << ',' << Fixed { t.cy, 1 } << ") v=("
              << Fixed { t.vx, 1 } << ',' << Fixed { t.vy, 1 } << ") pts=" << t.n_pts << '\n';
     }
 }

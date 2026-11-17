@@ -39,6 +39,7 @@ add_executable(light_ai_tests
     test_box_smoother.cpp
     test_kalman_axis.cpp
     test_associator.cpp
+    test_auto_orient.cpp
     test_trail_window.cpp
     test_tracker.cpp
     test_box_mapper.cpp
@@ -61,6 +62,10 @@ add_executable(light_ai_tests
     test_encode_pacer.cpp
     test_session_warmup.cpp
     test_idle_plate.cpp
+    test_glyph_font.cpp
+    test_callout_layout.cpp
+    test_global_track.cpp
+    test_reid_worker_tsan.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
     test_infer_slot_threads.cpp
@@ -72,6 +77,8 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/encode_pacer.cpp
     ${LIGHT_AI_ROOT}/src/core/session_warmup.cpp
     ${LIGHT_AI_ROOT}/src/core/bitmap_font.cpp
+    ${LIGHT_AI_ROOT}/src/core/glyph_font.cpp
+    ${LIGHT_AI_ROOT}/src/core/callout.cpp
     ${LIGHT_AI_ROOT}/src/core/idle_plate.cpp
     ${LIGHT_AI_ROOT}/src/core/status.cpp
     ${LIGHT_AI_ROOT}/src/core/http_url.cpp
@@ -79,6 +86,8 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/multipart_reader.cpp
     ${LIGHT_AI_ROOT}/src/core/yolo_decoder.cpp
     ${LIGHT_AI_ROOT}/src/core/associator.cpp
+    ${LIGHT_AI_ROOT}/src/core/auto_orient.cpp
+    ${LIGHT_AI_ROOT}/src/core/global_track.cpp
     ${LIGHT_AI_ROOT}/src/core/trail_window.cpp
     ${LIGHT_AI_ROOT}/src/source/buffered_socket.cpp
     ${LIGHT_AI_ROOT}/src/source/mjpeg_slot_pool.cpp
@@ -124,7 +133,9 @@ add_executable(light_ai_tests_tsan EXCLUDE_FROM_ALL
     test_source_prober.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
+    test_reid_worker_tsan.cpp
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
+    ${LIGHT_AI_ROOT}/src/core/global_track.cpp
     ${LIGHT_AI_ROOT}/src/core/status.cpp
 )
 target_include_directories(light_ai_tests_tsan PRIVATE

@@ -40,6 +40,29 @@ namespace
     {
         return probe_jpeg_sof( b.data(), b.size(), info );
     }
+
+    void check_exif_orient( TestRun& t )
+    {
+        Bytes ex_le;
+        put_soi( ex_le );
+        ex_le.insert( ex_le.end(), { 0xFF, 0xE1, 0x00, 0x1E, 'E', 'x', 'i', 'f', 0x00, 0x00, 'I', 'I', 0x2A, 0x00,
+                                     0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x12, 0x01, 0x03, 0x00, 0x01, 0x00,
+                                     0x00, 0x00, 0x08, 0x00, 0x00, 0x00 } );
+        put_sof( ex_le, 720, 1280, 0x22 );
+        put_sos( ex_le );
+        JpegSofInfo info;
+        CHECK( t, probe( ex_le, info ) && info.exif_rot_deg == 270 );
+
+        Bytes ex_be;
+        put_soi( ex_be );
+        ex_be.insert( ex_be.end(), { 0xFF, 0xE1, 0x00, 0x1E, 'E', 'x', 'i', 'f', 0x00, 0x00, 'M', 'M', 0x00, 0x2A,
+                                     0x00, 0x00, 0x00, 0x08, 0x00, 0x01, 0x01, 0x12, 0x00, 0x03, 0x00, 0x00,
+                                     0x00, 0x01, 0x00, 0x06, 0x00, 0x00 } );
+        put_sof( ex_be, 720, 1280, 0x22 );
+        put_sos( ex_be );
+        JpegSofInfo info_be;
+        CHECK( t, probe( ex_be, info_be ) && info_be.exif_rot_deg == 90 );
+    }
 }  // namespace
 
 void test_jpeg_probe( TestRun& t )
@@ -210,4 +233,5 @@ void test_jpeg_probe( TestRun& t )
         n = sizeof( not_jpeg );
         CHECK( t, !jpeg_frame_check( not_jpeg, n, info ) );
     }
+    check_exif_orient( t );
 }

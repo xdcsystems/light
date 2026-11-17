@@ -78,6 +78,20 @@ namespace
         f.stamp( Plane8 { q.data(), stride, h }, 10, 20, "NO", 0, 16 );
         f.stamp( Plane8 { nullptr, stride, h }, 10, 20, "NO", 2, 16 );
         CHECK( t, ink( q, stride, 0, 0, stride, h ).n == 0 );
+        // Long string within aligned kTextCap=32 / kVertexBytes=24576 renders completely without vertex truncation.
+        std::vector<uint8_t> lg21( static_cast<size_t>( 400 ) * 20, kGray );
+        std::vector<uint8_t> lg31( static_cast<size_t>( 400 ) * 20, kGray );
+        f.stamp( Plane8 { lg21.data(), 400, 20 }, 0, 2, "WWWWWWWWWWWWWWWWWWWWW", 1, 16 );
+        f.stamp( Plane8 { lg31.data(), 400, 20 }, 0, 2, "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW", 1, 16 );
+        CHECK( t, ink( lg31, 400, 0, 0, 400, 20 ).n > ink( lg21, 400, 0, 0, 400, 20 ).n );
+
+        // Non-ASCII UTF-8, DEL (0x7F), and control bytes are sanitized to blanks (no OOB UB).
+        std::vector<uint8_t> u( static_cast<size_t>( stride ) * h, kGray );
+        CHECK( t, f.width( "\xd1\x87\xd0\xb5\xd0\xbb\xd0\xbe\xd0\xb2\xd0\xb5\xd0\xba 1", 1 ) > 0 );
+        CHECK( t, f.height( "A\x7f\x01\x1f\nB", 1 ) > 0 );
+        f.stamp( Plane8 { u.data(), stride, h }, 10, 20, "\xd1\x87\xd0\xb5\xd0\xbb\x7f\x01 1", 1, 16 );
+        CHECK( t, only( u, kGray, 16 ) );
+        CHECK( t, ink( u, stride, 0, 0, stride, h ).n > 0 );  // '1' still renders
     }
 
     void clipping( TestRun& t )

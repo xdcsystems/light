@@ -42,6 +42,11 @@ void MuxSession::stop()
 {
     quit_.store( true );
     queue_.stop();  // wakes a drain blocked in pop()
+    {
+        const std::lock_guard<std::mutex> lk( tcp_mx_ );
+        if ( active_tcp_ != nullptr )
+            active_tcp_->abort_client();
+    }
     if ( thread_.joinable() )
         thread_.join();
 }
@@ -54,6 +59,21 @@ void MuxSession::serve() noexcept
                                      : ( "udp://" + cfg_.host + ':' + std::to_string( cfg_.port ) + "?pkt_size=1316" );
 
     TcpPullServer tcp( cfg_.port, 2 * 1024 * 1024, 15 );
+    struct TcpReg
+    {
+        std::mutex& mx;
+        TcpPullServer*& slot;
+        TcpReg( std::mutex& m, TcpPullServer*& s, TcpPullServer& t ) : mx( m ), slot( s )
+        {
+            const std::lock_guard<std::mutex> lk( mx );
+            slot = &t;
+        }
+        ~TcpReg()
+        {
+            const std::lock_guard<std::mutex> lk( mx );
+            slot = nullptr;
+        }
+    } tcp_reg( tcp_mx_, active_tcp_, tcp );
     if ( tcp_pull )
     {
         // The bind retries until it succeeds or stop() ends the thread;

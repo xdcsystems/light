@@ -18,7 +18,12 @@ void BoxSmoother::set_log( const std::string& path, const Log& log )
 // the leftovers. All pairs are collected, sorted by IoU (descending)
 // and assigned best-first - the standard greedy bipartite matching.
 // Semantics otherwise unchanged: warm-up pass-through, miss expiry, out order.
-void BoxSmoother::update( const DetList& in, DetList& out )
+void BoxSmoother::reset() noexcept
+{
+    tracks_ = {};
+}
+
+void BoxSmoother::update( const DetList& in, DetList& out ) noexcept
 {
     out.clear();
     for ( auto& t : tracks_ )
@@ -47,6 +52,8 @@ int BoxSmoother::collect_pairs( const DetList& in )
     for ( int i = 0; i < in.n && i < kMaxDet; ++i )
     {
         const Detection& d = in.d[i];
+        if ( d.cls == 0 )
+            continue;
         for ( int t = 0; t < kTrackCount; ++t )
         {
             const BoxTrack& tr = tracks_[t];
@@ -95,17 +102,20 @@ void BoxSmoother::emit( const DetList& in, const DetTrack& det_trk, DetList& out
     {
         const Detection& d = in.d[i];
         Detection sd = d;
-        if ( i < kMaxDet && det_trk[i] >= 0 )
+        if ( d.cls != 0 )
         {
-            const BoxTrack& t = tracks_[det_trk[i]];
-            sd.x = t.x;
-            sd.y = t.y;
-            sd.w = t.w;
-            sd.h = t.h;
-        }
-        else
-        {
-            spawn( d );
+            if ( i < kMaxDet && det_trk[i] >= 0 )
+            {
+                const BoxTrack& t = tracks_[det_trk[i]];
+                sd.x = t.x;
+                sd.y = t.y;
+                sd.w = t.w;
+                sd.h = t.h;
+            }
+            else
+            {
+                spawn( d );
+            }
         }
         out.push( sd );
     }
@@ -148,7 +158,7 @@ void BoxSmoother::log_frame( int frame, const DetList& raw, const DetList& smoot
     }
 }
 
-float BoxSmoother::iou( const BoxTrack& t, const Detection& d ) const
+float BoxSmoother::iou( const BoxTrack& t, const Detection& d ) const noexcept
 {
     // Delegates to the shared xywh IoU: BoxTrack and Detection are both
     // top-left + size boxes (box_math.hpp). No semantic change.
