@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 
 #include "core/yolo_decoder.hpp"
 #include "core/box_math.hpp"
@@ -160,8 +161,8 @@ bool YoloDecoder::decode_anchor( const HeadScan& s, size_t off, int k, int gx, i
     // cannot exceed obj. Anchors below conf_thr are dead.
     // The old 0.05 cut still walked every class channel
     // whenever the caller asked for a higher threshold.
-    if ( !( obj >= conf_thr_ ) )
-        return false;  // NaN-safe: NaN fails the comparison
+    if ( !std::isfinite( obj ) || !( obj >= conf_thr_ ) )
+        return false;
 
     int best = 0;
     const float best_cls = best_class( s, off, best );
@@ -169,10 +170,10 @@ bool YoloDecoder::decode_anchor( const HeadScan& s, size_t off, int k, int gx, i
     // beat zero (NaN never passes '>'), the pre-scan best
     // would map to an invalid class id. No evidence -> no
     // candidate (also kills conf==0 phantoms at thr <= 0).
-    if ( best_cls <= 0.0f )
+    if ( !std::isfinite( best_cls ) || best_cls <= 0.0f )
         return false;
     const float conf = obj * best_cls;
-    if ( !( conf >= conf_thr_ ) )  // NaN-safe: NaN passes a plain <
+    if ( !std::isfinite( conf ) || !( conf >= conf_thr_ ) )
         return false;
 
     const float* an = kANCH[s.anchors][k];
@@ -184,9 +185,8 @@ bool YoloDecoder::decode_anchor( const HeadScan& s, size_t off, int k, int gx, i
     const float bw_px = ( bw * 2.0f ) * ( bw * 2.0f ) * an[0];
     const float bh_px = ( bh * 2.0f ) * ( bh * 2.0f ) * an[1];
 
-    // NaN guard: NaN in any coordinate would sail through
-    // every plain < / || filter below and land in the box list.
-    if ( cx != cx || cy != cy || bw_px != bw_px || bh_px != bh_px )
+    // Reject NaN and +/-Inf so non-finite boxes cannot poison NMS IoU or emit().
+    if ( !std::isfinite( cx ) || !std::isfinite( cy ) || !std::isfinite( bw_px ) || !std::isfinite( bh_px ) )
         return false;
 
     if ( cy < b.top || cy >= b.top + b.h || cx < b.left || cx >= b.left + b.w )

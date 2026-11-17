@@ -120,6 +120,20 @@ namespace
         CHECK( t, a.match( 0, dets, tracks, pre.det_trk, pre.taken ) == 1 );
         CHECK( t, a.pair( 0 ).det == 0 && a.pair( 0 ).trk == 1 );
     }
+
+    // Defensive clamp if dets.n exceeds DetList::cap.
+    void test_det_cap_clamp( TestRun& t )
+    {
+        Associator a;
+        Associator::TrackBoxes tracks {};
+        tracks[0] = box( 100, 100, TRACK_CONF );
+        DetList dets;
+        dets.d[0] = { 100, 100, 50, 100, 0, 0.9f };
+        dets.n = DetList::cap + 5;
+        Round r;
+        CHECK( t, a.match( 0, dets, tracks, r.det_trk, r.taken ) == 1 );
+        CHECK( t, r.det_trk[0] == 0 );
+    }
 }  // namespace
 
 void test_associator( TestRun& t )
@@ -128,4 +142,5 @@ void test_associator( TestRun& t )
     test_size_gate( t );
     test_iou_gate( t );
     test_order_and_skips( t );
+    test_det_cap_clamp( t );
 }
