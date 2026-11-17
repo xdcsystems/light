@@ -45,14 +45,14 @@ SOF 1280x960) and `ffprobe -v error -count_packets -show_entries stream=nb_read_
 ## The reference run
 | | |
 |---|---|
-| CSV | `reference/ref_evening.csv`, 279854 bytes, 1063 frame blocks |
-| CSV sha256 | `cfdf2be38b35bfd5b919c39ae25a7cbe9f919696cbca6893a4ddb81c6458e2c4` |
-| commit | `feat/callout-2x-box-stabilize` (`BoxSmoother` interval-envelope `BoxEnvelope` stabilizer; `raw` lines unchanged vs Stage 4) |
+| CSV | `reference/ref_evening.csv`, 294319 bytes, 1063 frame blocks |
+| CSV sha256 | `83a6b6192328a415fab45f008117e53c58ed337767dceb44020a331082d2a20a` |
+| commit | `feat/callout-2x-box-stabilize` (`BoxSmoother` interval-envelope stabilizer + confirmed coasting & hysteresis; `raw` lines unchanged vs Stage 4) |
 | model | `misc/yolov5s_relu_int8_mmse_v5.rknn` (the working model, the default `--model`) |
 | model sha256 | `8fe20029429248ce07556c28820a46b7d342445bd6b2eb9a47e6fd089861b085` |
 | thresholds | `--conf 0.25 --iou 0.45` (the defaults) |
 | librknnrt | `2.5.0 (74ea630ce8@2026-09-30T09:41:17)` |
-| pool | `--pool 3` twice and `--pool 1`: all three `cmp`-identical |
+| pool | `--pool 3` and `--pool 1`: `cmp`-identical |
 | viewer | none (no `--net`): recognition only, the output side asleep |
 
 ## Rerun layer A

@@ -10,10 +10,10 @@
 void test_glyph_font( TestRun& t )
 {
     // Slot 0 is solid 0xFF (used by GPU shader for untextured quads).
-    const uint8_t* solid = glyph_font::glyph_rows( 0 );
+    const uint8_t* solid = glyph_font::glyph_alpha( 0 );
     bool all_ff = true;
-    for ( int r = 0; r < 8; ++r )
-        all_ff = all_ff && ( solid[r] == 0xFFu );
+    for ( int i = 0; i < glyph_font::kGlyphBytes; ++i )
+        all_ff = all_ff && ( solid[i] == 0xFFu );
     CHECK( t, all_ff );
 
     // Every Cyrillic codepoint A..Ya, a..ya, Yo, yo maps to non-empty distinct glyph index.
@@ -49,24 +49,31 @@ void test_glyph_font( TestRun& t )
     CHECK( t, glyph_font::next_utf8( mixed, mlen, mpos ) == 'Z' );
     CHECK( t, glyph_font::next_utf8( mixed, mlen, mpos ) == 0 );
 
-    // Atlas build matches glyph bit rows at 8x8 grid coordinates.
+    // Atlas build matches padded 9x12 8-bit coverage cells and keeps 1-px clear border around glyphs.
     std::array<uint8_t, glyph_font::kAtlasBytes> atlas {};
     glyph_font::build_atlas( atlas );
-    CHECK( t, atlas[0] == 0xFFu && atlas[7 * glyph_font::kAtlasW + 7] == 0xFFu );
+    CHECK( t, atlas[0] == 0xFFu && atlas[( glyph_font::kCellH - 1 ) * glyph_font::kAtlasW + glyph_font::kCellW - 1] == 0xFFu );
     const int idx_a = glyph_font::glyph_index( 'A' );
-    const uint8_t* rows_a = glyph_font::glyph_rows( idx_a );
-    const int ax = ( idx_a % glyph_font::kAtlasCols ) * glyph_font::kGlyphW;
-    const int ay = ( idx_a / glyph_font::kAtlasCols ) * glyph_font::kGlyphH;
+    const uint8_t* alpha_a = glyph_font::glyph_alpha( idx_a );
+    const int cell_x = ( idx_a % glyph_font::kAtlasCols ) * glyph_font::kCellW;
+    const int cell_y = ( idx_a / glyph_font::kAtlasCols ) * glyph_font::kCellH;
+    const int ax = cell_x + glyph_font::kCellPad;
+    const int ay = cell_y + glyph_font::kCellPad;
     bool match_a = true;
-    for ( int r = 0; r < 8; ++r )
+    bool has_aa = false;
+    for ( int r = 0; r < glyph_font::kGlyphH; ++r )
     {
-        for ( int c = 0; c < 8; ++c )
+        for ( int c = 0; c < glyph_font::kGlyphW; ++c )
         {
-            const uint8_t expected = ( ( rows_a[r] >> c ) & 1u ) != 0u ? 0xFFu : 0x00u;
-            match_a = match_a && ( atlas[( ay + r ) * glyph_font::kAtlasW + ax + c] == expected );
+            const uint8_t got = atlas[( ay + r ) * glyph_font::kAtlasW + ax + c];
+            const uint8_t exp = alpha_a[r * glyph_font::kGlyphW + c];
+            match_a = match_a && ( got == exp );
+            has_aa = has_aa || ( got > 0u && got < 255u );
         }
     }
-    CHECK( t, match_a );
+    const bool border_zero = ( atlas[cell_y * glyph_font::kAtlasW + cell_x] == 0u ) &&
+                             ( atlas[( cell_y + glyph_font::kCellH - 1 ) * glyph_font::kAtlasW + cell_x] == 0u );
+    CHECK( t, match_a && has_aa && border_zero );
 
     // format_person: zero-heap formatting for En and Ru + INT_MIN edge.
     char buf[glyph_font::kLabelCap] {};

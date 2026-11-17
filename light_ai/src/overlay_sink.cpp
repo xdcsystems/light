@@ -106,21 +106,22 @@ namespace
     void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, int gx, int gy, int glyph_idx,
                          uint8_t r, uint8_t g, uint8_t b ) noexcept
     {
-        const uint8_t* rows = glyph_font::glyph_rows( glyph_idx );
-        for ( int pr = 0; pr < CalloutItem::kGlyphH; ++pr )
+        const uint8_t* alpha = glyph_font::glyph_alpha( glyph_idx );
+        for ( int pr = 0; pr < glyph_font::kGlyphH; ++pr )
         {
             const int py = gy + pr;
             if ( py < 0 || py >= h )
                 continue;
-            const uint8_t bits = rows[pr / CalloutItem::kGlyphScale];
+            const uint8_t* row = alpha + pr * glyph_font::kGlyphW;
             uint8_t* line = rgb + static_cast<size_t>( py ) * stride;
-            for ( int pc = 0; pc < CalloutItem::kGlyphW; ++pc )
+            for ( int pc = 0; pc < glyph_font::kGlyphW; ++pc )
             {
-                if ( ( ( bits >> ( pc / CalloutItem::kGlyphScale ) ) & 1u ) == 0u )
+                const unsigned a = row[pc];
+                if ( a == 0u )
                     continue;
                 const int px = gx + pc;
                 if ( px >= 0 && px < w )
-                    blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, 255u );
+                    blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, a );
             }
         }
     }
@@ -134,7 +135,7 @@ namespace
                 fill_rect_cpu( rgb, w, h, stride, c.segs[s], c.r, c.g, c.b, 255u );
 
             const CalloutRect fill { c.pill.x0 + 1, c.pill.y0 + 1, c.pill.x1 - 1, c.pill.y1 - 1 };
-            fill_rect_cpu( rgb, w, h, stride, fill, 16, 16, 20, 200u );
+            fill_rect_cpu( rgb, w, h, stride, fill, 16, 16, 20, 235u );
             fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y0, c.pill.x1, c.pill.y0 + 1 }, c.r, c.g, c.b, 255u );
             fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y1 - 1, c.pill.x1, c.pill.y1 }, c.r, c.g, c.b, 255u );
             fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y0 + 1, c.pill.x0 + 1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255u );

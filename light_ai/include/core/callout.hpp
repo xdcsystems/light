@@ -23,7 +23,7 @@ struct CalloutItem
 {
     enum
     {
-        kGlyphScale = 2,
+        kGlyphScale = 1,
         kGlyphW = glyph_font::kGlyphW * kGlyphScale,
         kGlyphH = glyph_font::kGlyphH * kGlyphScale,
     };

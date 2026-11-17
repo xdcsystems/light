@@ -82,6 +82,8 @@ void BoxSmoother::apply_matches( const DetList& in, int na )
         t.y = t.env.y();
         t.w = t.env.w();
         t.h = t.env.h();
+        t.conf = d.conf;
+        ++t.hits;
         t.miss = 0;
         t.matched = true;
     }
@@ -91,8 +93,13 @@ void BoxSmoother::apply_matches( const DetList& in, int na )
 void BoxSmoother::expire()
 {
     for ( auto& t : tracks_ )
-        if ( t.alive && !t.matched && ++t.miss > kMaxMiss )
+    {
+        if ( !t.alive || t.matched )
+            continue;
+        const int lim = ( t.hits >= kCoastMinHits ) ? kMaxMiss : kUnconfMaxMiss;
+        if ( ++t.miss > lim )
             t.alive = false;
+    }
 }
 
 // The output in input order: a matched det carries its track's smoothed box,
@@ -108,6 +115,8 @@ void BoxSmoother::emit( const DetList& in, const DetTrack& det_trk, DetList& out
             if ( i < kMaxDet && det_trk[i] >= 0 )
             {
                 const BoxTrack& t = tracks_[det_trk[i]];
+                if ( t.hits < kCoastMinHits && t.conf < kInstantConf )
+                    continue;
                 sd.x = t.x;
                 sd.y = t.y;
                 sd.w = t.w;
@@ -116,9 +125,21 @@ void BoxSmoother::emit( const DetList& in, const DetTrack& det_trk, DetList& out
             else
             {
                 spawn( d );
+                if ( d.conf < kInstantConf )
+                    continue;
             }
         }
         out.push( sd );
+    }
+    emit_coast( out );
+}
+
+void BoxSmoother::emit_coast( DetList& out ) const
+{
+    for ( const auto& t : tracks_ )
+    {
+        if ( t.alive && !t.matched && t.hits >= kCoastMinHits && out.n < DetList::cap )
+            out.push( Detection { t.x, t.y, t.w, t.h, t.cls, t.conf } );
     }
 }
 
@@ -135,7 +156,9 @@ void BoxSmoother::spawn( const Detection& d )
         t.y = d.y;
         t.w = d.w;
         t.h = d.h;
+        t.conf = d.conf;
         t.cls = d.cls;
+        t.hits = 1;
         t.miss = 0;
         t.alive = true;
         t.matched = true;

@@ -14,8 +14,9 @@
 // solely from Tracker while Tracker consumes raw detections directly.
 // Global greedy IoU matching: pairs sorted by IoU, best-first;
 // class must match. Tuning constants live in the class.
-// A missed detection keeps the track (and its filtered coords) for up to 2 frames,
-// so a brief dropout does not reset the filter; more misses free the slot.
+// Confirmed tracks coast across short dropouts (up to kMaxMiss = 6 frames)
+// so stationary objects do not blink on 1-6 frame NPU drops; weak single-frame
+// detections (< kInstantConf) require kCoastMinHits confirmations to suppress flashes.
 // No heap: a fixed std::array of 32 slots, fixed-capacity DetList buffers
 // (PodList -- no allocations at all).
 
@@ -24,8 +25,10 @@ class BoxSmoother
     struct BoxTrack
     {
         float x = 0, y = 0, w = 0, h = 0;
+        float conf = 0.0f;
         BoxEnvelope env {};
         int cls = -1;
+        int hits = 0;
         int miss = 0;
         bool alive = false;
         bool matched = false;
@@ -36,7 +39,9 @@ class BoxSmoother
 
     enum
     {
-        kMaxMiss = 2,
+        kMaxMiss = 6,
+        kUnconfMaxMiss = 2,
+        kCoastMinHits = 2,
         kTrackCount = 32,
     // Detections beyond kMaxDet are never matched to existing tracks
     // (they pass through / spawn fresh tracks, as before) 
@@ -61,6 +66,7 @@ private:
     void apply_matches( const DetList& in, int na );
     void expire();
     void emit( const DetList& in, const DetTrack& det_trk, DetList& out );
+    void emit_coast( DetList& out ) const;
     void spawn( const Detection& d );
 
 private:
@@ -68,6 +74,7 @@ private:
     // kAlpha is the EMA weight of the TRACK (0.5 = plain average).
     const float kMatchThr = 0.3f;
     const float kAlpha = 0.5f;
+    const float kInstantConf = 0.35f;
 
     // Preallocated member: the ~48 KB matching array used to live on
     // update()'s stack, once per call.

@@ -17,6 +17,85 @@ namespace
         l.push( d );
         return l;
     }
+    void test_envelope_and_coast( TestRun& t )
+    {
+        // Stationary jittering box calibrates [lo, hi] over window, locks onto mean (0 px delta),
+        // and breaks out immediately when detections move outside the bounds.
+        {
+            BoxSmoother sm;
+            DetList out;
+            const float dx[8] = { -2.0f, 3.0f, -1.0f, 2.0f, -3.0f, 1.0f, 2.0f, -2.0f };
+            for ( const float off : dx )
+                sm.update( one( det( 200.0f + off, 150.0f - off, 80.0f, 120.0f, 56 ) ), out );
+            CHECK( t, out.n == 1 );
+            const float locked_x = out.d[0].x;
+            const float locked_y = out.d[0].y;
+            CHECK_NEAR( t, locked_x, 200.0f, 1e-4f );
+            CHECK_NEAR( t, locked_y, 150.0f, 1e-4f );
+
+            // Subsequent jitter inside [lo - pad, hi + pad] holds the locked mean identically.
+            sm.update( one( det( 203.0f, 148.0f, 80.0f, 120.0f, 56 ) ), out );
+            CHECK_NEAR( t, out.d[0].x, locked_x, 1e-6f );
+            CHECK_NEAR( t, out.d[0].y, locked_y, 1e-6f );
+            sm.update( one( det( 197.0f, 152.0f, 80.0f, 120.0f, 56 ) ), out );
+            CHECK_NEAR( t, out.d[0].x, locked_x, 1e-6f );
+            CHECK_NEAR( t, out.d[0].y, locked_y, 1e-6f );
+
+            // Moving outside bounds unlocks right away without lag.
+            sm.update( one( det( 230.0f, 150.0f, 80.0f, 120.0f, 56 ) ), out );
+            CHECK( t, out.d[0].x > 210.0f );
+
+            // Steady frames at the new position re-lock cleanly on the new center.
+            for ( int k = 0; k < BoxEnvelope::kWindowFrames; ++k )
+                sm.update( one( det( 230.0f + ( k & 1 ? 1.0f : -1.0f ), 150.0f, 80.0f, 120.0f, 56 ) ), out );
+            const float relocked_x = out.d[0].x;
+            sm.update( one( det( 231.0f, 150.0f, 80.0f, 120.0f, 56 ) ), out );
+            CHECK_NEAR( t, out.d[0].x, relocked_x, 1e-6f );
+        }
+        // Continuously moving box exceeds stationary span and never freezes.
+        {
+            BoxSmoother sm;
+            DetList out;
+            float prev_x = 0.0f;
+            for ( int k = 0; k < 12; ++k )
+            {
+                sm.update( one( det( 50.0f + static_cast<float>( k ) * 20.0f, 100.0f, 60.0f, 90.0f, 56 ) ), out );
+                if ( k > 0 )
+                    CHECK( t, out.d[0].x > prev_x );
+                prev_x = out.d[0].x;
+            }
+        }
+        // Confirmed track (hits >= 2) coasts smoothly across 6 missed frames and expires on the 7th.
+        {
+            BoxSmoother sm;
+            DetList out;
+            sm.update( one( det( 120, 140, 60, 90, 58 ) ), out );
+            sm.update( one( det( 122, 140, 60, 90, 58 ) ), out );
+            CHECK( t, out.n == 1 );
+            const float held_x = out.d[0].x;
+            for ( int m = 0; m < 6; ++m )
+            {
+                sm.update( DetList {}, out );
+                CHECK( t, out.n == 1 && out.d[0].cls == 58 );
+                CHECK_NEAR( t, out.d[0].x, held_x, 1e-4f );
+            }
+            sm.update( DetList {}, out );
+            CHECK( t, out.n == 0 );
+        }
+        // Weak detection (< 0.35) does not flash on 1 frame, appears once confirmed, then coasts on drop.
+        {
+            BoxSmoother sm;
+            DetList out;
+            sm.update( one( Detection { 300, 200, 40, 80, 75, 0.28f } ), out );
+            CHECK( t, out.n == 0 );
+            sm.update( one( Detection { 302, 200, 40, 80, 75, 0.29f } ), out );
+            CHECK( t, out.n == 1 );
+            CHECK_NEAR( t, out.d[0].x, 301.0f, 1e-4f );
+            sm.update( DetList {}, out );
+            CHECK( t, out.n == 1 );
+            CHECK_NEAR( t, out.d[0].x, 301.0f, 1e-4f );
+        }
+    }
 }  // namespace
 
 void test_box_smoother( TestRun& t )
@@ -129,50 +208,5 @@ void test_box_smoother( TestRun& t )
         sm.log_frame( 0, one( det( 1, 1, 1, 1, 0 ) ), out );  // no CSV open: a no-op
         CHECK( t, lout.str().empty() );
     }
-    // Stationary jittering box calibrates [lo, hi] over window, locks onto mean (0 px delta),
-    // and breaks out immediately when detections move outside the bounds.
-    {
-        BoxSmoother sm;
-        DetList out;
-        const float dx[8] = { -2.0f, 3.0f, -1.0f, 2.0f, -3.0f, 1.0f, 2.0f, -2.0f };
-        for ( const float off : dx )
-            sm.update( one( det( 200.0f + off, 150.0f - off, 80.0f, 120.0f, 56 ) ), out );
-        CHECK( t, out.n == 1 );
-        const float locked_x = out.d[0].x;
-        const float locked_y = out.d[0].y;
-        CHECK_NEAR( t, locked_x, 200.0f, 1e-4f );
-        CHECK_NEAR( t, locked_y, 150.0f, 1e-4f );
-
-        // Subsequent jitter inside [lo - pad, hi + pad] holds the locked mean identically.
-        sm.update( one( det( 203.0f, 148.0f, 80.0f, 120.0f, 56 ) ), out );
-        CHECK_NEAR( t, out.d[0].x, locked_x, 1e-6f );
-        CHECK_NEAR( t, out.d[0].y, locked_y, 1e-6f );
-        sm.update( one( det( 197.0f, 152.0f, 80.0f, 120.0f, 56 ) ), out );
-        CHECK_NEAR( t, out.d[0].x, locked_x, 1e-6f );
-        CHECK_NEAR( t, out.d[0].y, locked_y, 1e-6f );
-
-        // Moving outside bounds unlocks right away without lag.
-        sm.update( one( det( 230.0f, 150.0f, 80.0f, 120.0f, 56 ) ), out );
-        CHECK( t, out.d[0].x > 210.0f );
-
-        // Steady frames at the new position re-lock cleanly on the new center.
-        for ( int k = 0; k < BoxEnvelope::kWindowFrames; ++k )
-            sm.update( one( det( 230.0f + ( k & 1 ? 1.0f : -1.0f ), 150.0f, 80.0f, 120.0f, 56 ) ), out );
-        const float relocked_x = out.d[0].x;
-        sm.update( one( det( 231.0f, 150.0f, 80.0f, 120.0f, 56 ) ), out );
-        CHECK_NEAR( t, out.d[0].x, relocked_x, 1e-6f );
-    }
-    // Continuously moving box exceeds stationary span and never freezes.
-    {
-        BoxSmoother sm;
-        DetList out;
-        float prev_x = 0.0f;
-        for ( int k = 0; k < 12; ++k )
-        {
-            sm.update( one( det( 50.0f + static_cast<float>( k ) * 20.0f, 100.0f, 60.0f, 90.0f, 56 ) ), out );
-            if ( k > 0 )
-                CHECK( t, out.d[0].x > prev_x );
-            prev_x = out.d[0].x;
-        }
-    }
+    test_envelope_and_coast( t );
 }
