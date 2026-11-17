@@ -56,3 +56,5 @@ void test_packet_queue_threads( TestRun& t );
 void test_session_gate( TestRun& t );
 void test_session_gate_threads( TestRun& t );
 void test_infer_slot_threads( TestRun& t );
+void test_global_track( TestRun& t );
+void test_reid_worker_tsan( TestRun& t );

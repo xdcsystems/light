@@ -16,6 +16,7 @@ int main( int argc, char** argv )
         { "source_prober_threads", &test_source_prober_threads },
         { "packet_queue_threads", &test_packet_queue_threads },
         { "session_gate_threads", &test_session_gate_threads },
+        { "reid_worker_tsan", &test_reid_worker_tsan },
     };
     return run_suites( "light_ai_tests_tsan", suites, argc, argv, std::cout, std::cerr );
 }

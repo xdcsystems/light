@@ -137,6 +137,19 @@ namespace
         return false;
     }
 
+    bool apply_src_rot( Config& c, const char* v )
+    {
+        int deg = -1;
+        if ( !set_int( v, 0, 270, deg ) )
+            return false;
+        if ( deg != 0 && deg != 90 && deg != 180 && deg != 270 )
+            return false;
+        if ( c.sources.empty() )
+            return false;
+        c.sources.back().rot_deg = deg;
+        return true;
+    }
+
     bool apply_net_src( Config& c, const char* v )
     {
         if ( !v || std::strncmp( v, "http://", 7 ) != 0 )
@@ -199,6 +212,12 @@ OptionRegistry::OptionRegistry( const Log& log )
                               &apply_net_src } },
         { "--pool",         { true, "NPU context pool: 0|1 = single context (baseline), 3 = one engine per core", "0|1|3",
                               &apply_pool } },
+        { "--reid-model",   { true, "optional Re-ID RKNN model path for cross-camera global IDs", nullptr,
+                              +[]( Config& c, const char* v ) { return set_str( v, c.infer.reid_model ); } } },
+        { "--reid-thr",     { true, "Re-ID cosine similarity threshold 0.0..1.0 (default 0.62)", "0.0..1.0",
+                              +[]( Config& c, const char* v ) { return set_float_01( v, c.infer.reid_thr ); } } },
+        { "--src-rot",      { true, "rotate preceding source via RGA: 0|90|180|270 degrees", "0|90|180|270",
+                              &apply_src_rot } },
     } }
   , log_( log )
 {

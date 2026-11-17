@@ -89,10 +89,10 @@ int CliOptions::validate() const
     if ( !cfg_.cal.dir.empty() && !ensure_writable_dir( cfg_.cal.dir, log_ ) )
         return 2;
 
-    if ( cfg_.sources.size() > 3 )
+    if ( cfg_.sources.size() > 4 )
     {
         log_.error() << "too many video sources (" << cfg_.sources.size()
-                     << "): at most 3 sources are supported (one per NPU core)\n";
+                     << "): at most 4 sources are supported (2x2 grid max)\n";
         return 2;
     }
 

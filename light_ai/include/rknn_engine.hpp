@@ -6,6 +6,7 @@
 
 #include <rknn_api.h>
 
+#include "core/frame_view.hpp"
 #include "core/log.hpp"
 #include "core/status.hpp"
 
@@ -30,7 +31,7 @@ public:
     // so a stray move can never double-destroy an NPU context.
     RknnEngine( RknnEngine&& o ) noexcept
       : ctx_( o.ctx_ )
-      , in_mem_( o.in_mem_ )
+      , in_mems_( std::move( o.in_mems_ ) )
       , out_mems_( std::move( o.out_mems_ ) )
       , in_attr_( o.in_attr_ )
       , out_attrs_( std::move( o.out_attrs_ ) )
@@ -41,7 +42,7 @@ public:
       , log_( o.log_ )
     {
         o.ctx_ = 0;
-        o.in_mem_ = nullptr;
+        o.in_mems_.clear();
         o.out_mems_.clear();
         o.in_w_ = 0;
         o.in_h_ = 0;
@@ -51,7 +52,9 @@ public:
 
     RknnEngine& operator=( RknnEngine&& ) = delete;
 
-    Status setup_io();
+    Status setup_io( bool keep_native_outputs = false, int input_slots = 1 );
+    Status bind_input_slot( int slot ) noexcept;
+    void sync_output( size_t i ) const noexcept;
     Status run() const;
 
     // Pin inference to NPU core(s) via rknn_set_core_mask.
@@ -59,9 +62,11 @@ public:
     // flags of rknn_api.h, used by the pool), 3 = cores 0+1, 7 = 0+1+2.
     Status set_core_mask( unsigned mask ) const;
 
-    void* input_data() const { return in_mem_ ? in_mem_->virt_addr : nullptr; }
-    int input_fd() const { return in_mem_ ? in_mem_->fd : -1; }
-    uint32_t input_size() const { return in_mem_ ? in_mem_->size : 0; }
+    void* input_data() const { return ( !in_mems_.empty() && in_mems_[0] ) ? in_mems_[0]->virt_addr : nullptr; }
+    int input_fd() const { return ( !in_mems_.empty() && in_mems_[0] ) ? in_mems_[0]->fd : -1; }
+    uint32_t input_size() const { return ( !in_mems_.empty() && in_mems_[0] ) ? in_mems_[0]->size : 0; }
+    int input_slot_count() const noexcept { return static_cast<int>( in_mems_.size() ); }
+    TensorRef input_tensor( int slot ) const noexcept;
     uint32_t input_stride_bytes() const noexcept { return in_stride_bytes_; }
 
     const rknn_tensor_attr& input_attr() const { return in_attr_; }
@@ -84,11 +89,11 @@ public:
 private:
     void parse_input_dims();
     void release_io();
-    Status setup_outputs();
+    Status setup_outputs( bool keep_native_outputs );
 
 private:
     rknn_context ctx_ = 0;
-    rknn_tensor_mem* in_mem_ = nullptr;
+    std::vector<rknn_tensor_mem*> in_mems_;
     std::vector<rknn_tensor_mem*> out_mems_;
     rknn_tensor_attr in_attr_ {};
     std::vector<rknn_tensor_attr> out_attrs_;

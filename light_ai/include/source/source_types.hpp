@@ -60,10 +60,13 @@ struct EncodedFrame
 // Geometry of a Live source; read by the frame thread after it sees Live.
 struct SourceGeom
 {
-    int w = 0;
-    int h = 0;
+    int w = 0;        // effective scene width (swapped on 90/270 rot)
+    int h = 0;        // effective scene height
     LbGeom lb {};     // letterbox band of this source in the model input
     int aux_fd = -1;  // RGA intermediate for the two-pass path, -1 when not needed
+    int raw_w = 0;    // raw decoder width before RGA rotation
+    int raw_h = 0;    // raw decoder height before RGA rotation
+    int rot_deg = 0;  // configured RGA rotation (0/90/180/270)
 };
 
 // /dev nodes reserved by the other V4L2 sources. Built only on the attach path

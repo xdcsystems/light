@@ -29,11 +29,14 @@ struct SourceEndpoint
 {
     SourceKind kind = SourceKind::V4L2;
     std::string uri;  // V4L2 node (/dev/videoN) or http://host:port/path
+    int rot_deg = 0;  // hardware RGA rotation: 0, 90, 180, or 270 degrees
 };
 
 struct InferConfig
 {
     std::string model = "./misc/yolov5s_relu_int8_mmse_v5.rknn";  // --model
+    std::string reid_model;  // --reid-model: optional OSNet/Re-ID RKNN model (empty = local IDs)
+    float reid_thr = 0.62f;  // --reid-thr: cross-camera cosine similarity threshold
     // Detection thresholds, CLI-tunable via --conf / --iou.
     float conf_thr = 0.25f;
     float iou_thr = 0.45f;
