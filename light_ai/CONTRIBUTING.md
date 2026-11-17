@@ -5,7 +5,7 @@ This guide documents the project's coding rules, error model, comment style, and
 ## Coding Rules
 
 - **No GStreamer, no OpenCV.**
-- **Zero-copy frame path:** Frames exist only as `dma-buf` descriptors; CPU pixel copies are forbidden. The only permitted copies are compressed MJPEG input packets (~25 KB) into the decoder packet buffer and compressed H.264 packets out of the encoder.
+- **Zero-copy frame path:** Frames exist only as `dma-buf` descriptors; CPU pixel copies are forbidden. The only permitted copies are compressed MJPEG input packets (\~25 KB) into the decoder packet buffer and compressed H.264 packets out of the encoder.
 - **I/O & logging:** Use `iostream` only (`printf`/`sprintf`/`snprintf` are forbidden). All diagnostics go through `Log` ([`include/core/log.hpp`](include/core/log.hpp)) injected as `const Log&`. Only [`src/main.cpp`](src/main.cpp) owns `Log(std::cout, std::cerr)` and `print_usage(std::cout)`.
 - **Include order:** System and SDK headers first (`<...>`), project headers last (`"..."`). Reference: [`src/gpu_box_drawer.cpp`](src/gpu_box_drawer.cpp).
 - **Header layout:** Within each visibility section (`public:` / `private:`), member functions and data members live in separate blocks — functions first, then a fresh visibility label for data. Reference: [`include/camera_v4l2.hpp`](include/camera_v4l2.hpp).

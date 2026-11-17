@@ -15,7 +15,7 @@ detection output of today's code on a fixed clip, in two layers.
 
 ## What "identical" means in layer A
 `--box-log` writes floats through `operator<<` with the default stream precision:
-**6 significant digits** (`include/core/detection.hpp`), about 0.01 px at x ~ 1000.
+**6 significant digits** (`include/core/detection.hpp`), about 0.01 px at x \~ 1000.
 `cmp` proves the CSV equal to 6 significant digits, not the floats bit-equal.
 A stage 6 rewrite may, in rare cases, flip a last printed digit when a value sits
 at a rounding boundary: a rounding artifact to explain (show the two values),
@@ -26,7 +26,7 @@ not a behavior change. Anything else that differs is a behavior change.
 |---|---|
 | file | `misc/ref_evening.mjpeg` (git-ignored, `misc/*.mjpeg`) |
 | size | 131715466 bytes |
-| frames | 1063, 1280x960 baseline MJPEG as captured (stream copy), ~21.3 FPS: 50 s |
+| frames | 1063, 1280x960 baseline MJPEG as captured (stream copy), \~21.3 FPS: 50 s |
 | sha256 | `9d0d22a8c94f83b86337cefe94d9bd25afd9e0f27a92b658bdf8cd7ef29aa7b0` |
 | recorded | 2026-11-15, the USB camera (Canyon CNS CWC5), room light in the evening |
 | content | one person: walks across, enters and leaves, stands still, half out of frame, close up |
@@ -60,7 +60,7 @@ SOF 1280x960) and `ffprobe -v error -count_packets -show_entries stream=nb_read_
     bash tools/ref_replay.sh misc/ref_evening.mjpeg build/ref_p3.csv 3 reference/ref_evening.csv
     bash tools/ref_replay.sh misc/ref_evening.mjpeg build/ref_p1.csv 1 reference/ref_evening.csv
 
-Each run takes ~107 s (the clip paced at 10 FPS) and prints `PASS: 1063 frames in,
+Each run takes \~107 s (the clip paced at 10 FPS) and prints `PASS: 1063 frames in,
 1063 frame blocks out, ...` or `FAIL: <why>`. A different model, threshold or
 librknnrt version gives a different CSV by design: compare against the table above
 first. Build the binary first (`./scripts/build.sh`); no heavy job in parallel.
@@ -72,9 +72,9 @@ loses frames in three places; the replay avoids each, and every run proves it:
   part 0 in `setup_device()`: nothing is buffered yet;
 - the latest-frame skip (`read_latest_part`) fires only when a second complete
   part is buffered at a dequeue. The server holds part 1 for 0.5 s after part 0,
-  then paces at 10 FPS, well below the pipeline (~30 ms per frame at `--pool 1`).
+  then paces at 10 FPS, well below the pipeline (\~30 ms per frame at `--pool 1`).
   The startup between the prime and the second dequeue, measured with `strace -tt`
-  on the socket (2026-11-15): ~5 ms at `--pool 3`, ~31 ms at `--pool 1` (frame 0 is
+  on the socket (2026-11-15): \~5 ms at `--pool 3`, \~31 ms at `--pool 1` (frame 0 is
   processed synchronously there). 0.5 s keeps a wide margin and stays far below
   the 2 s watchdog (`kPollMs`, `kStallMs`);
 - a corrupt frame: the server checks every frame before serving.

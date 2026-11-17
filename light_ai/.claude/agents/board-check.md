@@ -43,7 +43,7 @@ anything (checkout, merge, commit, push, stash, reset).
 ## Reading logs
 Logs are long: use tail and grep, never read a whole log.
 - Build/gate: `tail -n 40 build/gate.log`; on failure grep for `error:` / `FAILED`
-  and show the FIRST error with ~15 lines of context.
+  and show the FIRST error with \~15 lines of context.
 - Tidy: two passes (main = clang-tidy 11, cognitive = clang-tidy 23 with cognitive complexity
   only), each with its block "---- <pass>: findings by check ----" in build/gate.log; per-file
   details in build/tidy/{src,tests}/<path>.log (main) and build/tidy/cognitive/{src,tests}/<path>.log, e.g.
