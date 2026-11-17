@@ -6,15 +6,19 @@
 
 #include <rknn_api.h>
 
+#include "core/log.hpp"
+#include "core/status.hpp"
+
 class RknnEngine
 {
 public:
-    explicit RknnEngine( const char* model_path );
+    // log: the diagnostics sink (the model / attribute lines, the io-mem and core-mask failures).
+    RknnEngine( const char* model_path, const Log& log );
     ~RknnEngine();
 
     // Non-copyable by design:
     // rknn_context and the io-mem pointers are runtime-owned handles;
-    // a copy would destroy them twice and invalidate the Pipeline pool slot pointers.
+    // a copy would destroy them twice and invalidate the InferencePool engine references.
     // The pool reserves vector capacity up front and never reallocates;
     // these deletions turn any violation of that contract into a compile-time error
     // instead of a silent NPU handle corruption.
@@ -30,6 +34,7 @@ public:
       , out_mems_( std::move( o.out_mems_ ) )
       , in_attr_( o.in_attr_ )
       , out_attrs_( std::move( o.out_attrs_ ) )
+      , log_( o.log_ )
     {
         o.ctx_ = 0;
         o.in_mem_ = nullptr;
@@ -38,19 +43,24 @@ public:
 
     RknnEngine& operator=( RknnEngine&& ) = delete;
 
-    int setup_io();
-    int run() const;
+    Status setup_io();
+    Status run() const;
 
     // Pin inference to NPU core(s) via rknn_set_core_mask.
     // mask: 0 = AUTO (do not call), 1/2/4 = core 0/1/2 (the per-core
     // flags of rknn_api.h, used by the pool), 3 = cores 0+1, 7 = 0+1+2.
-    int set_core_mask( unsigned mask ) const;
+    Status set_core_mask( unsigned mask ) const;
 
     void* input_data() const { return in_mem_ ? in_mem_->virt_addr : nullptr; }
     int input_fd() const { return in_mem_ ? in_mem_->fd : -1; }
     uint32_t input_size() const { return in_mem_ ? in_mem_->size : 0; }
 
     const rknn_tensor_attr& input_attr() const { return in_attr_; }
+    // Model input geometry -- the single source of truth for it (no CLI
+    // flag can desynchronize RGA from the tensor). NHWC: dims = {N, H, W, C},
+    // so W is dims[n-2] and H is dims[n-3]; 0 when the tensor is not 4-D.
+    int input_width() const { return in_attr_.n_dims >= 4 ? static_cast<int>( in_attr_.dims[in_attr_.n_dims - 2] ) : 0; }
+    int input_height() const { return in_attr_.n_dims >= 4 ? static_cast<int>( in_attr_.dims[in_attr_.n_dims - 3] ) : 0; }
     const std::vector<rknn_tensor_attr>& output_attrs() const { return out_attrs_; }
     // Output i as raw model-type bytes (int8_t here is just a byte view;
     // the real type is out_attrs_[i].type -- the model yields fp16).
@@ -69,4 +79,5 @@ private:
     std::vector<rknn_tensor_mem*> out_mems_;
     rknn_tensor_attr in_attr_ {};
     std::vector<rknn_tensor_attr> out_attrs_;
+    const Log& log_;  // owned by main(); outlives every engine
 };

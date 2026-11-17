@@ -7,7 +7,7 @@
 // association/spawn, BoxSmoother matching, YOLOv5 NMS).
 // Two box representations exist in the project, and both are kept:
 //   - xywh (top-left corner + size): Detection, BoxTrack;
-//   - corners (x1,y1,x2,y2): the NMS candidate Box in yolo_postprocess.
+//   - corners (x1,y1,x2,y2): the NMS candidate Box in YoloDecoder.
 // The degenerate-union guards differ deliberately:
 //   - box_iou returns 0.0f on an empty intersection (tracker/smooth
 //     contract, unchanged);
@@ -68,9 +68,9 @@ inline size_t greedy_iou_match( IouPair* pairs, size_t np, int* det_trk,
                                 unsigned char* trk_taken )
 {
     std::sort( pairs, pairs + np, []( const IouPair& a, const IouPair& b ) {
-        return a.iou != b.iou ? a.iou > b.iou
-                              : ( a.det != b.det ? a.det < b.det : a.trk < b.trk );
+        return std::tie( b.iou, a.det, a.trk ) < std::tie( a.iou, b.det, b.trk );
     } );
+
     size_t na = 0;
     for ( size_t p = 0; p < np; ++p )
     {

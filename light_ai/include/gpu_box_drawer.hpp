@@ -7,19 +7,31 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 
-#include "pod_list.hpp"
+// Xlib.h (pulled in via eglplatform.h) defines macros that clash
+// with project names. Undefine them right at the X11 entry point.
+#pragma push_macro("Status")
+#pragma push_macro("None")
+#pragma push_macro("Bool")
+#pragma push_macro("True")
+#pragma push_macro("False")
+#pragma push_macro("CursorShape")
+#pragma push_macro("RevertToParent")
+#undef Status
+#undef None
+#undef Bool
+#undef True
+#undef False
+#undef CursorShape
+#undef RevertToParent
+
+#include "core/gpu_box.hpp"  // GpuBox, GpuBoxList
+#include "core/status.hpp"
+
+class Log;
 
 // GPU-assisted box drawing straight into the NPU input tensor
 // (Mali G610 via EGL/GBM, zero CPU pixels per frame).
-// Colors are in tensor RGB888 semantics (byte0 = R);
-// the implementation swaps R/B internally -- the dma-buf reads as BGR to the GPU.
-struct GpuBox
-{
-    float x0, y0, x1, y1;  // tensor pixels, top-left origin
-    uint8_t r, g, b, a;
-};
-
-using GpuBoxList = PodList<GpuBox, 128>;
+// GpuBox / GpuBoxList live in core/gpu_box.hpp.
 
 class GpuBoxDrawer
 {
@@ -36,6 +48,9 @@ class GpuBoxDrawer
     using P_GenVertexArrays = void( GL_APIENTRYP )( GLsizei, GLuint * );
     using P_DeleteVertexArrays = void( GL_APIENTRYP )( GLsizei, const GLuint * );
     using P_BindVertexArray = void( GL_APIENTRYP )( GLuint );
+    // libgbm is dlopen'ed (the mali copy first): its entry points come from dlsym.
+    using P_GbmCreateDevice = void *( * )( int );
+    using P_GbmDestroyDevice = void ( * )( void * );
 
     // Batched VBO vertex layout (moved out of gpu_box_drawer.cpp: the
     // draw() staging buffer is typed by it). r/g/b/a fields are GL
@@ -65,7 +80,7 @@ private:
         // Preallocated draw() staging buffer, not a per-call stack array.
         // Typed: one slot per vertex of the batched VBO
         // (GpuBoxList cap x kVertsPerBox; see BatchVert above).
-        std::array<BatchVert, GpuBoxList::cap * kVertsPerBox> vstage {};
+        std::array<BatchVert, static_cast<std::size_t>( GpuBoxList::cap ) * kVertsPerBox> vstage {};
 
         // Per-slot import cache. Geometry (w/h/stride) is shared across
         // slots, only the dma-buf fd differs.
@@ -96,24 +111,26 @@ private:
     };
 
 public:
-    GpuBoxDrawer();
+    explicit GpuBoxDrawer( const Log& log ) : log_( log ) {}
     ~GpuBoxDrawer();
     GpuBoxDrawer( const GpuBoxDrawer & ) = delete;
     GpuBoxDrawer &operator=( const GpuBoxDrawer & ) = delete;
 
     // EGL/GBM display + surfaceless GLES3 context + shader + VBO.
-    bool init();
+    // On failure everything created so far is released (done()); the cause
+    // is in the returned Status, the step details are in the log.
+    Status init();
     // Imports the NPU tensor dma-buf as an EGLImage-backed FBO,
     // slot-keyed. attach_tensor()/draw() keep the single-context
     // semantics (slot 0); the pool uses attach_slot()/draw_slot().
-    bool attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride );
-    bool attach_tensor( int tensor_dma_fd, int w, int h, uint32_t stride )
+    Status attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride );
+    Status attach_tensor( int tensor_dma_fd, int w, int h, uint32_t stride )
     {
         return attach_slot( 0, tensor_dma_fd, w, h, stride );
     }
     // Async GPU draw: 1-px outlines for all boxes in ONE draw call
     // (batched VBO, per-vertex color), alpha-blended
-    // (Porter-Duff over; the trail fade in fill_gpu_boxes is the alpha source).
+    // (Porter-Duff over; the trail fade of BoxMapper is the alpha source).
     // Switching FBOs between slots is the only added cost vs the single-tensor path.
     void draw_slot( int slot, const GpuBox *boxes, int n );
     void draw( const GpuBox *boxes, int n )
@@ -131,6 +148,20 @@ public:
     bool ok() const { return ready_; }
 
 private:
+    // The steps of init(), in this order. Each one logs its own failure;
+    // the release of a partial init is done() in init() alone.
+    // GBM display: dlopen libgbm, then the first DRM node that initializes.
+    bool open_display();
+    // One DRM node: fd + GBM device + EGL display; a failed candidate releases what it created.
+    bool try_node( const char *path, P_GbmCreateDevice create_dev );
+    // The image import extensions and the extension entry points.
+    bool load_entry_points();
+    // Config (with the fallback), ES3 context then ES2, made current.
+    bool create_context();
+    // The batch VBO, and the VAO on ES3. Cannot fail.
+    void create_buffers();
+    void destroy_gbm_device( void *dev ) const;
+
     void done();
     void release_slot( int slot );
     void make_current();
@@ -140,6 +171,7 @@ private:
     void setup_attribs() const;
 
 private:
+    const Log& log_;
     State st_ {};
     bool ready_ = false;
 };

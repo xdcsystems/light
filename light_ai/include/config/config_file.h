@@ -7,16 +7,19 @@
 #pragma once
 #include <string>
 
+#include "core/log.hpp"
+
 struct Config;
 class OptionRegistry;
 
 class ConfigFileLoader
 {
 public:
-    explicit ConfigFileLoader( const OptionRegistry& reg );
+    ConfigFileLoader( const OptionRegistry& reg, const Log& log );
 
     bool load( const char* path, Config& cfg ) const;
 
 private:
     const OptionRegistry* reg_;
+    const Log* log_;
 };

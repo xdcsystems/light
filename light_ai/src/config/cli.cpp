@@ -8,7 +8,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,13 +17,13 @@
 
 namespace
 {
-    bool ensure_writable_dir( const std::string& dir )
+    bool ensure_writable_dir( const std::string& dir, const Log& log )
     {
         std::error_code ec;
         std::filesystem::create_directories( dir, ec );
         if ( ec )
         {
-            std::cerr << "invalid value for --cal-dir: '" << dir << "' (" << ec.message() << ")\n";
+            log.error() << "invalid value for --cal-dir: '" << dir << "' (" << ec.message() << ")\n";
             return false;
         }
         const std::string probe = dir + "/.light_ai_write_test";
@@ -36,7 +35,7 @@ namespace
         std::filesystem::remove( probe, ec );
         if ( !ok )
         {
-            std::cerr << "invalid value for --cal-dir: '" << dir << "' (not writable)\n";
+            log.error() << "invalid value for --cal-dir: '" << dir << "' (not writable)\n";
             return false;
         }
         return true;
@@ -48,70 +47,65 @@ namespace
             cfg.sources = std::move( ini_srcs );
         if ( cfg.sources.empty() )
             cfg.sources.push_back( { SourceKind::V4L2, "/dev/video20" } );
-
-        cfg.device.clear();
-        cfg.net_src.clear();
-        if ( cfg.sources.front().kind == SourceKind::NetMjpeg )
-            cfg.net_src = cfg.sources.front().uri;
-        else
-            cfg.device = cfg.sources.front().uri;
     }
 }  // namespace
 
 // ---- CliOptions implementation ----
+
+CliOptions::CliOptions( const Log& log ) : reg_( log ), log_( log ) {}
 
 // Cross-field checks: post-parse, because argv order is arbitrary.
 int CliOptions::validate() const
 {
     // --net-h264 is a variant of the preview subsystem, not an independent
     // switch: the whole preview setup (encoder, gpu drawer, diagnostics)
-    // lives under cfg_.net, so --net-h264 without --net silently runs a
+    // lives under cfg_.stream.enabled, so --net-h264 without --net silently runs a
     // stream-less pipeline. Fail loudly instead (checked here,
     // post-parse, because --net may come after --net-h264 on the
     // command line).
-    if ( cfg_.net_h264 && !cfg_.net )
+    if ( cfg_.stream.h264 && !cfg_.stream.enabled )
     {
-        std::cerr << "--net-h264: preview is off, nothing to stream.\n"
-                     "  --net-h264 selects the transport of the --net "
-                     "preview subsystem (MPEG-TS over TCP pull, or UDP\n"
-                     "  push with --net-host); add --net to enable the "
-                     "preview itself, e.g.:\n"
-                     "    light_ai --net --net-h264\n";
+        log_.error() << "--net-h264: preview is off, nothing to stream.\n"
+                        "  --net-h264 selects the transport of the --net "
+                        "preview subsystem (MPEG-TS over TCP pull, or UDP\n"
+                        "  push with --net-host); add --net to enable the "
+                        "preview itself, e.g.:\n"
+                        "    light_ai --net --net-h264\n";
         return 2;
     }
 
-    // --cal-dir only makes sense with the --cal series; --dump-cal always
-    // writes /tmp/cal.ppm and is unaffected. Post-parse for the same
-    // reason as --net-h264: order of argv is arbitrary.
-    if ( !cfg_.cal_dir.empty() && cfg_.cal_frames == 0 )
+    // --cal-dir only makes sense with something to write into it: the --cal
+    // series or the single-shot --dump-cal (<cal-dir>/cal.ppm). Post-parse for
+    // the same reason as --net-h264: order of argv is arbitrary.
+    if ( !cfg_.cal.dir.empty() && cfg_.cal.frames == 0 && !cfg_.cal.dump_one )
     {
-        std::cerr << "--cal-dir: no --cal series requested, nothing to write.\n"
-                     "  --cal-dir sets the directory for the --cal N --cal-interval K\n"
-                     "  frame series; the single-shot --dump-cal always writes\n"
-                     "  /tmp/cal.ppm and ignores --cal-dir, e.g.:\n"
-                     "    light_ai --cal 5 --cal-interval 60 --cal-dir /tmp/calrun\n";
+        log_.error() << "--cal-dir: no --cal series or --dump-cal requested, nothing to write.\n"
+                        "  --cal-dir sets the directory for the --cal N --cal-interval K\n"
+                        "  frame series (default dataset/) and for the single-shot\n"
+                        "  --dump-cal (default build/cal.ppm), e.g.:\n"
+                        "    light_ai --cal 5 --cal-interval 60 --cal-dir build/calrun\n";
         return 2;
     }
-    if ( !cfg_.cal_dir.empty() && !ensure_writable_dir( cfg_.cal_dir ) )
+    if ( !cfg_.cal.dir.empty() && !ensure_writable_dir( cfg_.cal.dir, log_ ) )
         return 2;
 
     if ( cfg_.sources.size() > 3 )
     {
-        std::cerr << "too many video sources (" << cfg_.sources.size()
-                  << "): at most 3 sources are supported (one per NPU core)\n";
+        log_.error() << "too many video sources (" << cfg_.sources.size()
+                     << "): at most 3 sources are supported (one per NPU core)\n";
         return 2;
     }
 
     return 0;
 }
 
-CliOptions::ParseStatus CliOptions::parse( int argc, char** argv )
+// Pre-pass: locate --config and --help before anything else. The file
+// layer applies BEFORE the CLI loop, so later CLI flags override it
+// (defaults < config file < CLI). --help skips the load: help must never
+// depend on a file. A --config without its value is an error even after
+// --help (the scan stops there, as before).
+CliOptions::ParseStatus CliOptions::prepass( int argc, char** argv, std::string& config_path ) const
 {
-    // Pre-pass: locate --config and --help before anything else. The
-    // file layer applies BEFORE the CLI loop, so later CLI flags
-    // override it (defaults < config file < CLI). --help skips the
-    // load: help must never depend on a file.
-    std::string config_path;
     bool want_help = false;
     for ( int i = 1; i < argc; ++i )
     {
@@ -119,7 +113,7 @@ CliOptions::ParseStatus CliOptions::parse( int argc, char** argv )
         {
             if ( i + 1 >= argc )
             {
-                std::cerr << "missing value for option: --config\n";
+                log_.error() << "missing value for option: --config\n";
                 return ParseStatus::Error;
             }
             config_path = argv[++i];
@@ -127,43 +121,52 @@ CliOptions::ParseStatus CliOptions::parse( int argc, char** argv )
         else if ( !std::strcmp( argv[i], "-h" ) || !std::strcmp( argv[i], "--help" ) )
             want_help = true;
     }
-    if ( want_help )
+    return want_help ? ParseStatus::Help : ParseStatus::Run;
+}
+
+bool CliOptions::apply_argv( int argc, char** argv )
+{
+    for ( int i = 1; i < argc; ++i )
     {
-        reg_.print_usage( std::cout );
-        return ParseStatus::Help;
+        const char* opt = argv[i];
+        const OptionRegistry::Entry* e = reg_.find( opt );
+        if ( e == nullptr )
+        {
+            log_.error() << "unknown option: " << opt << '\n';
+            return false;
+        }
+        const char* val = nullptr;
+        if ( e->opt.needs_value )
+        {
+            if ( i + 1 >= argc )
+            {
+                log_.error() << "missing value for option: " << opt << '\n';
+                return false;
+            }
+            val = argv[++i];
+        }
+        if ( !reg_.apply( *e, cfg_, val ) )
+            return false;
     }
+    return true;
+}
+
+CliOptions::ParseStatus CliOptions::parse( int argc, char** argv )
+{
+    std::string config_path;
+    const ParseStatus pre = prepass( argc, argv, config_path );
+    if ( pre != ParseStatus::Run )
+        return pre;
     if ( !config_path.empty() )
     {
-        ConfigFileLoader loader( reg_ );
+        const ConfigFileLoader loader( reg_, log_ );
         if ( !loader.load( config_path.c_str(), cfg_ ) )
             return ParseStatus::Error;
     }
     std::vector<SourceEndpoint> ini_srcs = std::move( cfg_.sources );
     cfg_.sources.clear();
-
-    for ( int i = 1; i < argc; ++i )
-    {
-        const char* opt = argv[i];
-        const OptionRegistry::Option* o = reg_.find( opt );
-        if ( o == nullptr )
-        {
-            std::cerr << "unknown option: " << opt << '\n';
-            return ParseStatus::Error;
-        }
-        const char* val = nullptr;
-        if ( o->needs_value )
-        {
-            if ( i + 1 >= argc )
-            {
-                std::cerr << "missing value for option: " << opt << '\n';
-                return ParseStatus::Error;
-            }
-            val = argv[++i];
-        }
-        if ( !o->apply( cfg_, val ) )
-            return ParseStatus::Error;
-    }
-
+    if ( !apply_argv( argc, argv ) )
+        return ParseStatus::Error;
     finalize_sources( ini_srcs, cfg_ );
     return validate() == 0 ? ParseStatus::Run : ParseStatus::Error;
 }

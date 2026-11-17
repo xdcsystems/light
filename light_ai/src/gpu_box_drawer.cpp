@@ -10,10 +10,10 @@
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
+#include <algorithm>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <initializer_list>
-#include <iostream>
 #include <linux/dma-buf.h>
 #include <cstring>
 #include <unistd.h>
@@ -21,6 +21,7 @@
 #include <drm/drm_fourcc.h>
 
 #include "gpu_box_drawer.hpp"
+#include "core/log.hpp"
 
 #ifndef EGL_PLATFORM_GBM_KHR
 #define EGL_PLATFORM_GBM_KHR 0x31D6
@@ -55,22 +56,22 @@ namespace
     // BatchVert + kVertsPerBox live in the header: State::vstage is typed
     // by them (std::array), the reinterpret_cast is gone.
     constexpr GLsizeiptr kVboBytes =
-            GpuBoxList::cap * GpuBoxDrawer::kVertsPerBox *
+            static_cast<GLsizeiptr>( GpuBoxList::cap ) * GpuBoxDrawer::kVertsPerBox *
             static_cast<GLsizeiptr>( sizeof( GpuBoxDrawer::BatchVert ) );
 
     // Compile/link diagnostics: libmali returns non-zero handles even for
     // failed shaders — without these checks a broken program degrades
     // silently into "nothing is drawn".
-    bool shader_ok( GLuint sh, const char *what )
+    bool shader_ok( GLuint sh, const char *what, const Log& log )
     {
         GLint ok = 0;
         glGetShaderiv( sh, GL_COMPILE_STATUS, &ok );
         if ( ok )
             return true;
-        char log[512];
+        char info[512];
         GLsizei n = 0;
-        glGetShaderInfoLog( sh, sizeof( log ), &n, log );
-        std::cerr << "gpu_draw: " << what << " shader compile failed:\n" << std::string_view( log, n ) << '\n';
+        glGetShaderInfoLog( sh, sizeof( info ), &n, info );
+        log.warn() << "gpu_draw: " << what << " shader compile failed:\n" << std::string_view( info, n ) << '\n';
         return false;
     }
 
@@ -93,7 +94,7 @@ bool GpuBoxDrawer::make_program()
     glShaderSource( fs, 1, &kFS, nullptr );
     glCompileShader( fs );
 
-    if ( !shader_ok( vs, "vertex" ) || !shader_ok( fs, "fragment" ) )
+    if ( !shader_ok( vs, "vertex", log_ ) || !shader_ok( fs, "fragment", log_ ) )
     {
         glDeleteShader( vs );
         glDeleteShader( fs );
@@ -112,7 +113,7 @@ bool GpuBoxDrawer::make_program()
         char log[512];
         GLsizei n = 0;
         glGetProgramInfoLog( st_.prog, sizeof( log ), &n, log );
-        std::cerr << "gpu_draw: program link failed:\n" << std::string_view( log, n ) << '\n';
+        log_.warn() << "gpu_draw: program link failed:\n" << std::string_view( log, n ) << '\n';
         glDeleteProgram( st_.prog );
         st_.prog = 0;
         glDeleteShader( vs );
@@ -127,7 +128,7 @@ bool GpuBoxDrawer::make_program()
 
     if ( st_.apos < 0 || st_.acol < 0 )
     {
-        std::cerr << "gpu_draw: a_pos/a_col missing from linked program\n";
+        log_.warn() << "gpu_draw: a_pos/a_col missing from linked program\n";
         glDeleteProgram( st_.prog );
         st_.prog = 0;
         return false;
@@ -150,24 +151,45 @@ void GpuBoxDrawer::setup_attribs() const
     }
 }
 
-GpuBoxDrawer::GpuBoxDrawer() = default;
-
 GpuBoxDrawer::~GpuBoxDrawer()
 {
     done();
 }
 
-bool GpuBoxDrawer::init()
+Status GpuBoxDrawer::init()
 {
     done();
     st_ = State {};
     ready_ = false;
 
+    const auto fail = [this]( const char *what )
+    {
+        done();  // init() error path: release everything created so far
+        return make_status( Errc::Failed, what );
+    };
+
+    if ( !open_display() )
+        return fail( "drawer: EGL/GBM display" );
+    if ( !load_entry_points() )
+        return fail( "drawer: EGL entry points" );
+    if ( !create_context() )
+        return fail( "drawer: GLES context" );
+    if ( !make_program() )
+    {
+        log_.warn() << "drawer: program failed\n";
+        return fail( "drawer: shader program" );
+    }
+    create_buffers();
+    ready_ = true;
+    return {};
+}
+
+bool GpuBoxDrawer::open_display()
+{
     st_.get_platform_display = reinterpret_cast<P_GetPlatformDisplayEXT>( eglGetProcAddress( "eglGetPlatformDisplayEXT" ) );
     if ( !st_.get_platform_display )
     {
-        std::cerr << "drawer: eglGetPlatformDisplayEXT missing\n";
-        done();  // init() error path: release everything created so far
+        log_.warn() << "drawer: eglGetPlatformDisplayEXT missing\n";
         return false;
     }
     // GBM display: the mali libgbm first, then the system one
@@ -177,68 +199,62 @@ bool GpuBoxDrawer::init()
         st_.dl_gbm = dlopen( "libgbm.so.1", RTLD_NOW | RTLD_GLOBAL );
     if ( !st_.dl_gbm )
     {
-        std::cerr << "drawer: libgbm not loadable\n";
-        done();  // init() error path: release everything created so far
+        log_.warn() << "drawer: libgbm not loadable\n";
         return false;
     }
-    using P_gbm_create_device = void *( * )( int );
-    P_gbm_create_device gbm_create_device = reinterpret_cast<P_gbm_create_device>( dlsym( st_.dl_gbm, "gbm_create_device" ) );
-    if ( !gbm_create_device )
+    auto create_dev = reinterpret_cast<P_GbmCreateDevice>( dlsym( st_.dl_gbm, "gbm_create_device" ) );
+    if ( !create_dev )
     {
-        std::cerr << "drawer: gbm_create_device missing\n";
-        done();  // init() error path: release everything created so far
+        log_.warn() << "drawer: gbm_create_device missing\n";
         return false;
     }
     for ( const char *node : { "/dev/dri/renderD128", "/dev/dri/card0" } )
     {
-        int fd = open( node, O_RDWR | O_CLOEXEC );
-        if ( fd < 0 )
-            continue;
-        void *dev = gbm_create_device( fd );
-        if ( !dev )
-        {
-            close( fd );
-            continue;
-        }
-        EGLDisplay d = st_.get_platform_display( EGL_PLATFORM_GBM_KHR, dev, nullptr );
-        EGLint maj = 0;
-        EGLint min = 0;
-        if ( d == EGL_NO_DISPLAY || !eglInitialize( d, &maj, &min ) )
-        {
-            // failed init candidate: release what this attempt created
-            // (EGL display + GBM device + fd). The dl_gbm handle stays:
-            // gbm_create_device may be needed by the next node attempt,
-            // done() closes it on the terminal failure path.
-            if ( d != EGL_NO_DISPLAY )
-                eglTerminate( d );
-            if ( dev )
-            {
-                using P_gbm_destroy_device = void ( * )( void * );
-                auto destroy_dev = reinterpret_cast<P_gbm_destroy_device>( dlsym( st_.dl_gbm, "gbm_destroy_device" ) );
-                if ( destroy_dev )
-                    destroy_dev( dev );
-            }
-            close( fd );
-            continue;
-        }
-
-        st_.dpy = d;
-        st_.gbm_fd = fd;  // kept open: gbm_dev is bound to it
-        st_.gbm_dev = dev;
-        break;
+        if ( try_node( node, create_dev ) )
+            return true;
     }
-    if ( st_.dpy == EGL_NO_DISPLAY )
+    log_.warn() << "drawer: EGL/GBM init failed (0x" << std::hex << eglGetError() << std::dec << ")\n";
+    return false;
+}
+
+bool GpuBoxDrawer::try_node( const char *path, P_GbmCreateDevice create_dev )
+{
+    const int fd = open( path, O_RDWR | O_CLOEXEC );
+    if ( fd < 0 )
+        return false;
+    void *dev = create_dev( fd );
+    if ( !dev )
     {
-        std::cerr << "drawer: EGL/GBM init failed (0x" << std::hex << eglGetError() << std::dec << ")\n";
-        done();  // init() error path: release everything created so far
+        close( fd );
         return false;
     }
+    EGLDisplay d = st_.get_platform_display( EGL_PLATFORM_GBM_KHR, dev, nullptr );
+    EGLint maj = 0;
+    EGLint min = 0;
+    if ( d == EGL_NO_DISPLAY || !eglInitialize( d, &maj, &min ) )
+    {
+        // failed init candidate: release what this attempt created
+        // (EGL display + GBM device + fd). The dl_gbm handle stays:
+        // gbm_create_device may be needed by the next node attempt,
+        // done() closes it on the terminal failure path.
+        if ( d != EGL_NO_DISPLAY )
+            eglTerminate( d );
+        destroy_gbm_device( dev );
+        close( fd );
+        return false;
+    }
+    st_.dpy = d;
+    st_.gbm_fd = fd;  // kept open: gbm_dev is bound to it
+    st_.gbm_dev = dev;
+    return true;
+}
 
+bool GpuBoxDrawer::load_entry_points()
+{
     const char *exts = eglQueryString( st_.dpy, EGL_EXTENSIONS );
     if ( !has( exts, "EGL_EXT_image_dma_buf_import" ) || !has( exts, "EGL_KHR_image_base" ) )
     {
-        std::cerr << "drawer: no image import extensions\n";
-        done();  // init() error path: release everything created so far
+        log_.warn() << "drawer: no image import extensions\n";
         return false;
     }
 
@@ -257,16 +273,19 @@ bool GpuBoxDrawer::init()
 
     if ( !st_.create_image || !st_.image_target_tex )
     {
-        std::cerr << "drawer: image entry points missing\n";
-        done();  // init() error path: release everything created so far
+        log_.warn() << "drawer: image entry points missing\n";
         return false;
     }
     st_.native_fence = has( exts, "EGL_ANDROID_native_fence_sync" ) && st_.create_sync && st_.client_wait;
+    return true;
+}
 
+bool GpuBoxDrawer::create_context()
+{
     EGLConfig cfg = nullptr;
     EGLint n = 0;
-    
-    const EGLint cattr[] = { 
+
+    const EGLint cattr[] = {
         EGL_SURFACE_TYPE,
         EGL_PBUFFER_BIT,
         EGL_RENDERABLE_TYPE,
@@ -277,7 +296,7 @@ bool GpuBoxDrawer::init()
         8,
         EGL_BLUE_SIZE,
         8,
-        EGL_NONE 
+        EGL_NONE
     };
 
     if ( !eglChooseConfig( st_.dpy, cattr, &cfg, 1, &n ) || n < 1 )
@@ -292,16 +311,14 @@ bool GpuBoxDrawer::init()
         st_.ctx = eglCreateContext( st_.dpy, cfg, EGL_NO_CONTEXT, c2 );
     if ( !st_.ctx || !eglMakeCurrent( st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, st_.ctx ) )
     {
-        std::cerr << "drawer: context failed (0x" << std::hex << eglGetError() << std::dec << ")\n";
-        done();  // init() error path: release everything created so far
+        log_.warn() << "drawer: context failed (0x" << std::hex << eglGetError() << std::dec << ")\n";
         return false;
     }
-    if ( !make_program() )
-    {
-        std::cerr << "drawer: program failed\n";
-        done();  // init() error path: release everything created so far
-        return false;
-    }
+    return true;
+}
+
+void GpuBoxDrawer::create_buffers()
+{
     glGenBuffers( 1, &st_.vbo );
     // Pre-allocate the batch VBO once: draw() only uploads into it.
     glBindBuffer( GL_ARRAY_BUFFER, st_.vbo );
@@ -316,19 +333,24 @@ bool GpuBoxDrawer::init()
         st_.bind_vao( st_.vao );
         setup_attribs();
         st_.bind_vao( 0 );
-        std::cout << "drawer: batch VAO ready (ES3)\n";
+        log_.info() << "drawer: batch VAO ready (ES3)\n";
     }
-    ready_ = true;
-    return true;
 }
 
-bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride )
+void GpuBoxDrawer::destroy_gbm_device( void *dev ) const
+{
+    auto destroy_dev = reinterpret_cast<P_GbmDestroyDevice>( dlsym( st_.dl_gbm, "gbm_destroy_device" ) );
+    if ( destroy_dev )
+        destroy_dev( dev );
+}
+
+Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride )
 {
     if ( !ready_ || slot < 0 || slot >= State::kSlots )
-        return false;
+        return make_status( Errc::Failed, "drawer: attach_slot precondition" );
     State::SlotImg& si = st_.slot[slot];
     if ( si.img != EGL_NO_IMAGE_KHR )
-        return true;  // idempotent: the pool attaches each slot once
+        return {};  // idempotent: the pool attaches each slot once
     make_current();
 
     EGLint iattr[] = { 
@@ -350,8 +372,8 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
     si.img = st_.create_image( st_.dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, static_cast<EGLClientBuffer>( nullptr ), iattr );
     if ( si.img == EGL_NO_IMAGE_KHR )
     {
-        std::cerr << "drawer: import tensor failed (slot " << slot << ", 0x" << std::hex << eglGetError() << std::dec << ")\n";
-        return false;
+        log_.warn() << "drawer: import tensor failed (slot " << slot << ", 0x" << std::hex << eglGetError() << std::dec << ")\n";
+        return make_status( Errc::Failed, "drawer: import tensor failed" );
     }
     glGenTextures( 1, &si.tex );
     glBindTexture( GL_TEXTURE_2D, si.tex );
@@ -364,10 +386,10 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
     const GLenum fst = glCheckFramebufferStatus( GL_FRAMEBUFFER );
     if ( fst != GL_FRAMEBUFFER_COMPLETE )
     {
-        std::cerr << "drawer: FBO incomplete (slot " << slot << ", status 0x" << std::hex << fst << std::dec << ")\n";
+        log_.warn() << "drawer: FBO incomplete (slot " << slot << ", status 0x" << std::hex << fst << std::dec << ")\n";
         glBindFramebuffer( GL_FRAMEBUFFER, 0 );
         release_slot( slot );
-        return false;
+        return make_status( Errc::Failed, "drawer: FBO incomplete" );
     }
     if ( st_.w == 0 )
     {
@@ -377,15 +399,15 @@ bool GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uint3
     }
     else if ( st_.w != w || st_.h != h || st_.stride != stride )
     {
-        std::cerr << "drawer: slot " << slot << " geometry mismatch: " << w << 'x' << h << " stride=" << stride
+        log_.warn() << "drawer: slot " << slot << " geometry mismatch: " << w << 'x' << h << " stride=" << stride
                   << " vs " << st_.w << 'x' << st_.h << " stride=" << st_.stride << '\n';
         glBindFramebuffer( GL_FRAMEBUFFER, 0 );
         release_slot( slot );
-        return false;
+        return make_status( Errc::Failed, "drawer: slot geometry mismatch" );
     }
-    std::cout << "drawer: tensor attached (slot " << slot << ") " << w << 'x' << h << " stride=" << stride
+    log_.info() << "drawer: tensor attached (slot " << slot << ") " << w << 'x' << h << " stride=" << stride
               << " (native fence: " << ( st_.native_fence ? "yes" : "no" ) << ")\n";
-    return true;
+    return {};
 }
 
 void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
@@ -394,8 +416,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
         return;
     if ( slot < 0 || slot >= State::kSlots || st_.slot[slot].fbo == 0 )
         return;
-    if ( n > GpuBoxList::cap )
-        n = GpuBoxList::cap;
+    n = std::min( n, static_cast<int>( GpuBoxList::cap ) );
     make_current();
 
     // Batched quads in tensor coordinates. The viewport clips anything
@@ -457,7 +478,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n )
     glDisable( GL_DEPTH_TEST );
     // Alpha blending: the per-vertex alpha was uploaded
     // but ignored (blend disabled, the RGB888 FBO stores no alpha).
-    // Porter-Duff over: the trail fade from fill_gpu_boxes (255..60)
+    // Porter-Duff over: the trail fade from BoxMapper (255..1)
     // and the a = 255 detections render as computed. The context
     // belongs to this drawer alone, so leaving blending on between
     // draws is safe; every draw sets the state before drawing.
@@ -498,7 +519,7 @@ void GpuBoxDrawer::sync_cpu()
                 st_.destroy_sync( st_.dpy, sync );
             if ( r == EGL_CONDITION_SATISFIED_KHR )
                 return;
-            std::cerr << "drawer: fence wait timed out, glFinish fallback\n";
+            log_.warn() << "drawer: fence wait timed out, glFinish fallback\n";
         }
     }
     // Known limit: glFinish() has no timeout. If the fence timed out
@@ -551,12 +572,9 @@ void GpuBoxDrawer::done()
     // Unconditional: init may fail after dlopen/dlopen+open, and those handles must go too.
     if ( st_.dl_gbm )
     {
-        using P_gbm_destroy_device = void ( * )( void * );
         if ( st_.gbm_dev )
         {
-            auto destroy_dev = reinterpret_cast<P_gbm_destroy_device>( dlsym( st_.dl_gbm, "gbm_destroy_device" ) );
-            if ( destroy_dev )
-                destroy_dev( st_.gbm_dev );
+            destroy_gbm_device( st_.gbm_dev );
             st_.gbm_dev = nullptr;
         }
         dlclose( st_.dl_gbm );

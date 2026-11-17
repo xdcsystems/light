@@ -1,10 +1,12 @@
-// DMA coherence helpers shared by pipeline (NPU tensor) and later
-// by net_encoder (its Transport guard is the same RAII pattern).
+// DMA coherence helpers shared by the pipeline (NPU tensor), the
+// encoder buffers (RkmppDrmPool gray fill) and FrameComposer / the
+// NO SIGNAL plate (CPU writes into canvas dma-bufs).
 // Header-only: guards are trivial RAII, cache ops are per-line one-liners.
 
 #pragma once
 #include <cstddef>  // size_t
 #include <cstdint>  // uintptr_t
+#include <cstring>  // std::memset
 #include <fcntl.h>  // dma-buf sync ioctl
 #include <sys/ioctl.h>
 #include <linux/dma-buf.h>
@@ -15,7 +17,7 @@ namespace dma
 // CPU access bracket for the NPU input tensor dma-buf.
 // draw_boxes_cpu writes through the rknn mmap with plain stores;
 // on a cacheable mapping the dirty lines stay in the CPU cache
-// while RGA (encoder prep_frame crop) reads DRAM as a DMA master,
+// while RGA (FrameComposer::compose crop) reads DRAM as a DMA master,
 // so CPU-drawn boxes/trails reach the h264 stream stale:
 // vertical edges smear into ~21-px horizontal dashes
 // (64-byte cache line / 3 bytes per RGB888 pixel),
@@ -114,5 +116,18 @@ inline void cache_drop( const void* p, size_t len )
 #endif
 }
 
+
+// CPU fill of a dma-buf range, then flush the dirty lines to the
+// point of coherency: the canonical "CPU writes, device reads next"
+// sequence. The DmaSync bracket and the cache_clean are inseparable
+// halves of one operation -- call this instead of hand-rolling either.
+inline void fill_and_flush( int fd, void* p, unsigned char val, size_t size )
+{
+    if ( !p || size == 0 )
+        return;
+    DmaSync sync( fd, true );
+    std::memset( p, val, size );
+    cache_clean( p, size );
+}
 }  // namespace dma
 

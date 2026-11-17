@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""Probe yolov5s_relu output semantics on the real /tmp/cal.ppm frame."""
+"""Probe yolov5s_relu output semantics on a real model-input frame.
+
+usage: probe_yolo.py [PPM]   (default: build/cal.ppm of the project, the --dump-cal output)
+"""
 import os
+import sys
 import numpy as np
 
 from rknnlite.api import RKNNLite
 
-d = open('/tmp/cal.ppm', 'rb').read()
+PROJ = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+ppm = sys.argv[1] if len(sys.argv) > 1 else os.path.join(PROJ, 'build', 'cal.ppm')
+with open(ppm, 'rb') as f:
+    d = f.read()
 i = d.index(b'255\n') + 4
 w, h = 640, 640
 img = np.frombuffer(d[i:], np.uint8).reshape(h, w, 3)
 
 rk = RKNNLite()
-assert rk.load_rknn(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'misc', 'yolov5s_relu.rknn')) == 0
+assert rk.load_rknn(os.path.join(PROJ, 'misc', 'yolov5s_relu.rknn')) == 0
 assert rk.init_runtime(core_mask=RKNNLite.NPU_CORE_0) == 0
 outs = rk.inference(inputs=[img[None]], data_format='nhwc')
 

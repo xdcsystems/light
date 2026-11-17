@@ -12,6 +12,10 @@ cd "$PROJ_ROOT"
 
 echo "PROJ_ROOT=$PROJ_ROOT"
 echo "BUILD_DIR=$BUILD_DIR"
+# The build tree, the test builds, the tidy logs and cache all live under build/: warn when it is on the eMMC
+# shellcheck source=storage_guard.sh
+. "$PROJ_ROOT/scripts/storage_guard.sh"
+storage_guard build "$BUILD_DIR"
 
 # Pin the libav* checks to the self-built ffmpeg (same pin as CMakeLists):
 # PKG_CONFIG_PATH prepends -- distro .pc files stay visible for
@@ -34,6 +38,14 @@ echo "==> CMake + build:"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 cmake -S "$PROJ_ROOT" -B "$BUILD_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 cmake --build "$BUILD_DIR" -j"$(nproc)"
+
+if [ "${SKIP_TESTS:-0}" != "1" ]; then
+    echo "==> unit tests gate (SKIP_TESTS=1 to skip):"
+    bash "$PROJ_ROOT/scripts/test.sh" || {
+        echo "unit tests FAILED -- build rejected"
+        exit 1
+    }
+fi
 
 if [ "${SKIP_TIDY:-0}" != "1" ]; then
     echo "==> clang-tidy gate (SKIP_TIDY=1 to skip):"

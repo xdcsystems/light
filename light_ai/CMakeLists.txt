@@ -78,6 +78,7 @@ add_executable(light_ai
     src/rknn_engine.cpp
     src/yolo_postprocess.cpp
     src/pipeline.cpp
+    src/sources.cpp
     src/overlay_sink.cpp
     src/tcp_pull_server.cpp
     src/net_preview.cpp
@@ -93,6 +94,33 @@ add_executable(light_ai
     src/config/cli.cpp
     src/config/option_registry.cpp
     src/config/config_file.cpp
+    src/core/geometry.cpp
+    src/core/encoder_config.cpp
+    src/core/param_set_cache.cpp
+    src/core/pts_clock.cpp
+    src/core/encode_pacer.cpp
+    src/core/session_warmup.cpp
+    src/core/bitmap_font.cpp
+    src/core/idle_plate.cpp
+    src/core/status.cpp
+    src/core/http_url.cpp
+    src/core/http_head.cpp
+    src/core/multipart_reader.cpp
+    src/core/yolo_decoder.cpp
+    src/core/associator.cpp
+    src/core/trail_window.cpp
+    src/source/buffered_socket.cpp
+    src/source/mjpeg_slot_pool.cpp
+    src/net/encoder_frame_pool.cpp
+    src/net/frame_composer.cpp
+    src/net/av_packet_queue.cpp
+    src/net/av_packet.cpp
+    src/net/mux_session.cpp
+    src/net/h264_encoder.cpp
+    src/net/network_init.cpp
+    src/process_env.cpp
+    src/signal_waiter.cpp
+    src/cpu_affinity.cpp
     externals/inih/ini.c
 )
 target_compile_definitions(light_ai PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)
@@ -124,9 +152,11 @@ target_link_directories(light_ai PRIVATE ${AV_LIBRARY_DIRS})
 # Both clusters expose an IDENTICAL feature set (verified on the board 2026-11-03,
 # /proc/cpuinfo, cpu0 == cpu4): fp asimd aes sha2 crc32 atomics (LSE)
 # fphp asimdhp lrcpc dcpop asimddp (dotprod). A binary built with +dotprod/+crypto 
-# is therefore legal on ALL eight cores — pinning to A76 is unnecessary;
-# the scheduler places hot threads (pipeline main + workers) on A76 (2.3 GHz)
-# and network/background threads wherever cores are free.
+# is therefore legal on ALL eight cores. Instruction set aside, the hot
+# threads (pipeline main + NPU workers) are pinned to the A76 cluster by
+# cpu_affinity.cpp (best-effort; 2026-11-12 audit follow-up): a bursty
+# cv-woken worker may drift to A55 under CFS/EAS. Network/background
+# threads stay with the scheduler.
 # LSE atomics (std::atomic stop flag) are valid on A55 as well.
 # Clang rejects the dotted "cortex-a76.cortex-a55" form in -mtune (GCC-only big.LITTLE syntax),
 # so the compiler branches are separate.

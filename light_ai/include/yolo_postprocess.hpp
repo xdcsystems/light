@@ -1,42 +1,26 @@
 #pragma once
 
-#include <ostream>
+#include "core/detection.hpp"     // DetList
+#include "core/log.hpp"
+#include "core/yolo_decoder.hpp"  // YoloDecoder
 
-#include "pod_list.hpp"
-
-// LbGeom (rga_resizer.h): the letterbox band travels as one object;
-// forward-declared -- the header declares only, the cpp maps the fields.
 class RknnEngine;
-struct LbGeom;
+struct InferJob;
 
-struct Detection
+// The postprocess step of the NPU pool (InferencePool<RknnEngine, YoloDecode>):
+// the RKNN side of YoloDecoder (core/yolo_decoder.hpp). It turns the engine
+// outputs the worker just ran into YoloHead views (the first three; a head
+// without data or with dims other than 4 is passed as unusable), takes the
+// job's source geometry and band and the engine's own model input size, and
+// lets the decoder do the rest.
+// One copy per worker (InferencePool): the decoder's candidate buffer is a
+// member, so one instance is never called concurrently.
+class YoloDecode
 {
-    float x, y, w, h;  // scene coordinates (pixels, top-left corner)
-    int cls;           // COCO class id
-    float conf;        // obj * best-class probability
+public:
+    YoloDecode( float conf_thr, float iou_thr, const Log& log ) : dec_( conf_thr, iou_thr, log ) {}
+    void operator()( const RknnEngine& npu, const InferJob& job, DetList& out );
+
+private:
+    YoloDecoder dec_;
 };
-
-// Writes the Detection fields in the CSV order used by the box
-// smoother log: cls,conf,x,y,w,h (comma-separated, no prefix and
-// no newline -- the caller supplies the row prefix and terminator).
-inline std::ostream& operator<<( std::ostream& os, const Detection& d )
-{
-    return os << d.cls << ',' << d.conf << ',' << d.x << ',' << d.y
-              << ',' << d.w << ',' << d.h;
-}
-
-// Decodes the three yolov5 heads (fp16 NCHW, post-sigmoid) of the engine,
-// applies conf threshold + NMS, filters bar detections and maps the rest
-// into scene coordinates. Letterbox: the visible band occupies rows
-// [lb.top, lb.top + lb.h) (landscape) or columns
-// [lb.left, lb.left + lb.w) (portrait) of the model input;
-// the mapping to scene coordinates is axial:
-// scene = (det - band origin) * cam / band size.
-using DetList = PodList<Detection, 128>;
-void yolo_postprocess( const RknnEngine& npu,
-                       float cam_w, float cam_h,
-                       float model_w, float model_h,
-                       const LbGeom& lb,
-                       DetList& out,
-                       float conf_thr = 0.25f,
-                       float iou_thr = 0.45f );

@@ -1,0 +1,17 @@
+# tests/.clang-tidy: the host unit tests under the clang-tidy gate (scripts/tidy_run.sh; #43).
+# Everything comes from the root .clang-tidy; only what differs for tests is here.
+InheritParentConfig: true
+# The tests' own helpers (check.hpp, loopback.hpp, mjpeg_stream.hpp, ...) are checked too.
+HeaderFilterRegex: '.*/light_ai/(src|include|tests)/.*'
+
+CheckOptions:
+  # readability-function-size: a suite is one table-driven function, one CHECK per case, so it is long, has many
+  # statements and locals; the root thresholds (sized for the pipeline's functions) would split suites for no
+  # reader's gain. The maxima of tests/ measured with clang-tidy 11 after #43 (lines rounded up to the ten, the
+  # counts exact): lines 167 (test_tracker), statements 135 (test_tracker), variables 43 (test_tracker),
+  # nesting 5 (test_source_prober_threads: a lambda's loop inside the thread body). Branches stay at the root's 11
+  # and parameters at 20: no suite is above them. Cognitive complexity is not relaxed (the second pass: 20).
+  - { key: readability-function-size.LineThreshold,      value: '170' }
+  - { key: readability-function-size.StatementThreshold, value: '135' }
+  - { key: readability-function-size.VariableThreshold,  value: '43' }
+  - { key: readability-function-size.NestingThreshold,   value: '5' }

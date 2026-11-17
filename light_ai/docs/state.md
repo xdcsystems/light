@@ -1,9 +1,10 @@
 # State notes (light_ai)
 
-The accumulating record that used to live at the end of README.md:
-INT8 build history, INT8 vs FP32 validation and the night-session
-findings (incl. the dataset map). Pointers like [Platform constraints],
-Section pointers like [Platform constraints] or [INT8 build history] refer to README.md sections (../README.md); milestone IDs like [M2.4] or [M2.6] live in roadmap.md alongside this file.
+The accumulating engineering record that used to live at the end of `README.md`:
+INT8 build history, INT8 vs. FP32 validation, night-session findings (incl. the dataset map),
+and refactoring verification logs. Section links map to
+[Platform constraints](../README.md#requirements--platform-constraints),
+[INT8 build history](#int8-build-history-rknn-toolkit2-250-colab), and [roadmap.md](roadmap.md).
 
 ## INT8 build history (rknn-toolkit2 2.5.0, Colab)
 
@@ -36,14 +37,14 @@ std [255,255,255], quant_img_RGB2BGR=False,
 quantized_method='channel', quantized_algorithm='mmse',
 target_platform='rk3588', optimization_level=3,
 do_quantization=True, dataset = 50 png. Build time 48 min (mmse
-~31 s per iteration, 90 iterations; Colab log: DONE 2884.1 s).
+\~31 s per iteration, 90 iterations; Colab log: DONE 2884.1 s).
 
 Toolkit facts (Colab side):
 - Colab does NOT support swap (fallocate / loop device / separate
   disk are all rejected by the kernel): mmse memory is capped by
   the 12 GB RAM -> at most 50 frames of 960p calibration.
   Verified.
-- Expected input scale under mmse: ~0.004-0.0045. A flat 1/255
+- Expected input scale under mmse: \~0.004-0.0045. A flat 1/255
   (0.00392157) is the signature of the default algorithm, not
   mmse. Verify after each build: grep 'scale' build_v4.log.
 - Toolkit 2.5.0 converts input AND outputs to int8 by default;
@@ -64,7 +65,7 @@ Status (2026-10-30, updated 2026-11-01): v3-vs-v4 A/B
 - Day (dataset_day2, 50 frames): conf 0.25 — 101 vs 101
   detections; the discrepancies are threshold noise (cls 39,
   scores 0.256/0.259).
-- Dusk (dataset_dusk, 100 frames, brightness ~86 vs ~116
+- Dusk (dataset_dusk, 100 frames, brightness \~86 vs \~116
   daytime): conf 0.18 — 223 vs 227 detections, ALL discrepancies
   sit in the 0.18-0.24 score band (mostly cls 56; symmetric
   split: 12 v4-only vs 8 v3-only, 37 IoU-matched); conf 0.25 —
@@ -78,7 +79,7 @@ Status (2026-10-30, updated 2026-11-01): v3-vs-v4 A/B
   no night blindness in any version. IoU v3-vs-v4: 98 matched,
   7 v3-only / 8 v4-only (unverified one-offs: totals 102/106 imply v3-only = 4 at matched = 98 — recount from a fresh night A/B before citing), all in the 0.18-0.24 band EXCEPT ONE:
   n2_cal_0040 — v3 cls56 0.3574, mmse cls56 0.3808 (boxes agree
-  within ~1 px), v4 sees NOTHING on that frame. A zone trace of
+  within \~1 px), v4 sees NOTHING on that frame. A zone trace of
   that object across all 23 n2 frames: detected by v3 20/23,
   v4 19/23, mmse 20/23 — v4's miss is a single-frame quantization
   collapse, not systematic blindness (frames 0032/0072/0080 are
@@ -101,7 +102,7 @@ Status (2026-10-30, updated 2026-11-01): v3-vs-v4 A/B
   mean conf 0.827 vs 0.832; potted plant in every frame both,
   mean conf 0.670 vs 0.719; vase 4% frames both (mmse scores it
   higher: 0.413/0.571 vs 0.285/0.345); zero anomalous frames in
-  either run. Infer on the night camera = ~22 ms, same as day —
+  either run. Infer on the night camera = \~22 ms, same as day —
   no night NPU penalty. First two blocks (warmup tail, vase
   fading at mmse start) are excluded, per M2.4 protocol.
 - Conf-0.18 control (same evening, 240 frames each, static
@@ -111,7 +112,7 @@ Status (2026-10-30, updated 2026-11-01): v3-vs-v4 A/B
   (26%) for v4; weak (<0.30) off-profile detections 36 vs 162.
   Class-set divergence 70/240 frames, all driven by the
   0.18-0.26 noise band (vase episodes, phantom potted plant at
-  ~(471,578)); main profile (chair + potted plant) intact in
+  \~(471,578)); main profile (chair + potted plant) intact in
   both. v4 note: empty frame 0 (cold-start miss) — second
   early-frame collapse pattern after M2.4 v3/vase. Decision
   unchanged: mmse stays the working model.
@@ -120,8 +121,8 @@ Status (2026-10-30, updated 2026-11-01): v3-vs-v4 A/B
   frames each, conf 0.25, static scene. Bottle and bowl are
   new scene objects — the composition differs from the
   pre-weekend day records; internal A/B validity intact):
-  * Performance: fp16 infer 29.7-30.4 ms vs ~22.06 int8 (+35-38%, clean repeat 11-01);
-    the pipeline stays camera-bound at ~25 FPS for all four (a pacing level, cf. 20 on the 10-30 960p runs — camera switches levels freely) —
+  * Performance: fp16 infer 29.7-30.4 ms vs \~22.06 int8 (+35-38%, clean repeat 11-01);
+    the pipeline stays camera-bound at \~25 FPS for all four (a pacing level, cf. 20 on the 10-30 960p runs — camera switches levels freely) —
     the fp16 reference costs nothing end-to-end.
   * v3 tracks the reference tightly: chair 0.868 vs 0.868,
     bottle/bowl within 0.02, vase 29% frames vs 50% — the only
@@ -131,7 +132,7 @@ Status (2026-10-30, updated 2026-11-01): v3-vs-v4 A/B
     (identical gap in both), vase near-absent 3%/1% vs 50% —
     calibration-branch properties, not per-model quirks.
   * cup recall: mmse 90% frames vs 13% fp16 (v4 54%, v3 6%),
-    same real box ~(470,639) — the mmse score band 0.26-0.34
+    same real box \~(470,639) — the mmse score band 0.26-0.34
     holds above the 0.25 threshold where fp16 dips below.
     Recall boost, not a phantom.
   * v4 extras: bottle 0.497 (lowest of the four, -0.06 vs the
@@ -181,37 +182,37 @@ Status (2026-10-30, updated 2026-11-01): v3-vs-v4 A/B
   against the logs):
   | object         | v5 (int8)      | fp16           | delta   | presence   |
   |----------------|----------------|----------------|---------|------------|
-  | chair          | 0.84-0.86      | 0.86-0.89      | ~-0.03  | 100%/100%  |
+  | chair          | 0.84-0.86      | 0.86-0.89      | \~-0.03  | 100%/100%  |
   | potted plant   | 0.50-0.73      | 0.51-0.75      | parity  | 100%/100%  |
-  | bowl           | 0.58-0.67      | 0.70-0.76      | ~-0.07  | 100%/100%  |
-  | vase           | 0.26-0.39      | 0.28-0.41      | ~-0.01  | ~93%/100%  |
+  | bowl           | 0.58-0.67      | 0.70-0.76      | \~-0.07  | 100%/100%  |
+  | vase           | 0.26-0.39      | 0.28-0.41      | \~-0.01  | \~93%/100%  |
   | dining table   | 0.26-0.35, intermittent | 0.27-0.37, intermittent | parity | flickers in both |
-  Boxes agree within ~3 px on every object; no empty frames in
+  Boxes agree within \~3 px on every object; no empty frames in
   either run. VERDICT: v5 == fp16 on the night profile. The
   mmse-branch small-object signature reproduces SOFTLY (bowl
-  underscored ~-0.07 — the same direction as the day four-way,
+  underscored \~-0.07 — the same direction as the day four-way,
   but presence stays 100% with a wide margin above 0.25; no vase
   underscoring at night). The 3/40 vase drops of v5 sit ON the
-  0.25 threshold (non-consecutive, conf dips to ~0.26 before the
+  0.25 threshold (non-consecutive, conf dips to \~0.26 before the
   drop) — edge flicker, far from the v2-ALARM level (-0.045
   systematic + vase never caught). Timing: infer 23.9-24.6 (v5)
-  vs 29.4-30.5 (fp16) — the int8 gain ~20% live; sum/FPS
-  identical (~39.8 ms, ~25.2 FPS) — source-bound. Notes: (a)
+  vs 29.4-30.5 (fp16) — the int8 gain \~20% live; sum/FPS
+  identical (\~39.8 ms, \~25.2 FPS) — source-bound. Notes: (a)
   CORRECTED by visual check (stream screenshots, same evening):
-  the wide low object at x~378 (62x37 px), detected as "bowl" by
+  the wide low object at x\~378 (62x37 px), detected as "bowl" by
   both models in 100% of frames, is the BLUE VASE (bowl-shaped,
   COCO bowl/vase ambiguity) — so the mmse small-object signature
   above applies to the VASE object: v5 med 0.636 vs fp16 0.727,
-  ~-0.09, presence 100%/100%, same direction as the day four-way
+  \~-0.09, presence 100%/100%, same direction as the day four-way
   (bowl 0.326 vs 0.480), shallower. The tall narrow object at
-  x~444 (24x69 px), labeled "vase" in the table above, is
+  x\~444 (24x69 px), labeled "vase" in the table above, is
   actually the BOTTLE — class confusion vase<->bottle; it is at
   parity between models. fp16 "bottle" records (4 total, 1% of
-  frames, x~446) are duplicate boxes of the SAME bottle — class
+  frames, x\~446) are duplicate boxes of the SAME bottle — class
   flap at the threshold, not a separate object. The true labels:
   "bowl" row above = blue vase; "vase" row above = bottle; (b) a single enc=4.8 ms
   block in the fp16 run (FPS dipped to 23.6 for one block, next
-  block back to 39.7/~25.2) — one-off, not a pattern; (c) the
+  block back to 39.7/\~25.2) — one-off, not a pattern; (c) the
   fp16 startup log carries "net: tensor stride check:
   size_with_stride=2457600 vs 1228800" absent on int8 runs (fp16
   tensor attr vs the RGB888 buffer) — run is clean, note for a
@@ -224,7 +225,7 @@ Status (2026-10-30, updated 2026-11-01): v3-vs-v4 A/B
 
 Purpose: verify the freshly calibrated int8 model (v2) against a float32
 reference on identical inputs — quantization verdict for the M2.4 re-check
-(path B). The v1 ALARM (box shift ~17 px, dconf -0.04) predates this
+(path B). The v1 ALARM (box shift \~17 px, dconf -0.04) predates this
 recalibration; this section documents v2.
 
 Methodology:
@@ -258,7 +259,7 @@ Conclusions:
   i.e. objects the FP32 model itself was unsure about.
 - Lowering the board conf to 0.18 pulls those edge candidates back; the 9
   "extra" detections at 0.18 are stable recurring objects (same boxes across
-  frames: cls39 at ~(249,368)-(259,396), cls58 at ~(295,376)-(347,482)), not
+  frames: cls39 at \~(249,368)-(259,396), cls58 at \~(295,376)-(347,482)), not
   noise. Working conf for v2: 0.18-0.20 (v3: 0.25 — see M2.4).
 - v1 box-shift ALARM is superseded for v2: no systematic shift on the
   calibration set (within-pixel agreement). M2.4 night A/B was re-run
@@ -266,7 +267,7 @@ Conclusions:
   M2.4 is closed on v3.
 - Dark blindness (n2_cal_0096, n2_cal_0152: 0 detections) is identical in
   FP32 and INT8 — quantization-independent, a data/scene problem.
-- Class-flip observation: the recurring object at ~(248,366)-(260,396) gets
+- Class-flip observation: the recurring object at \~(248,366)-(260,396) gets
   cls75/cls39/cls41 across frames; verify against ground-truth labels later.
 - Night A/B on the board (2026-10-26, live camera): v2 ALARM confirmed
   (systematic dconf -0.045 vs fp16, vase never detected) — superseded by
@@ -276,18 +277,18 @@ Conclusions:
 
 Dataset map (owner's clarification; current as of 2026-10-30):
 - dataset_day2    — day-2 daytime dump, 50 frames cal_00XX.ppm
-  (brightness two clusters: ~89 and ~114). The day A/B reference
+  (brightness two clusters: \~89 and \~114). The day A/B reference
   for the v3-vs-v4 comparison (2026-10-30).
 - dataset_day3    — fresh 960p daytime dump (2026-10-30,
-  --cal 100 --cal-interval 15): 100 frames, brightness ~116
+  --cal 100 --cal-interval 15): 100 frames, brightness \~116
   uniform. The quantization source of v4 (every 2nd frame = 50).
 - dataset_dusk    — dusk dump (2026-10-30, same protocol): 100
-  frames, brightness ~86 (vs ~116 daytime). cal_0000.ppm is an
+  frames, brightness \~86 (vs \~116 daytime). cal_0000.ppm is an
   AE-settling outlier (brightness 35) — exclude it from any
   future calibration.
 - The former day-4 daytime dump (the old dataset/, 60 frames:
   pre-letterboxed 640x640 network input, gray-128 padding rows
-  0-139 and 500-639, ~44% of pixels, content 640x360 centered;
+  0-139 and 500-639, \~44% of pixels, content 640x360 centered;
   one static daytime view; people intermittently cross the scene,
   occluding the lower half, Rmean 78-82 -> 53-57 in occluded
   frames, upper half unchanged, k=1.0; v3's quantization input,
@@ -329,13 +330,13 @@ Gamma 3.0 verdict (tools/probe_gamma3_det.py, int8_v2, full decode+NMS, band
 - Total gamma is negative for BOTH domains: dark — coverage up
   (131 -> 142 frames with detections) but detections down
   310 -> 261 (-16%), the stable recurring plant (cls58, 28
-  consecutive frames) dies entirely; bright — count ~flat but
+  consecutive frames) dies entirely; bright — count \~flat but
   mean conf drops (0.448 -> 0.382 @0.18), -19 detections @0.25.
 - Conditional gamma (dark only): +14 revived frames (incl. cal_0030 person 0.81
   confirmed visually: real backlit silhouette (person) in
   doorway + potted plant, row-tear artifacts present,
   cal_0047/0100/0152 chairs 0.4-0.6) minus 3 fully killed
-  frames and ~50 detections; also noise revivals (cal_0154 cls13 0.45).
+  frames and \~50 detections; also noise revivals (cal_0154 cls13 0.45).
 - VERDICT (owner's decision): conditional gamma 3.0 NOT adopted — "considered;
   detection A/B: insufficient gain for the loss of a stable
   class". A gamma change would also require a fresh calibration
@@ -376,31 +377,31 @@ Results:
 - serial (core0 only): 22.53 / 22.50 ms/frame (two runs).
 - pool (3 workers, one per core, parallel):
   9.39 / 7.86 ms/frame effective; scaling 2.40x / 2.86x.
-- Core load during pool phase: ~67% on ALL THREE cores — duped
+- Core load during pool phase: \~67% on ALL THREE cores — duped
   contexts do spread across cores (hypothesis "all contexts land
   on core0" refuted live; cf. M2.5 mask note: --core 7 mask
   gained <=2.5 ms — the difference is explicit per-core pinning).
 
 Findings:
 - serial pure-infer (22.5 ms) vs prod steady-state (29.5 ms):
-  the ~7 ms delta is DDR contention with live neighbors
+  the \~7 ms delta is DDR contention with live neighbors
   (cam/dec/rga/enc) — both numbers are correct, they measure
   different surroundings. For M5 planning, use the prod figure.
 - Scaling 2.4-2.86x matches community practice (pool of contexts,
-  e.g. rknn-cpp-Multithreading: ~2.4x on yolov5s; 3.0x is not
-  reachable — DDR-bound, cores sit at ~67%).
+  e.g. rknn-cpp-Multithreading: \~2.4x on yolov5s; 3.0x is not
+  reachable — DDR-bound, cores sit at \~67%).
 - Toolkit note: the board rknn_api.h is 1.x-era — no
   RKNN_QUERY_NUM_OUTPUT; output count goes through
   RKNN_QUERY_IN_OUT_NUM (rknn_input_output_num.n_output).
   rknn_init with size=0 = model path-as-string (our first run
   passed the path as a buffer — "rknn model is too small").
 
-yolov5m outlook (estimate, not measured): m-infer ~85 ms/core
-(x2.9 FLOPs vs s) -> effective ~30-35 ms/frame at the measured
-2.4-2.86x scaling -> ~20+ FPS steady within the same ~20 ms
-non-infer budget. The single-context m-projection (~10 FPS) is
+yolov5m outlook (estimate, not measured): m-infer \~85 ms/core
+(x2.9 FLOPs vs s) -> effective \~30-35 ms/frame at the measured
+2.4-2.86x scaling -> \~20+ FPS steady within the same \~20 ms
+non-infer budget. The single-context m-projection (\~10 FPS) is
 therefore beaten by the pool. Remaining price: +2 frames latency
-(~100 ms) — owner's decision, pending the end-to-end photo
+(\~100 ms) — owner's decision, pending the end-to-end photo
 latency measurement (below).
 
 Open items:
@@ -408,7 +409,7 @@ Open items:
   method (millisecond timer + viewer on one screen, 20-30 shots,
   median + p90; viewer is networked — ping stability check first,
   see conversation notes). Re-measure after M5 to verify the
-  predicted ~+100 ms.
+  predicted \~+100 ms.
 - bench_npu_pool.cpp: currently built ad hoc; either promote to a
   CMake tool target or keep as disposable (decide on next tools/
   pass).
@@ -424,7 +425,7 @@ to scene coordinates and matches the box-log "raw" lines of the SAME run.
 Calibration chain (each link verified independently):
 - feed recipe: raw uint8 + img[None], NO data_format kwarg (the
   save_board_csv.py path); RKNNLite silently returns None on a 3-dim
-  input or a rejected kwarg — see README [Platform constraints],
+  input or a rejected kwarg — see [Platform constraints](../README.md#requirements--platform-constraints),
   RKNNLite note.
 - harness anchor: the CAL variant (v2 + gamma 2.0 on a dataset_mix
   frame) reproduces misc/board_preds.csv to the 4th decimal
@@ -461,8 +462,8 @@ Verdict: the M5 worker pool is detection-correct. On the matched
 frames the pool output reproduces a single-context NPU path to
 dconf <= 0.0003 with IoU >= 0.94 — deeper than the NPU-vs-Lite gap
 itself. Throughput (CORRECTED 11-01 late by the pool1/pool3 wall-clock A/B):
-pool throughput is UNCHANGED vs pool1 (source-bound ~20 FPS both);
-45.9 ms is the in-flight window latency (~3x15.2), not per-frame
+pool throughput is UNCHANGED vs pool1 (source-bound \~20 FPS both);
+45.9 ms is the in-flight window latency (\~3x15.2), not per-frame
 cost.
 
 Open notes:
@@ -481,7 +482,7 @@ Open notes:
 
 ## Pure-infer figure registry (reconcile, M2.6 (c))
 
-Working formula: prod_shown_infer ~= pure_infer + DDR contention +
+Working formula: prod_shown_infer \~= pure_infer + DDR contention +
 pacing-stall share. Isolated bench numbers with performance governors
 are the pure figures; prod steady-state [timing] figures are NOT pure
 (they carry the pacing stall inside 'infer').
@@ -490,19 +491,19 @@ are the pure figures; prod steady-state [timing] figures are NOT pure
 |---|---|---|---|---|---|
 | 15.67 ms @7 | tools/bench_npu | int8, 960p | isolated bench, quiet | 11-01 | RECONCILES 15.4 @012 (10-25, 720p era): reproduced within 2%, resolution-independent; 3-core parallel gain 1.40x real (15.67 vs 22.06 @1); M2.6 (c) closed; pipeline-side mask gain <=2.5 ms stays a separate M5 integration note |
 | 18.1 / 22.0 @2/1 | tools/bench_npu, same run | int8, 720p era | same | 10-25 | scaling data only |
-| 21.2 ms @012 | M2.5 steady [timing] | int8 (v2 era), 720p | in-pipeline; CPU-governor-dependent (degrades to ~25.1-26.0 after idle) | 10-26/27 | OLDER SETUP - do not cite outside M2.5 context |
+| 21.2 ms @012 | M2.5 steady [timing] | int8 (v2 era), 720p | in-pipeline; CPU-governor-dependent (degrades to \~25.1-26.0 after idle) | 10-26/27 | OLDER SETUP - do not cite outside M2.5 context |
 | 25.1 ms (AUTO) | M2.5 steady [timing] | int8 (v2 era), 720p | in-pipeline | 10-26 | OLDER SETUP |
 | 22.5 ms (serial, core0) | tools/bench_npu_pool | int8_mmse, 960p | isolated bench, governors perf | 10-31 | CURRENT PURE REFERENCE (960p era) |
 | 29.0-30.3 ms | 960p section, steady [timing] | int8 mmse/v3 | prod, viewer attached | 10-30 | PROD steady-state (not pure) |
-| ~29.5 ms | pool-probe derivation | int8_mmse, 960p | prod | 10-31 | PROD steady-state = pure 22.5 + ~7 ms DDR contention |
+| \~29.5 ms | pool-probe derivation | int8_mmse, 960p | prod | 10-31 | PROD steady-state = pure 22.5 + \~7 ms DDR contention |
 | 30.0 ms (--core 7) | mask A/B, steady | int8 mmse, 960p | prod | 10-30 | PROD steady-state |
-| 22.07 ms | night session [timing] | int8_mmse | prod, night | 10-30 | VERIFIED clean repeat (bench_npu 200 iters, cores=1, quiet 11-01 12:51, dataset_mix frame); session 24.0 ms = noisy read; mmse ~= v3 (22.07 vs 22.06) |
-| 22.06 ms | day A/B [timing] | int8, 960p | prod | 11-01 | VERIFIED clean repeat (bench_npu 200 iters, cores=1, quiet 11-01 12:49); morning 24.5 ms = noisy first read; prod delta +34% (29.5 vs 22.06), "~7 ms DDR" note consistent |
-| 45.9 ms per 3 in-flight frames | M5 pool live A/B | int8_mmse, 960p | prod, 3 workers | 11-01 | CORRECTED 11-01 late: this is the in-flight WINDOW LATENCY (~3x15.2), not a per-frame cost; wall-clock throughput pool3 == pool1 (600 frames: 30.73 vs 30.60 s, both source-bound ~20 FPS; user-CPU 18.6 vs 10.5 s — 3 threads busy); [timing] sum/FPS overcounts in pool mode (the cam wait of frame k overlaps the compute of k-2, ~46 ms double-counted) — take FPS from wall clock until the accounting fix |
+| 22.07 ms | night session [timing] | int8_mmse | prod, night | 10-30 | VERIFIED clean repeat (bench_npu 200 iters, cores=1, quiet 11-01 12:51, dataset_mix frame); session 24.0 ms = noisy read; mmse \~= v3 (22.07 vs 22.06) |
+| 22.06 ms | day A/B [timing] | int8, 960p | prod | 11-01 | VERIFIED clean repeat (bench_npu 200 iters, cores=1, quiet 11-01 12:49); morning 24.5 ms = noisy first read; prod delta +34% (29.5 vs 22.06), "\~7 ms DDR" note consistent |
+| 45.9 ms per 3 in-flight frames | M5 pool live A/B | int8_mmse, 960p | prod, 3 workers | 11-01 | CORRECTED 11-01 late: this is the in-flight WINDOW LATENCY (\~3x15.2), not a per-frame cost; wall-clock throughput pool3 == pool1 (600 frames: 30.73 vs 30.60 s, both source-bound \~20 FPS; user-CPU 18.6 vs 10.5 s — 3 threads busy); [timing] sum/FPS overcounts in pool mode (the cam wait of frame k overlaps the compute of k-2, \~46 ms double-counted) — take FPS from wall clock until the accounting fix |
 | NPU 10/9/10% per core | pool live, debugfs rknpu/load | int8_mmse, 960p | prod, 3 workers | 11-02 | VERIFIED live: three cores balanced under round-robin dispatch; total inference budget same as single-context |
-| CPU ~8% user (vmstat) | pool + h264 stream live | — | prod | 11-02 | VERIFIED live: whole pipeline incl. encoder muxes on ~8% user CPU across cores; consistent with 18.6 s/600f registry row | 
+| CPU \~8% user (vmstat) | pool + h264 stream live | — | prod | 11-02 | VERIFIED live: whole pipeline incl. encoder muxes on \~8% user CPU across cores; consistent with 18.6 s/600f registry row | 
 | GPU practically idle | debugfs mali0 dvfs_utilization | — | prod | 11-02 | VERIFIED live: busy/idle ticks never fire (batch draw per frame is below the DVFS tick granularity), cur_freq stays 1 GHz in performance; boxes render (visual confirmation) — counter-blind, not draw-dead |
-| -mcpu=cortex-a76 -mtune=cortex-a76.cortex-a55 | CMakeLists TARGET_CPU_FLAGS A/B | int8_mmse_v5, 960p | prod, h264 pull, viewer attached | 11-02 | NO EFFECT vs -mcpu=cortex-a76: sum 95.2-95.8 ms / ~20.0 FPS both — camera-bound, inference lives on the NPU. Kept as documentation of intent. The dot form is legal only in -mtune (GCC 10.2 rejects -mcpu=cortex-a76+cortex-a55: "+" there means a feature modifier) |
+| -mcpu=cortex-a76 -mtune=cortex-a76.cortex-a55 | CMakeLists TARGET_CPU_FLAGS A/B | int8_mmse_v5, 960p | prod, h264 pull, viewer attached | 11-02 | NO EFFECT vs -mcpu=cortex-a76: sum 95.2-95.8 ms / \~20.0 FPS both — camera-bound, inference lives on the NPU. Kept as documentation of intent. The dot form is legal only in -mtune (GCC 10.2 rejects -mcpu=cortex-a76+cortex-a55: "+" there means a feature modifier) |
 
 ## Shutdown observations (2026-11-02): MPP prints on the graceful exit — CLOSED (b8b0bab, 7c0d6d9, 6fa82ac; verified 2026-11-09)
 
@@ -522,7 +523,7 @@ the EOS fixes) — this one is the mpp_packet/meta path. No crash, no
 other symptoms; the "Processed N frames" line and the exit are clean
 in both runs.
 Status (CLOSED 2026-11-09): fixed in b8b0bab (NetEncoder EOF drain),
-7c0d6d9, and 6fa82ac (MppDecoder::~MppDecoder strips KEY_INPUT_PACKET
+7c0d6d9, and 6fa82ac (`MppDecoder::~MppDecoder` strips KEY_INPUT_PACKET
 and KEY_OUTPUT_FRAME task metas on both ports before and after
 mpi_->reset). Verified 2026-11-09: 20x back-to-back teardown loop and
 600-frame --pool 3 --net --net-h264 multi-connect/disconnect run exit
@@ -539,28 +540,28 @@ Three commits over origin/master: 50ff7d4 (FrameTrace), 4b50a36
   infer, publish fills enc and hands the whole record to Timings::add.
   Verified live: [timing] format and dec/rga/infer/enc values identical
   to the 11-01/11-02 baselines; cam differs only by daylight (night
-  ~46 -> day ~35, wall 20 -> ~25 FPS — the VFR follow-source pacing
+  \~46 -> day \~35, wall 20 -> \~25 FPS — the VFR follow-source pacing
   documented in Config, not a refactor effect).
 - Unified path: pool 1 == ring of one. dispatch() then an immediate
   publish_oldest() that blocks on the worker's DONE — the legacy
   synchronous semantics with a single code path. The inlined
   single-context block is GONE (diffstat -168/+29); the drain loop lost
   its npool_>1 gate. pool 3 keeps publish-before-reuse unchanged.
-- ASYNC VERIFIED live (11-03, pool 3): cam ~35-36 ms alongside infer
-  ~45.5 ms and wall ~25 FPS — the pipeline thread does not wait on
+- ASYNC VERIFIED live (11-03, pool 3): cam \~35-36 ms alongside infer
+  \~45.5 ms and wall \~25 FPS — the pipeline thread does not wait on
   inference; three frames in flight, source-bound, as before.
 - NEW FINDING (11-03): pool 1 with --core 7 (mask 0x7 = all three
   cores) splits the model across NPU cores -> infer 22.5-23.5 ms/frame,
-  vs pool 3 where each engine is pinned to ONE core and takes ~45.5 ms.
-  Both modes are camera-bound (~25 FPS wall identical); the difference
-  is LATENCY: pool-1 sum ~39.6 ms (honest CFR accounting) vs the pool-3
-  in-flight window ~85 ms. Best low-latency mode: --pool 1 --core 7.
+  vs pool 3 where each engine is pinned to ONE core and takes \~45.5 ms.
+  Both modes are camera-bound (\~25 FPS wall identical); the difference
+  is LATENCY: pool-1 sum \~39.6 ms (honest CFR accounting) vs the pool-3
+  in-flight window \~85 ms. Best low-latency mode: --pool 1 --core 7.
   PENDING: reconcile vs the 10-30 registry row "30.0 ms (--core 7)"
   (see note below) and add a pure-figure row on the next bench pass.
 - Accounting note: on the unified path pool-1 infer is measured in the
   worker thread after wake (rknn_run + postprocess, no pacing stall,
   wake-up excluded). The prod figure landed near the pure serial bench
-  (22.5 ms, 10-31) instead of the old ~30 ms prod row — consistent with
+  (22.5 ms, 10-31) instead of the old \~30 ms prod row — consistent with
   the DDR-contention model but not yet reconciled; do not cite the two
   eras against each other until the bench pass.
 - Cleanup (11d6d67): dead dets_raw_ member removed (its only writer
@@ -576,7 +577,7 @@ Three commits over origin/master: 50ff7d4 (FrameTrace), 4b50a36
   process). Direct terminal output preserves order (deinit strictly at
   the end). When order matters: run direct, or split stderr to a file.
 - `clang-tidy` 11929 (`src/mpp_decoder.cpp`, started 11-02) hung >14 h
-  with ~zero CPU; killed 11-03. Resolved 2026-11-09: all 21 `.cpp`
+  with \~zero CPU; killed 11-03. Resolved 2026-11-09: all 21 `.cpp`
   translation units pass `scripts/tidy_run.sh` with 0 findings and 0 hangs.
 - CORRECTED (11-03, same day): the "SPSC queue refactor" naming in
   the first draft of this note was wrong. The publish FIFO
@@ -600,11 +601,11 @@ Two commits after the pipeline unification: dbc6fbc (batch B) and
 6535c60 (batch C).
 
 Batch B (dbc6fbc): publish() held mx_ across the draw-fence poll
-(worst case ~200 ms under the lock) and the RGA crop. prep_frame()
+(worst case \~200 ms under the lock) and the RGA crop. prep_frame()
 now runs on the pipeline thread before the lock; the critical
 section covers only encode + mux. Readiness is gated by the atomic
 active_ set by serve() under mx_. A/B vs the stashed baseline on
-the same scene: identical timings (pool 1 ~49.5 ms, pool 3 ~95.4
+the same scene: identical timings (pool 1 \~49.5 ms, pool 3 \~95.4
 ms) - the split is semantic, not a speed change.
 
 Batch C (6535c60):
@@ -627,26 +628,26 @@ Batch C (6535c60):
 
 Verification (2026-11-03 evening):
 - No-viewer run: no "header captured"/"viewer connected" lines,
-  enc = 0.0 in every timing block, wall recovered to ~24-25 FPS.
+  enc = 0.0 in every timing block, wall recovered to \~24-25 FPS.
 - Viewer kill mid-run: "write failed: EIO" from the drain loop,
   "viewer gone", timing blocks on both sides smooth; no
   "packet queue full" events. Header repeat (39 bytes)
   reproduced from the drain loop.
 - Reference in LIGHT conditions, both patches in: pool 1 sum
-  39.5-40.1 ms, ~25 FPS, enc 0.0 (no viewer) / <=0.8 (viewer).
+  39.5-40.1 ms, \~25 FPS, enc 0.0 (no viewer) / <=0.8 (viewer).
   All 2026-11-03 evening numbers are on the bottle-in-scene
   composition; cross-session comparisons need the same scene AND
   the same light (see the lighting note below).
 
 LIGHTING AS A TEST VARIABLE (2026-11-03, corrective):
 - Autoexposure ties the source frame rate to scene brightness:
-  in darkness the source sat at the ~20 FPS pacing level and sum
-  rose to ~49.5 (pool 1) / ~95.4 (pool 3); after the lights were
-  turned on the SAME scene and pipeline give sum ~39.6-40.1 and
-  wall ~25 FPS. The midday "regression" hunt (the bottle was
+  in darkness the source sat at the \~20 FPS pacing level and sum
+  rose to \~49.5 (pool 1) / \~95.4 (pool 3); after the lights were
+  turned on the SAME scene and pipeline give sum \~39.6-40.1 and
+  wall \~25 FPS. The midday "regression" hunt (the bottle was
   blamed) was wrong - lighting explains it; the bottle
   explanation is superseded.
-- The infer drop ~29 -> ~22 ms with the light on is not
+- The infer drop \~29 -> \~22 ms with the light on is not
   explained by the scene itself (int8 inference should not
   depend on frame content); working hypothesis: DVFS/governor
   pacing with rarer camera frames in the dark. UNVERIFIED; do
@@ -663,14 +664,14 @@ TIDY PASS (0693149, 2026-11-03 evening):
   run_session() owns one viewer-session iteration (transport
   setup, stream setup, teardown), moved verbatim with
   continue;/break; -> return;. serve() keeps the loop, the
-  tail print and the 500 ms UDP backoff: ~270 -> 37 lines,
+  tail print and the 500 ms UDP backoff: \~270 -> 37 lines,
   run_session() 193, limit 200.
 - Two uniform error-path deltas (never observed live):
   stream-setup failures share one 500 ms backoff, and the
   write_header path sleeps before the teardown.
 - Verified: build clean, tidy clean on both files, viewer
   smoke (full run: connect -> header captured 39 bytes ->
-  ~25 FPS -> clean EOF; kill run: write failed -> viewer gone
+  \~25 FPS -> clean EOF; kill run: write failed -> viewer gone
   -> enc=0.0 -> clean EOF, pipeline unaffected after the
   disconnect).
 
@@ -709,7 +710,7 @@ READABILITY PASS (post-tidy, 2026-11-03 evening):
   pre-patch finding).
 - Verified: build clean, tidy clean on net_encoder/camera/
   mpp_decoder, viewer smoke: header 39 bytes, sum 39.4-39.8
-  ms ~25 FPS, clean EOF; pts path unchanged.
+  ms \~25 FPS, clean EOF; pts path unchanged.
 - Patch-scripting lesson, second half: brace braces '{}' of
   declarations count too - a hand-written delta missed the
   initializer and the computed check failed before write.
@@ -719,7 +720,7 @@ READABILITY PASS (post-tidy, 2026-11-03 evening):
 
 ## Trail session (2026-11-04): M3.11 verification, exit Bus error, tracker notes
 
-- GitHub incident (2026-11-04): a git push failed for ~1 h with
+- GitHub incident (2026-11-04): a git push failed for \~1 h with
   "Permission denied (publickey)" on BOTH ssh 22 and ssh.github.com
   443 while the same key worked minutes earlier -- githubstatus.com
   carried "Incident with Pull Requests, Git Operations and Issues",
@@ -728,8 +729,8 @@ READABILITY PASS (post-tidy, 2026-11-03 evening):
   Protocol: with an unchanged key and a sudden publickey refusal,
   check githubstatus.com FIRST.
 - Bus error on exit (CLOSED 2026-11-09): one
-  3000-frame run on 2026-11-04 (h264 pull; viewer connected ~f60,
-  gone ~f1020) printed "Bus error" AFTER "Processed 3000 frames" --
+  3000-frame run on 2026-11-04 (h264 pull; viewer connected \~f60,
+  gone \~f1020) printed "Bus error" AFTER "Processed 3000 frames" --
   teardown phase, past the main loop. Closed by 6fa82ac (MppDecoder
   port task meta strip before/after reset) and 3912b2b (NetEncoder
   preallocated 8-slot AVPacket ring buffer drained before
@@ -747,7 +748,7 @@ READABILITY PASS (post-tidy, 2026-11-03 evening):
   (`kVClampPxs = 500`), decays per miss (`kMissVDrop = 90`), and `predict()`
   stops coasting position once `t.miss >= 2`.
 - Trail verification (M3.11): timing unchanged (post 0.7-1.1 ms,
-  sum ~86.5 ms, 25.0 FPS); slow walkers produce a near-continuous
+  sum \~86.5 ms, 25.0 FPS); slow walkers produce a near-continuous
   dashed line with stride 4 + 4 px dedup; the dark-red palette
   entry reads on white walls.
 
@@ -767,7 +768,7 @@ the commit).
   (det boxes + trails), draw_and_publish() (viewer-gated draw/encode;
   gate conditions inverted to an early return, same semantics).
 - Live verification (3000 frames, pool 3, h264 pull, viewer attached
-  from ~f75 to ~f2400): 24.8 FPS steady, sum ~86.5 ms, tracks up to
+  from \~f75 to \~f2400): 24.8 FPS steady, sum \~86.5 ms, tracks up to
   pts=300 (ring saturation), no crash; viewer disconnect mid-run
   handled cleanly (recognition kept running, enc -> 0.0).
 - PRE-EXISTING BUG found by the live run (NOT caused by the
@@ -777,7 +778,7 @@ the commit).
   history points the stride-4 sample yields 16+ entries and the
   stack (incl. the return address) is clobbered -> SIGSEGV with a
   garbled PC (two floats glued: 0x0023900043ad7c00). Crash window
-  ~frames 90-120 with a confirmed track. Fixed by aligning the
+  \~frames 90-120 with a confirmed track. Fixed by aligning the
   buffer with the documented capacity: samp[20]. Root cause of the
   previous invisibility: earlier live runs never kept a track alive
   long enough to reach 61+ history points.
@@ -812,42 +813,42 @@ Lessons (this session):
 ## fp16-reference check, v5, DAY half (2026-11-04, closed): v5 vs fp16
 
 Protocol: live camera /dev/video20, 1280x960, one static scene, one
-session (~14:05 CET, daylight, auto exposure; light not touched between
+session (\~14:05 CET, daylight, auto exposure; light not touched between
 the runs), 600 frames each, conf 0.25, --core 7, pool 1, viewer
-attached (fp16's viewer dropped at ~f465 -- handled, recognition
+attached (fp16's viewer dropped at \~f465 -- handled, recognition
 unaffected), box-logs: misc/v5_live_day.csv, misc/fp16_live_day.csv.
 Order: v5 -> fp16. Scene NOTE: the "bowl" label (wide low object,
-x~325, 48x31 px) is the BLUE VASE again (COCO bowl/vase ambiguity,
+x\~325, 48x31 px) is the BLUE VASE again (COCO bowl/vase ambiguity,
 visually confirmed by the owner 2026-11-04; the object MOVED since
-the night session where it sat at x~378 -- position-specific, same
+the night session where it sat at x\~378 -- position-specific, same
 object). No "vase" class appeared today; the tall narrow object at
-x~384 reads as "bottle" consistently. The scene composition differs
-from the 11-01 night session (bottle at x~384 day vs x~444 night) --
+x\~384 reads as "bottle" consistently. The scene composition differs
+from the 11-01 night session (bottle at x\~384 day vs x\~444 night) --
 cross-session comparisons are orientation only; the intra-pair day
 comparison is fully valid.
 
 Performance (intra-pair, valid):
-- infer: v5 23.5-23.8 ms vs fp16 27.4-27.5 ms (~15% int8 gain; the
-  night figure was ~20% -- cross-session, do not cite against).
-- sum 39.7-40.1 ms / ~25.2 FPS BOTH runs; wall 24.35 vs 24.28 FPS --
+- infer: v5 23.5-23.8 ms vs fp16 27.4-27.5 ms (\~15% int8 gain; the
+  night figure was \~20% -- cross-session, do not cite against).
+- sum 39.7-40.1 ms / \~25.2 FPS BOTH runs; wall 24.35 vs 24.28 FPS --
   source-bound, pipeline parity confirmed.
 - PACING LESSON for the registry: cam-wait mirrors the infer delta
   (v5 cam 12.8-13.6 ms vs fp16 8.2-8.3 ms -- exactly the infer gap);
   under CFR pacing the sum is a pacing constant, not a load metric.
   Load is visible in infer (and the mirrored cam), NOT in sum/FPS.
-  Candidate registry row: "sum under steady CFR ~39.7-40.1 ms is
+  Candidate registry row: "sum under steady CFR \~39.7-40.1 ms is
   pacing, infer + mirrored cam is the load signal".
 
 Detections (every 15th frame, 40 samples; CSV on board for full pass):
 | object         | v5 (int8)      | fp16           | delta   | presence v5/fp16 |
 |----------------|----------------|----------------|---------|------------------|
-| chair          | 0.81-0.84      | 0.84-0.86      | ~-0.02  | 100%/100%        |
-| potted plant   | 0.73-0.80      | 0.76-0.83      | ~-0.03  | 100%/100%        |
-| bowl (= blue vase) | 0.51-0.63  | 0.58-0.66      | ~-0.03  | 100%/100%        |
-| bottle         | 0.25-0.44      | 0.27-0.55      | ~-0.13  | 32/40 vs 39/40   |
+| chair          | 0.81-0.84      | 0.84-0.86      | \~-0.02  | 100%/100%        |
+| potted plant   | 0.73-0.80      | 0.76-0.83      | \~-0.03  | 100%/100%        |
+| bowl (= blue vase) | 0.51-0.63  | 0.58-0.66      | \~-0.03  | 100%/100%        |
+| bottle         | 0.25-0.44      | 0.27-0.55      | \~-0.13  | 32/40 vs 39/40   |
 
 - The mmse small-object signature SHRANK on the day profile: bowl gap
-  ~-0.03 (night ~-0.07, old four-way ~-0.15). v5 tracks the fp16
+  \~-0.03 (night \~-0.07, old four-way \~-0.15). v5 tracks the fp16
   reference closer than its predecessors.
 - NEW FINDING: bottle presence gap (80% vs 98%). All 8 v5 drops sit ON
   the 0.25 threshold (conf dips to 0.25-0.26 immediately before each
@@ -879,7 +880,7 @@ FIX (id churn / phantom velocity, backlog item from the morning log):
   bounds both wild measurements and accumulated coasting) +
   kMissVDrop=90 per-miss velocity decay (x0.90/tick) in the miss
   branch: no measurement -> trust extrapolation less. After
-  kMaxMiss=15 ticks the residual is ~0.2 of the original speed, so
+  kMaxMiss=15 ticks the residual is \~0.2 of the original speed, so
   brief occlusions still re-associate by IoU.
 - Live 900-frame run: max |v| exactly 500.00 px/s -- the clamp caught
   a partial-box spike in action (was -926 pre-patch); coasting decays
@@ -913,16 +914,16 @@ a tentative track near an alive unmatched track (ghost id=4 beside
 id=5 at track 630, pts=6, dead by 645; same pattern at 135 with
 id=1/id=2). Likely path: partial/low-conf box fails the IoU gate vs
 the coasting track, then spawns. Candidate fix: gate spawn by
-proximity to any alive track (IoU > 0 or center distance < ~0.5*bw
+proximity to any alive track (IoU > 0 or center distance < \~0.5*bw
 of the existing track).
 
 NEXT (candidate): short-gap survival probe -- quick dip behind the
-pedestal (< 15 frames, ~0.6 s) to directly confirm re-association;
+pedestal (< 15 frames, \~0.6 s) to directly confirm re-association;
 today's gaps were all longer than kMaxMiss, so survival is confirmed
 only indirectly (via decayed velocities). Then M3.12 planning.
 
 Short-gap probe (run2, 14:47): INCONCLUSIVE for the < kMaxMiss case.
-All observed gaps were >= ~15 frames (track-report holes at
+All observed gaps were >= \~15 frames (track-report holes at
 300->465, 585->660, 720->765, 885->960, 1020->1125) -- approach
 distance made clean 0.4-0.6 s dips impossible (person fills the
 frame near the camera; the "dip" is a frame exit, seconds long).
@@ -968,8 +969,8 @@ Audit outcome fixes, one commit: 8 files, +245/-56. What/why/verification:
    its laxer half-gate (15): its documented job is catching duplicates
    that failed a stricter gate (size gate on partial boxes, edge IoU
    jitter). Verified live: tracks stable, no id churn, dedupe
-   unchanged; at observed speeds (~11 px/frame) inter-frame IoU is
-   ~0.94, far above the 0.30 gate, so the only behavioral change is in
+   unchanged; at observed speeds (\~11 px/frame) inter-frame IoU is
+   \~0.94, far above the 0.30 gate, so the only behavioral change is in
    the IoU 0.15-0.30 dead zone (a ghost spawn becomes a dedupe drop).
 
 4. CPU draw parity (pipeline.cpp draw_boxes_cpu): fully off-screen
@@ -1120,7 +1121,7 @@ Results:
 
 Verdicts recorded (do not re-derive):
 - optional -> unique_ptr in Pipeline: DECLINED. optional constructs
-  in place (no-heap style); ~6 emplace sites vs dozens of arrow
+  in place (no-heap style); \~6 emplace sites vs dozens of arrow
   accesses in race-sensitive gating code; the gain is 4 of 17 hub
   includes while the other 13 are legitimate value members.
 - cal_dumper.hpp / dma_sync.hpp: header-only BY DESIGN (documented
@@ -1220,7 +1221,7 @@ Six follow-up items closed on `fix/audit-p0` after the P0/P1/P2 audit:
    `src/config/option_registry.cpp`, `src/config/cli.cpp`,
    `src/config/config_file.cpp`): added `ApplyFn` callback to
    `OptionRegistry::Entry` and `OptionRegistry::apply()`. Removed the
-   two duplicated ~100-line `if / else if` ladders from `cli.cpp` and
+   two duplicated \~100-line `if / else if` ladders from `cli.cpp` and
    `config_file.cpp` (project rule: branch tables over if-chains).
 3. Zero per-frame heap allocations in `NetEncoder::prep_frame()`
    (`include/rkmpp_drm_pool.hpp`, `src/net_encoder.cpp`): `RkmppDrmPool`
@@ -1250,7 +1251,7 @@ Six follow-up items closed on `fix/audit-p0` after the P0/P1/P2 audit:
    http://192.168.1.2:8080/video --net --net-h264 --net-fps 0 --pool 3`,
    portrait `720x1280` 4:2:0): auto-detected `720x1280` on connect,
    `420SP` decode path selected, letterbox band `x=[140,500) y=[0,640)`
-   -> `368x640` h264 stream, ~30.5-31.6 FPS wall, detections and
+   -> `368x640` h264 stream, \~30.5-31.6 FPS wall, detections and
    Kalman tracks verified live in `mpv`.
 
 ## 2026-11-10 -- P3 deduplication, M5/M5.1-M5.4 closure & OverlaySink
@@ -1313,26 +1314,26 @@ Design record:
   externals/fonts as a spare.
 
 Live verification (2026-11-12):
-- Multi-view timed run (--frames 600): a ~13 s partial-absence window
-  (s1 hot-attached at frame ~415) bridged at the unchanged live rate
+- Multi-view timed run (--frames 600): a \~13 s partial-absence window
+  (s1 hot-attached at frame \~415) bridged at the unchanged live rate
   -- "Processed 600 frames in 25.316 s -> 23.701 FPS"; idle frames
   absent from the counter and [timing] (enc 0.3-0.9 ms on live
   windows only).
 - Single-view absent run (--device /dev/video20, the source detached
   via sysfs uvcvideo unbind): viewer connected before any source
   attached; the NO SIGNAL full frame seen in ffplay; the camera bound
-  back mid-run -- hot recovery ("source s0: attached (hot)"), ~20 FPS
+  back mid-run -- hot recovery ("source s0: attached (hot)"), \~20 FPS
   steady; shutdown clean (drain, TOTAL summary, EOF reached).
 - Discovery-scan throttle: exactly one "scanning /dev/video*" per
   30 s window in every absent run (probe attempt % 15).
 - Wall-clock cross-check: the 523.4 s single-view run holds 1817 live
-  frames (~91 s at the ~20 FPS live rate); the rest was the all-absent
+  frames (\~91 s at the \~20 FPS live rate); the rest was the all-absent
   park with zero encode work.
 
 ## External audit pass 1 (2026-11-12): TcpPullServer write_packet, M5 node reservation
 
 Two external-audit findings verified against the source and patched.
-Commits: see git log (fill in on commit).
+Commits: 1fec17d.
 
 1. TcpPullServer::write_packet (P0, confirmed): one ::send per call;
    flush_buffer (libavformat/aviobuf.c) checks only < 0 and resets
@@ -1363,3 +1364,94 @@ Commits: see git log (fill in on commit).
    gets a slot). Single-source runs are unaffected (the list is empty).
    STATUS: patched, pending a live M5 disconnect drill (unplug cam1 while
    cam0 streams; expect "trying /dev/video20" to never appear from slot 1).
+
+## Audit round (2026-11-12): idiom modernization + A76 pinning -- commit 455cd08
+
+External-audit follow-up on fix/audit-p0; one commit, 13 files, +126/-78.
+The commit message carries the itemized applied/rejected lists; this
+record holds the decisions and the verification.
+
+Applied:
+- tracker: median-of-5 via the minimal 7-comparator selection network
+  (verified 120 permutations / 3125 multisets); recent_points reverse
+  -> std::reverse.
+- box_mapper band_box: one-sided clamps -> std::clamp; safe under the
+  reject gate (203k-case numeric A/B incl. NaN/inf, 0 diffs).
+- gpu_box_drawer / net_encoder: if-assign clamps -> std::min/max;
+  net_encoder keeps std::max for the two lower bounds (std::clamp
+  would change behavior there); gpu_box_drawer needs static_cast<int>
+  over the unscoped enum cap (template deduction performs no integral
+  promotion).
+- config layer: find()/normalize_key() -> std::string_view (audit 5.1
+  narrow subset). The audit's "temporary std::string at call sites"
+  claim checked against every call site: no temporary exists;
+  set_log/send_get/parse_http_url NOT converted (ofstream/concat need
+  real strings; views would add a hanging-reference hazard).
+- parse_int -> from_chars behind the strtol front-end (leading
+  whitespace and an explicit '+' preserved); overflow via
+  result_out_of_range. One documented edge: a bare "+" (strtol
+  accepted as 0) is rejected now. parse_float stays on strtof: board
+  libstdc++ is GCC 10 -- floating-point from_chars exists from GCC 11.
+- if-init in 7 sites / 5 files. The audit's flagship poll_frame
+  example is NOT applied: it requires else-after-return, which the
+  project style forbids (readability-else-after-return enabled, zero
+  such patterns in the tree).
+- A76 pinning (pipeline.cpp, best-effort sched_setaffinity, cpu 4-7):
+  NPU workers pin at worker_loop entry; pipeline main pins AFTER the
+  probe_th_ spawn so the prober keeps the scheduler default (children
+  inherit the creator's mask). Stale "pinning unnecessary" CMake note
+  rewritten; fail-soft on alien boards.
+
+A/B (pool 3, 2 sources, 1500 frames, 2026-11-12 evening): pin lines
+exact (3 workers + main, no prober pin), infer steady 26.5-27.1 ms,
+wall 49.4 FPS to the end -- no measurable effect (camera/source-bound,
+consistent with the flags and DVFS records above); kept as drift
+insurance against CFS/EAS parking a cv-woken worker on A55.
+
+Rejected on evidence (do not re-derive):
+- NEON collect_head: the obj pre-check already precedes the class scan
+  (only threshold-passing cells scan 80 classes); the tensor is
+  channel-major (stride cell_hw -- no NEON-friendly load); the fp16
+  decode is already fcvt s0,h0. The audit's "0.8-1.0 ms post" figure
+  has no source; measured post is \~0.1 ms.
+- NEON draw_boxes_cpu: put() is Porter-Duff RMW over the tensor (the
+  trail alpha 255..60 fades live) -- a vst3_u8 overwrite would kill
+  the fades; measured CPU/GPU parity (38.0 vs 38.3-38.6 ms); the path
+  is a --cpu-draw fallback only.
+- ci_find -> std::search: the audit's locale/errno/allocation
+  arguments do not apply to the pointer+length implementation; binary
+  socket window, recently hardened.
+- optimistic recv() without poll(): saves one poll per recv pair
+  (tens of syscalls against a \~40 ms frame budget); changes
+  blocked-socket timeout semantics; drains risk the bounded-window
+  overflow path in the same hardened file.
+
+Verified: build OK; tidy PASS (0 findings, 22 files); live run as
+above with one recoverable JPEG streak-1 drop (normal path). Commits:
+1fec17d (external audit pass 1 fixes) and 455cd08 (this round).
+
+Patch-scripting lessons (extends the 2026-11-08 series):
+- Anchor uniqueness is not enough: the free-function helper block was
+  spliced before worker_loop() while its first call site sat inside
+  run() ABOVE it ("not declared in this scope"). Anchors must also be
+  POSITION-checked -- insert before the first use in the TU.
+- Verbatim anchors go stale within the same session: the misplaced-
+  block removal asserted a concatenation the earlier patch had already
+  modified (the pin call inside worker_loop). Marker-based extraction
+  (find start/end, sanity-assert the block contents) is the form for
+  files edited twice in one session.
+- M6 lesson 5 regenerated live, third instance this session: an
+  anchor transcribed from the chat paste dropped the closing paren of
+  the file tail ("slot 1." vs the actual "slot 1)."). Chats/pastes are
+  NOT the file; only actual bytes anchor.
+
+## Stages 4–7 Architecture & Verification Summary (2026-11-13..17, `fix/audit-p0` @ `3ccd8ae`)
+
+Following the 2026-11-12 audit round (`455cd08`), architectural refactoring stages 4 through 7 were completed and merged into `fix/audit-p0` (through PR #71):
+
+- **Stage 4 (`NetEncoder` decomposition, #19 / #23 / #24):** Split the encoder into single-purpose `core/` and `net/` components (`EncoderConfig`, `StreamLayout`, `ParamSetCache`, `PtsClock`, `EncodePacer`, `BitmapFont`, `IdlePlate`, `EncoderFramePool`, `FrameComposer`, `PacketQueue`, `SessionGate`, `MuxSession`, `H264Encoder`, `NetworkInit`, `SessionWarmup`) with deterministic reverse-member teardown (`= default` destructor), IDR on every session start (#23), and `200 ms` multi-view `SessionWarmup` (#24).
+- **Stage 5 (`NetMjpegSource`, #28):** Replaced monolithic HTTP MJPEG handling with `ByteWindow`, `HttpUrl`, `HttpHead`, `MultipartReader`, `BufferedSocket`, and `MjpegSlotPool`, covered by host loopback integration tests.
+- **Stage 6 (Complexity & 2-pass tidy gate, #34 / #39 / #42 / #43 / #48 / #51 / #55 / #37):** Decomposed `YoloDecoder`, `KalmanAxis`, `Associator`, `TrailWindow`, `BoxMapper`, and `ConsoleReporter` (`fixed_fmt.hpp`); introduced the parallel cached two-pass tidy gate (`clang-tidy-11` + `clang-tidy==23.1.4` cognitive complexity threshold `20`); enforced NVMe build paths (`storage_guard.sh`).
+- **Stage 7 (`Status` error model & `noexcept`, #61, PRs #62–#71):** Unified runtime error reporting on `Status` (`include/core/status.hpp`), constrained exceptions (`throw_on`) to startup only, standardized exit codes `0..3`, added `retry_listen()` (`2 s` busy-port retry without halting recognition), enforced startup 3-head `yolo_head_shape` validation, and marked frame paths and thread bodies `noexcept`.
+- **Current verification baseline (`3ccd8ae`):** `49` unit test suites (`7,307` checks) and `4` ThreadSanitizer suites (`source_threads`, `source_prober_threads`, `packet_queue_threads`, `session_gate_threads` — `19` checks) pass on host and board.
+

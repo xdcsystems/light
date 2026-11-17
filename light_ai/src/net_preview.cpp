@@ -1,6 +1,5 @@
 #include <chrono>
 #include <cstring>
-#include <iostream>
 #include <stdexcept>
 
 extern "C"
@@ -13,6 +12,7 @@ extern "C"
 }
 
 #include "av_common.hpp"
+#include "core/log.hpp"
 #include "muxer_teardown.hpp"
 #include "net_preview.hpp"
 #include "tcp_pull_server.hpp"
@@ -42,8 +42,8 @@ namespace
     }
 }  // namespace
 
-NetPreview::NetPreview( int w, int h, int stride, int fps, int port )
-  : w_( w ), h_( h ), stride_( stride ), fps_( fps > 0 ? fps : 25 ), pace_fps_( fps > 0 ? fps : 0 ), port_( port )
+NetPreview::NetPreview( int w, int h, int stride, int fps, int port, const Log& log )
+  : log_( log ), w_( w ), h_( h ), stride_( stride ), fps_( fps > 0 ? fps : 25 ), pace_fps_( fps > 0 ? fps : 0 ), port_( port )
 {
     avformat_network_init();
     pkt_ = av_packet_alloc();
@@ -78,87 +78,110 @@ NetPreview::~NetPreview()
     avformat_network_deinit();
 }
 
-void NetPreview::serve()
+void NetPreview::serve() noexcept
 {
     TcpPullServer tcp( port_, 2 * 1024 * 1024, 5 );
-    if ( !tcp.listen() )
-    {
-        std::cerr << "net: tcp listener bind failed on port " << port_ << '\n';
-        error_.store( true );
+    // The bind retries until it succeeds or quit ends the thread; the run
+    // keeps going without a viewer and error_ is not set -- a bind failure
+    // is not a session failure (README, Run).
+    if ( Status st = retry_listen( [&] { return tcp.listen(); }, quit_, log_, "net", port_ ); !st.ok() )
         return;
-    }
-    std::cout << "net: listening on tcp port " << port_
-              << " (viewer: ffplay tcp://<board-ip>:" << port_ << ")\n";
+    log_.info() << "net: listening on tcp port " << port_ << " (viewer: ffplay tcp://<board-ip>:" << port_ << ")\n";
 
     while ( !quit_.load() )
     {
         error_.store( false );
 
-        if ( !tcp.accept_client( quit_ ) )
+        if ( Status ast = tcp.accept_client( quit_ ); !ast.ok() )
             continue;
 
         NutSessionGuard s( tcp );
-        if ( avformat_alloc_output_context2( &s.fc, nullptr, "nut", nullptr ) < 0 || !s.fc )
+        AVStream* st = nullptr;
+        if ( Status ost = open_session( tcp, s.fc, st ); !ost.ok() )
         {
-            std::cerr << "net: avformat_alloc_output_context2 failed\n";
+            log_.error() << "net: " << ost << '\n';
             continue;
         }
-        if ( !tcp.attach_avio( s.fc ) )
-            continue;
-
-        AVStream* st = avformat_new_stream( s.fc, nullptr );
-        if ( !st || !st->codecpar )
-            continue;
-        st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-        st->codecpar->codec_id = AV_CODEC_ID_RAWVIDEO;
-        st->codecpar->format = AV_PIX_FMT_RGB24;
-        st->codecpar->width = w_;
-        st->codecpar->height = h_;
-        st->time_base = AVRational { 1, fps_ };
-        st->avg_frame_rate = AVRational { fps_, 1 };
-        st->codecpar->codec_tag = MKTAG( 'R', 'G', 'B', 24 );
-
-        std::cout << "net: write_header attempt, codec_tag=0x" << std::hex << st->codecpar->codec_tag << std::dec << "\n";
-        const int ret2 = avformat_write_header( s.fc, nullptr );
-        if ( ret2 < 0 )
-        {
-            std::cerr << "net: write_header failed: " << av_err_str( ret2 ) << '\n';
-            continue;
-        }
-        const AVRational tb = st->time_base;
-        int64_t step = av_rescale_q( 1, AVRational { 1, fps_ }, tb );
-        if ( step < 1 )
-            step = 1;
-        std::cout << "net: stream time_base " << tb.num << '/' << tb.den << ", pts step " << step << "\n";
-        std::cout << "net: viewer connected, streaming " << w_ << 'x' << h_ << " rgb24 (nut) on port " << port_ << '\n';
-
-        {
-            std::lock_guard<std::mutex> lk( mx_ );
-            fc_ = s.fc;
-            stream_ = st;
-            frame_step_ = static_cast<uint64_t>( step );
-            pts_ = 0;
-            next_send_us_.store( 0, std::memory_order_relaxed );
-        }
-        connected_.store( true, std::memory_order_release );
-
-        {
-            std::unique_lock<std::mutex> lk( mx_ );
-            cv_.wait( lk, [this] {
-                return quit_.load() || error_.load();
-            } );
-        }
-        connected_.store( false, std::memory_order_release );
-        {
-            std::lock_guard<std::mutex> lk( mx_ );
-            fc_ = nullptr;
-            stream_ = nullptr;
-        }
-        if ( !error_.load() )
-            av_write_trailer( s.fc );
-        if ( !quit_.load() )
-            std::cout << "net: viewer gone, waiting for a new one\n";
+        go_live( s.fc, st );
+        wait_session_end();
+        close_session( s.fc );
     }
+}
+
+// The muxer of one viewer: a NUT context over the client socket, one raw
+// RGB24 stream, the header written. The steps return their Status; the
+// caller logs it ("net: <st>"), serve()'s guard frees fc and closes the
+// client.
+Status NetPreview::open_session( TcpPullServer& tcp, AVFormatContext*& fc, AVStream*& st )
+{
+    if ( const int r = avformat_alloc_output_context2( &fc, nullptr, "nut", nullptr ); r < 0 || !fc )
+        return sdk_status( Errc::Failed, "avformat_alloc_output_context2 failed", r );
+    if ( Status ast = tcp.attach_avio( fc ); !ast.ok() )
+        return ast;
+
+    st = avformat_new_stream( fc, nullptr );
+    if ( !st || !st->codecpar )
+        return make_status( Errc::NoMemory, "avformat_new_stream failed" );
+    st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
+    st->codecpar->codec_id = AV_CODEC_ID_RAWVIDEO;
+    st->codecpar->format = AV_PIX_FMT_RGB24;
+    st->codecpar->width = w_;
+    st->codecpar->height = h_;
+    st->time_base = AVRational { 1, fps_ };
+    st->avg_frame_rate = AVRational { fps_, 1 };
+    st->codecpar->codec_tag = MKTAG( 'R', 'G', 'B', 24 );
+
+    log_.info() << "net: write_header attempt, codec_tag=0x" << std::hex << st->codecpar->codec_tag << std::dec << "\n";
+    if ( const int ret2 = avformat_write_header( fc, nullptr ); ret2 < 0 )
+        return sdk_status( Errc::Failed, "write_header failed", ret2 );
+    return {};
+}
+
+// The pts step in the time base the muxer chose, then the session goes
+// public: publish() writes from the next pipeline frame on.
+void NetPreview::go_live( AVFormatContext* fc, AVStream* st )
+{
+    const AVRational tb = st->time_base;
+    int64_t step = av_rescale_q( 1, AVRational { 1, fps_ }, tb );
+    if ( step < 1 )
+        step = 1;
+    log_.info() << "net: stream time_base " << tb.num << '/' << tb.den << ", pts step " << step << "\n";
+    log_.info() << "net: viewer connected, streaming " << w_ << 'x' << h_ << " rgb24 (nut) on port " << port_ << '\n';
+
+    {
+        std::lock_guard<std::mutex> lk( mx_ );
+        fc_ = fc;
+        stream_ = st;
+        frame_step_ = static_cast<uint64_t>( step );
+        pts_ = 0;
+        next_send_us_.store( 0, std::memory_order_relaxed );
+    }
+    connected_.store( true, std::memory_order_release );
+}
+
+// Until the destructor sets quit_ or publish() a write error.
+void NetPreview::wait_session_end()
+{
+    std::unique_lock<std::mutex> lk( mx_ );
+    cv_.wait( lk, [this] {
+        return quit_.load() || error_.load();
+    } );
+}
+
+// The session ends: publish() stops first (fc_ cleared under mx_, so no write
+// is in flight), then the trailer -- only when no write failed (error_ unset).
+void NetPreview::close_session( AVFormatContext* fc )
+{
+    connected_.store( false, std::memory_order_release );
+    {
+        std::lock_guard<std::mutex> lk( mx_ );
+        fc_ = nullptr;
+        stream_ = nullptr;
+    }
+    if ( !error_.load() )
+        av_write_trailer( fc );
+    if ( !quit_.load() )
+        log_.info() << "net: viewer gone, waiting for a new one\n";
 }
 
 bool NetPreview::viewer_connected() const
@@ -206,7 +229,7 @@ void NetPreview::publish( const uint8_t* rgb )
     pkt_->size = 0;
     if ( ret < 0 )
     {
-        std::cerr << "net: write failed: " << av_err_str( ret ) << '\n';
+        log_.warn() << "net: write failed: " << av_err_str( ret ) << '\n';
         error_.store( true );
         connected_.store( false, std::memory_order_release );
         cv_.notify_all();

@@ -1,4 +1,6 @@
 # build and temp files
+# build/ of the root .gitignore matches a directory only: /build also covers a build symlink (#48)
+/build
 *.o
 *.d
 *.bak
@@ -22,7 +24,11 @@ artifacts/
 # misc: untracked artifacts, the only exception is README
 misc/preds_*.csv
 misc/boxlog_*.csv
+misc/*.mjpeg
 !misc/README.md
 
 # clangd index cache
 .cache/
+
+# Claude Code: personal settings stay local (project settings: .claude/settings.json)
+.claude/settings.local.json

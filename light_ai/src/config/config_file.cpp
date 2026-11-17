@@ -6,13 +6,14 @@
 // INI_CALL_HANDLER_ON_NEW_SECTION=1, set in CMakeLists.txt).
 
 #include <cctype>
-#include <iostream>
 #include <string>
+#include <string_view>
 #include <ini.h>
 
 #include "config/cli.hpp"
 #include "config/config_file.h"
 #include "config/option_registry.h"
+#include "core/log.hpp"
 
 namespace
 {
@@ -22,19 +23,20 @@ namespace
     {
         Config* cfg;
         const OptionRegistry* reg;
+        const Log* log;
     };
 
     // Normalization: leading dashes stripped, '_' -> '-', then the
     // "--" prefix re-attached -- both `net_h264 = true` and
     // `--net-h264 = true` land on the same table row.
-    std::string normalize_key( const char* key )
+    std::string normalize_key( std::string_view key )
     {
         std::string norm;
-        for ( const char* p = key; *p; ++p )
+        for ( const char ch : key )
         {
-            if ( *p == '-' && norm.empty() )
+            if ( ch == '-' && norm.empty() )
                 continue;
-            norm += ( *p == '_' ) ? '-' : *p;
+            norm += ( ch == '_' ) ? '-' : ch;
         }
         return norm;
     }
@@ -61,8 +63,7 @@ namespace
         // flat case, only a real named section is an error.
         if ( section && *section != '\0' )
         {
-            std::cerr << "config: sections are not supported: [" << section
-                      << "]; flat key = value only\n";
+            cx->log->error() << "config: sections are not supported: [" << section << "]; flat key = value only\n";
             return 0;
         }
         // A NULL name is the section-start call (CALL_HANDLER=1); any
@@ -75,48 +76,46 @@ namespace
             return 0;
         if ( norm == "config" )
         {
-            std::cerr << "config: nested --config in a config file is not "
-                      << "supported\n";
+            cx->log->error() << "config: nested --config in a config file is not supported\n";
             return 0;
         }
-        const OptionRegistry::Option* o =
-                cx->reg->find( ( "--" + norm ).c_str() );
-        if ( o == nullptr )
+        const OptionRegistry::Entry* e = cx->reg->find( "--" + norm );
+        if ( e == nullptr )
         {
-            std::cerr << "config: unknown key: '" << key
-                      << "'; valid names: 'light_ai --help'\n";
+            cx->log->error() << "config: unknown key: '" << key << "'; valid names: 'light_ai --help'\n";
             return 0;
         }
-        if ( !o->needs_value )
+        if ( !e->opt.needs_value )
         {
             if ( !flag_truthy( value ) )
             {
-                std::cerr << "config: flag '" << key << "' takes only true/yes/on/1; "
-                          << "a file cannot turn a flag off -- remove the line\n";
+                cx->log->error() << "config: flag '" << key << "' takes only true/yes/on/1; "
+                                 << "a file cannot turn a flag off -- remove the line\n";
                 return 0;
             }
-            return o->apply( *cx->cfg, nullptr ) ? 1 : 0;
+            return cx->reg->apply( *e, *cx->cfg, nullptr ) ? 1 : 0;
         }
-        if ( !o->apply( *cx->cfg, value ? value : "" ) )
+        if ( !cx->reg->apply( *e, *cx->cfg, value ? value : "" ) )
         {
-            // The lambda already printed its value_error; the error line
-            // comes from the ini_parse() return (the first error line,
+            // The registry already logged its "invalid value" line; the error
+            // line comes from the ini_parse() return (the first error line,
             // parsing continues) and is reported by load().
-            std::cerr << "config: rejected value (key '" << key << "')\n";
+            cx->log->error() << "config: rejected value (key '" << key << "')\n";
             return 0;
         }
         return 1;
     }
 }  // namespace
 
-ConfigFileLoader::ConfigFileLoader( const OptionRegistry& reg )
+ConfigFileLoader::ConfigFileLoader( const OptionRegistry& reg, const Log& log )
     : reg_( &reg )
+    , log_( &log )
 {
 }
 
 bool ConfigFileLoader::load( const char* path, Config& cfg ) const
 {
-    CfgFileCtx cx { &cfg, reg_ };
+    CfgFileCtx cx { &cfg, reg_, log_ };
     const int rc = ini_parse( path, cfg_file_handler, &cx );
     if ( rc != 0 )
     {
@@ -124,13 +123,13 @@ bool ConfigFileLoader::load( const char* path, Config& cfg ) const
         // (only with INI_USE_STACK=0 -- unreachable in this build, kept
         // for completeness); any other nonzero = the first error line.
         if ( rc == -1 )
-            std::cerr << "config: cannot open file: " << path << '\n';
+            log_->error() << "config: cannot open file: " << path << '\n';
         else if ( rc == -2 )
-            std::cerr << "config: out of memory while parsing: " << path << '\n';
+            log_->error() << "config: out of memory while parsing: " << path << '\n';
         else
-            std::cerr << "config: rejected: " << path << " (line " << rc << ")\n";
+            log_->error() << "config: rejected: " << path << " (line " << rc << ")\n";
         return false;
     }
-    std::cout << "config: loaded " << path << '\n';
+    log_->info() << "config: loaded " << path << '\n';
     return true;
 }

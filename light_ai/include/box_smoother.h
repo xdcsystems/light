@@ -4,11 +4,12 @@
 #include <fstream>
 #include <string>
 
-#include "box_math.hpp"
-#include "yolo_postprocess.hpp"
+#include "core/box_math.hpp"
+#include "core/detection.hpp"  // Detection, DetList
+#include "core/log.hpp"
 
 // EMA smoothing of detection boxes.
-// Filtering lives in Pipeline; yolo_postprocess stays a pure function.
+// Filtering lives in Pipeline; YoloDecoder stays free of history (one frame in, one list out).
 // Global greedy IoU matching: pairs sorted by IoU, best-first;
 // class must match. Tuning constants live in the class.
 // A missed detection keeps the track (and its filtered coords) for up to 2 frames,
@@ -42,12 +43,21 @@ class BoxSmoother
     };
 
 public:
-    void set_log( const std::string& path );
+    using DetTrack = std::array<int, kMaxDet>;  // per det: -1 = unmatched, else the track index
+
+    // Opens the --box-log CSV (empty path: no log); a failure is reported
+    // through log and disables the CSV.
+    void set_log( const std::string& path, const Log& log );
     void update( const DetList& in, DetList& out );
     void log_frame( int frame, const DetList& raw, const DetList& smooth );
 
 private:
     float iou( const BoxTrack& t, const Detection& d ) const;
+    int collect_pairs( const DetList& in );
+    void apply_matches( const DetList& in, int na );
+    void expire();
+    void emit( const DetList& in, const DetTrack& det_trk, DetList& out );
+    void spawn( const Detection& d );
 
 private:
     // Named constants, one place to tune;

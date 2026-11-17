@@ -1,14 +1,14 @@
 #define MODULE_TAG "light_ai"
 
 #include <cstring>
-#include <iostream>
 #include <rockchip/mpp_log.h>
 
 #include "mpp_decoder.hpp"
+#include "core/log.hpp"
 #include "jpeg_probe.hpp"
 
 
-int MppDecoder::init( int w, int h )
+Status MppDecoder::init( int w, int h )
 {
     w_ = w;
     h_ = h;
@@ -20,31 +20,40 @@ int MppDecoder::init( int w, int h )
     // idempotent, so per-Decoder invocation is safe.)
     mpp_set_log_level( MPP_LOG_WARN );
 
+    Status st;
     do
     {
-        if ( mpp_create( &ctx_, &mpi_ ) != MPP_OK )
+        MPP_RET rc = mpp_create( &ctx_, &mpi_ );
+        if ( rc != MPP_OK )
         {
-            std::cerr << "mpp_create failed\n";
+            log_.error() << "mpp_create failed\n";
+            st = sdk_status( Errc::Failed, "mpp_create failed", rc );
             break;
         }
-        if ( mpp_init( ctx_, MPP_CTX_DEC, MPP_VIDEO_CodingMJPEG ) != MPP_OK )
+        rc = mpp_init( ctx_, MPP_CTX_DEC, MPP_VIDEO_CodingMJPEG );
+        if ( rc != MPP_OK )
         {
-            std::cerr << "mpp_init failed\n";
+            log_.error() << "mpp_init failed\n";
+            st = sdk_status( Errc::Failed, "mpp_init failed", rc );
             break;
         }
 
         // Pool for input packets (DRM: the decoder reads the packet directly)
-        if ( mpp_buffer_group_get( &pkt_group_, MPP_BUFFER_TYPE_DRM, MPP_BUFFER_INTERNAL, MODULE_TAG, __FUNCTION__ ) != MPP_OK )
+        MPP_RET rg = mpp_buffer_group_get( &pkt_group_, MPP_BUFFER_TYPE_DRM, MPP_BUFFER_INTERNAL, MODULE_TAG, __FUNCTION__ );
+        if ( rg != MPP_OK )
         {
-            std::cerr << "mpp_buffer_group_get pkt failed\n";
+            log_.error() << "mpp_buffer_group_get pkt failed\n";
+            st = sdk_status( Errc::NoMemory, "mpp_buffer_group_get failed", rg );
             break;
         }
 
         // Pool for output frames (DRM; the buffer size lives in the
         // aligned-height note right below).
-        if ( mpp_buffer_group_get( &out_group_, MPP_BUFFER_TYPE_DRM, MPP_BUFFER_INTERNAL, MODULE_TAG, __FUNCTION__ ) != MPP_OK )
+        rg = mpp_buffer_group_get( &out_group_, MPP_BUFFER_TYPE_DRM, MPP_BUFFER_INTERNAL, MODULE_TAG, __FUNCTION__ );
+        if ( rg != MPP_OK )
         {
-            std::cerr << "mpp_buffer_group_get failed\n";
+            log_.error() << "mpp_buffer_group_get failed\n";
+            st = sdk_status( Errc::NoMemory, "mpp_buffer_group_get failed", rg );
             break;
         }
 
@@ -55,9 +64,11 @@ int MppDecoder::init( int w, int h )
         // accidentally aligned and hid this; the decoder asserts before it can
         // even report info_change, so the constructor must allocate the safe size.
         const int h_align = ( h_ + 15 ) & ~15;
-        if ( mpp_buffer_get( out_group_, &buf, static_cast<size_t>( w_ ) * h_align * 2 ) != MPP_OK )
+        rg = mpp_buffer_get( out_group_, &buf, static_cast<size_t>( w_ ) * h_align * 2 );
+        if ( rg != MPP_OK )
         {
-            std::cerr << "mpp_buffer_get failed\n";
+            log_.error() << "mpp_buffer_get failed\n";
+            st = sdk_status( Errc::NoMemory, "mpp_buffer_get failed", rg );
             break;
         }
         mpp_frame_init( &out_frame_ );
@@ -70,32 +81,40 @@ int MppDecoder::init( int w, int h )
     }
     while ( false );
 
-    if ( !ok_ )
+    if ( !st.ok() )
     {
-        if ( out_frame_ )
-        {
-            mpp_frame_deinit( &out_frame_ );
-            out_frame_ = nullptr;
-        }
-        if ( out_group_ )
-        {
-            mpp_buffer_group_put( out_group_ );
-            out_group_ = nullptr;
-        }
-        if ( pkt_group_ )
-        {
-            mpp_buffer_group_put( pkt_group_ );
-            pkt_group_ = nullptr;
-        }
-        if ( ctx_ )
-        {
-            mpp_destroy( ctx_ );
-            ctx_ = nullptr;
-            mpi_ = nullptr;
-        }
-        return -1;
+        cleanup_failed();
+        return st;
     }
-    return 0;
+    return {};
+}
+
+// One-shot teardown of the objects created before a failed init step:
+// the same release order as the dtor, but only the members that may
+// exist at that point.
+void MppDecoder::cleanup_failed()
+{
+    if ( out_frame_ )
+    {
+        mpp_frame_deinit( &out_frame_ );
+        out_frame_ = nullptr;
+    }
+    if ( out_group_ )
+    {
+        mpp_buffer_group_put( out_group_ );
+        out_group_ = nullptr;
+    }
+    if ( pkt_group_ )
+    {
+        mpp_buffer_group_put( pkt_group_ );
+        pkt_group_ = nullptr;
+    }
+    if ( ctx_ )
+    {
+        mpp_destroy( ctx_ );
+        ctx_ = nullptr;
+        mpi_ = nullptr;
+    }
 }
 
 MppDecoder::~MppDecoder()
@@ -154,29 +173,28 @@ MppDecoder::~MppDecoder()
     }
 }
 
-int MppDecoder::decode( const uint8_t* data, size_t size )
+Status MppDecoder::decode( const uint8_t* data, size_t size, int& fd )
 {
+    fd = -1;
     ++frames_;
-    int rc = make_packet( data, size );
-    if ( rc != 0 )
-        return rc;
-    rc = submit_input();
-    if ( rc != 0 )
-        return rc;
-    return retrieve_output();
+    if ( Status st = make_packet( data, size ); !st.ok() )
+        return st;
+    if ( Status st = submit_input(); !st.ok() )
+        return st;
+    return retrieve_output( fd );
 }
 
-// Phase 1/3: validate the input and build the input packet. Returns 0
-// on success or a negative decode() code (-1: bad input, -1: no SOI,
-// -2: packet buffer allocation). On success pkt_ is fully initialized
-// and not yet referenced by the decoder.
-int MppDecoder::make_packet( const uint8_t* data, size_t size )
+// Phase 1/3: validate the input and build the input packet. Returns Ok
+// (pkt_ fully initialized, not yet referenced by the decoder) or Ok with
+// no frame for a bad input / a mid-stream fragment without SOI (warn
+// logged); NoMemory on the packet buffer allocation failure.
+Status MppDecoder::make_packet( const uint8_t* data, size_t size )
 {
     if ( !ok_ || !data || size == 0 )
     {
-        std::cerr << "dec[" << frames_ << "]: BAD INPUT ok=" << ok_ << " data=" << static_cast<const void*>( data ) << " size=" << size
-                  << '\n';
-        return -1;
+        log_.warn() << "dec[" << frames_ << "]: BAD INPUT ok=" << ok_ << " data=" << static_cast<const void*>( data ) << " size=" << size
+                    << '\n';
+        return {};
     }
 
     // Mid-stream fragment guard: a complete camera MJPEG frame always
@@ -187,8 +205,8 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
     // reaches RGA/NPU. Reject anything without SOI.
     if ( size < 2 || data[0] != 0xFF || data[1] != 0xD8 )
     {
-        std::cerr << "dec[" << frames_ << "]: no SOI, mid-stream fragment (" << size << " bytes) dropped\n";
-        return -1;
+        log_.warn() << "dec[" << frames_ << "]: no SOI, mid-stream fragment (" << size << " bytes) dropped\n";
+        return {};
     }
 
     // Chroma-layout detection from the JPEG SOF marker, now via the shared
@@ -205,8 +223,8 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
             if ( want != out_fmt_ )
             {
                 out_fmt_ = want;
-                std::cout << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( want == MPP_FMT_YUV420SP ? "0" : "2" )
-                          << " -> out fmt " << ( out_fmt_ == MPP_FMT_YUV420SP ? "420SP" : "422SP" ) << '\n';
+                log_.info() << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( want == MPP_FMT_YUV420SP ? "0" : "2" )
+                            << " -> out fmt " << ( out_fmt_ == MPP_FMT_YUV420SP ? "420SP" : "422SP" ) << '\n';
             }
         }
     }
@@ -217,41 +235,43 @@ int MppDecoder::make_packet( const uint8_t* data, size_t size )
     drop_packet();
 
     MppBuffer pbuf = nullptr;
-    if ( mpp_buffer_get( pkt_group_, &pbuf, size ) != MPP_OK )
+    const MPP_RET rg = mpp_buffer_get( pkt_group_, &pbuf, size );
+    if ( rg != MPP_OK )
     {
-        std::cerr << "dec: pkt buffer alloc failed (" << size << ")\n";
-        return -2;
+        log_.error() << "dec: pkt buffer alloc failed (" << size << ")\n";
+        return sdk_status( Errc::NoMemory, "mpp_buffer_get failed", rg );
     }
     memcpy( mpp_buffer_get_ptr( pbuf ), data, size );
     mpp_packet_init_with_buffer( &pkt_, pbuf );  // the packet holds its own reference
     mpp_buffer_put( pbuf );                      // release ours
     mpp_packet_set_pts( pkt_, ++pts_ );
-    return 0;
+    return {};
 }
 
 // Phase 2/3: hand the packet to the decoder. On entry the packet is
 // owned by us; on success it is enqueued and the decoder holds it in
-// the task meta. On any failure (-3/-4/-5) no enqueue happened, so the
-// packet is dropped here - the decoder provably holds no reference.
-int MppDecoder::submit_input()
+// the task meta. On any failure no enqueue happened, so the packet is
+// dropped here - the decoder provably holds no reference.
+Status MppDecoder::submit_input()
 {
     // Input: wait for a free task (bounded: the input queue is a few
     // tasks deep, a free task must appear within a frame interval)
     if ( mpi_->poll( ctx_, MPP_PORT_INPUT, static_cast<MppPollType>( kTaskPollMs ) ) != MPP_OK )
     {
-        std::cerr << "dec: no free input task in " << kTaskPollMs << " ms\n";
+        log_.warn() << "dec: no free input task in " << kTaskPollMs << " ms\n";
         // No input task was taken, the decoder holds no reference to the
         // packet: deinit here, not on the next call.
         drop_packet();
-        return -3;
+        return make_status( Errc::Timeout, "no free input task" );
     }
     MppTask task = nullptr;
-    if ( mpi_->dequeue( ctx_, MPP_PORT_INPUT, &task ) != MPP_OK || !task )
+    MPP_RET rc = mpi_->dequeue( ctx_, MPP_PORT_INPUT, &task );
+    if ( rc != MPP_OK || !task )
     {
-        std::cerr << "dec: input dequeue failed\n";
+        log_.warn() << "dec: input dequeue failed\n";
         // No task was taken, the packet is not referenced: deinit here.
         drop_packet();
-        return -4;
+        return sdk_status( Errc::Failed, "input dequeue failed", rc );
     }
     mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, pkt_ );
     mpp_task_meta_set_frame( task, KEY_OUTPUT_FRAME, out_frame_ );
@@ -260,7 +280,7 @@ int MppDecoder::submit_input()
 
     if ( ret != MPP_OK )
     {
-        std::cerr << "dec: input enqueue ret=" << ret << '\n';
+        log_.warn() << "dec: input enqueue ret=" << ret << '\n';
         // Hand the task back so the decoder thread is not stuck waiting
         // for it forever on the next poll. A failed re-enqueue means the
         // queue state is broken: log it loudly, no third attempt.
@@ -272,21 +292,45 @@ int MppDecoder::submit_input()
         mpp_task_meta_get_frame( task, KEY_OUTPUT_FRAME, &old_f );
         if ( mpi_->enqueue( ctx_, MPP_PORT_INPUT, task ) != MPP_OK )
         {
-            std::cerr << "dec: task re-enqueue failed, decoder queue state broken\n";
+            log_.error() << "dec: task re-enqueue failed, decoder queue state broken\n";
         }
         // The failed enqueue means the decoder never took the task, the
         // packet is not referenced: safe to deinit now.
         drop_packet();
-        return -5;
+        return sdk_status( Errc::Failed, "input enqueue failed", ret );
     }
-    return 0;
+    return {};
 }
 
-// Phase 3/3: wait for the decoded frame and hand it back. On -6/-7 the
-// input task (holding pkt_ in its meta) is still queued inside the
-// decoder: reset() flushes all queued tasks and releases their meta
-// references, only after it is drop_packet() safe.
-int MppDecoder::retrieve_output()
+// Phase 3/3: wait for the decoded frame and hand it back. On a Timeout /
+// Failed take_output_task the input task (holding pkt_ in its meta) is
+// still queued inside the decoder: reset() flushes all queued tasks and
+// releases their meta references, only after it is drop_packet() safe.
+Status MppDecoder::retrieve_output( int& fd )
+{
+    MppTask task = nullptr;
+    if ( Status st = take_output_task( task ); !st.ok() )
+        return st;
+
+    MppFrame f = nullptr;
+    mpp_task_meta_get_frame( task, KEY_OUTPUT_FRAME, &f );
+    if ( f && mpp_frame_get_info_change( f ) )
+        return apply_info_change( f, task );
+    if ( const Status st = frame_fd( f, fd ); !st.ok() )
+        return st;
+
+    mpi_->enqueue( ctx_, MPP_PORT_OUTPUT, task );
+    // The output task is back in the free list, the decoder no longer
+    // references the packet: safe point for deinit (instead of the top
+    // of the next call, which raced with the still-enqueued task on the
+    // Timeout / Failed paths of the previous frame).
+    drop_packet();
+    return {};
+}
+
+// The output task of retrieve_output(): Ok with the task set, or a
+// Timeout / Failed Status with the decoder flushed and the packet dropped.
+Status MppDecoder::take_output_task( MppTask& task )
 {
     // Output: wait for the decoded frame (bounded: steady decode is
     // ~2-3 ms; a timeout means MPP is wedged — surface it instead of
@@ -296,90 +340,90 @@ int MppDecoder::retrieve_output()
         // The input task (holding pkt_ in its meta) is still queued inside
         // the decoder. reset_and_strip() pops any residual task meta and
         // flushes the ports before drop_packet().
-        std::cerr << "dec: output not ready in " << kTaskPollMs << " ms - flushing decoder\n";
+        log_.warn() << "dec: output not ready in " << kTaskPollMs << " ms - flushing decoder\n";
         reset_and_strip();
         drop_packet();
-        return -6;
+        return make_status( Errc::Timeout, "output not ready" );
     }
-    MppTask task = nullptr;
-    if ( mpi_->dequeue( ctx_, MPP_PORT_OUTPUT, &task ) != MPP_OK || !task )
+    MPP_RET rc = mpi_->dequeue( ctx_, MPP_PORT_OUTPUT, &task );
+    if ( rc != MPP_OK || !task )
     {
-        // See the -6 path: flush and strip task meta before drop_packet().
-        std::cerr << "dec: output dequeue failed - flushing decoder\n";
+        // See the Timeout path: flush and strip task meta before drop_packet().
+        log_.warn() << "dec: output dequeue failed - flushing decoder\n";
         reset_and_strip();
         drop_packet();
-        return -7;
+        return sdk_status( Errc::Failed, "output dequeue failed", rc );
     }
+    return {};
+}
 
-    int fd = -1;
-    MppFrame f = nullptr;
-    mpp_task_meta_get_frame( task, KEY_OUTPUT_FRAME, &f );
+// The info_change frame f (from the meta of task): the output frame is
+// re-sized in place with a new buffer, the task returned, the packet dropped.
+// Returns Ok -- the info_change frame itself is skipped (normal) -- or
+// NoMemory on the buffer allocation failure.
+Status MppDecoder::apply_info_change( MppFrame f, MppTask task )
+{
+    const uint32_t w = mpp_frame_get_width( f );
+    const uint32_t h = mpp_frame_get_height( f );
+    const size_t bs = mpp_frame_get_buf_size( f );
+    log_.warn() << "dec: info_change " << w << 'x' << h << " buf_size=" << bs << '\n';
 
-    if ( !f )
+    // Return the output task BEFORE touching out_frame_ (get_frame in
+    // retrieve_output() already popped KEY_OUTPUT_FRAME, leaving meta_size == 0).
+    mpi_->enqueue( ctx_, MPP_PORT_OUTPUT, task );
+
+    mpp_frame_set_width( out_frame_, w );
+    mpp_frame_set_height( out_frame_, h );
+    // Follow the SOF subsampling already parsed into out_fmt_.
+    // Hardcoding 422SP here disagrees with a 4:2:0 stream the moment
+    // MPP honors the frame format on info_change.
+    mpp_frame_set_fmt( out_frame_, out_fmt_ );
+    MppBuffer b = nullptr;
+    const MPP_RET rg = mpp_buffer_get( out_group_, &b, bs );
+    if ( rg != MPP_OK )
     {
-        std::cerr << "dec: output task WITHOUT frame in meta\n";
-    }
-    else if ( mpp_frame_get_info_change( f ) )
-    {
-        const uint32_t w = mpp_frame_get_width( f );
-        const uint32_t h = mpp_frame_get_height( f );
-        const size_t bs = mpp_frame_get_buf_size( f );
-        std::cerr << "dec: info_change " << w << 'x' << h << " buf_size=" << bs << '\n';
-
-        // Return the output task BEFORE touching out_frame_ (get_frame above
-        // already popped KEY_OUTPUT_FRAME, leaving meta_size == 0).
-        mpi_->enqueue( ctx_, MPP_PORT_OUTPUT, task );
-
-        mpp_frame_set_width( out_frame_, w );
-        mpp_frame_set_height( out_frame_, h );
-        // Follow the SOF subsampling already parsed into out_fmt_.
-        // Hardcoding 422SP here disagrees with a 4:2:0 stream the moment
-        // MPP honors the frame format on info_change.
-        mpp_frame_set_fmt( out_frame_, out_fmt_ );
-        MppBuffer b = nullptr;
-        if ( mpp_buffer_get( out_group_, &b, bs ) != MPP_OK )
-        {
-            std::cerr << "dec: alloc " << bs << " bytes FAILED\n";
-            mpi_->control( ctx_, MPP_DEC_SET_INFO_CHANGE_READY, nullptr );
-            // The info_change task has been returned: the packet is consumed.
-            drop_packet();
-            return -8;
-        }
-        // In-place re-set: the task meta we just returned still holds this
-        // same frame object, so it must not be destroyed and re-created.
-        mpp_frame_set_buffer( out_frame_, b );
-        mpp_buffer_put( b );
-
+        log_.error() << "dec: alloc " << bs << " bytes FAILED\n";
         mpi_->control( ctx_, MPP_DEC_SET_INFO_CHANGE_READY, nullptr );
         // The info_change task has been returned: the packet is consumed.
         drop_packet();
-        return -1;  // the info_change frame itself is skipped — this is normal
+        return sdk_status( Errc::NoMemory, "mpp_buffer_get failed", rg );
     }
-    else if ( mpp_frame_get_errinfo( f ) || mpp_frame_get_discard( f ) )
-    {
-        std::cerr << "dec: DECODE-ERROR errinfo=0x" << std::hex << mpp_frame_get_errinfo( f ) << std::dec
-                  << " discard=" << mpp_frame_get_discard( f ) << " fmt=" << static_cast<int>( mpp_frame_get_fmt( f ) ) << '\n';
-    }
-    else
-    {
-        MppBuffer buf = mpp_frame_get_buffer( f );
-        if ( buf )
-        {
-            fd = mpp_buffer_get_fd( buf );
-        }
-        else
-        {
-            std::cerr << "dec: frame WITHOUT buffer\n";
-        }
-    }
+    // In-place re-set: the task meta we just returned still holds this
+    // same frame object, so it must not be destroyed and re-created.
+    mpp_frame_set_buffer( out_frame_, b );
+    mpp_buffer_put( b );
 
-    mpi_->enqueue( ctx_, MPP_PORT_OUTPUT, task );
-    // The output task is back in the free list, the decoder no longer
-    // references the packet: safe point for deinit (instead of the top
-    // of the next call, which raced with the still-enqueued task on the
-    // -6/-7 paths of the previous frame).
+    mpi_->control( ctx_, MPP_DEC_SET_INFO_CHANGE_READY, nullptr );
+    // The info_change task has been returned: the packet is consumed.
     drop_packet();
-    return fd;
+    return {};  // the info_change frame itself is skipped — this is normal
+}
+
+// The dma-buf fd of a decoded (not info_change) frame into fd; Ok with
+// fd = -1 when the meta holds no frame, the frame carries errinfo /
+// discard, or it has no buffer (each case warn-logged).
+Status MppDecoder::frame_fd( MppFrame f, int& fd ) const
+{
+    fd = -1;
+    if ( !f )
+    {
+        log_.warn() << "dec: output task WITHOUT frame in meta\n";
+        return {};
+    }
+    if ( mpp_frame_get_errinfo( f ) || mpp_frame_get_discard( f ) )
+    {
+        log_.warn() << "dec: DECODE-ERROR errinfo=0x" << std::hex << mpp_frame_get_errinfo( f ) << std::dec
+                    << " discard=" << mpp_frame_get_discard( f ) << " fmt=" << static_cast<int>( mpp_frame_get_fmt( f ) ) << '\n';
+        return {};
+    }
+    MppBuffer buf = mpp_frame_get_buffer( f );
+    if ( !buf )
+    {
+        log_.warn() << "dec: frame WITHOUT buffer\n";
+        return {};
+    }
+    fd = mpp_buffer_get_fd( buf );
+    return {};
 }
 
 void MppDecoder::reset_and_strip()
@@ -423,8 +467,7 @@ int MppDecoder::aux_fd( size_t bytes )
         const size_t have = mpp_buffer_get_size( aux_ );
         if ( have >= bytes )
             return mpp_buffer_get_fd( aux_ );
-        std::cerr << "dec: aux buffer too small (" << have << " < " << bytes
-                  << "), reallocating\n";
+        log_.warn() << "dec: aux buffer too small (" << have << " < " << bytes << "), reallocating\n";
         mpp_buffer_put( aux_ );
         aux_ = nullptr;
     }
