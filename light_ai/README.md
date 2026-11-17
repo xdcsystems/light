@@ -28,19 +28,19 @@ Zero-copy hardware-accelerated object detection, Kalman tracking, and multi-came
 
 Sample output frames captured directly from the encoded H.264 preview stream on the RK3588 board (`yolov5s_relu_int8_mmse_v5.rknn`, `GpuBoxDrawer` + Kalman `Tracker` + `TrailWindow`):
 
-| Single Camera: Walking Detection & Trail (`640×480`) | Single Camera: Multi-Class + Smooth Trail (`640×480`) |
+| Single Camera: Live Person Detection (`640×480`) | Single Camera: Walking Detection & Green Trail (`640×480`) |
 |---|---|
-| ![Single camera walking person detection with tracking trail](docs/images/demo-single-walk.png) | ![Single camera person walking away with green trail and chair box](docs/images/demo-single-trail.png) |
-| **Dual Source `2×1`: Live Tracking (`1280×480`)** | **Dual Source `2×1`: Mixed V4L2 + Portrait HTTP MJPEG (`1280×480`)** |
-| ![Dual source side-by-side layout with person detection and cyan tracking trail](docs/images/demo-dual-track.png) | ![Dual source side-by-side landscape USB camera and portrait HTTP MJPEG stream](docs/images/demo-dual-mixed.png) |
-| **Dual Source `2×1`: `NO SIGNAL` Failover + Multi-Person (`1280×480`)** | **Multi-View `2×2` Grid: 3 Active Mixed-Aspect Streams (`1280×960`)** |
-| ![Dual source showing NO SIGNAL idle plate on disconnected slot and two people detected](docs/images/demo-dual-nosignal.png) | ![Four-tile 2x2 grid with three live cameras detecting people simultaneously](docs/images/demo-grid-multi.png) |
+| ![Single camera crisp front-facing person and potted plant detection](docs/images/demo-single-walk.png) | ![Single camera person walking away with smooth green trail and chair box](docs/images/demo-single-trail.png) |
+| **Dual Source `2×1`: Live Tracking + `NO SIGNAL` (`1280×480`)** | **Dual Source `2×1`: Mixed V4L2 + Portrait HTTP MJPEG (`1280×480`)** |
+| ![Dual source side-by-side layout with sharp person detection, cyan tracking trail, and NO SIGNAL plate](docs/images/demo-dual-track.png) | ![Dual source side-by-side landscape USB camera and portrait HTTP MJPEG stream](docs/images/demo-dual-mixed.png) |
+| **Dual Source `2×1`: `NO SIGNAL` Failover + Portrait Stream (`1280×480`)** | **Multi-View `2×2` Grid: 3 Active Mixed-Aspect Streams (`1280×960`)** |
+| ![Dual source showing NO SIGNAL idle plate on left slot and portrait person tracking on right slot](docs/images/demo-dual-nosignal.png) | ![Four-tile 2x2 grid with three live cameras detecting people simultaneously](docs/images/demo-grid-multi.png) |
 
 ---
 
 ## Quickstart
 
-On the CoolPi RK3588 board (physical NVMe checkout at `/mnt/nvme_data/linaro/Projects/light/light_ai`):
+Run from `light_ai/` inside your repository checkout on an RK3588 board *(on boards booting from eMMC with an external NVMe or USB SSD attached, keep the checkout on the external drive to avoid eMMC flash wear)*:
 
 ```bash
 # 1. Build + run host unit tests (49 suites) + TSan (4 suites) + 2-pass clang-tidy
@@ -66,16 +66,27 @@ ffplay -fflags nobuffer tcp://<board-ip>:1234
 ## Architecture & Pipeline
 
 ```mermaid
-flowchart LR
-    S["V4L2 USB (/dev/videoN)<br/>HTTP MJPEG (--net-src)"] --> SC["SourceSet / SourceChannel<br/>+ SourceProber"]
-    SC --> DEC["MppDecoder<br/>YUV422SP / YUV420SP (dma-buf)"]
-    DEC --> RGA1["RgaResizer (RGA3)<br/>Letterbox into NPU tensor fd"]
-    RGA1 --> POOL["InferencePool (--pool 1 | 3)<br/>RknnEngine + YoloDecoder"]
-    POOL --> TRK["BoxSmoother + Tracker<br/>(KalmanAxis, Associator, TrailWindow)"]
-    TRK --> OVL["OverlaySink<br/>GpuBoxDrawer (Mali EGL/GLES2) or CPU"]
-    OVL --> COMP["FrameComposer (RGA3)<br/>Crop band + RGB888->NV12<br/>1x1 / 2x1 / 2x2 canvas"]
-    COMP --> ENC["H264Encoder (h264_rkmpp)<br/>Zero-copy DRM_PRIME"]
-    ENC --> MUX["PacketQueue + MuxSession<br/>MPEG-TS TCP pull / UDP push"]
+flowchart TB
+    subgraph S1["1. Capture & Hardware Decode"]
+        direction LR
+        S["V4L2 USB (/dev/videoN)<br/>HTTP MJPEG (--net-src)"] --> SC["SourceSet / SourceChannel<br/>+ SourceProber"]
+        SC --> DEC["MppDecoder<br/>YUV422SP / YUV420SP (dma-buf)"]
+    end
+
+    subgraph S2["2. NPU Inference & Kalman Tracking"]
+        direction LR
+        RGA1["RgaResizer (RGA3)<br/>Letterbox into NPU tensor fd"] --> POOL["InferencePool (--pool 1 | 3)<br/>RknnEngine + YoloDecoder"]
+        POOL --> TRK["BoxSmoother + Tracker<br/>(KalmanAxis, Associator, TrailWindow)"]
+    end
+
+    subgraph S3["3. Viewer-Gated Overlay, Compose & Stream"]
+        direction LR
+        OVL["OverlaySink<br/>GpuBoxDrawer (Mali EGL) or CPU"] --> COMP["FrameComposer (RGA3)<br/>1x1 / 2x1 / 2x2 NV12 canvas"]
+        COMP --> ENC["H264Encoder (h264_rkmpp)<br/>PacketQueue + MuxSession (TS / UDP)"]
+    end
+
+    DEC --> RGA1
+    TRK --> OVL
 ```
 
 ### Key Architectural Invariants
@@ -183,10 +194,9 @@ Checks all translation units under `src/` and `tests/` (with [`tests/.clang-tidy
 1. **`main` pass:** system `clang-tidy-11` using [`.clang-tidy`](.clang-tidy) (all enabled checks).
 2. **`cognitive` pass:** pinned PyPI `clang-tidy==23.1.4` inside `light_ai/venv` using [`scripts/tidy_cognitive.yaml`](scripts/tidy_cognitive.yaml) (`readability-function-cognitive-complexity`, `Threshold: 20`).
 
-One-time venv setup on a fresh board:
+One-time venv setup from `light_ai/` on the target board:
 
 ```bash
-cd /mnt/nvme_data/linaro/Projects/light/light_ai
 python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4
 ```
 
@@ -195,7 +205,7 @@ python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4
 
 ### Storage Layout & Models
 
-- All build outputs, test binaries, tidy caches, logs, and calibration dumps stay inside `build/` or `dataset*/` (both git-ignored). [`scripts/storage_guard.sh`](scripts/storage_guard.sh) warns if build outputs target eMMC (`/dev/mmcblk*`) instead of NVMe (`/mnt/nvme_data`).
+- All build outputs, test binaries, tidy caches, logs, and calibration dumps stay inside `build/` or `dataset*/` (both git-ignored). On boards with internal eMMC, [`scripts/storage_guard.sh`](scripts/storage_guard.sh) emits a non-fatal warning if build outputs land on `/dev/mmcblk*` or `/` instead of external storage (such as NVMe or USB SSD) to avoid unnecessary flash wear.
 - **Models (`*.rknn`) are not tracked by Git:** place `.rknn` models in `./misc/` (default: `./misc/yolov5s_relu_int8_mmse_v5.rknn`), or specify `--model <path>`.
 - **RKNNLite Python wheel (for `scripts/` and `tools/`):** install from GitHub Releases (`rknn-toolkit-lite2-v2.5.0`) with SHA-256 verification via `./scripts/install_rknn.sh`.
 
@@ -242,7 +252,7 @@ sudo -n ./build/light_ai --device /dev/video20 --pool 3 --net --net-h264 --net-f
 # Hybrid multi-camera (USB + HTTP MJPEG) with custom bitrate
 sudo -n ./build/light_ai \
     --device /dev/video20 \
-    --net-src http://192.168.1.2:8080/video \
+    --net-src http://<stream-host>:8080/video \
     --pool 3 --net --net-h264 --net-fps 0 --net-bitrate 3000 --frames 3000
 
 # Viewers:
@@ -284,7 +294,7 @@ All **21 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 
 - **Busy port resilience:** If TCP port `--net-port` is already in use, `retry_listen()` logs one warning and retries every `2 s` while recognition continues uninterrupted.
 - **Graceful shutdown:** `ProcessEnv` + `SignalWaiter` handle `SIGINT`/`SIGTERM` without globals during `Pipeline::run()`, draining the pool, printing `TOTAL` timings, flushing `h264_rkmpp`, and calling `STREAMOFF`.
-- **File ownership after `sudo`:** A `sudo` run creates `build/cal.ppm` / `dataset/` files owned by `root`; restore ownership with `sudo -n chown -R linaro: build dataset`.
+- **File ownership after `sudo`:** A `sudo` run creates `build/cal.ppm` / `dataset/` files owned by `root`; restore ownership with `sudo -n chown -R "$(id -un):" build dataset`.
 
 ---
 
@@ -294,7 +304,7 @@ All **21 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 
 | Component | Version / Source | Purpose |
 |---|---|---|
-| Hardware / OS | CoolPi RK3588, Debian 11 (`aarch64`), GCC 10.2 / Clang 11 | Target SoC (Cortex-A76/A55, RKNPU2, RGA3, Mali G610) |
+| Hardware / OS | RK3588 (`aarch64` Linux), GCC 10+ / Clang 11+ | Target SoC (Cortex-A76/A55, RKNPU2, RGA3, Mali G610); verified on CoolPi RK3588 / Debian 11 |
 | `rockchip_mpp` | System `pkg-config` | Hardware MJPEG decode & H.264 encode (`h264_rkmpp`) |
 | `librga` | System `pkg-config` | Hardware resize, letterbox, RGB888→NV12, multi-view compose |
 | `rknnrt` | RKNPU2 `2.5.0` (`rknn_api.h`, `librknnrt.so`) | Zero-copy NPU inference |
@@ -333,7 +343,7 @@ All **21 options** (plus `--help` / `-h`) are shared between the CLI parser and 
   - [`scripts/build.sh`](scripts/build.sh) — full release build + unit/TSan tests + 2-pass clang-tidy gate.
   - [`scripts/test.sh`](scripts/test.sh) — host-side `light_ai_tests` + `light_ai_tests_tsan`.
   - [`scripts/tidy_run.sh`](scripts/tidy_run.sh), [`scripts/tidy_cache.py`](scripts/tidy_cache.py), [`scripts/tidy_cognitive.yaml`](scripts/tidy_cognitive.yaml) — 2-pass `clang-tidy` runner & cache.
-  - [`scripts/storage_guard.sh`](scripts/storage_guard.sh) — warns if build output lands on eMMC instead of NVMe.
+  - [`scripts/storage_guard.sh`](scripts/storage_guard.sh) — warns (non-fatally) if build output targets `/` or internal eMMC (`/dev/mmcblk*`) to help protect flash endurance on eMMC boards.
   - [`scripts/install_rknn.sh`](scripts/install_rknn.sh) — downloads & verifies `rknn_toolkit_lite2==2.5.0` wheel.
   - [`scripts/set_governors.sh`](scripts/set_governors.sh) — pins CPU/NPU/DDR governors to `performance` (`sudo`).
   - [`scripts/usb_replug.sh`](scripts/usb_replug.sh) — sysfs USB camera power-cycle helper (installed at `/usr/local/sbin/light-usb-replug`).

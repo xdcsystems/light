@@ -8,7 +8,7 @@ For general server-side stream options (`--net`, `--net-h264`, `--net-port`, `--
 
 - **Client hardware:** Intel Core 2 Duo T9550, ATI Mobility Radeon HD 3400 (legacy driver `8.970.100.0`, 2013-04-24 — final release for this series), DirectX 10.1 (exposes D3D11 feature level `10_1`), UVD2 H.264 decode via DXVA2, OpenGL without `WGL_NV_DX_interop`.
 - **Player:** Windows 64-bit `mpv` 0.41 (`mpv.com` console host; `mpv.exe` prints no console logs).
-- **Stream:** H.264/MPEG-TS over TCP pull (`tcp://192.168.1.10:1234`, confirmed by demuxer `"Found 'mpegts' at score=100"`), canonical `640x480` single-view band (`1280x960` source).
+- **Stream:** H.264/MPEG-TS over TCP pull (`tcp://<board-ip>:1234`, confirmed by demuxer `"Found 'mpegts' at score=100"`), canonical `640x480` single-view band (`1280x960` source).
 - **Cadence note:** `--net-fps` defaults to `25` (`0` = VFR follow-source), whereas USB camera pacing is a discrete firmware state `{20, 25, 30}` FPS — minor cadence differences reflect camera pacing, not a player defect.
 
 ## Recommended Launch (Product Path: Software Decode + `gpu-next`/D3D11)
@@ -21,7 +21,7 @@ No `%APPDATA%\mpv\mpv.conf` is required; pass all flags on the command line.
 @echo off
 :loop
 echo %date% %time% >> C:\mpv64\restarts.log
-mpv.com --cache=no --profile=low-latency --network-timeout=5 tcp://192.168.1.10:1234
+mpv.com --cache=no --profile=low-latency --network-timeout=5 tcp://<board-ip>:1234
 timeout /t 1 >nul
 goto loop
 ```
@@ -29,13 +29,13 @@ goto loop
 **One-shot from PowerShell:**
 
 ```powershell
-mpv.com --cache=no --profile=low-latency --network-timeout=5 tcp://192.168.1.10:1234
+mpv.com --cache=no --profile=low-latency --network-timeout=5 tcp://<board-ip>:1234
 ```
 
 **Fallback (CPU unload via `dxva2-copy` at higher latency):**
 
 ```powershell
-mpv.com --vo=gpu --gpu-api=opengl --gpu-context=win --hwdec=dxva2-copy --profile=low-latency --network-timeout=5 --opengl-swapinterval=0 tcp://192.168.1.10:1234
+mpv.com --vo=gpu --gpu-api=opengl --gpu-context=win --hwdec=dxva2-copy --profile=low-latency --network-timeout=5 --opengl-swapinterval=0 tcp://<board-ip>:1234
 ```
 
 ### Option Rationale
@@ -58,7 +58,7 @@ mpv.com --vo=gpu --gpu-api=opengl --gpu-context=win --hwdec=dxva2-copy --profile
 Cross-check player:
 
 ```bash
-ffplay -fflags nobuffer -rtbufsize 100k tcp://192.168.1.10:1234
+ffplay -fflags nobuffer -rtbufsize 100k tcp://<board-ip>:1234
 ```
 
 ## Established A/B Facts (2026-10-31 / 2026-11-01)
@@ -78,22 +78,22 @@ ffplay -fflags nobuffer -rtbufsize 100k tcp://192.168.1.10:1234
 
 ```powershell
 # Check board TCP port reachability
-Test-NetConnection 192.168.1.10 -Port 1234
+Test-NetConnection <board-ip> -Port 1234
 
 # Create log directory (mpv does not create it automatically)
 New-Item -ItemType Directory -Force C:\mpv64
 
 # Decode + network only (no video output)
-mpv.com --vo=null --profile=low-latency tcp://192.168.1.10:1234
+mpv.com --vo=null --profile=low-latency tcp://<board-ip>:1234
 
 # Software GDI fallback (no GPU)
-mpv.com --vo=gdi --profile=low-latency tcp://192.168.1.10:1234
+mpv.com --vo=gdi --profile=low-latency tcp://<board-ip>:1234
 
 # Measure startup timing ("playback restart complete" in log)
-mpv.com --vo=null --frames=30 --profile=low-latency --log-file=C:\mpv64\log.txt tcp://192.168.1.10:1234
+mpv.com --vo=null --frames=30 --profile=low-latency --log-file=C:\mpv64\log.txt tcp://<board-ip>:1234
 
 # Verify option acceptance (empty output = accepted)
-mpv.com -v --frames=1 --log-file=C:\mpv64\opt.log tcp://192.168.1.10:1234
+mpv.com -v --frames=1 --log-file=C:\mpv64\opt.log tcp://<board-ip>:1234
 Select-String -Path C:\mpv64\opt.log -Pattern "Could not set"
 
 # Check GPU and driver version
