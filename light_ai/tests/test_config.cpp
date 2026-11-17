@@ -173,12 +173,27 @@ namespace
                                  "--reid-model", "misc/osnet_x0_25_market.rknn", "--reid-thr", "0.65" } )
                   == Status::Run );
         CHECK( t, four.config().sources.size() == 4 );
+        CHECK( t, four.config().sources[0].rot_auto && four.config().sources[1].rot_auto );
+        CHECK( t, !four.config().sources[2].rot_auto && !four.config().sources[3].rot_auto );
         CHECK( t, four.config().sources[2].rot_deg == 90 && four.config().sources[3].rot_deg == 270 );
         CHECK( t, four.config().infer.reid_model == "misc/osnet_x0_25_market.rknn" );
         CHECK_NEAR( t, four.config().infer.reid_thr, 0.65f, 1e-6f );
         CHECK( t, rejected( { "--src-rot", "90" } ) );
         CHECK( t, rejected( { "--net-src", "http://c/s", "--src-rot", "45" } ) );
         CHECK( t, rejected( { "--reid-thr", "1.5" } ) );
+
+        Cli def_cli;
+        CHECK( t, parse( def_cli, {} ) == Status::Run );
+        CHECK( t, def_cli.config().infer.reid_model == "./misc/osnet_x1_0_imagenet.rknn" );
+        CHECK( t, def_cli.config().sources[0].rot_auto && def_cli.config().sources[0].rot_deg == 0 );
+
+        Cli off_cli;
+        CHECK( t, parse( off_cli, { "--reid-model", "none" } ) == Status::Run );
+        CHECK( t, off_cli.config().infer.reid_model.empty() );
+
+        Cli man0_cli;
+        CHECK( t, parse( man0_cli, { "--device", "/dev/video0", "--src-rot", "0" } ) == Status::Run );
+        CHECK( t, !man0_cli.config().sources[0].rot_auto && man0_cli.config().sources[0].rot_deg == 0 );
     }
 }  // namespace
 

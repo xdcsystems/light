@@ -84,3 +84,6 @@ Decode warm-up does not apply: the source is up at startup (no hot attach).
 takes one connection -- then the timer), the log has no source-trouble line
 (`net-src: corrupt`, `detached`, `dequeue failed`, `no frame in`), the server sent
 every frame, and the CSV holds 1063 frame blocks numbered 0..1062 in order.
+
+Stage 6 Re-ID check on the same clip (`--reid-model ./misc/osnet_x1_0_imagenet.rknn --pool 3`):
+leaves detector/tracker local geometry unchanged while mapping all 6 re-entries (`L1..L6`) of the subject to `global_id = 1` (`29.615 FPS`, `1063` frames, `0` errors).

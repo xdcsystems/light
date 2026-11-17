@@ -10,6 +10,7 @@
 #include "core/status.hpp"
 #include "config/config.hpp"
 #include "console_reporter.h"
+#include "core/auto_orient.hpp"
 #include "core/log.hpp"
 #include "core/stop_flag.hpp"
 #include "frame_trace.h"
@@ -49,6 +50,9 @@ class Pipeline
     {
         BoxSmoother smoother {};
         Tracker tracker {};
+        AutoOrient orient {};
+        uint32_t seen_attach_seq = 0;
+        int cur_rot = 0;
         int frames = 0;  // frames dispatched from this source (the cal/box-log frame index)
     };
 
@@ -87,6 +91,10 @@ private:
     Status handle_source_failure( const EncodedFrame& f );  // the fatal reason; Ok = recovered
     int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
 
+    void prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept;
+    bool submit_orient_probe( int src, int fd_src, int rot, int job_idx, int& ok ) noexcept;
+    bool probe_rot_batch( int src, int fd_src, const int* rots, int n_rots, float* scores, int& ok ) noexcept;
+    void update_auto_orient( int src, int fd_src, int& ok ) noexcept;
     // RGA into the slot's tensor, then submit to the pool.
     void frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms );
 

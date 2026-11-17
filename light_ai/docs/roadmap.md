@@ -567,8 +567,8 @@ under `README.md`. References map to [Platform constraints](../README.md#require
   dispatcher): `Config::sources` (`std::vector<SourceEndpoint>`,
   `SourceKind::V4L2` / `NetMjpeg`) accumulates any combination of
   repeatable `--device` and `--net-src` entries from INI or CLI
-  (e.g. 1x USB + 2x HTTP MJPEG), and `Pipeline` holds up to 3 active
-  sources in `srcs_[kMaxSources]` (`std::variant<CameraV4L2, NetMjpegSource>`
+  (e.g. 1x USB + 2x HTTP MJPEG), and `Pipeline` held up to 3 active
+  sources in `srcs_[kMaxSources]` *(raised to 4 sources / `2x2` grid in Stage 6)* (`std::variant<CameraV4L2, NetMjpegSource>`
   per slot, non-blocking round-robin `dequeue_next_source` with per-slot
   2 s stall watchdog `last_ok_tp`, independent reconnect and warmup).
   Closed 2026-11-10: per-source `MppDecoder`, `BoxSmoother`, `Tracker`,
@@ -667,7 +667,7 @@ under `README.md`. References map to [Platform constraints](../README.md#require
       live smoke 900 frames V4L2 (boxes, colors, trails rendered
       identically, clean EOF drain).
 
-- [ ] M6: toolchain hygiene (recorded 2026-10-27 by owner, restored
+- [x] M6: toolchain hygiene (recorded 2026-10-27 by owner, restored
       from session notes 2026-10-28): (a) clang-format — one enforced
       style across the tree; the recurring whitespace-only artifacts
       (empty lines sneaking into headers, see the pipeline.hpp restore
@@ -679,11 +679,11 @@ under `README.md`. References map to [Platform constraints](../README.md#require
       stay out of unit scope — live-run territory. Open sub-questions:
       the exact .clang-format profile (reference files: gpu_box_drawer
       style per project rules) and the first covered module.
-      *(Update 2026-11-17: `.clang-format` and 49 host unit-test suites under `tests/` have since landed in Stages 0–7.)*
+      *(Update 2026-11-17: `.clang-format` and 54 host unit-test suites + 5 TSan suites under `tests/` have landed across Stages 0–7 and `fix/audit-p1` Stages 1–6.)*
 
 ## Architectural Refactoring (Stages 0–7, 2026-11-12..17)
 
-Completed on `fix/audit-p0` (up to `3ccd8ae`, PR #71). See [CLAUDE.md](../CLAUDE.md) and [state.md](state.md) for verification details.
+Completed on `fix/audit-p0` (up to `3ccd8ae`, PR #71; merged into `master` in PR #73). See [CLAUDE.md](../CLAUDE.md) and [state.md](state.md) for verification details.
 
 - [x] **Stage 0 — Safety net & reference chain (PR #6, issue #32):**
       Extracted SDK-free domain types into `include/core/` and `src/core/`, added standalone host unit tests (`tests/CMakeLists.txt`), Layer A MJPEG replay (`misc/ref_evening.mjpeg` + `reference/ref_evening.csv`), and Layer B golden regression (`tests/test_reference_chain.cpp`).
@@ -702,3 +702,18 @@ Completed on `fix/audit-p0` (up to `3ccd8ae`, PR #71). See [CLAUDE.md](../CLAUDE
 - [x] **Stage 7 — Unified `Status` error model & `noexcept` frame path (issue #61, PRs #62–#71):**
       Added `Status` / `Errc` / `ErrnoText` (`include/core/status.hpp`), startup-only `throw_on` (`include/throw_on.hpp`), exit codes `0..3`, `retry_listen()` busy-port recovery, startup 3-head `yolo_head_shape` check, and `noexcept` enforcement on frame paths and thread bodies (`49` unit suites / `7,307` checks + `4` TSan suites / `19` checks).
 
+
+## Audit P1 Hardening, Accuracy, Labels & Re-ID (Stages 1–6, `fix/audit-p1`)
+
+- [x] **Stage 1 — UB guards, `RknnEngine` I/O safety & `Tracker` tentative expiry (`3411069`, PR #74):**
+      Clamped `BitmapFont` glyphs to ASCII `[32..126]`; checked `n_dims == 4` and `NHWC`/`NCHW` layout in `RknnEngine` before `setup_io()`, kept `ctx_ == 0` safe on moved-from engines; added `std::isfinite()` and `DetList::cap` guards in `YoloDecoder`/`Associator`; expired `TRACK_TENT` directly to `TRACK_FREE`.
+- [x] **Stage 2 — Teardown wakeup, socket abort & concurrency (`5574053`, PR #75):**
+      Connected `StopFlag` into `NetMjpegSource`/`BufferedSocket` (`AI_NUMERICHOST` + short poll slices); added `TcpPullServer::abort_client()` (`shutdown(fd, SHUT_RDWR)`, stalled-viewer teardown dropped from `19 s` to `4.248 s`); added epoch check in `SessionGate`, immediate `detach()` teardown, `kDecErrMax` recovery, and `EINTR`/`bytesused==0` V4L2 guards.
+- [x] **Stage 3 — Encoder PTS/drain, pipeline stride/RGA & perf (`80d424e`, PR #76):**
+      Forced `LOW_DELAY` drain and `AVDictionary` CBR/IDR in `H264Encoder`; added `SessionPtsFilter` (`pts_clock.hpp`) for viewer reconnects; propagated real `TensorRef::stride_bytes` across `OverlaySink`/`GpuBoxDrawer`/`NetPreview`; used grow-only `MppDecoder::pkt_buf_` and targeted `DmaSync`.
+- [x] **Stage 4 — Accuracy, tracker tuning & V4L2 `device_caps` (`f1c224a`, PR #77):**
+      Filtered metadata V4L2 nodes via `usb_cap_capture_streaming`; raised `Tracker::kMaxMiss` to `6`, disabled width/height growth on round-2 `anchor_clipped`, and added height-prior relaxation (`kHpDecayStreak = 8`); enabled `YoloDecoder` band-edge recall + deterministic `Box::seq` NMS; skipped `cls == 0` in `BoxSmoother`; re-baselined Layer A (`reference/ref_evening.csv`) and Layer B.
+- [x] **Stage 5 — Non-overlapping EN/RU track callouts (`17ede94` + `b518c76`, PR #78):**
+      Added `GlyphFont` (8x8 ASCII+Cyrillic `128x96` `GL_ALPHA` atlas, free functions) and `compute_callouts()` 14-candidate pill placer with `--label-lang en|ru`; batched `GpuBoxDrawer` (`4608` verts) and matched CPU fallback (`draw_callouts_cpu`); added `TrackState::global_id` (`display_id()`).
+- [x] **Stage 6 — Cross-camera Re-ID, RGA rotation & 4-source grid (`8c6b879`, PR #79):**
+      Added SDK-free `GlobalTrackTable` (`32` tracks, `45 s` TTL) + async `BasicReidQueue`/`ReidWorker` (4 zero-copy RKNN slots, `FP32`/`FP16`/`INT8`/`UINT8`); added per-call `RGA2` `crop_resize()` alongside `RGA3` `--src-rot 0|90|180|270` (plus `AutoOrient` auto-detection override); raised `kMaxSources` to `4` (`2x2` grid); defaulted `--reid-model` to `./misc/osnet_x1_0_imagenet.rknn` (`--reid-thr 0.62`), added `CalloutHistory` hysteresis, and logged `id=G(L...)` (`54` unit suites / `7,481` checks + `5` TSan suites / `22` checks).

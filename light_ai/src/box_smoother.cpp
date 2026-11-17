@@ -18,6 +18,11 @@ void BoxSmoother::set_log( const std::string& path, const Log& log )
 // the leftovers. All pairs are collected, sorted by IoU (descending)
 // and assigned best-first - the standard greedy bipartite matching.
 // Semantics otherwise unchanged: warm-up pass-through, miss expiry, out order.
+void BoxSmoother::reset() noexcept
+{
+    tracks_ = {};
+}
+
 void BoxSmoother::update( const DetList& in, DetList& out ) noexcept
 {
     out.clear();

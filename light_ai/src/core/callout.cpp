@@ -61,13 +61,40 @@ namespace
         return static_cast<int64_t>( ox ) * static_cast<int64_t>( oy );
     }
 
-    int64_t score_candidate( const CalloutRect& cand,
+    struct CandEval
+    {
+        CalloutRect rect {};
+        int64_t ov_cost = 0;
+        int clamp_shift = 0;
+        int64_t total = 0;
+        int idx = 0;
+    };
+
+    int find_prev_slot( const CalloutHistory& hist, int disp_id ) noexcept
+    {
+        for ( int i = 0; i < hist.entries.n; ++i )
+        {
+            if ( hist.entries.d[i].id == disp_id )
+                return hist.entries.d[i].slot;
+        }
+        return -1;
+    }
+
+    CandEval eval_candidate( int idx,
+                             const int prop[2],
+                             int pw,
+                             int ph,
+                             const CalloutRect& work,
                              int self_idx,
                              const CalloutList& placed,
                              const TrackCand* all_boxes,
                              int n_boxes ) noexcept
     {
         const CalloutRect& own = all_boxes[self_idx].box;
+        const int x0 = std::clamp( prop[0], work.x0, work.x1 - pw );
+        const int y0 = std::clamp( prop[1], work.y0, work.y1 - ph );
+        const CalloutRect cand { x0, y0, x0 + pw, y0 + ph };
+
         int64_t pill_ov = 0;
         for ( int i = 0; i < placed.n; ++i )
             pill_ov += rect_overlap( cand, placed.d[i].pill );
@@ -80,22 +107,23 @@ namespace
         }
 
         const int64_t own_ov = rect_overlap( cand, own );
-        const int ax = ( own.x0 + own.x1 ) / 2;
-        const int ay = own.y0;
-        const int pcx = ( cand.x0 + cand.x1 ) / 2;
-        const int pcy = ( cand.y0 + cand.y1 ) / 2;
-        const int64_t dist = static_cast<int64_t>( std::abs( pcx - ax ) ) +
-                             static_cast<int64_t>( std::abs( pcy - ay ) );
-        return pill_ov * 1000 + other_ov * 100 + own_ov * 10 + dist;
+        const int64_t ov_cost = pill_ov * 10000 + other_ov * 1000 + own_ov * 100;
+        const int clamp_shift = std::abs( x0 - prop[0] ) + std::abs( y0 - prop[1] );
+        // Use doubled integer coordinates so integer /2 rounding never breaks symmetry between left and right.
+        const int64_t dx2 = std::abs( ( cand.x0 + cand.x1 ) - ( own.x0 + own.x1 ) );
+        const int64_t dy2 = std::abs( ( cand.y0 + cand.y1 ) - 2 * own.y0 );
+        const int64_t total = ov_cost + static_cast<int64_t>( clamp_shift ) * 8 + ( dx2 + dy2 ) / 2;
+        return CandEval { cand, ov_cost, clamp_shift, total, idx };
     }
 
-    CalloutRect pick_best_pill( int self_idx,
-                                int pw,
-                                int ph,
-                                const CalloutRect& work,
-                                const CalloutList& placed,
-                                const TrackCand* all_boxes,
-                                int n_boxes ) noexcept
+    CandEval pick_best_pill( int self_idx,
+                             int prev_slot,
+                             int pw,
+                             int ph,
+                             const CalloutRect& work,
+                             const CalloutList& placed,
+                             const TrackCand* all_boxes,
+                             int n_boxes ) noexcept
     {
         const CalloutRect& b = all_boxes[self_idx].box;
         const int cx = ( b.x0 + b.x1 - pw ) / 2;
@@ -116,21 +144,25 @@ namespace
             { b.x0 + 2, b.y0 + 2 },
         };
 
-        const int max_x = work.x1 - pw;
-        const int max_y = work.y1 - ph;
-        CalloutRect best {};
-        int64_t best_score = -1;
-        for ( const auto& p : proposals )
+        CandEval best {};
+        best.total = -1;
+        CandEval prev_eval {};
+        for ( int idx = 0; idx < 14; ++idx )
         {
-            const int x0 = std::clamp( p[0], work.x0, max_x );
-            const int y0 = std::clamp( p[1], work.y0, max_y );
-            const CalloutRect cand { x0, y0, x0 + pw, y0 + ph };
-            const int64_t sc = score_candidate( cand, self_idx, placed, all_boxes, n_boxes );
-            if ( best_score < 0 || sc < best_score )
-            {
-                best_score = sc;
-                best = cand;
-            }
+            const CandEval cur = eval_candidate( idx, proposals[idx], pw, ph, work, self_idx, placed, all_boxes, n_boxes );
+            if ( idx == prev_slot )
+                prev_eval = cur;
+            if ( best.total < 0 || cur.total < best.total )
+                best = cur;
+        }
+
+        if ( prev_slot >= 0 && prev_slot < 14 && best.idx != prev_slot )
+        {
+            const bool prev_clean = ( prev_eval.ov_cost == 0 && prev_eval.clamp_shift <= 4 );
+            const bool promote_top = ( prev_slot >= 6 && best.idx <= 2 && best.ov_cost == 0 &&
+                                       best.clamp_shift == 0 && b.y0 - 14 - ph >= work.y0 );
+            if ( prev_clean && !promote_top )
+                return prev_eval;
         }
         return best;
     }
@@ -200,7 +232,79 @@ namespace
         item.b = pal[idx][2];
     }
 
+    int collect_track_cands( const TrajList& trajs,
+                             const CalloutRect& crop,
+                             float sx,
+                             float sy,
+                             std::array<TrackCand, kMaxTracks>& cands ) noexcept
+    {
+        int nc = 0;
+        for ( int k = 0; k < trajs.n && nc < kMaxTracks; ++k )
+        {
+            const TrackState& tr = trajs.d[k];
+            if ( tr.state != TRACK_TENT && tr.state != TRACK_CONF )
+                continue;
+            CalloutRect box {};
+            if ( map_track_box( tr, crop, sx, sy, box ) )
+                cands[nc++] = { k, box };
+        }
+        return nc;
+    }
+
+    void append_callout_for_track( int i,
+                                   int disp_id,
+                                   const CalloutConfig& cfg,
+                                   const CalloutRect& work,
+                                   const CalloutHistory& hist,
+                                   const TrackCand* cands,
+                                   int nc,
+                                   CalloutList& out,
+                                   CalloutHistory& next_hist ) noexcept
+    {
+        CalloutItem item {};
+        item.box = cands[i].box;
+        item.text_bytes = glyph_font::format_person( item.text, glyph_font::kLabelCap, disp_id, cfg.lang_ru );
+        const int ng = glyph_font::text_len( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
+        const int pw = ng * glyph_font::kGlyphW + 2 * kPadX;
+        // Guard before std::clamp: degenerate narrow crops must never trigger lo > hi UB.
+        if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < kPillH )
+            return;
+        const CandEval best = pick_best_pill( i, find_prev_slot( hist, disp_id ), pw, kPillH, work, out, cands, nc );
+        item.pill = best.rect;
+        item.text_x = item.pill.x0 + kPadX;
+        item.text_y = item.pill.y0 + kPadY;
+        assign_accent( disp_id, item );
+        build_connector( item );
+        out.push( item );
+        next_hist.entries.push( { disp_id, best.idx } );
+    }
+
 }  // namespace
+
+void compute_callouts( const TrajList& trajs,
+                       const LbGeom& lb,
+                       float sx,
+                       float sy,
+                       const CalloutConfig& cfg,
+                       CalloutHistory& hist,
+                       CalloutList& out ) noexcept
+{
+    out.clear();
+    const CalloutRect crop = make_even_bounds( lb );
+    const CalloutRect work { crop.x0 + kMarginPx, crop.y0 + kMarginPx, crop.x1 - kMarginPx, crop.y1 - kMarginPx };
+    if ( work.x1 - work.x0 <= 0 || work.y1 - work.y0 < kPillH )
+    {
+        hist.entries.clear();
+        return;
+    }
+
+    std::array<TrackCand, kMaxTracks> cands {};
+    const int nc = collect_track_cands( trajs, crop, sx, sy, cands );
+    CalloutHistory next_hist {};
+    for ( int i = 0; i < nc && out.n < CalloutList::cap; ++i )
+        append_callout_for_track( i, trajs.d[cands[i].track_idx].display_id(), cfg, work, hist, cands.data(), nc, out, next_hist );
+    hist = next_hist;
+}
 
 void compute_callouts( const TrajList& trajs,
                        const LbGeom& lb,
@@ -209,43 +313,6 @@ void compute_callouts( const TrajList& trajs,
                        const CalloutConfig& cfg,
                        CalloutList& out ) noexcept
 {
-    out.clear();
-    const CalloutRect crop = make_even_bounds( lb );
-    const CalloutRect work { crop.x0 + kMarginPx, crop.y0 + kMarginPx, crop.x1 - kMarginPx, crop.y1 - kMarginPx };
-    if ( work.x1 - work.x0 <= 0 || work.y1 - work.y0 < kPillH )
-        return;
-
-    std::array<TrackCand, kMaxTracks> cands {};
-    int nc = 0;
-    for ( int k = 0; k < trajs.n && nc < kMaxTracks; ++k )
-    {
-        const TrackState& tr = trajs.d[k];
-        if ( tr.state != TRACK_TENT && tr.state != TRACK_CONF )
-            continue;
-        CalloutRect box {};
-        if ( !map_track_box( tr, crop, sx, sy, box ) )
-            continue;
-        cands[nc++] = { k, box };
-    }
-
-    for ( int i = 0; i < nc && out.n < CalloutList::cap; ++i )
-    {
-        const TrackState& tr = trajs.d[cands[i].track_idx];
-        const int disp_id = tr.display_id();
-        CalloutItem item {};
-        item.box = cands[i].box;
-        item.text_bytes = glyph_font::format_person( item.text, glyph_font::kLabelCap, disp_id, cfg.lang_ru );
-        const int ng = glyph_font::text_len( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
-        const int pw = ng * glyph_font::kGlyphW + 2 * kPadX;
-        // Guard before std::clamp: degenerate narrow crops must never trigger lo > hi UB.
-        if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < kPillH )
-            continue;
-
-        item.pill = pick_best_pill( i, pw, kPillH, work, out, cands.data(), nc );
-        item.text_x = item.pill.x0 + kPadX;
-        item.text_y = item.pill.y0 + kPadY;
-        assign_accent( disp_id, item );
-        build_connector( item );
-        out.push( item );
-    }
+    CalloutHistory tmp {};
+    compute_callouts( trajs, lb, sx, sy, cfg, tmp, out );
 }

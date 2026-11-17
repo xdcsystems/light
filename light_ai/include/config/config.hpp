@@ -28,14 +28,15 @@ enum class SourceKind : uint8_t
 struct SourceEndpoint
 {
     SourceKind kind = SourceKind::V4L2;
-    std::string uri;  // V4L2 node (/dev/videoN) or http://host:port/path
-    int rot_deg = 0;  // hardware RGA rotation: 0, 90, 180, or 270 degrees
+    std::string uri;       // V4L2 node (/dev/videoN) or http://host:port/path
+    int rot_deg = 0;       // hardware RGA rotation: 0, 90, 180, or 270 degrees
+    bool rot_auto = true;  // true = auto-detect orientation unless --src-rot explicitly overrides
 };
 
 struct InferConfig
 {
-    std::string model = "./misc/yolov5s_relu_int8_mmse_v5.rknn";  // --model
-    std::string reid_model;  // --reid-model: optional OSNet/Re-ID RKNN model (empty = local IDs)
+    std::string model = "./misc/yolov5s_relu_int8_mmse_v5.rknn";         // --model
+    std::string reid_model = "./misc/osnet_x1_0_imagenet.rknn";           // --reid-model ('none'/'off'/'' = local IDs)
     float reid_thr = 0.62f;  // --reid-thr: cross-camera cosine similarity threshold
     // Detection thresholds, CLI-tunable via --conf / --iou.
     float conf_thr = 0.25f;

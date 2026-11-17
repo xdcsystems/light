@@ -21,4 +21,6 @@ All `.rknn` model files live in `misc/` (never in the `light_ai/` root):
 - `yolov5s_relu_int8_mmse.rknn` — Early MMSE INT8 build (`dataset_mix`; superseded by `v5`).
 - `yolov5s_relu_int8_v3.rknn` — MMSE INT8 calibrated on 60 daytime frames (`1/255` canonical input scale, M2.4).
 - `yolov5s_relu_int8_v4.rknn` — MMSE INT8 calibrated on 960p daytime frames (`dataset_day3`).
-- `yolov5s_relu_int8_mmse_v5.rknn` — **Active default model** since 2026-11-01 (MMSE INT8 calibrated on 30 night + 20 day frames). Configured as the default `--model` value in [`include/config/config.hpp`](../include/config/config.hpp); see [Run & CLI Reference](../README.md#run--cli-reference).
+- `yolov5s_relu_int8_mmse_v5.rknn` — **Active default detector model** since 2026-11-01 (MMSE INT8 calibrated on 30 night + 20 day frames). Configured as the default `--model` value in [`include/config/config.hpp`](../include/config/config.hpp); see [Run & CLI Reference](../README.md#run--cli-reference).
+- `osnet_x1_0_imagenet.rknn` — **Recommended cross-camera Re-ID model** (`3,162,950` B, `128×256` RGB888 input, `~6.1 ms/crop` NPU). Validated with `--reid-model ./misc/osnet_x1_0_imagenet.rknn --reid-thr 0.62` (same-person cosine `0.659..0.688` vs. cross-person `0.491..0.543`).
+- `osnet_x0_25_market.rknn` — Experimental INT8 OSNet (`959,386` B); quantization compresses cosine similarity to `0.896..0.933` across distinct people (comparison/debug only).

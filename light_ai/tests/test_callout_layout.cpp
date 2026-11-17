@@ -86,4 +86,35 @@ void test_callout_layout( TestRun& t )
         compute_callouts( trajs, odd, 0.5f, 0.5f, { false }, out );
         CHECK( t, out.n == 1 && inside_even( out.d[0].pill, odd ) );
     }
+
+    // 5. Hysteresis prevents side flip-flop across 1-px width/center jitter when prior side fits.
+    {
+        CalloutHistory hist {};
+        // Box sits near top edge so top candidates clip/overlap own box; sides (6 right, 7 left) are open.
+        const float xs[4] = { 640.0f, 641.0f, 639.0f, 642.0f };
+        const float ws[4] = { 100.0f, 101.0f, 99.0f, 102.0f };
+        bool stayed_on_side = true;
+        int first_side = 0;
+        for ( int step = 0; step < 4; ++step )
+        {
+            TrajList trajs {};
+            trajs.push( TrackState { 1, TRACK_CONF, xs[step], 110.0f, 0.0f, 0.0f, ws[step], 200.0f, 4 } );
+            CalloutList out {};
+            compute_callouts( trajs, lb, sx, sy, { false }, hist, out );
+            CHECK( t, out.n == 1 );
+            const int side = ( out.d[0].pill.x0 >= out.d[0].box.x1 ) ? 1 : -1;
+            if ( step == 0 )
+                first_side = side;
+            else
+                stayed_on_side = stayed_on_side && ( side == first_side );
+        }
+        CHECK( t, first_side == 1 && stayed_on_side );
+
+        // Pushing box to right boundary moves pill cleanly to the left and holds it there.
+        TrajList edge_tr {};
+        edge_tr.push( TrackState { 1, TRACK_CONF, 1200.0f, 110.0f, 0.0f, 0.0f, 120.0f, 200.0f, 5 } );
+        CalloutList out_edge {};
+        compute_callouts( edge_tr, lb, sx, sy, { false }, hist, out_edge );
+        CHECK( t, out_edge.n == 1 && out_edge.d[0].pill.x1 <= out_edge.d[0].box.x0 );
+    }
 }
