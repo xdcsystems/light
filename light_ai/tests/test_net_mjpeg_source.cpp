@@ -4,6 +4,8 @@
 // the head (it must answer the GET); later bytes are written by the test
 // thread itself before the dequeue that reads them.
 
+#include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -258,6 +260,30 @@ namespace
             }() );
         }
     }
+
+    void cancel_stops_blocking_read( TestRun& t, const Bytes& a )
+    {
+        Rig r;
+        std::string why;
+        CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+        int idx = -1;
+        uint32_t sz = 0;
+        CHECK( t, r.src.dequeue( idx, sz, -1 ).ok() );
+        r.src.requeue( idx );
+
+        std::atomic<bool> stop { false };
+        r.src.set_cancel( &stop );
+        std::thread waker( [&stop] {
+            std::this_thread::sleep_for( std::chrono::milliseconds( 80 ) );
+            stop.store( true );
+        } );
+        const auto t0 = std::chrono::steady_clock::now();
+        const Status st = r.src.dequeue( idx, sz, -1 );
+        const auto el = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0 ).count();
+        waker.join();
+        CHECK( t, !st.ok() && st.code() == Errc::Lost && el < 1000 );
+    }
 }  // namespace
 
 void test_net_mjpeg_source( TestRun& t )
@@ -271,4 +297,5 @@ void test_net_mjpeg_source( TestRun& t )
     corrupt_streak( t, a );
     desync_recovers( t, a );
     refused( t, a, wide );
+    cancel_stops_blocking_read( t, a );
 }

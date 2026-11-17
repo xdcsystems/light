@@ -25,6 +25,7 @@ public:
 
     void request() { flag_.store( true, std::memory_order_release ); }
     bool requested() const { return flag_.load( std::memory_order_acquire ); }
+    const std::atomic<bool>& raw() const noexcept { return flag_; }
 
 private:
     std::atomic<bool> flag_ { false };

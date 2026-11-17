@@ -25,6 +25,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -116,5 +117,7 @@ private:
     ParamSetCache params_;
     uint32_t sessions_ = 0;             // the last session's epoch (1, 2, ...)
     std::atomic<bool> quit_ { false };  // stop() -> the accept poll and the session loop
+    std::mutex tcp_mx_;
+    TcpPullServer* active_tcp_ = nullptr;
     std::thread thread_;                // last: started by start(), after every member above
 };

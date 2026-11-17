@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -53,8 +54,17 @@ public:
     // Sends every byte (EINTR retried). Not ok: Lost "send: <errno>" or
     // "send: peer closed, 0 bytes sent"; Failed "send: not connected".
     Status send_all( const std::string& bytes ) const;
+    // Non-owning stop flags observed by connect() and fill_until().
+    void set_cancel( const std::atomic<bool>* stop, const std::atomic<bool>* prober_quit = nullptr ) noexcept
+    {
+        stop_ = stop;
+        prober_quit_ = prober_quit;
+    }
+    bool cancelled() const noexcept;
     // One poll( timeout_ms; < 0 = do not wait ) + one recv into the window.
     Fill fill( int timeout_ms );
+    // Bounded wait across slice_ms steps, returning Interrupted promptly on cancel.
+    Fill fill_until( int total_ms, int slice_ms = 200 );
     // Closes the socket and drops the window. Idempotent.
     void close();
     bool is_open() const { return fd_ >= 0; }
@@ -67,6 +77,11 @@ public:
     void clear() { win_.clear(); }
 
 private:
+    Status wait_connect() noexcept;
+
+private:
     int fd_ = -1;
+    const std::atomic<bool>* stop_ = nullptr;
+    const std::atomic<bool>* prober_quit_ = nullptr;
     ByteWindow<kWindow> win_;
 };

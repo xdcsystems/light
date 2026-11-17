@@ -52,6 +52,15 @@ void test_session_gate( TestRun& t )
     g.open( make( 5 ) );
     g.run( [&]( const SessionGate::Session& s ) { seen = s; } );
     CHECK( t, seen.epoch == 5 && consistent( seen ) );
+
+    // Epoch-checked run() rejects stale epochs and accepts the matching one.
+    CHECK( t, !g.run( 4, [&]( const SessionGate::Session& ) { ++calls; } ) );
+    CHECK( t, calls == 1 );
+    CHECK( t, g.run( 5, [&]( const SessionGate::Session& s ) {
+        ++calls;
+        seen = s;
+    } ) );
+    CHECK( t, calls == 2 && seen.epoch == 5 );
 }
 
 // Threaded (also run under TSan): the serve side opens and closes 2000
@@ -87,9 +96,9 @@ void test_session_gate_threads( TestRun& t )
                 continue;
             }
             const uint32_t snap = g.epoch();
-            g.run( [&]( const SessionGate::Session& s ) {
+            g.run( snap, [&]( const SessionGate::Session& s ) {
                 encodes.fetch_add( 1 );
-                if ( !consistent( s ) || s.epoch <= closed_upto.load() || s.epoch < last || s.epoch < snap )
+                if ( !consistent( s ) || s.epoch <= closed_upto.load() || s.epoch < last || s.epoch != snap )
                     bad.fetch_add( 1 );
                 last = s.epoch;
             } );

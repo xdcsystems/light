@@ -105,9 +105,8 @@ Status NetMjpegSource::read_headers()
         }
         if ( h.parse == HttpHead::Parse::Error )
             return h.err;
-        const BufferedSocket::Fill r = sock_.fill( kPollMs );
-        if ( r == BufferedSocket::Fill::Interrupted || r == BufferedSocket::Fill::Data )
-            continue;  // EINTR: transient, not a watchdog expiry
+        if ( sock_.fill_until( kPollMs ) == BufferedSocket::Fill::Data )
+            continue;
         return make_status( Errc::Timeout, "no HTTP response within the watchdog window" );
     }
 }
@@ -198,10 +197,10 @@ NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
             parts_.resync();
             return Read::Desync;
         }
-        const BufferedSocket::Fill r = sock_.fill( kPollMs );
-        if ( r == BufferedSocket::Fill::Interrupted || r == BufferedSocket::Fill::Data )
-            continue;  // EINTR: transient, not a watchdog expiry
-        parts_.resync();  // the watchdog, EOF / error, or a wedged-full window
+        const BufferedSocket::Fill r = sock_.fill_until( kPollMs );
+        if ( r == BufferedSocket::Fill::Data )
+            continue;
+        parts_.resync();  // cancelled, watchdog, EOF / error, or a wedged-full window
         return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
     }
 }

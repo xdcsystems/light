@@ -68,6 +68,11 @@ NetPreview::~NetPreview()
 {
     quit_.store( true );
     {
+        const std::lock_guard<std::mutex> lk( tcp_mx_ );
+        if ( active_tcp_ != nullptr )
+            active_tcp_->abort_client();
+    }
+    {
         std::lock_guard<std::mutex> lk( mx_ );
         cv_.notify_all();
     }
@@ -81,6 +86,21 @@ NetPreview::~NetPreview()
 void NetPreview::serve() noexcept
 {
     TcpPullServer tcp( port_, 2 * 1024 * 1024, 5 );
+    struct TcpReg
+    {
+        std::mutex& mx;
+        TcpPullServer*& slot;
+        TcpReg( std::mutex& m, TcpPullServer*& s, TcpPullServer& t ) : mx( m ), slot( s )
+        {
+            const std::lock_guard<std::mutex> lk( mx );
+            slot = &t;
+        }
+        ~TcpReg()
+        {
+            const std::lock_guard<std::mutex> lk( mx );
+            slot = nullptr;
+        }
+    } tcp_reg( tcp_mx_, active_tcp_, tcp );
     // The bind retries until it succeeds or quit ends the thread; the run
     // keeps going without a viewer and error_ is not set -- a bind failure
     // is not a session failure (README, Run).

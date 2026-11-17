@@ -70,6 +70,17 @@ public:
         return true;
     }
 
+    // Epoch-checked run: drops frames composed under a stale session epoch.
+    template <class F>
+    bool run( uint32_t expected_epoch, F&& f )
+    {
+        std::lock_guard<std::mutex> lk( mx_ );
+        if ( !active_.load() || session_.epoch != expected_epoch )
+            return false;
+        std::forward<F>( f )( static_cast<const Session&>( session_ ) );
+        return true;
+    }
+
 private:
     std::mutex mx_;
     Session session_ {};

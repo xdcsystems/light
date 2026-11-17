@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -51,14 +52,16 @@ public:
     {
         if ( set_.size() <= 0 || th_.joinable() )
             return;
+        stop_req_.store( false, std::memory_order_release );
+        set_.set_prober_quit( &stop_req_ );
         th_ = std::thread( [this] { loop(); } );
     }
 
-    // Wakes the prober and joins it. Returns at once between rounds; during a
-    // round it waits for the attach in progress (a net connect: up to 5 s).
+    // Wakes the prober (and aborts any in-flight connect/read) and joins it.
     // Idempotent; any thread but the prober's.
     void stop()
     {
+        stop_req_.store( true, std::memory_order_release );
         {
             const std::lock_guard<std::mutex> lk( mu_ );
             quit_ = true;
@@ -119,6 +122,7 @@ private:
 
     std::mutex mu_;  // guards quit_; cv_ wakes the wait between rounds
     std::condition_variable cv_;
+    std::atomic<bool> stop_req_ { false };
     bool quit_ = false;
     std::thread th_;
 };
