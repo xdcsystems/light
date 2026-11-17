@@ -71,6 +71,36 @@ namespace
         trk.update( one( person( 600, 400, 100, 200 ) ), 3080000, out );
         CHECK( t, out.n == 1 && out.d[0].state == TRACK_TENT );
     }
+
+    // P2-9: Round-2 clipped box bottom-anchoring without size mutation + gentle downward hp decay.
+    void check_p2_9( TestRun& t )
+    {
+        {
+            Tracker trk;
+            TrajList out;
+            int64_t ts = stand( trk, out, 5, 0 );  // cx=500, cy=400, w=100, h=200 (feet at y=500)
+            // Squeezed upper-clipped box: h=80 -> rh=0.40 (< kSizeMin 0.50 -> round 2 only),
+            // feet stay at y=500 -> cy_det = 460. Expect cy near 400 and bh/bw frozen.
+            trk.update( one( person( 500, 460, 100, 80 ) ), ts, out );
+            CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
+            CHECK_NEAR( t, out.d[0].bh, 200.0f, 1e-2f );
+            CHECK_NEAR( t, out.d[0].bw, 100.0f, 1e-2f );
+            CHECK_NEAR( t, out.d[0].cy, 400.0f, 5.0f );
+        }
+        {
+            Tracker trk;
+            TrajList out;
+            int64_t ts = 0;
+            for ( int i = 0; i < 3; ++i, ts += kFrameUs )
+                trk.update( one( person( 500, 300, 120, 400 ) ), ts, out );
+            for ( int i = 0; i < 5; ++i, ts += kFrameUs )
+                trk.update( one( person( 500, 400, 120, 200 ) ), ts, out );
+            CHECK( t, out.n == 1 && out.d[0].bh > 350.0f );
+            for ( int i = 0; i < 25; ++i, ts += kFrameUs )
+                trk.update( one( person( 500, 400, 120, 200 ) ), ts, out );
+            CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].bh < 250.0f );
+        }
+    }
 }  // namespace
 
 void test_tracker( TestRun& t )
@@ -109,14 +139,14 @@ void test_tracker( TestRun& t )
         trk.update( one( chair ), 0, out );
         CHECK( t, out.n == 0 );
     }
-    // A confirmed track coasts through 4 missed frames and dies on the 5th;
+    // A confirmed track coasts through 6 missed frames (kMaxMiss = 6) and dies on the 7th;
     // the ghost keeps its trail until the points age out (4 s), then the slot is freed.
     {
         Tracker trk;
         TrajList out;
         int64_t ts = stand( trk, out, 5, 0 );
         CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF );
-        for ( int miss = 1; miss <= 4; ++miss, ts += kFrameUs )
+        for ( int miss = 1; miss <= 6; ++miss, ts += kFrameUs )
         {
             trk.update( DetList {}, ts, out );
             CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF );
@@ -231,5 +261,6 @@ void test_tracker( TestRun& t )
         trk.update( one( person( 500, 400, 100, 200 ) ), kFrameUs, out );
         CHECK( t, out.n == 1 && out.d[0].id == 1 );
     }
+    check_p2_9( t );
     check_trail_restart( t );
 }

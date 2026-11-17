@@ -52,7 +52,8 @@ def decode_outputs(outputs, conf_thres=0.25, iou_thres=0.45):
 
 def nms(pred, iou_thres):
     keep = []
-    order = pred[:, 4].argsort()[::-1]
+    # Match C++ YoloDecoder std::stable_sort descending confidence order cleanly.
+    order = np.argsort(-pred[:, 4], kind='stable')
     while order.size:
         i = order[0]
         keep.append(i)

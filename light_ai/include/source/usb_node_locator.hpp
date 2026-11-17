@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <string>
 
 #include "core/log.hpp"
@@ -31,6 +32,18 @@ enum
     kMaxCandidates = 64,         // /dev/videoN candidates per scan
     kScanLogThrottleMs = 30000,  // "scanning /dev/video*" at most every 30 s
 };
+
+// Pure V4L2 capability check: when V4L2_CAP_DEVICE_CAPS (0x80000000) is set,
+// per-node capabilities live in device_caps rather than card-wide capabilities
+// (rejects metadata nodes such as /dev/video21 early before S_FMT).
+inline bool usb_cap_capture_streaming( uint32_t capabilities, uint32_t device_caps ) noexcept
+{
+    constexpr uint32_t video_capture = 0x00000001u;
+    constexpr uint32_t streaming = 0x04000000u;
+    constexpr uint32_t dev_caps = 0x80000000u;
+    const uint32_t caps = ( capabilities & dev_caps ) != 0u ? device_caps : capabilities;
+    return ( caps & video_capture ) != 0u && ( caps & streaming ) != 0u;
+}
 
 template <class Host>
 class BasicUsbNodeLocator

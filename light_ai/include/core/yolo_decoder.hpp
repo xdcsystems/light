@@ -80,6 +80,7 @@ private:
         float x1, y1, x2, y2;
         float conf;
         int cls;
+        int seq;  // scan index: deterministic tie-break without std::stable_sort heap buffer
     };
     // The letterbox band in model-input pixels.
     struct Band
@@ -106,7 +107,7 @@ private:
     float best_class( const HeadScan& s, size_t off, int& best ) const noexcept;
     void push_candidate( const Box& box ) noexcept;
     void suppress() noexcept;
-    void emit( const YoloFrame& f, const Band& b, DetList& out ) const noexcept;
+    int emit( const YoloFrame& f, const Band& b, DetList& out ) const noexcept;
 
 private:
     float conf_thr_;
