@@ -120,6 +120,10 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
     const LbGeom enc_lb = band_geom( model_w_, model_h_ * 3 / 4, model_w_, model_h_ );
     sink_.init( cfg_.stream, pool_.tensors(), model_w_, model_h_, enc_lb, srcs_.size() );
 
+    global_tracks_.set_sim_thr( cfg_.infer.reid_thr );
+    if ( !cfg_.infer.reid_model.empty() )
+        reid_worker_.emplace( cfg_.infer.reid_model.c_str(), pool_.size(), log_ );
+
     if ( cfg_.cal.frames > 0 && cfg_.cal.dir.empty() )
     {
         std::error_code ec;
@@ -398,9 +402,11 @@ void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int
         band = {};
     }
     LbGeom lg {};
+    const int raw_w = ss.raw_w > 0 ? ss.raw_w : ss.w;
+    const int raw_h = ss.raw_h > 0 ? ss.raw_h : ss.h;
     const Status rga_st =
-            rga_.resize( fd_src, ss.w, ss.h, tn.fd, model_w_, model_h_, ss.aux_fd, ss.w / 2, ss.h / 2, &lg,
-                    ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 );
+            rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd, raw_w / 2, raw_h / 2, &lg,
+                         ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1, ss.rot_deg );
     if ( rga_st.ok() )
     {
         cal_dumper_.maybe( frame_idx, tn.fd, static_cast<const uint8_t*>( tn.data ), tn.size );
@@ -457,22 +463,54 @@ int Pipeline::publish_oldest()
         // non-person drawing below and the --box-log CSV.
         ss.tracker.update( res_.dets, res_.job.ts_us, trajs_ );
 
+        FrameView view {};
+        view.tensor_idx = res_.slot;
+        view.tensor = pool_.tensor( res_.slot );
+        view.lb = res_.job.lb;
+        view.src_idx = res_.job.src_idx;
+        view.src_w = res_.job.src_w;
+        view.src_h = res_.job.src_h;
+        view.ts_us = res_.job.ts_us;
+        if ( reid_worker_ )
+            run_reid_stage( view );
+
         rep_.report( res_.job.frame, dets_, trajs_, res_.job.src_idx, srcs_.size() );
         if ( sink_.enabled() )
-        {
-            FrameView view {};
-            view.tensor_idx = res_.slot;
-            view.tensor = pool_.tensor( res_.slot );
-            view.lb = res_.job.lb;
-            view.src_idx = res_.job.src_idx;
-            view.src_w = res_.job.src_w;
-            view.src_h = res_.job.src_h;
-            view.ts_us = res_.job.ts_us;
             enc_ms = sink_.draw_and_publish( view, dets_, trajs_, ss.tracker );
-        }
     }
 
     res_.job.tr.enc = enc_ms;
     t_.add( res_.job.tr );
     return res_.npu_ok ? 1 : 0;
+}
+
+void Pipeline::run_reid_stage( const FrameView& view ) noexcept
+{
+    ReidResult done {};
+    while ( reid_worker_->poll_result( done ) )
+        global_tracks_.apply_result( done );
+
+    global_tracks_.sync_cam( view.src_idx, trajs_, view.ts_us );
+    if ( !res_.job.rga_ok || view.tensor.fd < 0 )
+        return;
+
+    std::array<ReidCropReq, reid_cfg::kMaxCropsPerFrame> reqs {};
+    const int rw = reid_worker_->input_width();
+    const int rh = reid_worker_->input_height();
+    const int nr = global_tracks_.select_crops( view.src_idx, trajs_, view.lb, view.src_w, view.src_h,
+                                                rw, rh, reqs.data(), reid_cfg::kMaxCropsPerFrame );
+    for ( int i = 0; i < nr; ++i )
+    {
+        const int rslot = reid_worker_->try_acquire_slot();
+        if ( rslot < 0 )
+            break;
+        const TensorRef dst = reid_worker_->input_tensor( rslot );
+        if ( dst.fd < 0 )
+            break;
+        if ( !rga_.crop_resize( view.tensor.fd, model_w_, model_h_, reqs[i].srect, dst.fd, rw, rh ).ok() )
+            continue;
+        const ReidJob job { rslot, view.src_idx, reqs[i].local_id, reqs[i].gen, view.ts_us, reqs[i].clipped, reqs[i].occluded };
+        if ( reid_worker_->submit( job ) )
+            global_tracks_.mark_dispatched( view.src_idx, reqs[i].local_id, reqs[i].gen );
+    }
 }

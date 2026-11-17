@@ -78,6 +78,7 @@ public:
         idx_ = idx;
         kind_ = ep.kind;
         node_ = ep.uri;
+        rot_deg_ = ep.rot_deg;
         model_w_ = model_w;
         model_h_ = model_h;
         
@@ -228,6 +229,18 @@ private:
         return {};
     }
 
+    bool quarter_turn() const noexcept
+    {
+        return rot_deg_ == 90 || rot_deg_ == 270;
+    }
+
+    bool needs_aux( int w, int h ) const noexcept
+    {
+        if ( w > kAuxRatio * model_w_ || h > kAuxRatio * model_h_ )
+            return true;
+        return quarter_turn() && ( h > kAuxRatio * model_w_ || w > kAuxRatio * model_h_ );
+    }
+
     // Decoder (first attach only), geometry guard, aux buffer, letterbox.
     Attach prepare_decode( int w, int h, bool hot, Status& why )
     {
@@ -253,7 +266,7 @@ private:
             dec_w_ = w;
             dec_h_ = h;
         }
-        if ( ( w > kAuxRatio * model_w_ || h > kAuxRatio * model_h_ ) && geom_.aux_fd < 0 )
+        if ( needs_aux( w, h ) && geom_.aux_fd < 0 )
         {
             geom_.aux_fd = dec_.aux_fd( static_cast<size_t>( w / 2 ) * static_cast<size_t>( h / 2 ) * 2 );
             if ( geom_.aux_fd < 0 )
@@ -264,9 +277,13 @@ private:
                 return Attach::AuxFailed;
             }
         }
-        geom_.w = w;
-        geom_.h = h;
-        geom_.lb = band_geom( w, h, model_w_, model_h_ );
+        geom_.raw_w = w;
+        geom_.raw_h = h;
+        geom_.rot_deg = rot_deg_;
+        const bool swap = quarter_turn();
+        geom_.w = swap ? h : w;
+        geom_.h = swap ? w : h;
+        geom_.lb = band_geom( geom_.w, geom_.h, model_w_, model_h_ );
         return Attach::Live;
     }
 
@@ -280,6 +297,7 @@ private:
     SourceKind kind_ = SourceKind::V4L2;
     std::string node_;  // V4L2 node or URL; discovery may adopt another node
     int idx_ = 0;
+    int rot_deg_ = 0;
     int model_w_ = 0;
     int model_h_ = 0;
     SourceGeom geom_ {};

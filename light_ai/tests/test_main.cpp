@@ -61,6 +61,8 @@ int main( int argc, char** argv )
         { "session_gate", &test_session_gate },
         { "session_gate_threads", &test_session_gate_threads },
         { "infer_slot_threads", &test_infer_slot_threads },
+        { "global_track", &test_global_track },
+        { "reid_worker_tsan", &test_reid_worker_tsan },
     };
     return run_suites( "light_ai_tests", suites, argc, argv, std::cout, std::cerr );
 }

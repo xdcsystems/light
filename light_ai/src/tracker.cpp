@@ -295,6 +295,7 @@ void Tracker::init_slot( Track& t, float cx, float cy, float bw, float bh, int64
 {
     t.life = TRACK_TENT;
     t.id = next_id_++;
+    t.gen = next_gen_++;
     t.fx.reset( cx, static_cast<float>( kRMeas ), 900.0f );
     t.fy.reset( cy, static_cast<float>( kRMeas ), 900.0f );
     t.bw = bw;
@@ -349,6 +350,8 @@ TrackState Tracker::state_of( const Track& t ) const
     s.bw = t.bw;
     s.bh = t.bh;
     s.n_pts = t.trail.size();
+    s.gen = t.gen;
+    s.hp = t.hp;
     return s;
 }
 

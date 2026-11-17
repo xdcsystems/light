@@ -40,6 +40,8 @@ struct TrackState
                                 // state may also be TRACK_DEAD: no box, only
                                 // the trail keeps drawing (fading, path history)
     int global_id = 0;          // cross-camera Re-ID id (Stage 6); 0 = use local id
+    uint32_t gen = 0;           // monotonic track slot generation for async Re-ID safety
+    float hp = 0.0f;            // height prior snapshot for Re-ID clipping filter
 
     int display_id() const noexcept { return global_id > 0 ? global_id : id; }
 };

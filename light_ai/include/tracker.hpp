@@ -116,6 +116,7 @@ class Tracker
         int miss = 0;
         TrackLife life = TRACK_FREE;
         int id = 0;
+        uint32_t gen = 0;
         TrailWindow trail;
     };
 
@@ -163,5 +164,6 @@ private:
 private:
     std::array<Track, kMaxTracks> tracks_ {};
     Associator assoc_ {};
-    int next_id_ = 1;
+    int next_id_ = 1;       // monotonic across slot reuse (box colors follow)
+    uint32_t next_gen_ = 1; // monotonic across track init for async Re-ID validation
 };

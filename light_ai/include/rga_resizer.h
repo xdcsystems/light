@@ -30,7 +30,12 @@ public:
     // Ok: *geom receives the band geometry. A failure Status carries the
     // cause (aspect mismatch, no aux for the two-pass path, an im2d error
     // with the raw IM_STATUS in sys()); geom stays untouched then.
-    Status resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux, LbGeom* geom, int src_fmt = 0 );
+    Status resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux,
+                   LbGeom* geom, int src_fmt = 0, int rot_deg = 0 );
+    // Crops RGB888 sub-rect from model tensor -> dst RGB888 Re-ID tensor using per-call RGA2
+    // core selection (RGA3 rejects unaligned RGB888 crop offsets). Enforces 1/8x .. 8x scale bounds.
+    Status crop_resize( int src_fd, int w_src, int h_src, LbGeom crop_roi, int dst_fd, int w_dst, int h_dst,
+                        int aux_fd = -1, int w_aux = 0, int h_aux = 0 ) const noexcept;
 
 private:
     // Pass 1 of the two-pass path: src (src_fmt_rk) into aux (NV12, w_aux x h_aux).

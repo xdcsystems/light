@@ -63,6 +63,8 @@ add_executable(light_ai_tests
     test_idle_plate.cpp
     test_glyph_font.cpp
     test_callout_layout.cpp
+    test_global_track.cpp
+    test_reid_worker_tsan.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
     test_infer_slot_threads.cpp
@@ -83,6 +85,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/multipart_reader.cpp
     ${LIGHT_AI_ROOT}/src/core/yolo_decoder.cpp
     ${LIGHT_AI_ROOT}/src/core/associator.cpp
+    ${LIGHT_AI_ROOT}/src/core/global_track.cpp
     ${LIGHT_AI_ROOT}/src/core/trail_window.cpp
     ${LIGHT_AI_ROOT}/src/source/buffered_socket.cpp
     ${LIGHT_AI_ROOT}/src/source/mjpeg_slot_pool.cpp
@@ -128,7 +131,9 @@ add_executable(light_ai_tests_tsan EXCLUDE_FROM_ALL
     test_source_prober.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
+    test_reid_worker_tsan.cpp
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
+    ${LIGHT_AI_ROOT}/src/core/global_track.cpp
     ${LIGHT_AI_ROOT}/src/core/status.cpp
 )
 target_include_directories(light_ai_tests_tsan PRIVATE
