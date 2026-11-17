@@ -122,11 +122,10 @@ Associator::TrackBoxes Tracker::track_boxes() const
 // cannot promote or confirm a TENT, so weak detector noise stays spawn-only.
 void Tracker::apply_match( Track& t, const Detection& d, int round, int64_t ts_us )
 {
-    // A round-2 det is size-untrusted (merged blob or a squeezed
-    // partial box): feed the position only, the track keeps its own
-    // extent until a round-1 det re-sizes it.
-    measure( t, d.x + d.w * 0.5f, d.y + d.h * 0.5f,
-             round == 0 ? d.w : t.bw, round == 0 ? d.h : t.bh, ts_us );
+    // Round-2 dets (weak match: merged blob or squeezed partial box) pass d.h
+    // for bottom-anchor offset calculation of cy when clipped, without mutating
+    // t.hp, t.bw, or t.bh (trust_size = false).
+    measure( t, d.x + d.w * 0.5f, d.y + d.h * 0.5f, d.w, d.h, round == 0, ts_us );
     if ( round == 0 )
     {
         ++t.hits;
@@ -137,24 +136,20 @@ void Tracker::apply_match( Track& t, const Detection& d, int round, int64_t ts_u
     t.ts_last_match_us = ts_us;
 }
 
-void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, int64_t ts_us ) const
+void Tracker::measure( Track& t, float cx, float cy, float bw, float bh, bool trust_size, int64_t ts_us ) const
 {
-    // Height prior: the detector flips between full-body and partially-cut
-    // boxes; the raw box center then jumps by half the height difference
-    // (hundreds of px) and the KF reads it as a crouch even for a person who
-    // only edged out of view. Re-anchor the center to the box BOTTOM and the
-    // prior height instead: the feet stay put when only the upper part is
-    // clipped. The prior updates only from plausibly full boxes, so a run of
-    // clipped detections never shrinks it. The bh EMA (drawn box size) is
-    // frozen while clipped, so the rendered box does not collapse either.
-    update_height_prior( t, bh );
-    const float cy_meas = anchor_clipped( t, cy, bh );
+    if ( trust_size )
+        update_height_prior( t, bh );
+    const float cy_meas = anchor_clipped( t, cy, bh, trust_size );
     const float r = static_cast<float>( kRMeas );
     const float vmax = static_cast<float>( kVClampPxs );
     t.fx.update( cx, r, vmax );
     t.fy.update( cy_meas, r, vmax );
-    const float a = static_cast<float>( kSizeEma ) / 100.0f;
-    t.bw += ( bw - t.bw ) * a;
+    if ( trust_size )
+    {
+        const float a = static_cast<float>( kSizeEma ) / 100.0f;
+        t.bw += ( bw - t.bw ) * a;
+    }
 
     // Trail push from the median window of the posteriors (TrailWindow).
     t.trail.feed( ts_us, t.fx.x(), t.fy.x() );
@@ -175,9 +170,33 @@ void Tracker::update_height_prior( Track& t, float bh ) const
     const float a = static_cast<float>( kSizeEma ) / 100.0f;
     const float full_r = static_cast<float>( kFullBandPct ) / 100.0f;
     if ( t.hp <= 0.0f )
+    {
         t.hp = bh;
-    else if ( bh >= t.hp * full_r )
+        t.small_streak = 0;
+        t.small_bh = 0.0f;
+        return;
+    }
+    if ( bh >= t.hp * full_r )
+    {
         t.hp += ( bh - t.hp ) * a;
+        t.small_streak = 0;
+        t.small_bh = 0.0f;
+        return;
+    }
+    // Downward adaptation only after kHpDecayStreak mutually consistent smaller
+    // boxes, so transient partial occlusions stay anchored while inflated spawn
+    // priors or steadily receding people relax cleanly.
+    const float tol = static_cast<float>( kHpConsistentPct ) / 100.0f;
+    if ( t.small_streak == 0 || bh < t.small_bh * ( 1.0f - tol ) || bh > t.small_bh * ( 1.0f + tol ) )
+    {
+        t.small_bh = bh;
+        t.small_streak = 1;
+        return;
+    }
+    t.small_bh += ( bh - t.small_bh ) * a;
+    ++t.small_streak;
+    if ( t.small_streak >= kHpDecayStreak )
+        t.hp += ( t.small_bh - t.hp ) * ( static_cast<float>( kHpDecayPct ) / 100.0f );
 }
 
 // Continuous clip anchor: the anchor strength grows with how clipped
@@ -189,13 +208,14 @@ void Tracker::update_height_prior( Track& t, float bh ) const
 // w=1 (fully anchored to bottom + prior height), in between --
 // proportional blend, so no jump can exist at the boundary by design.
 // Returns the measured center y; updates the bh EMA.
-float Tracker::anchor_clipped( Track& t, float cy, float bh ) const
+float Tracker::anchor_clipped( Track& t, float cy, float bh, bool update_bh ) const
 {
     const float a = static_cast<float>( kSizeEma ) / 100.0f;
     const float clip_r = static_cast<float>( kClipRatioPct ) / 100.0f;
     if ( t.hp <= 0.0f )
     {
-        t.bh += ( bh - t.bh ) * a;
+        if ( update_bh )
+            t.bh += ( bh - t.bh ) * a;
         return cy;
     }
     float w = ( 1.0f - bh / t.hp ) / ( 1.0f - clip_r );
@@ -205,12 +225,12 @@ float Tracker::anchor_clipped( Track& t, float cy, float bh ) const
         w = 1.0f;
     // bottom edge stays, lost height restored from the prior
     const float cy_meas = cy + w * ( bh * 0.5f - t.hp * 0.5f );
-    // drawn box size: the clipped fraction is restored from the
-    // prior proportionally to w. w=1 reproduces the old frozen-EMA
-    // behavior (the box keeps the prior height), w<1 blends
-    // smoothly instead of switching the EMA on/off.
-    const float bh_meas = bh + w * ( t.hp - bh );
-    t.bh += ( bh_meas - t.bh ) * a;
+    // drawn box size: restored from the prior proportionally to w when size-trusted.
+    if ( update_bh )
+    {
+        const float bh_meas = bh + w * ( t.hp - bh );
+        t.bh += ( bh_meas - t.bh ) * a;
+    }
     return cy_meas;
 }
 
@@ -284,6 +304,8 @@ void Tracker::init_slot( Track& t, float cx, float cy, float bw, float bh, int64
     // never fires, so hp never relearns (see measure). The trail restarts
     // with the spawn point (TrailWindow::restart resets the median window).
     t.hp = 0.0f;
+    t.small_bh = 0.0f;
+    t.small_streak = 0;
     t.trail.restart( ts_us, cx, cy );
     t.ts_last_us = ts_us;
     t.hits = 1;

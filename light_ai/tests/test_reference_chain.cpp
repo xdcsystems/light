@@ -381,7 +381,7 @@ namespace
     // size on the same center -- size ratio 220 % (above kSizeMax 200, within
     // kSizeMaxWeak 300), IoU 0.21 (below kIoUGate 0.30, above kIoUGateWeak 0.15):
     // only round 2 can match it. Without round 2 the track misses, dies after
-    // kMaxMiss (4) and the blob spawns a new id. Asserts: every blob frame meets the
+    // kMaxMiss (6) and the blob spawns a new id (kFrames covers 12 blob frames > 6). Asserts: every blob frame meets the
     // weak-only conditions, and the track survives under the same id, alone.
     // A blob frame of run_weak against the confirmed track p: the size ratio within the weak band
     // (200..300 %) and the IoU within [kIoUGateWeak, kIoUGate). 1 when it holds, 0 when not.

@@ -40,6 +40,17 @@ namespace
 
 void test_usb_node_locator( TestRun& t )
 {
+    // V4L2 device_caps helper rejects metadata-only nodes when V4L2_CAP_DEVICE_CAPS is set.
+    {
+        constexpr uint32_t cap = 0x00000001u;
+        constexpr uint32_t stream = 0x04000000u;
+        constexpr uint32_t dev_caps = 0x80000000u;
+        constexpr uint32_t meta = 0x00800000u;
+        CHECK( t, usb_cap_capture_streaming( cap | stream | dev_caps, cap | stream ) );
+        CHECK( t, !usb_cap_capture_streaming( cap | stream | dev_caps, meta | stream ) );
+        CHECK( t, usb_cap_capture_streaming( cap | stream, 0u ) );
+        CHECK( t, !usb_cap_capture_streaming( cap, cap | stream ) );
+    }
     // The configured node, present and usable: taken directly, no scan.
     {
         std::ostringstream out;

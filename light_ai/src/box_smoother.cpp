@@ -47,6 +47,8 @@ int BoxSmoother::collect_pairs( const DetList& in )
     for ( int i = 0; i < in.n && i < kMaxDet; ++i )
     {
         const Detection& d = in.d[i];
+        if ( d.cls == 0 )
+            continue;
         for ( int t = 0; t < kTrackCount; ++t )
         {
             const BoxTrack& tr = tracks_[t];
@@ -95,17 +97,20 @@ void BoxSmoother::emit( const DetList& in, const DetTrack& det_trk, DetList& out
     {
         const Detection& d = in.d[i];
         Detection sd = d;
-        if ( i < kMaxDet && det_trk[i] >= 0 )
+        if ( d.cls != 0 )
         {
-            const BoxTrack& t = tracks_[det_trk[i]];
-            sd.x = t.x;
-            sd.y = t.y;
-            sd.w = t.w;
-            sd.h = t.h;
-        }
-        else
-        {
-            spawn( d );
+            if ( i < kMaxDet && det_trk[i] >= 0 )
+            {
+                const BoxTrack& t = tracks_[det_trk[i]];
+                sd.x = t.x;
+                sd.y = t.y;
+                sd.w = t.w;
+                sd.h = t.h;
+            }
+            else
+            {
+                spawn( d );
+            }
         }
         out.push( sd );
     }

@@ -23,14 +23,20 @@ namespace
     // diagnosis is clear.
     bool usb_capture_node( const std::string& path )
     {
+        static_assert( V4L2_CAP_VIDEO_CAPTURE == 0x00000001u, "V4L2_CAP_VIDEO_CAPTURE drift" );
+        static_assert( V4L2_CAP_STREAMING == 0x04000000u, "V4L2_CAP_STREAMING drift" );
+        static_assert( V4L2_CAP_DEVICE_CAPS == 0x80000000u, "V4L2_CAP_DEVICE_CAPS drift" );
         const int fd = ::open( path.c_str(), O_RDONLY | O_CLOEXEC );
         if ( fd < 0 )
             return false;
         v4l2_capability cap {};
-        while ( ::ioctl( fd, VIDIOC_QUERYCAP, &cap ) < 0 && errno == EINTR )
-        {}
+        int qrc = 0;
+        do
+        {
+            qrc = ::ioctl( fd, VIDIOC_QUERYCAP, &cap );
+        } while ( qrc < 0 && errno == EINTR );
         bool ok = false;
-        if ( ( cap.capabilities & V4L2_CAP_VIDEO_CAPTURE ) && ( cap.capabilities & V4L2_CAP_STREAMING ) )
+        if ( qrc == 0 && usb_cap_capture_streaming( cap.capabilities, cap.device_caps ) )
         {
             const char* bus = reinterpret_cast<const char*>( cap.bus_info );
             ok = std::strstr( bus, "usb" ) != nullptr;

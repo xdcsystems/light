@@ -302,6 +302,61 @@ namespace
         CHECK( t, err.str() == "yolo_postprocess: letterbox band x=[0, 64) y=[40, 72) does not fit model 64x64\n" );
     }
 
+    // Edge-clipped person whose center sits slightly in the gray bar (4 px past top) with
+    // visible overlap is recovered and clamped cleanly to the scene edge.
+    void test_edge_tolerance( TestRun& t )
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        YoloDecoder dec( 0.25f, 0.45f, log );
+        Head p5( 2, 2 );
+        // Stride 32, gy=0: cy = (0.75 * 2 - 0.5 + 0) * 32 = 32? Pick ty=0.35 -> cy=(0.7-0.5)*32=6.4,
+        // inside band [16, 48) margin (16-9.6=6.4 vs center off by 9.6 <= pad 16), anchor 2 (h=326 -> bh=32.6).
+        // y1 = 6.4 - 16.3 = -9.9, y2 = 6.4 + 16.3 = 22.7 -> overlaps [16, 48) by 6.7 px!
+        p5.set( 1, 0, 2, 0.5f, 0.35f, 0.25f, 0.158f, 0.8f, 1.0f, 0.0f );
+        const YoloHead heads[1] = { p5.view() };
+        DetList dets;
+        dec.decode( heads, 1, landscape(), dets );
+        CHECK( t, dets.n == 1 );
+        CHECK_NEAR( t, dets.d[0].y, 0.0f, 1e-3f );
+        CHECK( t, dets.d[0].h > 10.0f );
+        CHECK( t, err.str().empty() );
+    }
+
+    // Equal-confidence candidates preserve scan order (stable_sort) and DetList::cap overflow warns once.
+    void test_det_cap_overflow( TestRun& t )
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        YoloDecoder dec( 0.25f, 0.45f, log );
+        Head p3( 32, 8 );  // 256 cells -> 256 non-overlapping candidates (cell spacing 8 > box size 4)
+        for ( int gy = 0; gy < 8; ++gy )
+            for ( int gx = 0; gx < 32; ++gx )
+                p3.set( gx, gy, 0, 0.5f, 0.5f, 0.25f, 0.25f, 0.8f, 1.0f, 0.0f );
+        YoloFrame f;
+        f.cam_w = 256.0f;
+        f.cam_h = 64.0f;
+        f.model_w = 256.0f;
+        f.model_h = 64.0f;
+        f.lb = LbGeom { 0, 256, 0, 64 };
+        const YoloHead heads[1] = { p3.view() };
+        DetList dets;
+        dec.decode( heads, 1, f, dets );
+        CHECK( t, dets.n == DetList::cap );
+        bool scan_order = true;
+        for ( int k = 1; k < dets.n; ++k )
+        {
+            const Detection& prev = dets.d[k - 1];
+            const Detection& cur = dets.d[k];
+            if ( cur.y < prev.y || ( cur.y == prev.y && cur.x <= prev.x ) )
+                scan_order = false;
+        }
+        CHECK( t, scan_order );
+        CHECK( t, err.str() == "yolo: det cap 128 reached, 128 detections dropped\n" );
+    }
+
     // More candidates than kMaxCand: the overflow is counted and reported once.
     // A 1024 x 128 model, stride 8: 128 x 16 cells x 3 anchors = 6144 candidates.
     void test_cap( TestRun& t )
@@ -325,7 +380,8 @@ namespace
         DetList dets;
         dec.decode( heads, 1, f, dets );
         CHECK( t, dets.n == DetList::cap );
-        CHECK( t, err.str() == "yolo: candidate cap 4096 reached, 2048 candidates dropped (raise --conf)\n" );
+        CHECK( t, err.str().find( "yolo: candidate cap 4096 reached, 2048 candidates dropped (raise --conf)\n" ) == 0 );
+        CHECK( t, err.str().find( "yolo: det cap 128 reached," ) != std::string::npos );
     }
 }  // namespace
 
@@ -337,5 +393,7 @@ void test_yolo_decoder( TestRun& t )
     test_head_order( t );
     test_bad_heads( t );
     test_band_misfit( t );
+    test_edge_tolerance( t );
+    test_det_cap_overflow( t );
     test_cap( t );
 }

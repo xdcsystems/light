@@ -25,6 +25,21 @@ namespace
             { { 30, 61 }, { 62, 45 }, { 59, 119 } },
             { { 116, 90 }, { 156, 198 }, { 373, 326 } },
     };
+
+    // Accepts detections whose center sits slightly past the letterbox boundary
+    // (half-visible people exiting/entering frame edges) as long as the box overlaps
+    // the visible band by >= 2 model pixels per axis.
+    bool box_overlaps_band( float cx, float cy, float bw_px, float bh_px, int stride,
+                            float left, float top, float bw, float bh ) noexcept
+    {
+        const float pad_x = std::min( 16.0f, std::max( static_cast<float>( stride ) * 0.5f, bw_px * 0.25f ) );
+        const float pad_y = std::min( 16.0f, std::max( static_cast<float>( stride ) * 0.5f, bh_px * 0.25f ) );
+        if ( cy < top - pad_y || cy >= top + bh + pad_y || cx < left - pad_x || cx >= left + bw + pad_x )
+            return false;
+        const float vx = std::min( cx + bw_px * 0.5f, left + bw ) - std::max( cx - bw_px * 0.5f, left );
+        const float vy = std::min( cy + bh_px * 0.5f, top + bh ) - std::max( cy - bh_px * 0.5f, top );
+        return vx >= 2.0f && vy >= 2.0f;
+    }
 }  // namespace
 
 YoloDecoder::YoloDecoder( float conf_thr, float iou_thr, const Log& log )
@@ -64,7 +79,9 @@ void YoloDecoder::decode( const YoloHead* heads, int n_heads, const YoloFrame& f
         log_.warn() << "yolo: candidate cap " << kMaxCand << " reached, " << dropped_ << " candidates dropped (raise --conf)\n";
 
     suppress();
-    emit( f, b, out );
+    const int dropped_out = emit( f, b, out );
+    if ( dropped_out > 0 )
+        log_.warn() << "yolo: det cap " << DetList::cap << " reached, " << dropped_out << " detections dropped\n";
 }
 
 // Letterbox geometry must fit the model input: the band is rows
@@ -189,10 +206,10 @@ bool YoloDecoder::decode_anchor( const HeadScan& s, size_t off, int k, int gx, i
     if ( !std::isfinite( cx ) || !std::isfinite( cy ) || !std::isfinite( bw_px ) || !std::isfinite( bh_px ) )
         return false;
 
-    if ( cy < b.top || cy >= b.top + b.h || cx < b.left || cx >= b.left + b.w )
+    if ( !box_overlaps_band( cx, cy, bw_px, bh_px, stride, b.left, b.top, b.w, b.h ) )
         return false;  // bar
 
-    out = { cx - bw_px / 2, cy - bh_px / 2, cx + bw_px / 2, cy + bh_px / 2, conf, best - 5 };
+    out = { cx - bw_px * 0.5f, cy - bh_px * 0.5f, cx + bw_px * 0.5f, cy + bh_px * 0.5f, conf, best - 5, 0 };
     return true;
 }
 
@@ -215,9 +232,16 @@ float YoloDecoder::best_class( const HeadScan& s, size_t off, int& best ) const 
 void YoloDecoder::push_candidate( const Box& box ) noexcept
 {
     if ( nc_ < kMaxCand )
-        cand_[nc_++] = box;
+    {
+        Box& dst = cand_[nc_];
+        dst = box;
+        dst.seq = nc_;
+        ++nc_;
+    }
     else
+    {
         ++dropped_;  // cap hit: reported once per frame in decode()
+    }
 }
 
 // Stage 2/2, part 1: class-aware greedy NMS over the candidates (standard
@@ -225,7 +249,7 @@ void YoloDecoder::push_candidate( const Box& box ) noexcept
 void YoloDecoder::suppress() noexcept
 {
     std::sort( cand_.begin(), cand_.begin() + nc_, []( const Box& a, const Box& b ) {
-        return a.conf > b.conf;
+        return a.conf != b.conf ? a.conf > b.conf : a.seq < b.seq;
     } );
     std::fill_n( sup_.begin(), nc_, uint8_t { 0 } );
     for ( int i = 0; i < nc_; ++i )
@@ -246,7 +270,7 @@ void YoloDecoder::suppress() noexcept
 
 // Stage 2/2, part 2: the survivors, in confidence order, back to camera
 // pixels and into the preallocated detector list.
-void YoloDecoder::emit( const YoloFrame& f, const Band& b, DetList& out ) const noexcept
+int YoloDecoder::emit( const YoloFrame& f, const Band& b, DetList& out ) const noexcept
 {
     // Axial mapping: scene = (det - band origin) * cam / band size.
     // Landscape: the band fills the tensor width (lb_left = 0, lb_w = model_w)
@@ -255,6 +279,7 @@ void YoloDecoder::emit( const YoloFrame& f, const Band& b, DetList& out ) const 
     // separately (both are cam/lb for a uniform fit).
     const float sx = f.cam_w / b.w;
     const float sy = f.cam_h / b.h;
+    int dropped = 0;
     for ( int i = 0; i < nc_; ++i )
     {
         if ( sup_[i] )
@@ -282,6 +307,8 @@ void YoloDecoder::emit( const YoloFrame& f, const Band& b, DetList& out ) const 
         // geometry. Skip it before any consumer sees it.
         if ( d.w <= 0.0f || d.h <= 0.0f )
             continue;
-        out.push( d );
+        if ( !out.push( d ) )
+            ++dropped;
     }
+    return dropped;
 }
