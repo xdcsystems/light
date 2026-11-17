@@ -12,7 +12,7 @@ namespace
     constexpr int kMarginPx = 2;
     constexpr int kPadX = 4;
     constexpr int kPadY = 3;
-    constexpr int kPillH = glyph_font::kGlyphH + 2 * kPadY;  // 14 px
+    constexpr int kPillH = CalloutItem::kGlyphH + 2 * kPadY;  // 22 px at 2x scale
     constexpr int kMaxTracks = TrajList::cap;
 
     struct TrackCand
@@ -127,17 +127,19 @@ namespace
     {
         const CalloutRect& b = all_boxes[self_idx].box;
         const int cx = ( b.x0 + b.x1 - pw ) / 2;
+        const int row2_off = 10 + ph;
+        const int side2_off = ph + 2;
         const int proposals[14][2] = {
             { b.x0, b.y0 - 10 - ph },
             { cx, b.y0 - 10 - ph },
             { b.x1 - pw, b.y0 - 10 - ph },
-            { b.x0, b.y0 - 24 - ph },
-            { cx, b.y0 - 24 - ph },
-            { b.x1 - pw, b.y0 - 24 - ph },
+            { b.x0, b.y0 - row2_off - ph },
+            { cx, b.y0 - row2_off - ph },
+            { b.x1 - pw, b.y0 - row2_off - ph },
             { b.x1 + 8, b.y0 },
             { b.x0 - 8 - pw, b.y0 },
-            { b.x1 + 8, b.y0 + 16 },
-            { b.x0 - 8 - pw, b.y0 + 16 },
+            { b.x1 + 8, b.y0 + side2_off },
+            { b.x0 - 8 - pw, b.y0 + side2_off },
             { b.x0, b.y1 + 8 },
             { cx, b.y1 + 8 },
             { b.x1 - pw, b.y1 + 8 },
@@ -265,7 +267,7 @@ namespace
         item.box = cands[i].box;
         item.text_bytes = glyph_font::format_person( item.text, glyph_font::kLabelCap, disp_id, cfg.lang_ru );
         const int ng = glyph_font::text_len( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
-        const int pw = ng * glyph_font::kGlyphW + 2 * kPadX;
+        const int pw = ng * CalloutItem::kGlyphW + 2 * kPadX;
         // Guard before std::clamp: degenerate narrow crops must never trigger lo > hi UB.
         if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < kPillH )
             return;

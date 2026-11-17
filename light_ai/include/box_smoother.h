@@ -4,11 +4,12 @@
 #include <fstream>
 #include <string>
 
+#include "core/box_envelope.hpp"
 #include "core/box_math.hpp"
 #include "core/detection.hpp"  // Detection, DetList
 #include "core/log.hpp"
 
-// EMA smoothing of non-person (cls != 0) detection boxes. Persons (cls == 0) pass
+// Interval-envelope + EMA smoothing of non-person (cls != 0) detection boxes. Persons (cls == 0) pass
 // through unsmoothed without consuming track slots, since BoxMapper draws persons
 // solely from Tracker while Tracker consumes raw detections directly.
 // Global greedy IoU matching: pairs sorted by IoU, best-first;
@@ -23,6 +24,7 @@ class BoxSmoother
     struct BoxTrack
     {
         float x = 0, y = 0, w = 0, h = 0;
+        BoxEnvelope env {};
         int cls = -1;
         int miss = 0;
         bool alive = false;

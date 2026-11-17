@@ -129,4 +129,50 @@ void test_box_smoother( TestRun& t )
         sm.log_frame( 0, one( det( 1, 1, 1, 1, 0 ) ), out );  // no CSV open: a no-op
         CHECK( t, lout.str().empty() );
     }
+    // Stationary jittering box calibrates [lo, hi] over window, locks onto mean (0 px delta),
+    // and breaks out immediately when detections move outside the bounds.
+    {
+        BoxSmoother sm;
+        DetList out;
+        const float dx[8] = { -2.0f, 3.0f, -1.0f, 2.0f, -3.0f, 1.0f, 2.0f, -2.0f };
+        for ( const float off : dx )
+            sm.update( one( det( 200.0f + off, 150.0f - off, 80.0f, 120.0f, 56 ) ), out );
+        CHECK( t, out.n == 1 );
+        const float locked_x = out.d[0].x;
+        const float locked_y = out.d[0].y;
+        CHECK_NEAR( t, locked_x, 200.0f, 1e-4f );
+        CHECK_NEAR( t, locked_y, 150.0f, 1e-4f );
+
+        // Subsequent jitter inside [lo - pad, hi + pad] holds the locked mean identically.
+        sm.update( one( det( 203.0f, 148.0f, 80.0f, 120.0f, 56 ) ), out );
+        CHECK_NEAR( t, out.d[0].x, locked_x, 1e-6f );
+        CHECK_NEAR( t, out.d[0].y, locked_y, 1e-6f );
+        sm.update( one( det( 197.0f, 152.0f, 80.0f, 120.0f, 56 ) ), out );
+        CHECK_NEAR( t, out.d[0].x, locked_x, 1e-6f );
+        CHECK_NEAR( t, out.d[0].y, locked_y, 1e-6f );
+
+        // Moving outside bounds unlocks right away without lag.
+        sm.update( one( det( 230.0f, 150.0f, 80.0f, 120.0f, 56 ) ), out );
+        CHECK( t, out.d[0].x > 210.0f );
+
+        // Steady frames at the new position re-lock cleanly on the new center.
+        for ( int k = 0; k < BoxEnvelope::kWindowFrames; ++k )
+            sm.update( one( det( 230.0f + ( k & 1 ? 1.0f : -1.0f ), 150.0f, 80.0f, 120.0f, 56 ) ), out );
+        const float relocked_x = out.d[0].x;
+        sm.update( one( det( 231.0f, 150.0f, 80.0f, 120.0f, 56 ) ), out );
+        CHECK_NEAR( t, out.d[0].x, relocked_x, 1e-6f );
+    }
+    // Continuously moving box exceeds stationary span and never freezes.
+    {
+        BoxSmoother sm;
+        DetList out;
+        float prev_x = 0.0f;
+        for ( int k = 0; k < 12; ++k )
+        {
+            sm.update( one( det( 50.0f + static_cast<float>( k ) * 20.0f, 100.0f, 60.0f, 90.0f, 56 ) ), out );
+            if ( k > 0 )
+                CHECK( t, out.d[0].x > prev_x );
+            prev_x = out.d[0].x;
+        }
+    }
 }

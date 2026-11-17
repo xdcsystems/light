@@ -77,10 +77,11 @@ void BoxSmoother::apply_matches( const DetList& in, int na )
         const Pair& pr = pairs_[p];
         BoxTrack& t = tracks_[pr.trk];
         const Detection& d = in.d[pr.det];
-        t.x = kAlpha * t.x + ( 1.0f - kAlpha ) * d.x;
-        t.y = kAlpha * t.y + ( 1.0f - kAlpha ) * d.y;
-        t.w = kAlpha * t.w + ( 1.0f - kAlpha ) * d.w;
-        t.h = kAlpha * t.h + ( 1.0f - kAlpha ) * d.h;
+        t.env.step( d.x, d.y, d.x + d.w, d.y + d.h, kAlpha );
+        t.x = t.env.x();
+        t.y = t.env.y();
+        t.w = t.env.w();
+        t.h = t.env.h();
         t.miss = 0;
         t.matched = true;
     }
@@ -129,6 +130,7 @@ void BoxSmoother::spawn( const Detection& d )
     {
         if ( t.alive )
             continue;
+        t.env.reset( d.x, d.y, d.x + d.w, d.y + d.h );
         t.x = d.x;
         t.y = d.y;
         t.w = d.w;

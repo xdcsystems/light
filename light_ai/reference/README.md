@@ -45,9 +45,9 @@ SOF 1280x960) and `ffprobe -v error -count_packets -show_entries stream=nb_read_
 ## The reference run
 | | |
 |---|---|
-| CSV | `reference/ref_evening.csv`, 279560 bytes, 1063 frame blocks |
-| CSV sha256 | `f86d3d7873959289019994ae490eca19cd2f5b3b9aa5a5385f31f60b6fce7bc7` |
-| commit | `feat/stage4-accuracy-tracking` (Stage 4: `YoloDecoder` edge tolerance + `stable_sort` NMS, `BoxSmoother` skipping `cls == 0`) |
+| CSV | `reference/ref_evening.csv`, 279854 bytes, 1063 frame blocks |
+| CSV sha256 | `cfdf2be38b35bfd5b919c39ae25a7cbe9f919696cbca6893a4ddb81c6458e2c4` |
+| commit | `feat/callout-2x-box-stabilize` (`BoxSmoother` interval-envelope `BoxEnvelope` stabilizer; `raw` lines unchanged vs Stage 4) |
 | model | `misc/yolov5s_relu_int8_mmse_v5.rknn` (the working model, the default `--model`) |
 | model sha256 | `8fe20029429248ce07556c28820a46b7d342445bd6b2eb9a47e6fd089861b085` |
 | thresholds | `--conf 0.25 --iou 0.45` (the defaults) |

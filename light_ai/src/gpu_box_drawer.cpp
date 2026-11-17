@@ -154,9 +154,9 @@ namespace
             glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
             const float fx = static_cast<float>( gx );
             const float fy = static_cast<float>( c.text_y );
-            emit_quad( qt, fx, fy, fx + static_cast<float>( glyph_font::kGlyphW ),
-                       fy + static_cast<float>( glyph_font::kGlyphH ), u0, v0, u1, v1, 255, 255, 255, 255 );
-            gx += glyph_font::kGlyphW;
+            emit_quad( qt, fx, fy, fx + static_cast<float>( CalloutItem::kGlyphW ),
+                       fy + static_cast<float>( CalloutItem::kGlyphH ), u0, v0, u1, v1, 255, 255, 255, 255 );
+            gx += CalloutItem::kGlyphW;
         }
     }
 

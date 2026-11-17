@@ -42,6 +42,8 @@ void test_callout_layout( TestRun& t )
         CHECK( t, out.n == 1 );
         CHECK( t, std::string( out.d[0].text ) == "person 99" );
         CHECK( t, inside_even( out.d[0].pill, lb ) );
+        CHECK( t, out.d[0].pill.y1 - out.d[0].pill.y0 >= CalloutItem::kGlyphH );
+        CHECK( t, out.d[0].pill.x1 - out.d[0].pill.x0 >= 9 * CalloutItem::kGlyphW );
     }
 
     // 2. Russian label + up to 8 clustered people -> all pills stay inside band and non-overlapping.
