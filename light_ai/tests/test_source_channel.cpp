@@ -196,10 +196,25 @@ void test_source_channel( TestRun& t )
         CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Frame );
         CHECK( t, r.ch.decode( f, &err ) == -1 && err.code() == Errc::Lost );
 
-        // NoMemory triggers Lost immediately.
+        // NoMemory triggers Lost immediately and resets dec_ready_ for clean re-init.
         r.dec.decode_rc = 2;
         err = {};
         CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Frame );
         CHECK( t, r.ch.decode( f, &err ) == -1 && err.code() == Errc::Lost );
+        r.ch.detach();
+        r.dec.decode_rc = 0;
+        CHECK( t, r.attach( true ) == Attach::Live && r.dec.inits == 2 );
+    }
+    // Stride forwarding and even-aligned aux_fd sizing.
+    {
+        Rig r( SourceKind::V4L2, 64 );
+        r.dev.w = 854;
+        r.dev.h = 480;
+        r.dec.hor_stride = 864;
+        r.dec.ver_stride = 480;
+        CHECK( t, r.attach( false ) == Attach::Live );
+        CHECK( t, r.ch.hor_stride() == 864 && r.ch.ver_stride() == 480 );
+        // 854 / 2 = 427 -> aligned up to 428; 480 / 2 = 240 -> 428 * 240 * 2 = 205440.
+        CHECK( t, r.dec.last_aux_bytes == static_cast<size_t>( 428 ) * 240 * 2 );
     }
 }

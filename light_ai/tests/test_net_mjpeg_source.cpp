@@ -261,6 +261,92 @@ namespace
         }
     }
 
+    // Builds a valid JPEG > 256 KiB by inserting COM (FF FE) segments right after SOI (FF D8).
+    Bytes make_large_jpeg( const Bytes& base, size_t min_bytes, uint8_t fill )
+    {
+        Bytes out;
+        out.reserve( min_bytes + base.size() + 64 );
+        out.push_back( base[0] );
+        out.push_back( base[1] );
+        size_t added = 0;
+        while ( out.size() + base.size() - 2 < min_bytes )
+        {
+            const size_t payload = 60000;
+            const uint16_t seg_len = static_cast<uint16_t>( payload + 2 );
+            out.push_back( 0xFF );
+            out.push_back( 0xFE );
+            out.push_back( static_cast<uint8_t>( seg_len >> 8 ) );
+            out.push_back( static_cast<uint8_t>( seg_len & 0xFF ) );
+            out.insert( out.end(), payload, static_cast<uint8_t>( fill + ( added & 0x0F ) ) );
+            added += payload;
+        }
+        out.insert( out.end(), base.begin() + 2, base.end() );
+        return out;
+    }
+
+    int poll_nonblocking_frame( Rig& r, int timeout_ms, int& err, Bytes& f )
+    {
+        int idx = -1;
+        for ( int i = 0; i < 40; ++i )
+        {
+            idx = r.dequeue( timeout_ms, err, f );
+            if ( idx >= 0 || err != EAGAIN )
+                break;
+            std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
+        }
+        return idx;
+    }
+
+    void large_jpeg_nonblocking( TestRun& t, const Bytes& a )
+    {
+        const Bytes big1 = make_large_jpeg( a, 380 * 1024, 0x31 );
+        const Bytes big2 = make_large_jpeg( variant( a, 0x55 ), 520 * 1024, 0x62 );
+        CHECK( t, big1.size() > 350 * 1024 && big2.size() > 500 * 1024 );
+
+        // 1) With Content-Length: non-blocking dequeue (timeout_ms >= 0) and start() drain.
+        {
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a, big1 }, false ), why ) == 0 );
+            r.src.start();
+            int err = -1;
+            Bytes f;
+            int idx = r.dequeue( 0, err, f );
+            CHECK( t, idx == 0 && err == 0 && f == big1 );
+            r.src.requeue( idx );
+
+            const std::string stream2 = parts( { big2 }, true );
+            std::thread writer( [&r, &stream2] { r.send( stream2 ); } );
+            idx = poll_nonblocking_frame( r, 5, err, f );
+            writer.join();
+            CHECK( t, idx >= 0 && err == 0 && f == big2 );
+            r.src.requeue( idx );
+        }
+
+        // 2) Without Content-Length (boundary-scan mode) in non-blocking mode.
+        {
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            r.src.start();
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( 0, err, f ) );
+
+            const std::string no_cl = "\r\n" + str( mjpeg_test::make_stream( "--frame", { big1, big2 }, false, "\r\n", false ) )
+                                      + "\r\n--frame\r\n";
+            std::thread writer( [&r, &no_cl] { r.send( no_cl ); } );
+            int idx = poll_nonblocking_frame( r, 0, err, f );
+            CHECK( t, idx >= 0 && err == 0 && f == big1 );
+            r.src.requeue( idx );
+
+            idx = poll_nonblocking_frame( r, 5, err, f );
+            writer.join();
+            CHECK( t, idx >= 0 && err == 0 && f == big2 );
+            r.src.requeue( idx );
+        }
+    }
+
     void cancel_stops_blocking_read( TestRun& t, const Bytes& a )
     {
         Rig r;
@@ -296,6 +382,7 @@ void test_net_mjpeg_source( TestRun& t )
     connect_and_frames( t, a );
     corrupt_streak( t, a );
     desync_recovers( t, a );
+    large_jpeg_nonblocking( t, a );
     refused( t, a, wide );
     cancel_stops_blocking_read( t, a );
 }

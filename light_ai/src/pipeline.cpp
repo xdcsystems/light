@@ -341,8 +341,8 @@ Status Pipeline::handle_source_failure( const EncodedFrame& f )
     if ( !recoverable )
         return f.st;
     // M4: frames from the dead stream are never published - drop the
-    // pending slots (their infer may still be in flight; the pool waits
-    // for it, then frees without publishing). A no-op with one engine:
+    // pending slots immediately (any in-flight infer is abandoned and freed
+    // by its worker upon completion). A no-op with one engine:
     // its single frame was published before the next dequeue.
     pool_.discard( f.src );
     ++reconnects_;
@@ -418,7 +418,8 @@ bool Pipeline::submit_orient_probe( int src, int fd_src, int rot, int job_idx, i
     LbGeom lg {};
     const int yuv_fmt = ( ch.out_fmt() == MPP_FMT_YUV420SP ) ? 0 : 1;
     const Status rga_st = rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd,
-                                       raw_w / 2, raw_h / 2, &lg, yuv_fmt, rot );
+                                       ( ( raw_w / 2 ) + 1 ) & ~1, ( ( raw_h / 2 ) + 1 ) & ~1,
+                                       &lg, yuv_fmt, rot, ch.hor_stride(), ch.ver_stride() );
     if ( rga_st.ok() )
         tensor_band_[static_cast<size_t>( slot )] = elb;
     InferJob job { src, ew, eh, job_idx, -1, rga_st.ok(), elb, {} };
@@ -524,8 +525,9 @@ void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int
     const TensorRef tn = pool_.tensor( slot );
     LbGeom lg {};
     const Status rga_st =
-            rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd, raw_w / 2, raw_h / 2, &lg,
-                         ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1, rot );
+            rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd,
+                         ( ( raw_w / 2 ) + 1 ) & ~1, ( ( raw_h / 2 ) + 1 ) & ~1, &lg,
+                         ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1, rot, ch.hor_stride(), ch.ver_stride() );
     if ( rga_st.ok() )
     {
         cal_dumper_.maybe( frame_idx, tn.fd, static_cast<const uint8_t*>( tn.data ), tn.size );

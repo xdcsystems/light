@@ -1,5 +1,5 @@
 #include <chrono>
-#include <cstring>
+#include <cstddef>
 #include <stdexcept>
 
 extern "C"
@@ -40,10 +40,24 @@ namespace
                    std::chrono::steady_clock::now().time_since_epoch() )
             .count();
     }
+
+    size_t frame_byte_size( int h, int stride ) noexcept
+    {
+        if ( h <= 0 || stride <= 0 )
+            return 0;
+        return static_cast<size_t>( stride ) * static_cast<size_t>( h );
+    }
 }  // namespace
 
 NetPreview::NetPreview( int w, int h, int stride, int fps, int port, const Log& log )
-  : log_( log ), w_( w ), h_( h ), stride_( stride ), fps_( fps > 0 ? fps : 25 ), pace_fps_( fps > 0 ? fps : 0 ), port_( port )
+  : log_( log )
+  , w_( w )
+  , h_( h )
+  , fps_( fps > 0 ? fps : 25 )
+  , pace_fps_( fps > 0 ? fps : 0 )
+  , port_( port )
+  , ring_( frame_byte_size( h, stride ) )
+  , send_buf_( frame_byte_size( h, stride ) )
 {
     avformat_network_init();
     pkt_ = av_packet_alloc();
@@ -72,10 +86,7 @@ NetPreview::~NetPreview()
         if ( active_tcp_ != nullptr )
             active_tcp_->abort_client();
     }
-    {
-        std::lock_guard<std::mutex> lk( mx_ );
-        cv_.notify_all();
-    }
+    ring_.stop();
     if ( thread_.joinable() )
         thread_.join();
     if ( pkt_ )
@@ -102,16 +113,13 @@ void NetPreview::serve() noexcept
         }
     } tcp_reg( tcp_mx_, active_tcp_, tcp );
     // The bind retries until it succeeds or quit ends the thread; the run
-    // keeps going without a viewer and error_ is not set -- a bind failure
-    // is not a session failure (README, Run).
+    // keeps going without a viewer.
     if ( Status st = retry_listen( [&] { return tcp.listen(); }, quit_, log_, "net", port_ ); !st.ok() )
         return;
     log_.info() << "net: listening on tcp port " << port_ << " (viewer: ffplay tcp://<board-ip>:" << port_ << ")\n";
 
     while ( !quit_.load() )
     {
-        error_.store( false );
-
         if ( Status ast = tcp.accept_client( quit_ ); !ast.ok() )
             continue;
 
@@ -122,16 +130,13 @@ void NetPreview::serve() noexcept
             log_.error() << "net: " << ost << '\n';
             continue;
         }
-        go_live( s.fc, st );
-        wait_session_end();
-        close_session( s.fc );
+        const uint64_t frame_step = compute_frame_step( st );
+        go_live();
+        const bool write_err = drain_session( s.fc, st, frame_step );
+        close_session( s.fc, write_err );
     }
 }
 
-// The muxer of one viewer: a NUT context over the client socket, one raw
-// RGB24 stream, the header written. The steps return their Status; the
-// caller logs it ("net: <st>"), serve()'s guard frees fc and closes the
-// client.
 Status NetPreview::open_session( TcpPullServer& tcp, AVFormatContext*& fc, AVStream*& st )
 {
     if ( const int r = avformat_alloc_output_context2( &fc, nullptr, "nut", nullptr ); r < 0 || !fc )
@@ -157,9 +162,7 @@ Status NetPreview::open_session( TcpPullServer& tcp, AVFormatContext*& fc, AVStr
     return {};
 }
 
-// The pts step in the time base the muxer chose, then the session goes
-// public: publish() writes from the next pipeline frame on.
-void NetPreview::go_live( AVFormatContext* fc, AVStream* st )
+uint64_t NetPreview::compute_frame_step( const AVStream* st ) const noexcept
 {
     const AVRational tb = st->time_base;
     int64_t step = av_rescale_q( 1, AVRational { 1, fps_ }, tb );
@@ -167,38 +170,53 @@ void NetPreview::go_live( AVFormatContext* fc, AVStream* st )
         step = 1;
     log_.info() << "net: stream time_base " << tb.num << '/' << tb.den << ", pts step " << step << "\n";
     log_.info() << "net: viewer connected, streaming " << w_ << 'x' << h_ << " rgb24 (nut) on port " << port_ << '\n';
+    return static_cast<uint64_t>( step );
+}
 
-    {
-        std::lock_guard<std::mutex> lk( mx_ );
-        fc_ = fc;
-        stream_ = st;
-        frame_step_ = static_cast<uint64_t>( step );
-        pts_ = 0;
-        next_send_us_.store( 0, std::memory_order_relaxed );
-    }
+void NetPreview::go_live() noexcept
+{
+    next_send_us_.store( 0, std::memory_order_relaxed );
+    ring_.open();
     connected_.store( true, std::memory_order_release );
 }
 
-// Until the destructor sets quit_ or publish() a write error.
-void NetPreview::wait_session_end()
+bool NetPreview::drain_session( AVFormatContext* fc, AVStream* st, uint64_t frame_step ) noexcept
 {
-    std::unique_lock<std::mutex> lk( mx_ );
-    cv_.wait( lk, [this] {
-        return quit_.load() || error_.load();
-    } );
+    uint64_t pts = 0;
+    while ( !quit_.load( std::memory_order_relaxed ) && ring_.pop( send_buf_ ) )
+    {
+        pkt_->buf = nullptr;
+        pkt_->data = send_buf_.data();
+        pkt_->size = static_cast<int>( send_buf_.size() );
+        pkt_->stream_index = st->index;
+        pkt_->pts = pkt_->dts = static_cast<int64_t>( pts * frame_step );
+        pkt_->duration = static_cast<int64_t>( frame_step );
+        pkt_->flags |= AV_PKT_FLAG_KEY;
+        ++pts;
+
+        const int ret = av_write_frame( fc, pkt_ );
+        pkt_->data = nullptr;
+        pkt_->size = 0;
+        if ( ret < 0 )
+        {
+            log_.warn() << "net: write failed: " << av_err_str( ret ) << '\n';
+            return true;
+        }
+        avio_flush( fc->pb );
+        if ( fc->pb && fc->pb->error < 0 )
+        {
+            log_.warn() << "net: flush failed: " << av_err_str( fc->pb->error ) << '\n';
+            return true;
+        }
+    }
+    return false;
 }
 
-// The session ends: publish() stops first (fc_ cleared under mx_, so no write
-// is in flight), then the trailer -- only when no write failed (error_ unset).
-void NetPreview::close_session( AVFormatContext* fc )
+void NetPreview::close_session( AVFormatContext* fc, bool write_err )
 {
     connected_.store( false, std::memory_order_release );
-    {
-        std::lock_guard<std::mutex> lk( mx_ );
-        fc_ = nullptr;
-        stream_ = nullptr;
-    }
-    if ( !error_.load() )
+    ring_.close();
+    if ( !write_err )
         av_write_trailer( fc );
     if ( !quit_.load() )
         log_.info() << "net: viewer gone, waiting for a new one\n";
@@ -217,10 +235,7 @@ bool NetPreview::viewer_connected() const
 
 void NetPreview::publish( const uint8_t* rgb )
 {
-    if ( !connected_.load( std::memory_order_acquire ) )
-        return;
-    std::lock_guard<std::mutex> lk( mx_ );
-    if ( !fc_ || quit_.load() )
+    if ( !connected_.load( std::memory_order_acquire ) || quit_.load( std::memory_order_relaxed ) || rgb == nullptr )
         return;
     if ( pace_fps_ > 0 )
     {
@@ -232,28 +247,5 @@ void NetPreview::publish( const uint8_t* rgb )
         const int64_t target = next_us > 0 ? next_us + step_us : now_us + step_us;
         next_send_us_.store( target > now_us ? target : now_us + step_us, std::memory_order_relaxed );
     }
-
-    // Zero per-frame heap allocation: av_write_frame synchronously muxes
-    // pkt_->data into the NUT AVIO stream without taking buffer ownership.
-    pkt_->buf = nullptr;
-    pkt_->data = const_cast<uint8_t*>( rgb );  // NOLINT(cppcoreguidelines-pro-type-const-cast)
-    pkt_->size = stride_ * h_;
-    pkt_->stream_index = stream_->index;
-    pkt_->pts = pkt_->dts = static_cast<int64_t>( pts_ * frame_step_ );
-    pkt_->duration = frame_step_;
-    pkt_->flags |= AV_PKT_FLAG_KEY;
-    ++pts_;
-
-    const int ret = av_write_frame( fc_, pkt_ );
-    pkt_->data = nullptr;
-    pkt_->size = 0;
-    if ( ret < 0 )
-    {
-        log_.warn() << "net: write failed: " << av_err_str( ret ) << '\n';
-        error_.store( true );
-        connected_.store( false, std::memory_order_release );
-        cv_.notify_all();
-        return;
-    }
-    avio_flush( fc_->pb );
+    static_cast<void>( ring_.push( rgb ) );
 }

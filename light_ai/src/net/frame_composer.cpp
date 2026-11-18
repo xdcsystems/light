@@ -53,16 +53,18 @@ namespace
     {
         if ( void* p = mpp_buffer_get_ptr( mb ) )
         {
+            const size_t sz = mpp_buffer_get_size( mb );
             uint8_t* py = static_cast<uint8_t*>( p );
             const size_t ysz = static_cast<size_t>( stride ) * static_cast<size_t>( vstride );
             dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
+            dma::cache_drop( p, sz );
             for ( int r = 0; r < rc.h; ++r )
                 std::memset( py + static_cast<size_t>( rc.top + r ) * stride + rc.left, 128, static_cast<size_t>( rc.w ) );
             uint8_t* puv = py + ysz;
             for ( int r = 0; r < rc.h / 2; ++r )
                 std::memset( puv + static_cast<size_t>( rc.top / 2 + r ) * stride + static_cast<std::ptrdiff_t>( rc.left / 2 ) * 2, 128,
                              static_cast<size_t>( rc.w / 2 ) * 2 );
-            dma::cache_clean( p, mpp_buffer_get_size( mb ) );
+            dma::cache_clean( p, sz );
         }
     }
 

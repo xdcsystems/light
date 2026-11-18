@@ -76,6 +76,7 @@ void NetMjpegSource::teardown()
 {
     sock_.close();
     primed_len_ = 0;
+    rx_slot_ = -1;
     pool_.release_all();
 }
 
@@ -120,43 +121,57 @@ void NetMjpegSource::drop_window()
 {
     sock_.clear();
     parts_.resync();
+    rx_slot_ = -1;
 }
 
-NetMjpegSource::Ready NetMjpegSource::poll_part_ready( int timeout_ms )
+int NetMjpegSource::acquire_rx_slot()
 {
-    if ( part_buffered() )
-        return Ready::Yes;
+    if ( rx_slot_ >= 0 )
+        return rx_slot_;
+    int slot = pool_.free_slot();
+    if ( slot < 0 )
+    {
+        // Contract: requeue() precedes the next dequeue(); a full pool
+        // here is a caller bug — loud, then slot 0 defensively.
+        log_.error() << "net-src: all buffers in flight, reusing slot 0 (pipeline contract violation)\n";
+        slot = 0;
+    }
+    rx_slot_ = slot;
+    return slot;
+}
+
+NetMjpegSource::Read NetMjpegSource::step_nonblocking_part( int slot, int timeout_ms, uint32_t* size )
+{
+    uint8_t* const dst = pool_.data( slot );
     int wait_ms = timeout_ms;
     while ( true )
     {
+        const MultipartReader::Step st = parts_.feed( sock_.data(), sock_.size(), dst );
+        sock_.consume( st.consumed );
+        if ( st.ev == MultipartReader::Event::Part )
+        {
+            *size = st.size;
+            rx_slot_ = -1;
+            return Read::Part;
+        }
+        if ( st.ev == MultipartReader::Event::Desync )
+        {
+            parts_.resync();
+            rx_slot_ = -1;
+            return Read::Desync;
+        }
         const BufferedSocket::Fill r = sock_.fill( wait_ms );
-        if ( r == BufferedSocket::Fill::Interrupted )
-            return Ready::No;  // EINTR: not ready yet and not a timeout -- caller retries
-        if ( r == BufferedSocket::Fill::Closed )
-            return Ready::Lost;
-        if ( r == BufferedSocket::Fill::Full )
-            return Ready::Desync;
-        if ( part_buffered() )
-            return Ready::Yes;
-        if ( r == BufferedSocket::Fill::Timeout )
-            return Ready::No;
-        wait_ms = 0;  // Data: take what else is already there, without waiting
+        if ( r == BufferedSocket::Fill::Data )
+        {
+            wait_ms = 0;  // drain remaining queued bytes without blocking again
+            continue;
+        }
+        if ( r == BufferedSocket::Fill::Timeout || r == BufferedSocket::Fill::Interrupted )
+            return Read::Pending;  // keep rx_slot_ and parts_ state for next poll
+        parts_.resync();
+        rx_slot_ = -1;
+        return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
     }
-}
-
-Status NetMjpegSource::wait_part_ready( int timeout_ms )
-{
-    if ( timeout_ms < 0 )
-        return {};
-    const Ready pr = poll_part_ready( timeout_ms );
-    if ( pr == Ready::Yes )
-        return {};
-    if ( pr == Ready::Desync )
-    {
-        ++err_streak_;
-        drop_window();
-    }
-    return dequeue_status( ( pr == Ready::No || ( pr == Ready::Desync && err_streak_ < kErrStreakMax ) ) ? EAGAIN : EIO );
 }
 
 void NetMjpegSource::start()
@@ -166,14 +181,21 @@ void NetMjpegSource::start()
     // keeping only the freshest valid frame in slot 0 (primed_len_).
     // Read into slot 1 first so a failed/corrupt drain never clobbers
     // the valid primed frame already sitting in slot 0.
-    for ( int guard = 0; guard < kDrainMax && poll_part_ready( 0 ) == Ready::Yes; ++guard )
+    for ( int guard = 0; guard < kDrainMax; ++guard )
     {
         uint32_t n = 0;
-        if ( read_part( 1, &n ) != Read::Part )
-            break;
-        if ( frame_ok( pool_.data( 1 ), n, width_, height_ ) )
+        const int slot = ( rx_slot_ >= 0 ) ? rx_slot_ : 1;
+        rx_slot_ = slot;
+        const Read rc = step_nonblocking_part( slot, 0, &n );
+        if ( rc != Read::Part )
         {
-            pool_.swap( 0, 1 );
+            if ( rc == Read::Desync )
+                drop_window();
+            break;
+        }
+        if ( frame_ok( pool_.data( slot ), n, width_, height_ ) )
+        {
+            pool_.swap( 0, slot );
             primed_len_ = n;
         }
     }
@@ -189,46 +211,31 @@ NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
         if ( st.ev == MultipartReader::Event::Part )
         {
             *size = st.size;
+            rx_slot_ = -1;
             return Read::Part;
         }
         if ( st.ev == MultipartReader::Event::Desync )
         {
             parts_.resync();
+            rx_slot_ = -1;
             return Read::Desync;
         }
         const BufferedSocket::Fill r = sock_.fill_until( kPollMs );
         if ( r == BufferedSocket::Fill::Data )
             continue;
         parts_.resync();  // cancelled, watchdog, EOF / error, or a wedged-full window
+        rx_slot_ = -1;
         return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
     }
 }
 
-NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size, bool blocking )
+void NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )
 {
-    uint32_t n = 0;
-    Read rc = read_part( slot, &n );
-    if ( rc == Read::Desync )
-    {
-        // Desynced stream: drop the buffered window and count the streak.
-        // Only block for a retry when dequeue() was called in blocking mode
-        // (timeout_ms < 0) or when a complete next part is already in memory,
-        // so non-blocking multi-source polling never stalls the pipeline thread.
-        ++err_streak_;
-        drop_window();
-        if ( err_streak_ < kErrStreakMax && ( blocking || poll_part_ready( 0 ) == Ready::Yes ) )
-        {
-            n = 0;
-            rc = read_part( slot, &n );
-        }
-    }
-    if ( rc != Read::Part )
-        return rc;
     const int scratch = pool_.free_slot( slot );
     // If multiple frames queued up in the TCP buffer during a Wi-Fi burst,
     // advance to the freshest complete frame via a scratch slot so a failed
     // or corrupt skip never clobbers the frame already in `slot`.
-    for ( int skip = 0; scratch >= 0 && skip < kSkipMax && poll_part_ready( 0 ) == Ready::Yes; ++skip )
+    for ( int skip = 0; scratch >= 0 && skip < kSkipMax && part_buffered(); ++skip )
     {
         uint32_t next_n = 0;
         if ( const Read sr = read_part( scratch, &next_n ); sr != Read::Part )
@@ -243,6 +250,29 @@ NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size,
             n = next_n;
         }
     }
+}
+
+NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size, int timeout_ms )
+{
+    uint32_t n = 0;
+    const bool blocking = timeout_ms < 0;
+    Read rc = blocking ? read_part( slot, &n ) : step_nonblocking_part( slot, timeout_ms, &n );
+    if ( rc == Read::Desync )
+    {
+        // Desynced stream: drop the buffered window and count the streak.
+        // Only retry when blocking or a complete next part is already buffered,
+        // so non-blocking multi-source polling never stalls the pipeline thread.
+        ++err_streak_;
+        drop_window();
+        if ( err_streak_ < kErrStreakMax && ( blocking || part_buffered() ) )
+        {
+            n = 0;
+            rc = blocking ? read_part( slot, &n ) : step_nonblocking_part( slot, 0, &n );
+        }
+    }
+    if ( rc != Read::Part )
+        return rc;
+    skip_buffered_parts( slot, n );
     *size = n;
     return Read::Part;
 }
@@ -255,18 +285,11 @@ Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms )
         return dequeue_status( EIO );  // recoverable stall -> the reconnect ladder
     if ( primed_len_ > 0 )
         return take_primed( index, size );
-    if ( Status st = wait_part_ready( timeout_ms ); !st.ok() )
-        return st;
-    int slot = pool_.free_slot();
-    if ( slot < 0 )
-    {
-        // Contract: requeue() precedes the next dequeue(); a full pool
-        // here is a caller bug — loud, then slot 0 defensively.
-        log_.error() << "net-src: all buffers in flight, reusing slot 0 (pipeline contract violation)\n";
-        slot = 0;
-    }
+    const int slot = acquire_rx_slot();
     uint32_t n = 0;
-    const Read r = read_latest_part( slot, &n, timeout_ms < 0 );
+    const Read r = read_latest_part( slot, &n, timeout_ms );
+    if ( r == Read::Pending )
+        return dequeue_status( EAGAIN );
     if ( r == Read::Desync )
         return dequeue_status( ( err_streak_ >= kErrStreakMax ) ? EIO : EAGAIN );
     if ( r != Read::Part )

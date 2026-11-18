@@ -4,6 +4,11 @@
 
 namespace
 {
+    int align2( int v )
+    {
+        return std::max( 2, ( v + 1 ) & ~1 );
+    }
+
     int align16( int v )
     {
         return ( v + 15 ) & ~15;
@@ -19,10 +24,10 @@ StreamLayout make_stream_layout( int model_w, int model_h, const LbGeom& band, i
 {
     StreamLayout l;
     l.nsrc = nsrc > 1 ? std::min( nsrc, static_cast<int>( StreamLayout::kMaxTiles ) ) : 1;
-    // Single view: the band at its native size (the height as given, the
-    // width 16-aligned); multi-view: a 4:3 cell of the model input.
+    // Single view: the band at its native size (width 16-aligned, height
+    // 2-aligned >= 2 for NV12/h264_rkmpp); multi-view: a 4:3 cell of the model input.
     l.tile_w = l.nsrc > 1 ? align16( model_w ) : align16( band.w );
-    l.tile_h = l.nsrc > 1 ? align16( model_h * 3 / 4 ) : band.h;
+    l.tile_h = l.nsrc > 1 ? align16( model_h * 3 / 4 ) : align2( band.h );
     l.w = l.nsrc > 1 ? l.tile_w * 2 : l.tile_w;
     l.h = l.nsrc > 2 ? l.tile_h * 2 : l.tile_h;
     l.vstride = align64( l.h );

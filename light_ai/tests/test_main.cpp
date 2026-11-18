@@ -57,6 +57,8 @@ int main( int argc, char** argv )
         { "encode_pacer", &test_encode_pacer },
         { "session_warmup", &test_session_warmup },
         { "idle_plate", &test_idle_plate },
+        { "preview_ring", &test_preview_ring },
+        { "preview_ring_threads", &test_preview_ring_threads },
         { "packet_queue", &test_packet_queue },
         { "packet_queue_threads", &test_packet_queue_threads },
         { "session_gate", &test_session_gate },

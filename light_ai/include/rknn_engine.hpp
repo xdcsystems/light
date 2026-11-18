@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -32,6 +33,7 @@ public:
     RknnEngine( RknnEngine&& o ) noexcept
       : ctx_( o.ctx_ )
       , in_mems_( std::move( o.in_mems_ ) )
+      , in_dma_( std::move( o.in_dma_ ) )
       , out_mems_( std::move( o.out_mems_ ) )
       , in_attr_( o.in_attr_ )
       , out_attrs_( std::move( o.out_attrs_ ) )
@@ -43,6 +45,7 @@ public:
     {
         o.ctx_ = 0;
         o.in_mems_.clear();
+        o.in_dma_.clear();
         o.out_mems_.clear();
         o.in_w_ = 0;
         o.in_h_ = 0;
@@ -87,13 +90,23 @@ public:
     }
 
 private:
+    struct Dma32Buf
+    {
+        int fd = -1;
+        void* ptr = nullptr;
+        size_t size = 0;
+    };
+
+private:
     void parse_input_dims();
     void release_io();
+    Status alloc_input_slot( int slot, uint32_t in_size, bool& warned_fallback );
     Status setup_outputs( bool keep_native_outputs );
 
 private:
     rknn_context ctx_ = 0;
     std::vector<rknn_tensor_mem*> in_mems_;
+    std::vector<Dma32Buf> in_dma_;
     std::vector<rknn_tensor_mem*> out_mems_;
     rknn_tensor_attr in_attr_ {};
     std::vector<rknn_tensor_attr> out_attrs_;
