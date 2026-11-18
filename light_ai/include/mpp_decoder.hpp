@@ -52,6 +52,8 @@ public:
     // The RGA read side must match;
     // before the first frame the value is the legacy camera default (422SP).
     MppFrameFormat out_fmt() const { return out_fmt_; }
+    int hor_stride() const noexcept { return hor_stride_; }
+    int ver_stride() const noexcept { return ver_stride_; }
 
 private:
     // Phase boundaries of decode(): the input packet lifetime is owned
@@ -81,6 +83,8 @@ private:
     // the same release order as the dtor, but only the members that may
     // exist at that point.
     void cleanup_failed();
+    void teardown() noexcept;
+    void update_strides( MppFrame f ) noexcept;
 
     // Packet teardown mechanics. Deinit is legal only at points where
     // the decoder provably holds no reference --
@@ -109,6 +113,8 @@ private:
 
     int w_ = 0;
     int h_ = 0;
+    int hor_stride_ = 0;
+    int ver_stride_ = 0;
     MppFrameFormat out_fmt_ = MPP_FMT_YUV422SP;  // SOF-detected, see make_packet
     uint64_t pts_ = 0;
     int frames_ = 0;

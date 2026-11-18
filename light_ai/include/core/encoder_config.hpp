@@ -4,7 +4,7 @@
 //
 // StreamLayout is the stream geometry, pure integer math (host-tested):
 //   single view (nsrc 1): the stream is the visible letterbox band of the
-//     tensor at its native size, the width 16-aligned;
+//     tensor at its native size, the width 16-aligned and height 2-aligned;
 //   multi-view (nsrc 2..4): one tile_w x tile_h cell per source, 4:3 of the
 //     model input, in a Side-by-Side (2x1) or Grid (2x2) canvas.
 // SDK-free: the RGA calls take these numbers, nothing here knows RGA.
@@ -26,7 +26,7 @@ struct StreamLayout
 public:
     int w = 0;  // stream (encoder) size
     int h = 0;
-    int tile_w = 0;  // one cell; single view: the band, the width 16-aligned
+    int tile_w = 0;  // one cell; single view: the band, width 16-aligned and height 2-aligned
     int tile_h = 0;
     int nsrc = 1;     // tiles in the canvas, 1..kMaxTiles
     int vstride = 0;  // NV12 vertical stride: h 64-aligned (matches MPP prep_cfg ver_stride)

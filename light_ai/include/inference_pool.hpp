@@ -168,10 +168,10 @@ public:
         return false;
     }
 
-    // Drops every pending frame of src_idx (its source detached: those
-    // frames are never published). Frames of other sources keep their
-    // order. A frame still on the NPU after the bounded wait is abandoned,
-    // not freed -- its worker frees the slot.
+    // Drops every pending frame of src_idx immediately (its source detached:
+    // those frames are never published). Frames of other sources keep their
+    // order. Completed slots are freed; frames still on the NPU are marked
+    // Abandoned with zero wait so their worker frees them upon completion.
     void discard( int src_idx )
     {
         const int n = fifo_.size();
@@ -185,7 +185,7 @@ public:
                 fifo_.push( k );
                 continue;
             }
-            static_cast<void>( slot.reclaim( opts_.result_timeout ) );
+            static_cast<void>( slot.reclaim( std::chrono::milliseconds::zero() ) );
         }
     }
 

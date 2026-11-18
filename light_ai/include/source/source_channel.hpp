@@ -185,6 +185,11 @@ public:
         if ( !st.ok() )
         {
             ++dec_err_streak_;
+            if ( st.code() == Errc::NoMemory )
+            {
+                dec_ready_ = false;
+                geom_.aux_fd = -1;
+            }
             if ( err != nullptr && ( st.code() == Errc::NoMemory || dec_err_streak_ >= kDecErrMax ) )
                 *err = Status( Errc::Lost, st.what(), st.kind(), st.sys() );
             return -1;
@@ -213,6 +218,8 @@ public:
     bool rot_auto() const noexcept { return rot_auto_; }
     int rot_deg() const noexcept { return rot_deg_; }
     auto out_fmt() const { return dec_.out_fmt(); }
+    int hor_stride() const noexcept { return dec_.hor_stride(); }
+    int ver_stride() const noexcept { return dec_.ver_stride(); }
     // Attaching thread only.
     const std::string& node() const { return node_; }
 
@@ -290,7 +297,11 @@ private:
         }
         if ( needs_aux( w, h ) && geom_.aux_fd < 0 )
         {
-            geom_.aux_fd = dec_.aux_fd( static_cast<size_t>( w / 2 ) * static_cast<size_t>( h / 2 ) * 2 );
+            const int w_aux = ( ( w / 2 ) + 1 ) & ~1;
+            const int h_aux = ( ( h / 2 ) + 1 ) & ~1;
+            const int w_aux_stride = ( w_aux + 15 ) & ~15;
+            const int h_aux_stride = ( h_aux + 15 ) & ~15;
+            geom_.aux_fd = dec_.aux_fd( static_cast<size_t>( w_aux_stride ) * static_cast<size_t>( h_aux_stride ) * 2 );
             if ( geom_.aux_fd < 0 )
             {
                 if ( hot )

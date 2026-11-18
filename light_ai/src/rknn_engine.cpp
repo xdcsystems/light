@@ -1,6 +1,11 @@
+#include <fcntl.h>
 #include <ios>
+#include <linux/dma-heap.h>
 #include <stdexcept>
 #include <string>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #include "rknn_engine.hpp"
 
@@ -86,6 +91,14 @@ void RknnEngine::release_io()
             rknn_destroy_mem( ctx_, m );
     }
     in_mems_.clear();
+    for ( const Dma32Buf& b : in_dma_ )
+    {
+        if ( b.ptr != nullptr )
+            ::munmap( b.ptr, b.size );
+        if ( b.fd >= 0 )
+            ::close( b.fd );
+    }
+    in_dma_.clear();
     for ( auto* m : out_mems_ )
     {
         if ( m )
@@ -97,6 +110,30 @@ void RknnEngine::release_io()
 
 namespace
 {
+    int alloc_dma32_buf( size_t aligned, void*& out_ptr ) noexcept
+    {
+        out_ptr = nullptr;
+        const int heap = ::open( "/dev/dma_heap/system-dma32", O_RDWR | O_CLOEXEC );
+        if ( heap < 0 )
+            return -1;
+        dma_heap_allocation_data req {};
+        req.len = aligned;
+        req.fd_flags = O_RDWR | O_CLOEXEC;
+        const int rc = ::ioctl( heap, DMA_HEAP_IOCTL_ALLOC, &req );
+        ::close( heap );
+        if ( rc < 0 )
+            return -1;
+        const int fd = static_cast<int>( req.fd );
+        void* const ptr = ::mmap( nullptr, aligned, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0 );
+        if ( ptr == reinterpret_cast<void*>( -1 ) )
+        {
+            ::close( fd );
+            return -1;
+        }
+        out_ptr = ptr;
+        return fd;
+    }
+
     uint32_t tensor_elem_bytes( rknn_tensor_type tp ) noexcept
     {
         switch ( tp )
@@ -171,14 +208,14 @@ Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
     in_attr_.size = in_size;
 
     in_mems_.assign( static_cast<size_t>( input_slots ), nullptr );
+    in_dma_.reserve( static_cast<size_t>( input_slots ) );
+    bool warned_fallback = false;
     for ( int s = 0; s < input_slots; ++s )
     {
-        in_mems_[s] = rknn_create_mem( ctx_, in_size );
-        if ( !in_mems_[s] )
+        if ( Status st = alloc_input_slot( s, in_size, warned_fallback ); !st.ok() )
         {
-            log_.error() << "rknn_create_mem (input " << s << ") failed\n";
             release_io();
-            return make_status( Errc::NoMemory, "rknn_create_mem failed" );
+            return st;
         }
     }
 
@@ -207,6 +244,40 @@ Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
         log_.info() << "  out[" << i << "]: " << out_attrs_[i].n_elems << " elems, " << get_type_string( out_attrs_[i].type ) << "\n";
     }
 
+    return {};
+}
+
+Status RknnEngine::alloc_input_slot( int slot, uint32_t in_size, bool& warned_fallback )
+{
+    const size_t aligned = ( static_cast<size_t>( in_size ) + 4095 ) & ~static_cast<size_t>( 4095 );
+    void* ptr = nullptr;
+    const int fd = alloc_dma32_buf( aligned, ptr );
+    if ( fd >= 0 )
+    {
+        rknn_tensor_mem* const mem = rknn_create_mem_from_fd( ctx_, fd, ptr, in_size, 0 );
+        if ( !mem )
+        {
+            ::munmap( ptr, aligned );
+            ::close( fd );
+            log_.error() << "rknn_create_mem_from_fd (input " << slot << ") failed\n";
+            return make_status( Errc::NoMemory, "rknn_create_mem_from_fd failed" );
+        }
+        in_dma_.push_back( Dma32Buf { fd, ptr, aligned } );
+        in_mems_[static_cast<size_t>( slot )] = mem;
+        return {};
+    }
+    if ( !warned_fallback )
+    {
+        warned_fallback = true;
+        log_.warn() << "rknn: /dev/dma_heap/system-dma32 unavailable, falling back to rknn_create_mem\n";
+    }
+    rknn_tensor_mem* const mem = rknn_create_mem( ctx_, in_size );
+    if ( !mem )
+    {
+        log_.error() << "rknn_create_mem (input " << slot << ") failed\n";
+        return make_status( Errc::NoMemory, "rknn_create_mem failed" );
+    }
+    in_mems_[static_cast<size_t>( slot )] = mem;
     return {};
 }
 

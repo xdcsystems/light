@@ -275,15 +275,24 @@ namespace
             CHECK( t, p.empty() && wait_acquire( p ) >= 0 );
         }
         {
-            // A discarded frame still on a wedged NPU is abandoned; its worker frees it.
+            // A discarded frame still on a wedged NPU is abandoned immediately (< 100 ms even with 5 s timeout).
             FakeNpu npu;
-            Pool p( pool_cfg( 1 ), FakeDecode {}, log, fast_opts(), &npu );
+            PoolOptions long_opts = fast_opts();
+            long_opts.result_timeout = std::chrono::milliseconds( 5000 );
+            Pool p( pool_cfg( 3 ), FakeDecode {}, log, long_opts, &npu );
             npu.hold();
-            CHECK( t, p.submit( 0, job( 5 ) ) );
+            CHECK( t, p.submit( p.try_acquire(), job( 5, 0 ) ) );
+            CHECK( t, p.submit( p.try_acquire(), job( 6, 1 ) ) );
+            CHECK( t, p.submit( p.try_acquire(), job( 7, 0 ) ) );
+            const auto t0 = std::chrono::steady_clock::now();
             p.discard( 0 );
-            CHECK( t, p.empty() && p.try_acquire() == -1 );
+            const auto ms_el = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now() - t0 ).count();
+            CHECK( t, ms_el < 100 && p.pending() == 1 && p.try_acquire() == -1 );
             npu.release();
-            CHECK( t, wait_acquire( p ) == 0 );
+            InferResult r;
+            CHECK( t, p.collect( r ) && r.job.frame == 6 && r.job.src_idx == 1 );
+            CHECK( t, p.empty() && wait_acquire( p ) >= 0 );
         }
     }
 

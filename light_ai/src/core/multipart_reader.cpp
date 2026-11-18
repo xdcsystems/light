@@ -144,21 +144,19 @@ bool MultipartReader::on_header( Cursor& c, const uint8_t* d, size_t n, size_t& 
     c.need = need;
     c.got = 0;
     c.phase = Phase::Body;
-    if ( need > 0 && static_cast<size_t>( need ) > cap_ )
-    {
-        out = make_step( Event::Desync, off );  // an oversized "part": desynced garbage
-        return false;
-    }
+    c.skip = need > 0 && static_cast<size_t>( need ) > cap_;
     return true;
 }
 
 MultipartReader::Step MultipartReader::finish( Cursor& c, size_t consumed ) const
 {
     const auto size = static_cast<uint32_t>( c.got );
+    const bool skipped = c.skip;
     c.phase = Phase::Delimiter;
     c.need = -1;
     c.got = 0;
-    return make_step( Event::Part, consumed, size );
+    c.skip = false;
+    return skipped ? make_step( Event::Desync, consumed ) : make_step( Event::Part, consumed, size );
 }
 
 MultipartReader::Step MultipartReader::on_body_length( Cursor& c, const uint8_t* d, size_t n, size_t off, uint8_t* dst ) const
@@ -166,7 +164,7 @@ MultipartReader::Step MultipartReader::on_body_length( Cursor& c, const uint8_t*
     // The window is refilled as it drains: the caller's watchdog covers
     // the whole body, not one chunk.
     const size_t take = std::min( n - off, static_cast<size_t>( c.need ) - c.got );
-    if ( dst != nullptr )
+    if ( !c.skip && dst != nullptr )
         std::memcpy( dst + c.got, d + off, take );
     c.got += take;
     off += take;
@@ -184,7 +182,7 @@ MultipartReader::Step MultipartReader::on_body_scan( Cursor& c, const uint8_t* d
     Form f = c.form;
     size_t p = 0;
     size_t end = 0;
-    if ( find_delimiter( d, n, off, c.got == 0, f, p, end ) )
+    if ( find_delimiter( d, n, off, c.got == 0 && !c.skip, f, p, end ) )
     {
         size_t lb = p;
         if ( p > off )
@@ -194,8 +192,11 @@ MultipartReader::Step MultipartReader::on_body_scan( Cursor& c, const uint8_t* d
                 --lb;
         }
         const size_t len = lb - off;
-        if ( c.got + len > cap_ )
-            return make_step( Event::Desync, off );
+        if ( c.skip || c.got + len > cap_ )
+        {
+            c.skip = true;
+            return finish( c, lb );
+        }
         if ( dst != nullptr )
             std::memcpy( dst + c.got, d + off, len );
         c.got += len;
@@ -209,8 +210,12 @@ MultipartReader::Step MultipartReader::on_body_scan( Cursor& c, const uint8_t* d
     if ( avail > keep )
     {
         const size_t flush = avail - keep;
-        if ( c.got + flush > cap_ )
-            return make_step( Event::Desync, off );
+        if ( c.skip || c.got + flush > cap_ )
+        {
+            c.skip = true;
+            off += flush;
+            return make_step( Event::NeedMore, off );
+        }
         if ( dst != nullptr )
             std::memcpy( dst + c.got, d + off, flush );
         c.got += flush;

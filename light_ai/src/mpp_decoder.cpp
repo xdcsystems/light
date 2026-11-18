@@ -35,10 +35,34 @@ namespace
         size = static_cast<size_t>( found - data ) + 2;
         return true;
     }
+
+    void strip_port_tasks( MppCtx ctx, MppApi* mpi, MppPortType port ) noexcept
+    {
+        enum { kMaxTasks = 16 };
+        MppTask tasks[kMaxTasks] {};
+        int n = 0;
+        while ( n < kMaxTasks )
+        {
+            if ( mpi->poll( ctx, port, MPP_POLL_NON_BLOCK ) != MPP_OK )
+                break;
+            MppTask t = nullptr;
+            if ( mpi->dequeue( ctx, port, &t ) != MPP_OK || !t )
+                break;
+            MppPacket old_p = nullptr;
+            MppFrame old_f = nullptr;
+            mpp_task_meta_get_packet( t, KEY_INPUT_PACKET, &old_p );
+            mpp_task_meta_get_frame( t, KEY_OUTPUT_FRAME, &old_f );
+            tasks[n++] = t;
+        }
+        for ( int i = 0; i < n; ++i )
+            mpi->enqueue( ctx, port, tasks[i] );
+    }
 }  // namespace
 
 Status MppDecoder::init( int w, int h )
 {
+    if ( ctx_ )
+        teardown();
     w_ = w;
     h_ = h;
     // MPP logs its version banner, rc/prep config and teardown meta dumps
@@ -92,8 +116,9 @@ Status MppDecoder::init( int w, int h )
         // 1088 rows: slot_size 4177920 vs 4147200 for exact 1080). 640x480 was
         // accidentally aligned and hid this; the decoder asserts before it can
         // even report info_change, so the constructor must allocate the safe size.
+        const int w_align = ( w_ + 15 ) & ~15;
         const int h_align = ( h_ + 15 ) & ~15;
-        rg = mpp_buffer_get( out_group_, &buf, static_cast<size_t>( w_ ) * h_align * 2 );
+        rg = mpp_buffer_get( out_group_, &buf, static_cast<size_t>( w_align ) * h_align * 2 );
         if ( rg != MPP_OK )
         {
             log_.error() << "mpp_buffer_get failed\n";
@@ -103,9 +128,13 @@ Status MppDecoder::init( int w, int h )
         mpp_frame_init( &out_frame_ );
         mpp_frame_set_width( out_frame_, w_ );
         mpp_frame_set_height( out_frame_, h_ );
+        mpp_frame_set_hor_stride( out_frame_, static_cast<uint32_t>( w_align ) );
+        mpp_frame_set_ver_stride( out_frame_, static_cast<uint32_t>( h_align ) );
         mpp_frame_set_fmt( out_frame_, MPP_FMT_YUV422SP );
         mpp_frame_set_buffer( out_frame_, buf );
         mpp_buffer_put( buf );
+        hor_stride_ = w_align;
+        ver_stride_ = h_align;
         ok_ = true;
     }
     while ( false );
@@ -144,31 +173,25 @@ void MppDecoder::cleanup_failed()
         ctx_ = nullptr;
         mpi_ = nullptr;
     }
+    hor_stride_ = 0;
+    ver_stride_ = 0;
+    ok_ = false;
 }
 
 MppDecoder::~MppDecoder()
 {
+    teardown();
+}
+
+void MppDecoder::teardown() noexcept
+{
     if ( !ctx_ )
         return;
 
-    // Strip meta references from the tasks left in the ports. The decoder
-    // recycles consumed input tasks back to the user side of the input port
-    // with the packet pointer still in the meta. Once we deinit that packet,
-    // the pointer dangles, and the decoder teardown (dec_release_task_in_port)
-    // dereferences it and double-deinits it ("negative ref_count" /
-    // "invalid mem pool ptr"). Dequeued tasks are cleared and re-enqueued:
-    // the same helper serves the runtime recovery paths (-6/-7), where
-    // losing the tasks would permanently shrink the port queues; in the
-    // destructor it makes no difference -- mpp_destroy frees the tasks with
-    // their queues regardless. Must run BEFORE reset() as well as after:
-    // reset() itself calls dec_release_task_in_port.
+    // Strip meta references from the tasks left in the ports before and after
+    // reset() before mpp_destroy() tears down the internal buffer pools.
     reset_and_strip();
 
-    // Critical order: release every MPP object that may hold references to
-    // buffers BEFORE mpp_destroy(). MPP tears down its internal buffer pools
-    // during destroy, and a later mpp_frame_deinit/mpp_packet_deinit would
-    // decrement refcounts in an already-freed pool ("non-positive ref_count"
-    // + "invalid mem pool ptr" at exit).
     if ( pkt_ )
     {
         mpp_packet_deinit( &pkt_ );
@@ -206,6 +229,14 @@ MppDecoder::~MppDecoder()
         mpp_buffer_group_put( pkt_group_ );
         pkt_group_ = nullptr;
     }
+    w_ = 0;
+    h_ = 0;
+    hor_stride_ = 0;
+    ver_stride_ = 0;
+    out_fmt_ = MPP_FMT_YUV422SP;
+    pts_ = 0;
+    frames_ = 0;
+    ok_ = false;
 }
 
 Status MppDecoder::decode( const uint8_t* data, size_t size, int& fd )
@@ -389,6 +420,8 @@ Status MppDecoder::retrieve_output( int& fd )
         return apply_info_change( f, task );
     if ( const Status st = frame_fd( f, fd ); !st.ok() )
         return st;
+    if ( fd >= 0 )
+        update_strides( f );
 
     mpi_->enqueue( ctx_, MPP_PORT_OUTPUT, task );
     // The output task is back in the free list, the decoder no longer
@@ -432,33 +465,60 @@ Status MppDecoder::take_output_task( MppTask& task )
 // re-sized in place with a new buffer, the task returned, the packet dropped.
 // Returns Ok -- the info_change frame itself is skipped (normal) -- or
 // NoMemory on the buffer allocation failure.
+void MppDecoder::update_strides( MppFrame f ) noexcept
+{
+    if ( !f )
+        return;
+    const int hs = static_cast<int>( mpp_frame_get_hor_stride( f ) );
+    const int vs = static_cast<int>( mpp_frame_get_ver_stride( f ) );
+    if ( hs > 0 )
+        hor_stride_ = hs;
+    if ( vs > 0 )
+        ver_stride_ = vs;
+    if ( out_frame_ && hs > 0 && vs > 0 )
+    {
+        mpp_frame_set_hor_stride( out_frame_, static_cast<uint32_t>( hs ) );
+        mpp_frame_set_ver_stride( out_frame_, static_cast<uint32_t>( vs ) );
+    }
+}
+
 Status MppDecoder::apply_info_change( MppFrame f, MppTask task )
 {
     const uint32_t w = mpp_frame_get_width( f );
     const uint32_t h = mpp_frame_get_height( f );
+    const uint32_t hs = mpp_frame_get_hor_stride( f );
+    const uint32_t vs = mpp_frame_get_ver_stride( f );
     const size_t bs = mpp_frame_get_buf_size( f );
-    log_.warn() << "dec: info_change " << w << 'x' << h << " buf_size=" << bs << '\n';
+    log_.warn() << "dec: info_change " << w << 'x' << h << " stride=" << hs << 'x' << vs << " buf_size=" << bs << '\n';
 
     // Return the output task BEFORE touching out_frame_ (get_frame in
     // retrieve_output() already popped KEY_OUTPUT_FRAME, leaving meta_size == 0).
     mpi_->enqueue( ctx_, MPP_PORT_OUTPUT, task );
 
-    mpp_frame_set_width( out_frame_, w );
-    mpp_frame_set_height( out_frame_, h );
-    // Follow the SOF subsampling already parsed into out_fmt_.
-    // Hardcoding 422SP here disagrees with a 4:2:0 stream the moment
-    // MPP honors the frame format on info_change.
-    mpp_frame_set_fmt( out_frame_, out_fmt_ );
+    // Allocate the replacement buffer BEFORE mutating out_frame_ or signaling READY.
     MppBuffer b = nullptr;
     const MPP_RET rg = mpp_buffer_get( out_group_, &b, bs );
-    if ( rg != MPP_OK )
+    if ( rg != MPP_OK || !b )
     {
         log_.error() << "dec: alloc " << bs << " bytes FAILED\n";
-        mpi_->control( ctx_, MPP_DEC_SET_INFO_CHANGE_READY, nullptr );
-        // The info_change task has been returned: the packet is consumed.
         drop_packet();
         return sdk_status( Errc::NoMemory, "mpp_buffer_get failed", rg );
     }
+
+    mpp_frame_set_width( out_frame_, w );
+    mpp_frame_set_height( out_frame_, h );
+    if ( hs > 0 )
+    {
+        mpp_frame_set_hor_stride( out_frame_, hs );
+        hor_stride_ = static_cast<int>( hs );
+    }
+    if ( vs > 0 )
+    {
+        mpp_frame_set_ver_stride( out_frame_, vs );
+        ver_stride_ = static_cast<int>( vs );
+    }
+    // Follow the SOF subsampling already parsed into out_fmt_.
+    mpp_frame_set_fmt( out_frame_, out_fmt_ );
     // In-place re-set: the task meta we just returned still holds this
     // same frame object, so it must not be destroyed and re-created.
     mpp_frame_set_buffer( out_frame_, b );
@@ -499,30 +559,14 @@ Status MppDecoder::frame_fd( MppFrame f, int& fd ) const
 
 void MppDecoder::reset_and_strip()
 {
-    // Pop any residual KEY_INPUT_PACKET / KEY_OUTPUT_FRAME nodes from
-    // tasks sitting in the ports (get_* removes the key so meta_size
-    // becomes 0, whereas set_*(nullptr) inserts a key with a null value)
-    // and return the tasks before mpi_->reset() reconciles the queues to
-    // status 0, meta_size 0.
+    // Pop any residual KEY_INPUT_PACKET / KEY_OUTPUT_FRAME nodes from all
+    // tasks sitting in both ports before AND after mpi_->reset() reconciles
+    // the queues.
     for ( MppPortType port : { MPP_PORT_INPUT, MPP_PORT_OUTPUT } )
-    {
-        for ( int i = 0; i < 4; ++i )
-        {
-            MppTask t = nullptr;
-            if ( mpi_->poll( ctx_, port, MPP_POLL_NON_BLOCK ) != MPP_OK )
-                break;
-            if ( mpi_->dequeue( ctx_, port, &t ) != MPP_OK || !t )
-                break;
-            MppPacket old_p = nullptr;
-            MppFrame old_f = nullptr;
-            mpp_task_meta_get_packet( t, KEY_INPUT_PACKET, &old_p );
-            mpp_task_meta_get_frame( t, KEY_OUTPUT_FRAME, &old_f );
-            mpi_->enqueue( ctx_, port, t );
-            if ( !old_p && !old_f )
-                break;
-        }
-    }
+        strip_port_tasks( ctx_, mpi_, port );
     mpi_->reset( ctx_ );
+    for ( MppPortType port : { MPP_PORT_INPUT, MPP_PORT_OUTPUT } )
+        strip_port_tasks( ctx_, mpi_, port );
 }
 
 int MppDecoder::aux_fd( size_t bytes )

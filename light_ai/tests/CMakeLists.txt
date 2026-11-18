@@ -66,6 +66,7 @@ add_executable(light_ai_tests
     test_callout_layout.cpp
     test_global_track.cpp
     test_reid_worker_tsan.cpp
+    test_preview_ring.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
     test_infer_slot_threads.cpp
@@ -131,6 +132,7 @@ add_executable(light_ai_tests_tsan EXCLUDE_FROM_ALL
     tsan_main.cpp
     test_source_threads.cpp
     test_source_prober.cpp
+    test_preview_ring.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
     test_reid_worker_tsan.cpp

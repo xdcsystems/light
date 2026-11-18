@@ -261,6 +261,221 @@ namespace
         }
     }
 
+    // Builds a valid JPEG > 256 KiB by inserting COM (FF FE) segments right after SOI (FF D8).
+    Bytes make_large_jpeg( const Bytes& base, size_t min_bytes, uint8_t fill )
+    {
+        Bytes out;
+        out.reserve( min_bytes + base.size() + 64 );
+        out.push_back( base[0] );
+        out.push_back( base[1] );
+        size_t added = 0;
+        while ( out.size() + base.size() - 2 < min_bytes )
+        {
+            const size_t payload = 60000;
+            const uint16_t seg_len = static_cast<uint16_t>( payload + 2 );
+            out.push_back( 0xFF );
+            out.push_back( 0xFE );
+            out.push_back( static_cast<uint8_t>( seg_len >> 8 ) );
+            out.push_back( static_cast<uint8_t>( seg_len & 0xFF ) );
+            out.insert( out.end(), payload, static_cast<uint8_t>( fill + ( added & 0x0F ) ) );
+            added += payload;
+        }
+        out.insert( out.end(), base.begin() + 2, base.end() );
+        return out;
+    }
+
+    int poll_nonblocking_frame( Rig& r, int timeout_ms, int& err, Bytes& f )
+    {
+        int idx = -1;
+        for ( int i = 0; i < 40; ++i )
+        {
+            idx = r.dequeue( timeout_ms, err, f );
+            if ( idx >= 0 || err != EAGAIN )
+                break;
+            std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
+        }
+        return idx;
+    }
+
+    void large_jpeg_nonblocking( TestRun& t, const Bytes& a )
+    {
+        const Bytes big1 = make_large_jpeg( a, 380 * 1024, 0x31 );
+        const Bytes big2 = make_large_jpeg( variant( a, 0x55 ), 520 * 1024, 0x62 );
+        CHECK( t, big1.size() > 350 * 1024 && big2.size() > 500 * 1024 );
+
+        // 1) With Content-Length: non-blocking dequeue (timeout_ms >= 0) and start() drain.
+        {
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a, big1 }, false ), why ) == 0 );
+            r.src.start();
+            int err = -1;
+            Bytes f;
+            int idx = r.dequeue( 0, err, f );
+            CHECK( t, idx == 0 && err == 0 && f == big1 );
+            r.src.requeue( idx );
+
+            const std::string stream2 = parts( { big2 }, true );
+            std::thread writer( [&r, &stream2] { r.send( stream2 ); } );
+            idx = poll_nonblocking_frame( r, 5, err, f );
+            writer.join();
+            CHECK( t, idx >= 0 && err == 0 && f == big2 );
+            r.src.requeue( idx );
+        }
+
+        // 2) Without Content-Length (boundary-scan mode) in non-blocking mode.
+        {
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            r.src.start();
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( 0, err, f ) );
+
+            const std::string no_cl = "\r\n" + str( mjpeg_test::make_stream( "--frame", { big1, big2 }, false, "\r\n", false ) )
+                                      + "\r\n--frame\r\n";
+            std::thread writer( [&r, &no_cl] { r.send( no_cl ); } );
+            int idx = poll_nonblocking_frame( r, 0, err, f );
+            CHECK( t, idx >= 0 && err == 0 && f == big1 );
+            r.src.requeue( idx );
+
+            idx = poll_nonblocking_frame( r, 5, err, f );
+            writer.join();
+            CHECK( t, idx >= 0 && err == 0 && f == big2 );
+            r.src.requeue( idx );
+        }
+    }
+
+    void oversized_part_recovers( TestRun& t, const Bytes& a )
+    {
+        const Bytes huge = make_large_jpeg( variant( a, 0x41 ), 1250 * 1024, 0x21 );
+        const Bytes good = make_large_jpeg( variant( a, 0x77 ), 380 * 1024, 0x51 );
+        CHECK( t, huge.size() > ( 1u << 20 ) && good.size() > 350 * 1024 );
+
+        // 1) Single > 1 MiB Content-Length part drains cleanly and recovers the next ~380 KiB frame.
+        {
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            r.src.start();
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( 1000, err, f ) );
+
+            const std::string stream = parts( { huge, good }, true );
+            std::thread writer( [&r, &stream] { r.send( stream ); } );
+            int idx = -1;
+            for ( int i = 0; i < 60; ++i )
+            {
+                idx = r.dequeue( 5, err, f );
+                if ( idx >= 0 || err != EAGAIN )
+                    break;
+                std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
+            }
+            writer.join();
+            CHECK( t, idx >= 0 && err == 0 && f == good );
+            r.src.requeue( idx );
+        }
+
+        // 2) > 2 MiB boundary-scan part (no Content-Length) also drains cleanly and recovers.
+        {
+            const Bytes huge2 = make_large_jpeg( variant( a, 0x42 ), 2200 * 1024, 0x22 );
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            r.src.start();
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( 1000, err, f ) );
+
+            const std::string stream = "\r\n" + str( mjpeg_test::make_stream( "--frame", { huge2, good }, false, "\r\n", false ) )
+                                       + "\r\n--frame\r\n";
+            std::thread writer( [&r, &stream] { r.send( stream ); } );
+            int idx = -1;
+            for ( int i = 0; i < 60; ++i )
+            {
+                idx = r.dequeue( 5, err, f );
+                if ( idx >= 0 || err != EAGAIN )
+                    break;
+                std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
+            }
+            writer.join();
+            CHECK( t, idx >= 0 && err == 0 && f == good );
+            r.src.requeue( idx );
+        }
+
+        // 3) 4 consecutive > 1 MiB parts still trip kErrStreakMax -> EIO.
+        {
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            r.src.start();
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( 1000, err, f ) );
+
+            const std::string stream = parts( { huge, huge, huge, huge }, true );
+            std::thread writer( [&r, &stream] { r.send( stream ); } );
+            int idx = -1;
+            for ( int i = 0; i < 80; ++i )
+            {
+                idx = r.dequeue( 5, err, f );
+                if ( idx >= 0 || err != EAGAIN )
+                    break;
+                std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
+            }
+            writer.join();
+            CHECK( t, idx == -1 && err == EIO );
+        }
+    }
+
+    // Blocking dequeue: the retry after a bad part counts toward kErrStreakMax
+    // too (regression: a bad retry was not counted, a Desync retry kept the
+    // wedged window), so 4 bad parts in a row give EIO on the second call.
+    void bad_retry_counts_blocking( TestRun& t, const Bytes& a )
+    {
+        // 1) 4 x 1.1 MiB Content-Length parts, then a good one: EAGAIN, then EIO.
+        {
+            const Bytes huge = make_large_jpeg( variant( a, 0x43 ), 1126 * 1024, 0x23 );
+            CHECK( t, huge.size() > ( 1u << 20 ) );
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( -1, err, f ) );
+
+            const std::string stream = parts( { huge, huge, huge, huge, variant( a, 0x45 ) }, true );
+            std::thread writer( [&r, &stream] { r.send( stream ); } );
+            const int idx1 = r.dequeue( -1, err, f );
+            const int err1 = err;
+            const int idx2 = r.dequeue( -1, err, f );
+            writer.join();
+            CHECK( t, idx1 == -1 && err1 == EAGAIN );
+            CHECK( t, idx2 == -1 && err == EIO );
+        }
+        // 2) The retry returns Desync: 4 wedged windows of delimiter-less junk,
+        // each dropped and counted -> EAGAIN, then EIO.
+        {
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( -1, err, f ) );
+
+            const std::string stream = "\r\n" + std::string( 4 * 256 * 1024 - 2, 'g' ) + parts( { variant( a, 0x46 ) }, true );
+            std::thread writer( [&r, &stream] { r.send( stream ); } );
+            const int idx1 = r.dequeue( -1, err, f );
+            const int err1 = err;
+            const int idx2 = r.dequeue( -1, err, f );
+            writer.join();
+            CHECK( t, idx1 == -1 && err1 == EAGAIN );
+            CHECK( t, idx2 == -1 && err == EIO );
+        }
+    }
+
     void cancel_stops_blocking_read( TestRun& t, const Bytes& a )
     {
         Rig r;
@@ -296,6 +511,9 @@ void test_net_mjpeg_source( TestRun& t )
     connect_and_frames( t, a );
     corrupt_streak( t, a );
     desync_recovers( t, a );
+    large_jpeg_nonblocking( t, a );
+    oversized_part_recovers( t, a );
+    bad_retry_counts_blocking( t, a );
     refused( t, a, wide );
     cancel_stops_blocking_read( t, a );
 }
