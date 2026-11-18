@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <numeric>
 #include <string_view>
 
 #include "core/callout.hpp"
@@ -11,8 +12,8 @@ namespace
 {
     constexpr int kMarginPx = 2;
     constexpr int kPadX = 4;
-    constexpr int kPadY = 3;
-    constexpr int kPillH = glyph_font::kGlyphH + 2 * kPadY;  // 14 px
+    constexpr int kPadY = 2;
+    constexpr int kPillH = CalloutItem::kGlyphH + 2 * kPadY;  // 16 px (12 px AA glyph + 2 px padding)
     constexpr int kMaxTracks = TrajList::cap;
 
     struct TrackCand
@@ -72,12 +73,11 @@ namespace
 
     int find_prev_slot( const CalloutHistory& hist, int disp_id ) noexcept
     {
-        for ( int i = 0; i < hist.entries.n; ++i )
-        {
-            if ( hist.entries.d[i].id == disp_id )
-                return hist.entries.d[i].slot;
-        }
-        return -1;
+        const auto* const end = hist.entries.d.begin() + hist.entries.n;
+        const auto* const it = std::find_if( hist.entries.d.begin(), end, [disp_id]( const CalloutPrevSlot& s ) {
+            return s.id == disp_id;
+        } );
+        return it != end ? it->slot : -1;
     }
 
     CandEval eval_candidate( int idx,
@@ -95,9 +95,9 @@ namespace
         const int y0 = std::clamp( prop[1], work.y0, work.y1 - ph );
         const CalloutRect cand { x0, y0, x0 + pw, y0 + ph };
 
-        int64_t pill_ov = 0;
-        for ( int i = 0; i < placed.n; ++i )
-            pill_ov += rect_overlap( cand, placed.d[i].pill );
+        const int64_t pill_ov = std::accumulate(
+            placed.d.begin(), placed.d.begin() + placed.n, int64_t { 0 },
+            [&cand]( int64_t acc, const CalloutItem& p ) { return acc + rect_overlap( cand, p.pill ); } );
 
         int64_t other_ov = 0;
         for ( int i = 0; i < n_boxes; ++i )
@@ -127,17 +127,19 @@ namespace
     {
         const CalloutRect& b = all_boxes[self_idx].box;
         const int cx = ( b.x0 + b.x1 - pw ) / 2;
+        const int row2_off = 10 + ph;
+        const int side2_off = ph + 2;
         const int proposals[14][2] = {
             { b.x0, b.y0 - 10 - ph },
             { cx, b.y0 - 10 - ph },
             { b.x1 - pw, b.y0 - 10 - ph },
-            { b.x0, b.y0 - 24 - ph },
-            { cx, b.y0 - 24 - ph },
-            { b.x1 - pw, b.y0 - 24 - ph },
+            { b.x0, b.y0 - row2_off - ph },
+            { cx, b.y0 - row2_off - ph },
+            { b.x1 - pw, b.y0 - row2_off - ph },
             { b.x1 + 8, b.y0 },
             { b.x0 - 8 - pw, b.y0 },
-            { b.x1 + 8, b.y0 + 16 },
-            { b.x0 - 8 - pw, b.y0 + 16 },
+            { b.x1 + 8, b.y0 + side2_off },
+            { b.x0 - 8 - pw, b.y0 + side2_off },
             { b.x0, b.y1 + 8 },
             { cx, b.y1 + 8 },
             { b.x1 - pw, b.y1 + 8 },
@@ -265,7 +267,7 @@ namespace
         item.box = cands[i].box;
         item.text_bytes = glyph_font::format_person( item.text, glyph_font::kLabelCap, disp_id, cfg.lang_ru );
         const int ng = glyph_font::text_len( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
-        const int pw = ng * glyph_font::kGlyphW + 2 * kPadX;
+        const int pw = ng * CalloutItem::kGlyphW + 2 * kPadX;
         // Guard before std::clamp: degenerate narrow crops must never trigger lo > hi UB.
         if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < kPillH )
             return;

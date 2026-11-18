@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -7,6 +8,7 @@
 #include <fcntl.h>
 #include <linux/videodev2.h>
 #include <string>
+#include <string_view>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -50,11 +52,9 @@ namespace
     {
         if ( std::strncmp( name, "video", 5 ) != 0 || name[5] == '\0' )
             return false;
-        for ( const char* p = name + 5; *p != '\0'; ++p )
-        {
-            if ( std::isdigit( static_cast<unsigned char>( *p ) ) == 0 )
-                return false;
-        }
+        const std::string_view digits( name + 5 );
+        if ( !std::all_of( digits.begin(), digits.end(), []( unsigned char c ) { return std::isdigit( c ) != 0; } ) )
+            return false;
         n = static_cast<int>( std::strtol( name + 5, nullptr, 10 ) );
         return true;
     }

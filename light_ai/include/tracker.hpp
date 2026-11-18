@@ -89,6 +89,10 @@ class Tracker
                              // the clip threshold until anchored boxes read as
                              // "full" and the crouch returns) nor get re-anchored
                              // (they are plausible sizes; the bh EMA follows them)
+        kInitConfPct = 35,  // min confidence x100 to spawn a new person track
+                            // (suppresses weak 0.25-0.34 false-positive flashes)
+        kSpawnContainGate = 65,  // min IoA (intersection / min area) x100:
+                            // suppresses nested head/torso sub-boxes inside a person
         kSpawnDedupeGate = Associator::kIoUGate / 2  // spawn-dedupe gate, min IoU x100:
                             // an unmatched detection overlapping an alive
                             // track beyond this is a duplicate seen through

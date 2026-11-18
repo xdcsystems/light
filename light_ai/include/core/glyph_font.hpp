@@ -1,5 +1,5 @@
-// Fixed 8x8 1-bpp bitmap font (ASCII + Cyrillic) with bounds-checked UTF-8 decoding
-// and atlas builder for zero-heap GPU/CPU callout label rendering.
+// Fixed 7x12 8-bit high-contrast bitmap font (ASCII + Cyrillic) with bounds-checked UTF-8
+// decoding and 1-px-padded atlas builder for zero-heap GPU and CPU label rendering.
 
 #pragma once
 
@@ -11,18 +11,23 @@ namespace glyph_font
 {
     enum
     {
-        kGlyphW = 8,
-        kGlyphH = 8,
+        kGlyphW = 7,
+        kGlyphH = 12,
+        kGlyphBytes = kGlyphW * kGlyphH,
+        kCellPad = 1,
+        kCellW = kGlyphW + 2 * kCellPad,
+        kCellH = kGlyphH + 2 * kCellPad,
         kSlotCount = 162,
-        kAtlasW = 128,
-        kAtlasH = 96,
-        kAtlasCols = kAtlasW / kGlyphW,
+        kAtlasCols = 16,
+        kAtlasRows = ( kSlotCount + kAtlasCols - 1 ) / kAtlasCols,
+        kAtlasW = kAtlasCols * kCellW,
+        kAtlasH = kAtlasRows * kCellH,
         kAtlasBytes = kAtlasW * kAtlasH,
         kLabelCap = 32
     };
 
-    // 8-byte LSB-left row bitmap for slot [0..kSlotCount-1]. Slot 0 is solid 0xFF.
-    const uint8_t* glyph_rows( int idx ) noexcept;
+    // 7x12 8-bit alpha coverage bitmap for slot [0..kSlotCount-1]. Slot 0 is solid 0xFF.
+    const uint8_t* glyph_alpha( int idx ) noexcept;
 
     // Maps Unicode codepoint to slot [1..161]; unknown -> '?' slot.
     int glyph_index( uint32_t cp ) noexcept;
@@ -34,10 +39,10 @@ namespace glyph_font
     // Counts decoded glyphs in a UTF-8 string.
     int text_len( std::string_view text ) noexcept;
 
-    // Populates 128x96 GL_ALPHA atlas (0x00 transparent, 0xFF opaque).
+    // Populates kAtlasW x kAtlasH GL_ALPHA atlas with 1-px padding per glyph cell.
     void build_atlas( std::array<uint8_t, kAtlasBytes>& atlas ) noexcept;
 
-    // Texture atlas UVs for a glyph cell, or the center of solid slot 0.
+    // Texture atlas UVs for a glyph cell interior, or the center of padded solid slot 0.
     void glyph_uv( int idx, float& u0, float& v0, float& u1, float& v1 ) noexcept;
     void solid_uv( float& u, float& v ) noexcept;
 

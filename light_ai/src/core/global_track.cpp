@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 
 #include "core/box_math.hpp"
 #include "core/global_track.hpp"
@@ -25,12 +26,7 @@ namespace
 
     bool any_cam_active( const GlobalTrack& g ) noexcept
     {
-        for ( const LocalBinding& b : g.cams )
-        {
-            if ( b.active )
-                return true;
-        }
-        return false;
+        return std::any_of( g.cams.begin(), g.cams.end(), []( const LocalBinding& b ) { return b.active; } );
     }
 
     bool collides_on_cam( const GlobalTrack& g, int src_idx, int local_id, uint32_t gen ) noexcept
@@ -41,13 +37,9 @@ namespace
 
     bool has_live_track( const TrajList& trajs, int id, uint32_t gen ) noexcept
     {
-        for ( int k = 0; k < trajs.n; ++k )
-        {
-            const TrackState& tr = trajs.d[k];
-            if ( ( tr.state == TRACK_TENT || tr.state == TRACK_CONF ) && tr.id == id && tr.gen == gen )
-                return true;
-        }
-        return false;
+        return std::any_of( trajs.d.begin(), trajs.d.begin() + trajs.n, [id, gen]( const TrackState& tr ) {
+            return ( tr.state == TRACK_TENT || tr.state == TRACK_CONF ) && tr.id == id && tr.gen == gen;
+        } );
     }
 
     float max_peer_iou( const TrajList& trajs, int self_k ) noexcept
@@ -139,18 +131,15 @@ bool l2_normalize( float* vec, int dim ) noexcept
 {
     if ( !vec || dim <= 0 )
         return false;
-    double sum = 0.0;
-    for ( int i = 0; i < dim; ++i )
-    {
-        if ( !std::isfinite( vec[i] ) )
-            return false;
-        sum += static_cast<double>( vec[i] ) * static_cast<double>( vec[i] );
-    }
+    if ( !std::all_of( vec, vec + dim, []( float x ) { return std::isfinite( x ); } ) )
+        return false;
+    const double sum = std::inner_product( vec, vec + dim, vec, 0.0, std::plus<>(), []( float x, float y ) {
+        return static_cast<double>( x ) * static_cast<double>( y );
+    } );
     if ( sum <= 1e-12 )
         return false;
     const float inv = static_cast<float>( 1.0 / std::sqrt( sum ) );
-    for ( int i = 0; i < dim; ++i )
-        vec[i] *= inv;
+    std::transform( vec, vec + dim, vec, [inv]( float x ) { return x * inv; } );
     return true;
 }
 
@@ -158,9 +147,9 @@ float dot_feature( const float* a, const float* b, int dim ) noexcept
 {
     if ( !a || !b || dim <= 0 )
         return 0.0f;
-    double acc = 0.0;
-    for ( int i = 0; i < dim; ++i )
-        acc += static_cast<double>( a[i] ) * static_cast<double>( b[i] );
+    const double acc = std::inner_product( a, a + dim, b, 0.0, std::plus<>(), []( float x, float y ) {
+        return static_cast<double>( x ) * static_cast<double>( y );
+    } );
     return static_cast<float>( acc );
 }
 
@@ -181,26 +170,21 @@ int GlobalTrackTable::find_live_idx( int src_idx, int local_id, uint32_t gen ) c
     if ( src_idx < 0 || src_idx >= reid_cfg::kMaxSources )
         return -1;
     const auto& row = live_[src_idx];
-    for ( int i = 0; i < reid_cfg::kMaxLocalTracks; ++i )
-    {
-        if ( row[i].alive && row[i].local_id == local_id && row[i].gen == gen )
-            return i;
-    }
-    return -1;
+    const auto* const it = std::find_if( row.begin(), row.end(), [local_id, gen]( const LiveLocal& lv ) {
+        return lv.alive && lv.local_id == local_id && lv.gen == gen;
+    } );
+    return it != row.end() ? static_cast<int>( it - row.begin() ) : -1;
 }
 
 int GlobalTrackTable::find_global_by_local( int src_idx, int local_id, uint32_t gen ) const noexcept
 {
-    for ( int s = 0; s < reid_cfg::kMaxGlobalTracks; ++s )
-    {
-        const GlobalTrack& g = tracks_[s];
+    const auto* const it = std::find_if( tracks_.begin(), tracks_.end(), [src_idx, local_id, gen]( const GlobalTrack& g ) {
         if ( !g.used )
-            continue;
+            return false;
         const LocalBinding& b = g.cams[src_idx];
-        if ( b.active && b.local_id == local_id && b.gen == gen )
-            return s;
-    }
-    return -1;
+        return b.active && b.local_id == local_id && b.gen == gen;
+    } );
+    return it != tracks_.end() ? static_cast<int>( it - tracks_.begin() ) : -1;
 }
 
 int GlobalTrackTable::alloc_global_slot() noexcept
@@ -229,8 +213,8 @@ void GlobalTrackTable::bind_slot( int gslot, int src_idx, int local_id, uint32_t
 
 void GlobalTrackTable::update_ema( GlobalTrack& g, const float* feat, int dim ) noexcept
 {
-    for ( int i = 0; i < dim; ++i )
-        g.ema_feat[i] = ( 1.0f - kEmaAlpha ) * g.ema_feat[i] + kEmaAlpha * feat[i];
+    std::transform( g.ema_feat.begin(), g.ema_feat.begin() + dim, feat, g.ema_feat.begin(),
+                    []( float old_v, float new_v ) { return ( 1.0f - kEmaAlpha ) * old_v + kEmaAlpha * new_v; } );
     if ( l2_normalize( g.ema_feat.data(), dim ) )
         ++g.samples;
 }
@@ -439,11 +423,7 @@ void GlobalTrackTable::mark_dispatched( int src_idx, int local_id, uint32_t gen 
 
 int GlobalTrackTable::active_global_count() const noexcept
 {
-    int cnt = 0;
-    for ( const GlobalTrack& g : tracks_ )
-    {
-        if ( g.used )
-            ++cnt;
-    }
-    return cnt;
+    return static_cast<int>( std::count_if( tracks_.begin(), tracks_.end(), []( const GlobalTrack& g ) {
+        return g.used;
+    } ) );
 }

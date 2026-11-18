@@ -64,6 +64,9 @@ H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log
     // a captured stream shows I-frames every 26 for GOP 25.
     ctx->gop_size = cfg.gop();  // 1 s: a late joiner waits at most one GOP
     ctx->max_b_frames = 0;  // no reorder: minimal latency
+    // Synchronous MPP output collection per frame: prevents rkmppenc from holding
+    // 4-5 DRM buffers in flight concurrently with RGA writes and cuts latency by 4 frames.
+    ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
     // Rate control: pass standard AVOption rc_mode=CBR to h264_rkmpp (no private
     // ABI mirror needed). Unconsumed options stay in opts and are logged cleanly.
     AvDictGuard opts;
@@ -121,11 +124,9 @@ void H264Encoder::drain()
     line << "\n";
 }
 
-// The wrapper runs a NON_BLOCK output timeout (no LOW_DELAY
-// flag): EAGAIN during flush means "frames still in flight",
-// not "done". Stopping at the first EAGAIN leaves up to
-// EncoderFramePool::kSlots frames + EOS queued inside MPP; mpp_destroy
-// then tears its internal queues down over live packets
+// Blocking drain (AV_CODEC_FLAG_LOW_DELAY is active): EAGAIN during flush
+// means frames are still in flight, not "done". Stopping early would leave
+// queued frames + EOS inside MPP so mpp_destroy tears down live packets
 // ("mpp_meta: put_meta negative ref_count" /
 // "mpp_mem_pool ... caller mpp_packet_deinit" at exit).
 // Bounded: the encoder holds at most kSlots frames and
@@ -208,8 +209,8 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Sessi
         fr->pict_type = AV_PICTURE_TYPE_NONE;
     }
 
-    // EAGAIN from send = the rkmpp input queue is full (3-deep task
-    // queue under a VFR clump). The FFmpeg contract: pull one output
+    // EAGAIN from send = the rkmpp input queue is temporarily full
+    // under a VFR clump. The FFmpeg contract: pull one output
     // packet out first, then retry the send (the dtor flush loop uses
     // the same pattern for EOF). Was: fatal -> a full stream
     // session restart over a transient backpressure.

@@ -4,27 +4,9 @@
 
 namespace
 {
-    // Median of 5 values, 7-comparator selection network: the minimal
-    // oblivious net (an exhaustive search confirms no 6-comparator median
-    // network exists), loop-free, ~7 branches vs ~10-19 for the former
-    // insertion sort. Reorders `v` in place; callers pass a disposable copy.
     float median_of_5( float* v )
     {
-        const auto order2 = []( float& a, float& b ) {
-            if ( b < a )
-            {
-                const float t = a;
-                a = b;
-                b = t;
-            }
-        };
-        order2( v[0], v[1] );
-        order2( v[2], v[3] );
-        order2( v[0], v[2] );
-        order2( v[1], v[3] );
-        order2( v[1], v[2] );
-        order2( v[1], v[4] );
-        order2( v[2], v[4] );
+        std::nth_element( v, v + 2, v + 5 );
         return v[2];
     }
 }  // namespace
@@ -93,6 +75,8 @@ void TrailWindow::evict( int64_t cutoff_us )
 // keep every `stride`-th hit.
 int TrailWindow::recent( int stride, TrajPoint* dst, int dst_cap ) const
 {
+    if ( stride <= 0 || dst == nullptr || dst_cap <= 0 )
+        return 0;
     const int n = ring_.size();
     int w = 0;  // write index into dst
     for ( int k = 0; k < n && w < dst_cap; ++k )

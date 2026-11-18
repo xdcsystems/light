@@ -87,6 +87,17 @@ namespace
             CHECK_NEAR( t, out.d[0].bw, 100.0f, 1e-2f );
             CHECK_NEAR( t, out.d[0].cy, 400.0f, 5.0f );
         }
+        // Bottom-clipped box (legs occluded by a desk): top stays at y=300, h=80 -> cy_det=340.
+        // Expect top-anchored cy near 400 instead of jumping up toward 280.
+        {
+            Tracker trk;
+            TrajList out;
+            int64_t ts = stand( trk, out, 5, 0 );  // cx=500, cy=400, w=100, h=200 (top at y=300)
+            trk.update( one( person( 500, 340, 100, 80 ) ), ts, out );
+            CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
+            CHECK_NEAR( t, out.d[0].bh, 200.0f, 1e-2f );
+            CHECK_NEAR( t, out.d[0].cy, 400.0f, 5.0f );
+        }
         {
             Tracker trk;
             TrajList out;
@@ -99,6 +110,41 @@ namespace
             for ( int i = 0; i < 25; ++i, ts += kFrameUs )
                 trk.update( one( person( 500, 400, 120, 200 ) ), ts, out );
             CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].bh < 250.0f );
+        }
+    }
+
+    void check_spawn_gates( TestRun& t )
+    {
+        // Nested sub-box suppression (kSpawnContainGate = 65%): a small head/torso
+        // box (50x65) inside a full seated person (170x340) has IoU ~ 0.056 (< 0.15),
+        // but IoA_min = 1.0, so it must not spawn a ghost person track either on the
+        // same frame or against a live track.
+        {
+            Tracker trk;
+            TrajList out;
+            DetList dets;
+            dets.push( person( 392.0f, 720.0f, 170.0f, 340.0f ) );
+            dets.push( person( 368.0f, 605.0f, 50.0f, 65.0f ) );
+            trk.update( dets, 0, out );
+            CHECK( t, out.n == 1 );
+            trk.update( one( person( 368.0f, 605.0f, 50.0f, 65.0f ) ), kFrameUs, out );
+            CHECK( t, out.n == 1 && out.d[0].id == 1 );
+        }
+        // Spawn confidence gate (kInitConfPct = 35): a sub-0.35 detection cannot
+        // spawn a new track, but can still update an existing track.
+        {
+            Tracker trk;
+            TrajList out;
+            Detection weak = person( 500, 400, 100, 200 );
+            weak.conf = 0.28f;
+            trk.update( one( weak ), 0, out );
+            CHECK( t, out.n == 0 );
+            Detection ok = person( 500, 400, 100, 200 );
+            ok.conf = 0.36f;
+            trk.update( one( ok ), kFrameUs, out );
+            CHECK( t, out.n == 1 && out.d[0].id == 1 );
+            trk.update( one( weak ), 2 * kFrameUs, out );
+            CHECK( t, out.n == 1 && out.d[0].id == 1 );
         }
     }
 }  // namespace
@@ -239,6 +285,7 @@ void test_tracker( TestRun& t )
         CHECK( t, out.n == 1 && out.d[0].id == 1 );
         CHECK_NEAR( t, out.d[0].bw, 100.0f, 1e-2f );  // the squeezed box never reached the filter
     }
+    check_spawn_gates( t );
     // Capacity: 8 track slots; the 9th person is dropped.
     {
         Tracker trk;

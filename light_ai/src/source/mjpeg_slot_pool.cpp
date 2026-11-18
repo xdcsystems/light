@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cerrno>
+#include <iterator>
 #include <utility>
 #include <sys/mman.h>
 
@@ -47,8 +49,7 @@ void MjpegSlotPool::release( int i )
 
 void MjpegSlotPool::release_all()
 {
-    for ( bool& f : in_flight_ )
-        f = false;
+    std::fill( std::begin( in_flight_ ), std::end( in_flight_ ), false );
 }
 
 void MjpegSlotPool::swap( int a, int b )

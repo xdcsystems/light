@@ -106,21 +106,22 @@ namespace
     void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, int gx, int gy, int glyph_idx,
                          uint8_t r, uint8_t g, uint8_t b ) noexcept
     {
-        const uint8_t* rows = glyph_font::glyph_rows( glyph_idx );
-        for ( int row = 0; row < glyph_font::kGlyphH; ++row )
+        const uint8_t* alpha = glyph_font::glyph_alpha( glyph_idx );
+        for ( int pr = 0; pr < glyph_font::kGlyphH; ++pr )
         {
-            const int py = gy + row;
+            const int py = gy + pr;
             if ( py < 0 || py >= h )
                 continue;
-            const uint8_t bits = rows[row];
+            const uint8_t* row = alpha + pr * glyph_font::kGlyphW;
             uint8_t* line = rgb + static_cast<size_t>( py ) * stride;
-            for ( int col = 0; col < glyph_font::kGlyphW; ++col )
+            for ( int pc = 0; pc < glyph_font::kGlyphW; ++pc )
             {
-                if ( ( ( bits >> col ) & 1u ) == 0u )
+                const unsigned a = row[pc];
+                if ( a == 0u )
                     continue;
-                const int px = gx + col;
+                const int px = gx + pc;
                 if ( px >= 0 && px < w )
-                    blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, 255u );
+                    blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, a );
             }
         }
     }
@@ -134,7 +135,7 @@ namespace
                 fill_rect_cpu( rgb, w, h, stride, c.segs[s], c.r, c.g, c.b, 255u );
 
             const CalloutRect fill { c.pill.x0 + 1, c.pill.y0 + 1, c.pill.x1 - 1, c.pill.y1 - 1 };
-            fill_rect_cpu( rgb, w, h, stride, fill, 16, 16, 20, 200u );
+            fill_rect_cpu( rgb, w, h, stride, fill, 12, 12, 16, 245u );
             fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y0, c.pill.x1, c.pill.y0 + 1 }, c.r, c.g, c.b, 255u );
             fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y1 - 1, c.pill.x1, c.pill.y1 }, c.r, c.g, c.b, 255u );
             fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y0 + 1, c.pill.x0 + 1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255u );
@@ -148,7 +149,7 @@ namespace
                 if ( cp == 0 )
                     break;
                 draw_glyph_cpu( rgb, w, h, stride, gx, c.text_y, glyph_font::glyph_index( cp ), 255, 255, 255 );
-                gx += glyph_font::kGlyphW;
+                gx += CalloutItem::kGlyphW;
             }
         }
     }
@@ -193,7 +194,8 @@ void OverlaySink::init( const StreamConfig& stream,
     // Compare allocated mem against stride_bytes * model_h_ (avoiding tn.size / model_h_
     // which overestimates when native model input is FP16).
     const uint64_t expected_bytes = static_cast<uint64_t>( stride_bytes_ ) * static_cast<uint64_t>( model_h_ );
-    log_.info() << "net: tensor stride check: input mem=" << tensors.d[0].size
+    const size_t t0_size = tensors.n > 0 ? tensors.d[0].size : 0;
+    log_.info() << "net: tensor stride check: input mem=" << t0_size
                 << " stride=" << stride_bytes_ << " expected=" << expected_bytes << "\n";
     if ( stride_bytes_ != fallback_stride )
         log_.warn() << "net: non-packed input tensor stride (" << stride_bytes_ << " != " << fallback_stride
@@ -253,6 +255,50 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
     }
 }
 
+int OverlaySink::find_stab_idx( const TrackStabList& list, int id, uint32_t gen ) const noexcept
+{
+    const auto* const end = list.d.begin() + list.n;
+    const auto* const it = std::find_if( list.d.begin(), end, [id, gen]( const TrackDispStab& e ) {
+        return e.id == id && e.gen == gen;
+    } );
+    return it != end ? static_cast<int>( it - list.d.begin() ) : -1;
+}
+
+void OverlaySink::stabilize_display_tracks( int src_idx, TrajList& disp ) noexcept
+{
+    TrackStabList& prev = track_stab_[src_idx];
+    TrackStabList next {};
+    for ( int k = 0; k < disp.n; ++k )
+    {
+        TrackState& tr = disp.d[k];
+        if ( tr.state != TRACK_TENT && tr.state != TRACK_CONF )
+            continue;
+        const float x0 = tr.cx - tr.bw * 0.5f;
+        const float y0 = tr.cy - tr.bh * 0.5f;
+        const float x1 = tr.cx + tr.bw * 0.5f;
+        const float y1 = tr.cy + tr.bh * 0.5f;
+        const int idx = find_stab_idx( prev, tr.id, tr.gen );
+        TrackDispStab entry {};
+        entry.id = tr.id;
+        entry.gen = tr.gen;
+        if ( idx >= 0 )
+        {
+            entry.env = prev.d[idx].env;
+            entry.env.step( x0, y0, x1, y1, 0.0f );
+        }
+        else
+        {
+            entry.env.reset( x0, y0, x1, y1 );
+        }
+        tr.cx = entry.env.cx();
+        tr.cy = entry.env.cy();
+        tr.bw = entry.env.bw();
+        tr.bh = entry.env.bh();
+        next.push( entry );
+    }
+    prev = next;
+}
+
 bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
                                             const DetList& dets,
                                             const TrajList& trajs,
@@ -260,13 +306,17 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
 {
     const float sx = frame.lb.w / static_cast<float>( frame.src_w );
     const float sy = frame.lb.h / static_cast<float>( frame.src_h );
+    TrajList disp = trajs;
+    const bool valid_src = frame.src_idx >= 0 && frame.src_idx < reid_cfg::kMaxSources;
+    if ( valid_src )
+        stabilize_display_tracks( frame.src_idx, disp );
     boxes_.clear();
-    mapper_.fill( dets, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
+    mapper_.fill( dets, disp, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
     callouts_.clear();
-    if ( frame.src_idx >= 0 && frame.src_idx < reid_cfg::kMaxSources )
-        compute_callouts( trajs, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callout_hist_[frame.src_idx], callouts_ );
+    if ( valid_src )
+        compute_callouts( disp, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callout_hist_[frame.src_idx], callouts_ );
     else
-        compute_callouts( trajs, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callouts_ );
+        compute_callouts( disp, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callouts_ );
     if ( boxes_.n <= 0 && callouts_.n <= 0 )
         return false;
 
@@ -277,6 +327,8 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
         return false;
     }
     const TensorRef& tn = frame.tensor;
+    if ( tn.data == nullptr )
+        return false;
     dma::DmaSync wr( tn.fd, true );
     dma::cache_drop( tn.data, tn.size );
     const int row_stride = static_cast<int>( tn.stride_bytes > 0 ? tn.stride_bytes : stride_bytes_ );

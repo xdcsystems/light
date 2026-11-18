@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
@@ -63,10 +64,9 @@ inline bool parse_sof_segment( const uint8_t* seg, size_t seglen, JpegSofInfo& o
     for ( int c = 0; c < ncomp && 10 + static_cast<size_t>( c ) * 3 < seglen; ++c )
     {
         const int v = seg[9 + static_cast<size_t>( c ) * 3] & 0x0F;
-        if ( v > v_max )
-            v_max = v;
-        if ( v > 0 && v < v_min )
-            v_min = v;
+        v_max = std::max( v_max, v );
+        if ( v > 0 )
+            v_min = std::min( v_min, v );
     }
     out.yuv420 = ( v_max >= 2 && v_min == 1 );
     return true;
@@ -201,6 +201,14 @@ inline bool jpeg_frame_check( const uint8_t* data, uint32_t& size, JpegSofInfo& 
     size = sz;
     if ( sz < 4 || data[0] != 0xFF || data[1] != 0xD8 )
         return false;
+    uint32_t zsz = sz;
+    while ( zsz > 4 && data[zsz - 1] == 0x00 )
+        --zsz;
+    if ( data[zsz - 2] == 0xFF && data[zsz - 1] == 0xD9 )
+    {
+        sz = zsz;
+        size = zsz;
+    }
     if ( !probe_jpeg_sof( data, sz, info ) )
         return false;
     return data[sz - 2] == 0xFF && data[sz - 1] == 0xD9;

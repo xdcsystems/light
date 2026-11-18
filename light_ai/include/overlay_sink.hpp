@@ -13,6 +13,7 @@
 
 #include "box_mapper.h"          // BoxMapper
 #include "config/config.hpp"     // LabelLang
+#include "core/box_envelope.hpp" // BoxEnvelope
 #include "core/callout.hpp"      // CalloutHistory, CalloutList
 #include "core/detection.hpp"    // DetList
 #include "core/frame_view.hpp"   // FrameView, TensorSet
@@ -56,7 +57,17 @@ public:
     void publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept;
 
 private:
+    struct TrackDispStab
+    {
+        int id = 0;
+        uint32_t gen = 0;
+        BoxEnvelope env {};
+    };
+    using TrackStabList = PodList<TrackDispStab, TrajList::cap>;
+
     void init_gpu_drawer( bool cpu_draw, const TensorSet& tensors );
+    int find_stab_idx( const TrackStabList& list, int id, uint32_t gen ) const noexcept;
+    void stabilize_display_tracks( int src_idx, TrajList& disp ) noexcept;
     bool draw_overlay_into_tensor( const FrameView& frame,
                                    const DetList& dets,
                                    const TrajList& trajs,
@@ -71,6 +82,7 @@ private:
     GpuBoxList boxes_ {};
     CalloutList callouts_ {};
     std::array<CalloutHistory, reid_cfg::kMaxSources> callout_hist_ {};
+    std::array<TrackStabList, reid_cfg::kMaxSources> track_stab_ {};
     LabelLang label_lang_ = LabelLang::En;
     int model_w_ = 0;
     int model_h_ = 0;

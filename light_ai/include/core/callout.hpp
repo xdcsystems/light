@@ -21,6 +21,13 @@ struct CalloutRect
 
 struct CalloutItem
 {
+    enum
+    {
+        kGlyphScale = 1,
+        kGlyphW = glyph_font::kGlyphW * kGlyphScale,
+        kGlyphH = glyph_font::kGlyphH * kGlyphScale,
+    };
+
     CalloutRect box {};
     CalloutRect pill {};
     CalloutRect segs[2] {};

@@ -75,11 +75,12 @@ namespace
 
     void fill_box( const Plane8& plane, const QuadBox& b, uint8_t val )
     {
+        if ( b.x0 >= b.x1 )
+            return;
         for ( int ry = b.y0; ry < b.y1; ++ry )
         {
             uint8_t* row = plane.p + static_cast<size_t>( ry ) * plane.stride;
-            for ( int rx = b.x0; rx < b.x1; ++rx )
-                row[rx] = val;
+            std::fill( row + b.x0, row + b.x1, val );
         }
     }
 }  // namespace

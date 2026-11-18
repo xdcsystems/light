@@ -77,10 +77,13 @@ void BoxSmoother::apply_matches( const DetList& in, int na )
         const Pair& pr = pairs_[p];
         BoxTrack& t = tracks_[pr.trk];
         const Detection& d = in.d[pr.det];
-        t.x = kAlpha * t.x + ( 1.0f - kAlpha ) * d.x;
-        t.y = kAlpha * t.y + ( 1.0f - kAlpha ) * d.y;
-        t.w = kAlpha * t.w + ( 1.0f - kAlpha ) * d.w;
-        t.h = kAlpha * t.h + ( 1.0f - kAlpha ) * d.h;
+        t.env.step( d.x, d.y, d.x + d.w, d.y + d.h, kAlpha );
+        t.x = t.env.x();
+        t.y = t.env.y();
+        t.w = t.env.w();
+        t.h = t.env.h();
+        t.conf = d.conf;
+        t.hits = std::min( t.hits + 1, static_cast<int>( kCoastMinHits ) );
         t.miss = 0;
         t.matched = true;
     }
@@ -90,8 +93,13 @@ void BoxSmoother::apply_matches( const DetList& in, int na )
 void BoxSmoother::expire()
 {
     for ( auto& t : tracks_ )
-        if ( t.alive && !t.matched && ++t.miss > kMaxMiss )
+    {
+        if ( !t.alive || t.matched )
+            continue;
+        const int lim = ( t.hits >= kCoastMinHits ) ? kMaxMiss : kUnconfMaxMiss;
+        if ( ++t.miss > lim )
             t.alive = false;
+    }
 }
 
 // The output in input order: a matched det carries its track's smoothed box,
@@ -107,6 +115,8 @@ void BoxSmoother::emit( const DetList& in, const DetTrack& det_trk, DetList& out
             if ( i < kMaxDet && det_trk[i] >= 0 )
             {
                 const BoxTrack& t = tracks_[det_trk[i]];
+                if ( t.hits < kCoastMinHits && t.conf < kInstantConf )
+                    continue;
                 sd.x = t.x;
                 sd.y = t.y;
                 sd.w = t.w;
@@ -115,9 +125,21 @@ void BoxSmoother::emit( const DetList& in, const DetTrack& det_trk, DetList& out
             else
             {
                 spawn( d );
+                if ( d.conf < kInstantConf )
+                    continue;
             }
         }
         out.push( sd );
+    }
+    emit_coast( out );
+}
+
+void BoxSmoother::emit_coast( DetList& out ) const
+{
+    for ( const auto& t : tracks_ )
+    {
+        if ( t.alive && !t.matched && t.hits >= kCoastMinHits && out.n < DetList::cap )
+            out.push( Detection { t.x, t.y, t.w, t.h, t.cls, t.conf } );
     }
 }
 
@@ -125,20 +147,23 @@ void BoxSmoother::emit( const DetList& in, const DetTrack& det_trk, DetList& out
 // through unsmoothed (warm-up). No free slot: no track.
 void BoxSmoother::spawn( const Detection& d )
 {
-    for ( auto& t : tracks_ )
-    {
-        if ( t.alive )
-            continue;
-        t.x = d.x;
-        t.y = d.y;
-        t.w = d.w;
-        t.h = d.h;
-        t.cls = d.cls;
-        t.miss = 0;
-        t.alive = true;
-        t.matched = true;
-        break;
-    }
+    auto* const it = std::find_if( tracks_.begin(), tracks_.end(), []( const BoxTrack& t ) {
+        return !t.alive;
+    } );
+    if ( it == tracks_.end() )
+        return;
+    BoxTrack& t = *it;
+    t.env.reset( d.x, d.y, d.x + d.w, d.y + d.h );
+    t.x = d.x;
+    t.y = d.y;
+    t.w = d.w;
+    t.h = d.h;
+    t.conf = d.conf;
+    t.cls = d.cls;
+    t.hits = 1;
+    t.miss = 0;
+    t.alive = true;
+    t.matched = true;
 }
 
 void BoxSmoother::log_frame( int frame, const DetList& raw, const DetList& smooth )

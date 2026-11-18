@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "core/pts_clock.hpp"
 
 // us * 90000 / 1000000 = us * 9 / 100; adding half the divisor rounds to
@@ -12,7 +14,7 @@ void PtsClock::restart( int64_t frame_step ) noexcept
     counter_ = 0;
     base_us_ = -1;
     last_pts_ = -1;
-    frame_step_ = frame_step < 1 ? 1 : frame_step;
+    frame_step_ = std::max<int64_t>( 1, frame_step );
 }
 
 int64_t PtsClock::next( int64_t ts_us, uint64_t frames_sent ) noexcept

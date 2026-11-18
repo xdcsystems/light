@@ -155,15 +155,13 @@ namespace
             { "off", Log::Level::Off },
         } };
         const std::string_view sv( v );
-        for ( const LevelMap& m : levels )
-        {
-            if ( sv == m.name )
-            {
-                c.log_level = m.level;
-                return true;
-            }
-        }
-        return false;
+        const auto* const it = std::find_if( levels.begin(), levels.end(), [sv]( const LevelMap& m ) {
+            return sv == m.name;
+        } );
+        if ( it == levels.end() )
+            return false;
+        c.log_level = it->level;
+        return true;
     }
 
     bool apply_reid_model( Config& c, const char* v )

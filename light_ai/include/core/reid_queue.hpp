@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <condition_variable>
@@ -51,12 +52,10 @@ public:
     // Non-blocking slot claim; returns [0..3] or -1 when all slots are in flight.
     int try_acquire_slot() noexcept
     {
-        for ( int i = 0; i < reid_cfg::kReidSlots; ++i )
-        {
-            if ( states_[i].load( std::memory_order_acquire ) == ReidSlotState::Free )
-                return i;
-        }
-        return -1;
+        const auto it = std::find_if( states_.begin(), states_.end(), []( const std::atomic<ReidSlotState>& s ) {
+            return s.load( std::memory_order_acquire ) == ReidSlotState::Free;
+        } );
+        return it != states_.end() ? static_cast<int>( it - states_.begin() ) : -1;
     }
 
     bool submit( const ReidJob& job ) noexcept

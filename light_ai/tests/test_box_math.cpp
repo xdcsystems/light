@@ -13,6 +13,12 @@ void test_box_math( TestRun& t )
     CHECK_NEAR( t, box_iou( 0, 0, 10, 10, 5, 0, 10, 10 ), 1.0f / 3.0f, 1e-6f );
     CHECK( t, box_iou( 0, 0, 0, 0, 0, 0, 0, 0 ) == 0.0f );
 
+    // box_ioa_min: nested sub-box inside a much larger box has low IoU (< 0.10)
+    // but 100% containment over the smaller area.
+    CHECK_NEAR( t, box_ioa_min( 300, 550, 170, 340, 340, 570, 50, 65 ), 1.0f, 1e-6f );
+    CHECK( t, box_ioa_min( 0, 0, 10, 10, 20, 20, 10, 10 ) == 0.0f );
+    CHECK( t, box_ioa_min( 0, 0, 0, 10, 0, 0, 10, 10 ) == 0.0f );
+
     // box_iou_corners: same geometry, plus the epsilon guard on zero-area boxes.
     CHECK_NEAR( t, box_iou_corners( 0, 0, 10, 10, 5, 0, 15, 10 ), 1.0f / 3.0f, 1e-5f );
     CHECK( t, box_iou_corners( 0, 0, 10, 10, 20, 20, 30, 30 ) == 0.0f );

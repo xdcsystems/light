@@ -62,7 +62,7 @@ class NetMjpegSource
     // The next part (poll_part_ready).
     enum class Ready : uint8_t
     {
-        Yes,    // complete in the window (or the window wedged full: the read desyncs)
+        Yes,    // complete in the window
         No,     // not within the wait (an EINTR included)
         Lost,   // EOF or a socket error
         Desync  // the window wedged full while waiting
@@ -113,7 +113,7 @@ private:
     // After the head: the first JPEG frame primed into slot 0, its SOFn
     // geometry checked against a locked one (a reconnect).
     Status prime_first_frame();
-    // One complete part (or a wedged-full window) is buffered: no fill needed.
+    // One complete part is buffered in the window: no fill needed.
     bool part_buffered() const;
     // The desync protocol: the buffered window is dropped, the reader resyncs.
     void drop_window();
@@ -126,7 +126,7 @@ private:
     Status take_primed( int& index, uint32_t& size );
     // One part into slot, then the freshest of the parts already buffered
     // (via a scratch slot, at most kSkipMax); a Desync gets one resync retry.
-    Read read_latest_part( int slot, uint32_t* size );
+    Read read_latest_part( int slot, uint32_t* size, bool blocking );
     // One part into slot (core/multipart_reader.hpp), refilling with the
     // kPollMs watchdog. Any result but Part resyncs the reader (the next read
     // starts at a delimiter line); only the callers drop the window on Desync.
