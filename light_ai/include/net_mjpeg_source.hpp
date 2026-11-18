@@ -55,10 +55,11 @@ class NetMjpegSource
     // One part read (read_part, step_nonblocking_part, read_latest_part).
     enum class Read : uint8_t
     {
-        Part,     // one part in the slot
-        Pending,  // non-blocking poll timed out or interrupted mid-part; rx_slot_ stays active
-        Lost,     // the watchdog, EOF or a socket error: the connection is gone
-        Desync    // the stream does not parse, or the window wedged full: drop it, resync
+        Part,       // one part in the slot
+        Pending,    // non-blocking poll timed out or interrupted mid-part; rx_slot_ stays active
+        Lost,       // the watchdog, EOF or a socket error: the connection is gone
+        Desync,     // the window wedged full of non-delimited bytes: drop it, resync
+        Oversized   // a > kSlotBytes part was drained to the next delimiter: keep the window
     };
 
 public:

@@ -158,7 +158,7 @@ NetMjpegSource::Read NetMjpegSource::step_nonblocking_part( int slot, int timeou
         {
             parts_.resync();
             rx_slot_ = -1;
-            return Read::Desync;
+            return Read::Oversized;
         }
         const BufferedSocket::Fill r = sock_.fill( wait_ms );
         if ( r == BufferedSocket::Fill::Data )
@@ -187,6 +187,8 @@ void NetMjpegSource::start()
         const int slot = ( rx_slot_ >= 0 ) ? rx_slot_ : 1;
         rx_slot_ = slot;
         const Read rc = step_nonblocking_part( slot, 0, &n );
+        if ( rc == Read::Oversized )
+            continue;
         if ( rc != Read::Part )
         {
             if ( rc == Read::Desync )
@@ -218,7 +220,7 @@ NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
         {
             parts_.resync();
             rx_slot_ = -1;
-            return Read::Desync;
+            return Read::Oversized;
         }
         const BufferedSocket::Fill r = sock_.fill_until( kPollMs );
         if ( r == BufferedSocket::Fill::Data )
@@ -238,7 +240,10 @@ void NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )
     for ( int skip = 0; scratch >= 0 && skip < kSkipMax && part_buffered(); ++skip )
     {
         uint32_t next_n = 0;
-        if ( const Read sr = read_part( scratch, &next_n ); sr != Read::Part )
+        const Read sr = read_part( scratch, &next_n );
+        if ( sr == Read::Oversized )
+            continue;
+        if ( sr != Read::Part )
         {
             if ( sr == Read::Desync )
                 drop_window();
@@ -257,13 +262,14 @@ NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size,
     uint32_t n = 0;
     const bool blocking = timeout_ms < 0;
     Read rc = blocking ? read_part( slot, &n ) : step_nonblocking_part( slot, timeout_ms, &n );
-    if ( rc == Read::Desync )
+    if ( rc == Read::Desync || rc == Read::Oversized )
     {
-        // Desynced stream: drop the buffered window and count the streak.
-        // Only retry when blocking or a complete next part is already buffered,
-        // so non-blocking multi-source polling never stalls the pipeline thread.
+        // Wedged window (Desync) drops the buffer; Oversized already drained to the
+        // next delimiter so buffered bytes stay intact. Only retry when blocking or a
+        // complete next part is already buffered.
         ++err_streak_;
-        drop_window();
+        if ( rc == Read::Desync )
+            drop_window();
         if ( err_streak_ < kErrStreakMax && ( blocking || part_buffered() ) )
         {
             n = 0;
@@ -290,7 +296,7 @@ Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms )
     const Read r = read_latest_part( slot, &n, timeout_ms );
     if ( r == Read::Pending )
         return dequeue_status( EAGAIN );
-    if ( r == Read::Desync )
+    if ( r == Read::Desync || r == Read::Oversized )
         return dequeue_status( ( err_streak_ >= kErrStreakMax ) ? EIO : EAGAIN );
     if ( r != Read::Part )
         return dequeue_status( EIO );  // EOF / watchdog / recv error: recoverable

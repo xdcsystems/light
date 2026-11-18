@@ -299,7 +299,9 @@ private:
         {
             const int w_aux = ( ( w / 2 ) + 1 ) & ~1;
             const int h_aux = ( ( h / 2 ) + 1 ) & ~1;
-            geom_.aux_fd = dec_.aux_fd( static_cast<size_t>( w_aux ) * static_cast<size_t>( h_aux ) * 2 );
+            const int w_aux_stride = ( w_aux + 15 ) & ~15;
+            const int h_aux_stride = ( h_aux + 15 ) & ~15;
+            geom_.aux_fd = dec_.aux_fd( static_cast<size_t>( w_aux_stride ) * static_cast<size_t>( h_aux_stride ) * 2 );
             if ( geom_.aux_fd < 0 )
             {
                 if ( hot )

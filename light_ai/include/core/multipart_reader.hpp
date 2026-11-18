@@ -18,9 +18,11 @@
 //
 // Desync is the caller's window: while searching for a delimiter or a
 // header end feed() consumes nothing, so a full window without one is a
-// desynced stream (NetMjpegSource). feed() reports Desync itself only for
-// a body above body_cap. After Desync -- or an abandoned read -- resync(),
-// then drop or keep the window.
+// desynced stream (NetMjpegSource). For a body above body_cap, feed()
+// drains and discards the oversized part across NeedMore chunks, then
+// reports Desync once at the end of the part (next delimiter intact).
+// After Desync -- or an abandoned read -- resync(), then drop or keep
+// the window.
 //
 // part_buffered() runs the same grammar on a state copy without copying:
 // true iff feed() on the same bytes would end in Part or Desync.
@@ -88,8 +90,9 @@ private:
     {
         Phase phase = Phase::Delimiter;
         Form form = Form::Open;
-        long need = -1;  // Content-Length of the current part, -1 = none
-        size_t got = 0;  // body bytes delivered so far
+        long need = -1;     // Content-Length of the current part, -1 = none
+        size_t got = 0;     // body bytes delivered (or skipped) so far
+        bool skip = false;  // true while draining an oversized (> body_cap) part
     };
 
 private:

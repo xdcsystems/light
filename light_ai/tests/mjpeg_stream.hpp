@@ -102,7 +102,13 @@ DriveResult drive( MultipartReader& r, const Bytes& s, Chunks mode, size_t cap, 
             continue;
         }
         w.tail();
-        if ( st.ev == MultipartReader::Event::Desync || w.room() == 0 )
+        if ( st.ev == MultipartReader::Event::Desync )
+        {
+            ++out.desyncs;
+            r.resync();
+            continue;
+        }
+        if ( w.room() == 0 )
         {
             ++out.desyncs;
             w.clear();

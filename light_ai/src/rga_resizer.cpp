@@ -85,8 +85,8 @@ Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_d
         src_fd = aux_fd;
         w_src = w_aux;
         h_src = h_aux;
-        ws = w_aux;
-        hs = h_aux;
+        ws = ( w_aux + 15 ) & ~15;
+        hs = ( h_aux + 15 ) & ~15;
         pass_fmt = RK_FORMAT_YCbCr_420_SP;
     }
 
@@ -159,12 +159,14 @@ Status RgaResizer::crop_resize( int src_fd, int w_src, int h_src, LbGeom crop_ro
 Status RgaResizer::downscale_to_aux( int src_fd, int w_src, int h_src, int src_w_stride, int src_h_stride,
                                      int src_fmt_rk, int aux_fd, int w_aux, int h_aux ) const
 {
-    if ( aux_fd < 0 )
+    if ( aux_fd < 0 || w_aux <= 0 || h_aux <= 0 )
     {
         log_.error() << "RGA: two-pass needed but aux_fd < 0\n";
         return make_status( Errc::Failed, "RGA: two-pass needed but aux_fd < 0" );
     }
+    const int w_aux_stride = ( w_aux + 15 ) & ~15;
+    const int h_aux_stride = ( h_aux + 15 ) & ~15;
     rga_buffer_t src = wrap( src_fd, w_src, h_src, src_w_stride, src_h_stride, src_fmt_rk );
-    rga_buffer_t mid = wrap( aux_fd, w_aux, h_aux, RK_FORMAT_YCbCr_420_SP );
+    rga_buffer_t mid = wrap( aux_fd, w_aux, h_aux, w_aux_stride, h_aux_stride, RK_FORMAT_YCbCr_420_SP );
     return rga_check( imresize( src, mid ), log_, "RGA resize (pass 1) failed" );
 }

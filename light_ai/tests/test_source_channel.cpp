@@ -53,6 +53,42 @@ namespace
         Channel ch;
         std::string last_why;
     };
+
+    void aux_stride_sizing( TestRun& t )
+    {
+        // Stride forwarding and 16-aligned aux_fd stride sizing.
+        {
+            Rig r( SourceKind::V4L2, 64 );
+            r.dev.w = 854;
+            r.dev.h = 480;
+            r.dec.hor_stride = 864;
+            r.dec.ver_stride = 480;
+            CHECK( t, r.attach( false ) == Attach::Live );
+            CHECK( t, r.ch.hor_stride() == 864 && r.ch.ver_stride() == 480 );
+            // 854 / 2 = 427 -> w_aux=428 -> 16-aligned stride 432; h_aux=240 -> 432 * 240 * 2 = 207360.
+            CHECK( t, r.dec.last_aux_bytes == static_cast<size_t>( 432 ) * 240 * 2 );
+        }
+        {
+            Rig r( SourceKind::V4L2, 64 );
+            r.dev.w = 720;
+            r.dev.h = 1280;
+            r.dec.hor_stride = 720;
+            r.dec.ver_stride = 1280;
+            CHECK( t, r.attach( false ) == Attach::Live );
+            // 720 / 2 = 360 -> 16-aligned stride 368; 1280 / 2 = 640 -> 368 * 640 * 2 = 471040.
+            CHECK( t, r.dec.last_aux_bytes == static_cast<size_t>( 368 ) * 640 * 2 );
+        }
+        {
+            Rig r( SourceKind::V4L2, 64 );
+            r.dev.w = 1920;
+            r.dev.h = 1080;
+            r.dec.hor_stride = 1920;
+            r.dec.ver_stride = 1088;
+            CHECK( t, r.attach( false ) == Attach::Live );
+            // 1920 / 2 = 960; 1080 / 2 = 540 -> 16-aligned stride 544 -> 960 * 544 * 2 = 1044480.
+            CHECK( t, r.dec.last_aux_bytes == static_cast<size_t>( 960 ) * 544 * 2 );
+        }
+    }
 }  // namespace
 
 void test_source_channel( TestRun& t )
@@ -205,16 +241,5 @@ void test_source_channel( TestRun& t )
         r.dec.decode_rc = 0;
         CHECK( t, r.attach( true ) == Attach::Live && r.dec.inits == 2 );
     }
-    // Stride forwarding and even-aligned aux_fd sizing.
-    {
-        Rig r( SourceKind::V4L2, 64 );
-        r.dev.w = 854;
-        r.dev.h = 480;
-        r.dec.hor_stride = 864;
-        r.dec.ver_stride = 480;
-        CHECK( t, r.attach( false ) == Attach::Live );
-        CHECK( t, r.ch.hor_stride() == 864 && r.ch.ver_stride() == 480 );
-        // 854 / 2 = 427 -> aligned up to 428; 480 / 2 = 240 -> 428 * 240 * 2 = 205440.
-        CHECK( t, r.dec.last_aux_bytes == static_cast<size_t>( 428 ) * 240 * 2 );
-    }
+    aux_stride_sizing( t );
 }

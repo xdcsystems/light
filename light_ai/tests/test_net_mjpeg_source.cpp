@@ -347,6 +347,89 @@ namespace
         }
     }
 
+    void oversized_part_recovers( TestRun& t, const Bytes& a )
+    {
+        const Bytes huge = make_large_jpeg( variant( a, 0x41 ), 1250 * 1024, 0x21 );
+        const Bytes good = make_large_jpeg( variant( a, 0x77 ), 380 * 1024, 0x51 );
+        CHECK( t, huge.size() > ( 1u << 20 ) && good.size() > 350 * 1024 );
+
+        // 1) Single > 1 MiB Content-Length part drains cleanly and recovers the next ~380 KiB frame.
+        {
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            r.src.start();
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( 1000, err, f ) );
+
+            const std::string stream = parts( { huge, good }, true );
+            std::thread writer( [&r, &stream] { r.send( stream ); } );
+            int idx = -1;
+            for ( int i = 0; i < 60; ++i )
+            {
+                idx = r.dequeue( 5, err, f );
+                if ( idx >= 0 || err != EAGAIN )
+                    break;
+                std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
+            }
+            writer.join();
+            CHECK( t, idx >= 0 && err == 0 && f == good );
+            r.src.requeue( idx );
+        }
+
+        // 2) > 2 MiB boundary-scan part (no Content-Length) also drains cleanly and recovers.
+        {
+            const Bytes huge2 = make_large_jpeg( variant( a, 0x42 ), 2200 * 1024, 0x22 );
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            r.src.start();
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( 1000, err, f ) );
+
+            const std::string stream = "\r\n" + str( mjpeg_test::make_stream( "--frame", { huge2, good }, false, "\r\n", false ) )
+                                       + "\r\n--frame\r\n";
+            std::thread writer( [&r, &stream] { r.send( stream ); } );
+            int idx = -1;
+            for ( int i = 0; i < 60; ++i )
+            {
+                idx = r.dequeue( 5, err, f );
+                if ( idx >= 0 || err != EAGAIN )
+                    break;
+                std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
+            }
+            writer.join();
+            CHECK( t, idx >= 0 && err == 0 && f == good );
+            r.src.requeue( idx );
+        }
+
+        // 3) 4 consecutive > 1 MiB parts still trip kErrStreakMax -> EIO.
+        {
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            r.src.start();
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( 1000, err, f ) );
+
+            const std::string stream = parts( { huge, huge, huge, huge }, true );
+            std::thread writer( [&r, &stream] { r.send( stream ); } );
+            int idx = -1;
+            for ( int i = 0; i < 80; ++i )
+            {
+                idx = r.dequeue( 5, err, f );
+                if ( idx >= 0 || err != EAGAIN )
+                    break;
+                std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
+            }
+            writer.join();
+            CHECK( t, idx == -1 && err == EIO );
+        }
+    }
+
     void cancel_stops_blocking_read( TestRun& t, const Bytes& a )
     {
         Rig r;
@@ -383,6 +466,7 @@ void test_net_mjpeg_source( TestRun& t )
     corrupt_streak( t, a );
     desync_recovers( t, a );
     large_jpeg_nonblocking( t, a );
+    oversized_part_recovers( t, a );
     refused( t, a, wide );
     cancel_stops_blocking_read( t, a );
 }

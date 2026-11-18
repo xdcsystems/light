@@ -375,10 +375,12 @@ namespace
             const Bytes rest( streams[i].begin() + static_cast<long>( st.consumed ), streams[i].end() );
             CHECK( t, buffered_matches_feed( r, rest, kCap ) );
         }
-        // An oversized Content-Length is "ready" too: the read that follows desyncs.
+        // An oversized Content-Length drains its body, then desyncs cleanly.
         {
             Bytes s;
             put( s, "--frame\r\nContent-Length: 5000\r\n\r\n" );
+            CHECK( t, !reader( "frame" ).part_buffered( s.data(), s.size() ) );
+            put( s, garbage( 5000, 11 ) );
             CHECK( t, reader( "frame" ).part_buffered( s.data(), s.size() ) );
             CHECK( t, buffered_matches_feed( reader( "frame" ), s, kCap ) );
         }
