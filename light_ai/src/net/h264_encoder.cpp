@@ -124,11 +124,9 @@ void H264Encoder::drain()
     line << "\n";
 }
 
-// The wrapper runs a NON_BLOCK output timeout (no LOW_DELAY
-// flag): EAGAIN during flush means "frames still in flight",
-// not "done". Stopping at the first EAGAIN leaves up to
-// EncoderFramePool::kSlots frames + EOS queued inside MPP; mpp_destroy
-// then tears its internal queues down over live packets
+// Blocking drain (AV_CODEC_FLAG_LOW_DELAY is active): EAGAIN during flush
+// means frames are still in flight, not "done". Stopping early would leave
+// queued frames + EOS inside MPP so mpp_destroy tears down live packets
 // ("mpp_meta: put_meta negative ref_count" /
 // "mpp_mem_pool ... caller mpp_packet_deinit" at exit).
 // Bounded: the encoder holds at most kSlots frames and
@@ -211,8 +209,8 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Sessi
         fr->pict_type = AV_PICTURE_TYPE_NONE;
     }
 
-    // EAGAIN from send = the rkmpp input queue is full (3-deep task
-    // queue under a VFR clump). The FFmpeg contract: pull one output
+    // EAGAIN from send = the rkmpp input queue is temporarily full
+    // under a VFR clump. The FFmpeg contract: pull one output
     // packet out first, then retry the send (the dtor flush loop uses
     // the same pattern for EOF). Was: fatal -> a full stream
     // session restart over a transient backpressure.

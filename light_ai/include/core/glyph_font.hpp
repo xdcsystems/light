@@ -1,4 +1,4 @@
-// Fixed 10x16 8-bit high-contrast bitmap font (ASCII + Cyrillic) with bounds-checked UTF-8
+// Fixed 7x12 8-bit high-contrast bitmap font (ASCII + Cyrillic) with bounds-checked UTF-8
 // decoding and 1-px-padded atlas builder for zero-heap GPU and CPU label rendering.
 
 #pragma once
@@ -11,8 +11,8 @@ namespace glyph_font
 {
     enum
     {
-        kGlyphW = 10,
-        kGlyphH = 16,
+        kGlyphW = 7,
+        kGlyphH = 12,
         kGlyphBytes = kGlyphW * kGlyphH,
         kCellPad = 1,
         kCellW = kGlyphW + 2 * kCellPad,
@@ -26,7 +26,7 @@ namespace glyph_font
         kLabelCap = 32
     };
 
-    // 10x16 8-bit alpha coverage bitmap for slot [0..kSlotCount-1]. Slot 0 is solid 0xFF.
+    // 7x12 8-bit alpha coverage bitmap for slot [0..kSlotCount-1]. Slot 0 is solid 0xFF.
     const uint8_t* glyph_alpha( int idx ) noexcept;
 
     // Maps Unicode codepoint to slot [1..161]; unknown -> '?' slot.

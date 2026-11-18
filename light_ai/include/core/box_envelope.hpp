@@ -23,6 +23,9 @@ struct BoxEnvelope
         std::copy_n( v, 4, hi );
         std::copy_n( v, 4, sum );
         std::copy_n( v, 4, out );
+        std::copy_n( v, 4, first );
+        std::copy_n( v, 4, prev );
+        std::fill_n( path, 4, 0.0f );
         count = 1;
         locked = false;
     }
@@ -76,12 +79,17 @@ private:
 
     void unlock_step( const float v[4], float move_alpha ) noexcept
     {
-        std::transform( out, out + 4, v, out, [move_alpha]( float o, float x ) {
-            return move_alpha * o + ( 1.0f - move_alpha ) * x;
+        // Blend halfway from held output on lock breakout so motion resumes without a sharp jump.
+        const float eff_a = locked ? std::max( move_alpha, 0.5f ) : move_alpha;
+        std::transform( out, out + 4, v, out, [eff_a]( float o, float x ) {
+            return eff_a * o + ( 1.0f - eff_a ) * x;
         } );
         std::copy_n( v, 4, lo );
         std::copy_n( v, 4, hi );
         std::copy_n( v, 4, sum );
+        std::copy_n( v, 4, first );
+        std::copy_n( v, 4, prev );
+        std::fill_n( path, 4, 0.0f );
         count = 1;
         locked = false;
     }
@@ -90,11 +98,16 @@ private:
     {
         float nlo[4] {};
         float nhi[4] {};
+        float npath[4] {};
         for ( int i = 0; i < 4; ++i )
         {
             nlo[i] = std::min( lo[i], v[i] );
             nhi[i] = std::max( hi[i], v[i] );
-            if ( nhi[i] - nlo[i] > max_span[i] )
+            npath[i] = path[i] + std::fabs( v[i] - prev[i] );
+            const float net = std::fabs( v[i] - first[i] );
+            // Break out on steady monotonic drift so slow motion never stair-steps.
+            const bool drift = ( count >= 2 && net >= 0.9f * npath[i] && net >= 0.8f );
+            if ( nhi[i] - nlo[i] > max_span[i] || drift )
             {
                 unlock_step( v, move_alpha );
                 return;
@@ -106,11 +119,17 @@ private:
         {
             lo[i] = nlo[i];
             hi[i] = nhi[i];
+            prev[i] = v[i];
+            path[i] = npath[i];
             sum[i] += v[i];
-            out[i] = sum[i] * inv;
+            out[i] = move_alpha * out[i] + ( 1.0f - move_alpha ) * v[i];
         }
         if ( count >= kWindowFrames )
+        {
             locked = true;
+            for ( int i = 0; i < 4; ++i )
+                out[i] = sum[i] * inv;
+        }
     }
 
 private:
@@ -118,6 +137,9 @@ private:
     float hi[4] {};
     float sum[4] {};
     float out[4] {};
+    float first[4] {};
+    float prev[4] {};
+    float path[4] {};
     int count = 0;
     bool locked = false;
 };

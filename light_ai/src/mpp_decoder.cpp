@@ -22,7 +22,18 @@ namespace
     {
         while ( size > 2 && is_jpeg_pad( data[size - 1] ) )
             --size;
-        return size >= 4 && data[0] == 0xFF && data[1] == 0xD8 && data[size - 2] == 0xFF && data[size - 1] == 0xD9;
+        if ( size < 4 || data[0] != 0xFF || data[1] != 0xD8 )
+            return false;
+        if ( data[size - 2] == 0xFF && data[size - 1] == 0xD9 )
+            return true;
+        // Some UVC cameras append non-zero trailer metadata after EOI; search the last 64 B.
+        const size_t scan_start = size > 66 ? size - 64 : 2;
+        const uint8_t eoi[2] = { 0xFF, 0xD9 };
+        const uint8_t* const found = std::find_end( data + scan_start, data + size, eoi, eoi + 2 );
+        if ( found == data + size )
+            return false;
+        size = static_cast<size_t>( found - data ) + 2;
+        return true;
     }
 }  // namespace
 
@@ -247,7 +258,8 @@ Status MppDecoder::make_packet( const uint8_t* data, size_t size )
             if ( want != out_fmt_ )
             {
                 out_fmt_ = want;
-                mpp_frame_set_fmt( out_frame_, out_fmt_ );
+                if ( out_frame_ )
+                    mpp_frame_set_fmt( out_frame_, out_fmt_ );
                 log_.info() << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( want == MPP_FMT_YUV420SP ? "0" : "2" )
                             << " -> out fmt " << ( out_fmt_ == MPP_FMT_YUV420SP ? "420SP" : "422SP" ) << '\n';
             }

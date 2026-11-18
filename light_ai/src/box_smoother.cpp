@@ -83,7 +83,7 @@ void BoxSmoother::apply_matches( const DetList& in, int na )
         t.w = t.env.w();
         t.h = t.env.h();
         t.conf = d.conf;
-        ++t.hits;
+        t.hits = std::min( t.hits + 1, static_cast<int>( kCoastMinHits ) );
         t.miss = 0;
         t.matched = true;
     }

@@ -96,6 +96,72 @@ namespace
             CHECK_NEAR( t, out.d[0].x, 301.0f, 1e-4f );
         }
     }
+
+    void check_slow_ramp_walk( TestRun& t, float spd )
+    {
+        BoxSmoother sm;
+        DetList out;
+        float prev_x = 0.0f;
+        for ( int k = 0; k < 30; ++k )
+        {
+            sm.update( one( det( 100.0f + static_cast<float>( k ) * spd, 150.0f, 80.0f, 120.0f, 56 ) ), out );
+            if ( k > 0 )
+            {
+                const float dx = out.d[0].x - prev_x;
+                CHECK( t, dx > 0.0f && dx <= 1.5f * spd + 1e-3f );
+            }
+            prev_x = out.d[0].x;
+        }
+
+        // Direct OverlaySink path (move_alpha = 0): steady slow walk from start never freezes or jerks.
+        BoxEnvelope walk;
+        float prev_wx = 0.0f;
+        for ( int k = 0; k < 30; ++k )
+        {
+            const float shift = static_cast<float>( k ) * spd;
+            walk.step( 100.0f + shift, 100.0f, 180.0f + shift, 220.0f, 0.0f );
+            if ( k > 0 )
+            {
+                const float dx = walk.cx() - prev_wx;
+                CHECK( t, dx > 0.0f && dx <= 1.5f * spd + 1e-3f );
+            }
+            prev_wx = walk.cx();
+        }
+    }
+
+    void check_slow_ramp_breakout( TestRun& t, float spd )
+    {
+        // Stationary lock -> slow ramp breaks out cleanly and stays smooth thereafter.
+        BoxEnvelope env;
+        for ( int k = 0; k < BoxEnvelope::kWindowFrames; ++k )
+            env.step( 100.0f, 100.0f, 180.0f, 220.0f, 0.0f );
+        float prev_cx = env.cx();
+        int frozen = 0;
+        for ( int k = 1; k <= 40; ++k )
+        {
+            const float shift = static_cast<float>( k ) * spd;
+            env.step( 100.0f + shift, 100.0f, 180.0f + shift, 220.0f, 0.0f );
+            const float cx = env.cx();
+            const float dx = cx - prev_cx;
+            if ( k >= 14 )
+            {
+                frozen += ( dx <= 1e-5f ) ? 1 : 0;
+                CHECK( t, dx <= 1.5f * spd + 1e-3f );
+            }
+            prev_cx = cx;
+        }
+        CHECK( t, frozen == 0 );
+    }
+
+    void test_slow_ramp( TestRun& t )
+    {
+        const float speeds[4] = { 0.5f, 1.0f, 2.0f, 3.0f };
+        for ( float spd : speeds )
+        {
+            check_slow_ramp_walk( t, spd );
+            check_slow_ramp_breakout( t, spd );
+        }
+    }
 }  // namespace
 
 void test_box_smoother( TestRun& t )
@@ -209,4 +275,5 @@ void test_box_smoother( TestRun& t )
         CHECK( t, lout.str().empty() );
     }
     test_envelope_and_coast( t );
+    test_slow_ramp( t );
 }

@@ -297,9 +297,12 @@ bool Tracker::is_duplicate( float cx, float cy, float bw, float bh ) const
         const float tx = t.fx.x() - t.bw * 0.5f;
         const float ty = t.fy.x() - t.bh * 0.5f;
         const float iou = box_iou( nx, ny, bw, bh, tx, ty, t.bw, t.bh );
+        if ( iou * 100.0f >= static_cast<float>( kSpawnDedupeGate ) )
+            return true;
+        // Apply containment dedupe only when candidate is nested/smaller than the alive track,
+        // so a tiny ghost track never blocks spawning a full-body person.
         const float ioa = box_ioa_min( nx, ny, bw, bh, tx, ty, t.bw, t.bh );
-        return iou * 100.0f >= static_cast<float>( kSpawnDedupeGate ) ||
-               ioa * 100.0f >= static_cast<float>( kSpawnContainGate );
+        return bw * bh <= t.bw * t.bh * 1.15f && ioa * 100.0f >= static_cast<float>( kSpawnContainGate );
     } );
 }
 

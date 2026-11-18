@@ -49,7 +49,7 @@ void test_glyph_font( TestRun& t )
     CHECK( t, glyph_font::next_utf8( mixed, mlen, mpos ) == 'Z' );
     CHECK( t, glyph_font::next_utf8( mixed, mlen, mpos ) == 0 );
 
-    // Atlas build matches padded 9x12 8-bit coverage cells and keeps 1-px clear border around glyphs.
+    // Atlas build matches padded 9x14 8-bit coverage cells (7x12 glyphs) and keeps 1-px clear border around glyphs.
     std::array<uint8_t, glyph_font::kAtlasBytes> atlas {};
     glyph_font::build_atlas( atlas );
     CHECK( t, atlas[0] == 0xFFu && atlas[( glyph_font::kCellH - 1 ) * glyph_font::kAtlasW + glyph_font::kCellW - 1] == 0xFFu );

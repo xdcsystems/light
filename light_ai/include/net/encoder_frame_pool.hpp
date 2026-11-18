@@ -2,9 +2,8 @@
 // pre-bound to an AVFrame as an AV_PIX_FMT_DRM_PRIME descriptor. The rkmpp
 // wrapper imports the dma-buf by fd: no CPU pixel copies anywhere in the path.
 //
-// Eight slots: a plane held by an in-flight encode is never overwritten by
-// RGA. rkmppenc can hold up to 5 frames in flight (H26X_ASYNC_FRAMES = 4
-// with a > check), so an 8-slot ring stays well ahead of both RGA and VEPU.
+// Eight slots: an 8-slot ring stays well ahead of RGA writes and VEPU / V4L2
+// async pipeline depth (even alongside AV_CODEC_FLAG_LOW_DELAY output draining).
 //
 // RAII: the ctor allocates everything or throws std::runtime_error (fail
 // loud at startup, nothing leaks); the dtor frees the AVFrames, then the

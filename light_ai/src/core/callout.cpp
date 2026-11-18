@@ -13,7 +13,7 @@ namespace
     constexpr int kMarginPx = 2;
     constexpr int kPadX = 4;
     constexpr int kPadY = 2;
-    constexpr int kPillH = CalloutItem::kGlyphH + 2 * kPadY;  // 20 px (16 px AA glyph + 2 px padding)
+    constexpr int kPillH = CalloutItem::kGlyphH + 2 * kPadY;  // 16 px (12 px AA glyph + 2 px padding)
     constexpr int kMaxTracks = TrajList::cap;
 
     struct TrackCand
