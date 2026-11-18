@@ -430,6 +430,52 @@ namespace
         }
     }
 
+    // Blocking dequeue: the retry after a bad part counts toward kErrStreakMax
+    // too (regression: a bad retry was not counted, a Desync retry kept the
+    // wedged window), so 4 bad parts in a row give EIO on the second call.
+    void bad_retry_counts_blocking( TestRun& t, const Bytes& a )
+    {
+        // 1) 4 x 1.1 MiB Content-Length parts, then a good one: EAGAIN, then EIO.
+        {
+            const Bytes huge = make_large_jpeg( variant( a, 0x43 ), 1126 * 1024, 0x23 );
+            CHECK( t, huge.size() > ( 1u << 20 ) );
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( -1, err, f ) );
+
+            const std::string stream = parts( { huge, huge, huge, huge, variant( a, 0x45 ) }, true );
+            std::thread writer( [&r, &stream] { r.send( stream ); } );
+            const int idx1 = r.dequeue( -1, err, f );
+            const int err1 = err;
+            const int idx2 = r.dequeue( -1, err, f );
+            writer.join();
+            CHECK( t, idx1 == -1 && err1 == EAGAIN );
+            CHECK( t, idx2 == -1 && err == EIO );
+        }
+        // 2) The retry returns Desync: 4 wedged windows of delimiter-less junk,
+        // each dropped and counted -> EAGAIN, then EIO.
+        {
+            Rig r;
+            std::string why;
+            CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+            int err = -1;
+            Bytes f;
+            r.src.requeue( r.dequeue( -1, err, f ) );
+
+            const std::string stream = "\r\n" + std::string( 4 * 256 * 1024 - 2, 'g' ) + parts( { variant( a, 0x46 ) }, true );
+            std::thread writer( [&r, &stream] { r.send( stream ); } );
+            const int idx1 = r.dequeue( -1, err, f );
+            const int err1 = err;
+            const int idx2 = r.dequeue( -1, err, f );
+            writer.join();
+            CHECK( t, idx1 == -1 && err1 == EAGAIN );
+            CHECK( t, idx2 == -1 && err == EIO );
+        }
+    }
+
     void cancel_stops_blocking_read( TestRun& t, const Bytes& a )
     {
         Rig r;
@@ -467,6 +513,7 @@ void test_net_mjpeg_source( TestRun& t )
     desync_recovers( t, a );
     large_jpeg_nonblocking( t, a );
     oversized_part_recovers( t, a );
+    bad_retry_counts_blocking( t, a );
     refused( t, a, wide );
     cancel_stops_blocking_read( t, a );
 }

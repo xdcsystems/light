@@ -25,6 +25,10 @@ public:
     // untouched (h = 0 marks "no valid band").
     // src_fmt: 0 = YUV420SP (default), nonzero = YUV422SP --
     // the actual decoder output layout (MppDecoder::out_fmt).
+    // src_w_stride / src_h_stride: the source strides; 0 = the 16-aligned
+    // w_src / h_src (how MppDecoder allocates its frames).
+    // aux (two-pass) is NV12 with 16-aligned strides: the caller allocates at
+    // least align16(w_aux) * align16(h_aux) * 3 / 2 bytes (SourceChannel: x2).
     // The MJPEG decoder follows the stream subsampling and ignores
     // the fmt pre-set on its frame; the RGA read side must match.
     // Ok: *geom receives the band geometry. A failure Status carries the
@@ -34,6 +38,10 @@ public:
                    LbGeom* geom, int src_fmt = 0, int rot_deg = 0, int src_w_stride = 0, int src_h_stride = 0 );
     // Crops RGB888 sub-rect from model tensor -> dst RGB888 Re-ID tensor: routes >= 68x68
     // crops to RGA3 (IOMMU) and < 68 px crops to RGA2 (< 4G DMA32). Enforces 1/8x .. 8x scale bounds.
+    // src / dst are tight (stride = width). A > 8x downscale needs aux: an RGB888
+    // w_aux x h_aux intermediate with 16-aligned strides (RGA rejects an unaligned
+    // RGB888 width stride), so the caller allocates at least
+    // align16(w_aux) * align16(h_aux) * 3 bytes; without aux that case fails.
     Status crop_resize( int src_fd, int w_src, int h_src, LbGeom crop_roi, int dst_fd, int w_dst, int h_dst,
                         int aux_fd = -1, int w_aux = 0, int h_aux = 0 ) const noexcept;
 

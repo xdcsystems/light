@@ -20,9 +20,16 @@ namespace
         return wrap( fd, w, h, w, h, fmt );
     }
 
-    int resolve_stride( int stride, int fallback ) noexcept
+    // RGA wants 16-aligned strides (RGB888: "width stride should be 16 aligned").
+    int align16( int v ) noexcept
     {
-        return stride > 0 ? stride : fallback;
+        return ( v + 15 ) & ~15;
+    }
+
+    // An unknown (0) stride: the 16-aligned size, how every frame buffer here is laid out.
+    int resolve_stride( int stride, int size ) noexcept
+    {
+        return stride > 0 ? stride : align16( size );
     }
 
     bool can_use_rga3( int cw, int ch, int w_dst, int h_dst, bool two_pass, int w_aux, int h_aux ) noexcept
@@ -85,8 +92,8 @@ Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_d
         src_fd = aux_fd;
         w_src = w_aux;
         h_src = h_aux;
-        ws = ( w_aux + 15 ) & ~15;
-        hs = ( h_aux + 15 ) & ~15;
+        ws = align16( w_aux );
+        hs = align16( h_aux );
         pass_fmt = RK_FORMAT_YCbCr_420_SP;
     }
 
@@ -133,12 +140,15 @@ Status RgaResizer::crop_resize( int src_fd, int w_src, int h_src, LbGeom crop_ro
                    : IM_SCHEDULER_RGA2_CORE0;
 
     im_rect sr { cx, cy, cw, ch };
+    int ws = w_src;
+    int hs = h_src;
     if ( cw > 8 * w_dst || ch > 8 * h_dst )
     {
         if ( aux_fd < 0 || w_aux <= 0 || h_aux <= 0 )
             return make_status( Errc::Failed, "RGA crop: >8x downscale without aux_fd" );
+        // aux is RGB888 with 16-aligned strides (see crop_resize in rga_resizer.h).
         if ( Status st = rga_check( improcess( wrap( src_fd, w_src, h_src, RK_FORMAT_RGB_888 ),
-                                               wrap( aux_fd, w_aux, h_aux, RK_FORMAT_RGB_888 ),
+                                               wrap( aux_fd, w_aux, h_aux, align16( w_aux ), align16( h_aux ), RK_FORMAT_RGB_888 ),
                                                {}, sr, { 0, 0, w_aux, h_aux }, {}, -1, nullptr, &opt, IM_SYNC ),
                                     log_, "RGA crop (pass 1) failed" );
              !st.ok() )
@@ -146,10 +156,12 @@ Status RgaResizer::crop_resize( int src_fd, int w_src, int h_src, LbGeom crop_ro
         src_fd = aux_fd;
         w_src = w_aux;
         h_src = h_aux;
+        ws = align16( w_aux );
+        hs = align16( h_aux );
         sr = { 0, 0, w_src, h_src };
     }
 
-    return rga_check( improcess( wrap( src_fd, w_src, h_src, RK_FORMAT_RGB_888 ),
+    return rga_check( improcess( wrap( src_fd, w_src, h_src, ws, hs, RK_FORMAT_RGB_888 ),
                                  wrap( dst_fd, w_dst, h_dst, RK_FORMAT_RGB_888 ),
                                  {}, sr, { 0, 0, w_dst, h_dst }, {}, -1, nullptr, &opt, IM_SYNC ),
                       log_, "RGA crop failed" );
@@ -164,8 +176,8 @@ Status RgaResizer::downscale_to_aux( int src_fd, int w_src, int h_src, int src_w
         log_.error() << "RGA: two-pass needed but aux_fd < 0\n";
         return make_status( Errc::Failed, "RGA: two-pass needed but aux_fd < 0" );
     }
-    const int w_aux_stride = ( w_aux + 15 ) & ~15;
-    const int h_aux_stride = ( h_aux + 15 ) & ~15;
+    const int w_aux_stride = align16( w_aux );
+    const int h_aux_stride = align16( h_aux );
     rga_buffer_t src = wrap( src_fd, w_src, h_src, src_w_stride, src_h_stride, src_fmt_rk );
     rga_buffer_t mid = wrap( aux_fd, w_aux, h_aux, w_aux_stride, h_aux_stride, RK_FORMAT_YCbCr_420_SP );
     return rga_check( imresize( src, mid ), log_, "RGA resize (pass 1) failed" );

@@ -257,24 +257,29 @@ void NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )
     }
 }
 
+bool NetMjpegSource::note_bad_part( Read rc )
+{
+    if ( rc != Read::Desync && rc != Read::Oversized )
+        return false;
+    // Wedged window (Desync) drops the buffer; Oversized already drained to the
+    // next delimiter so buffered bytes stay intact.
+    ++err_streak_;
+    if ( rc == Read::Desync )
+        drop_window();
+    return true;
+}
+
 NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size, int timeout_ms )
 {
     uint32_t n = 0;
     const bool blocking = timeout_ms < 0;
     Read rc = blocking ? read_part( slot, &n ) : step_nonblocking_part( slot, timeout_ms, &n );
-    if ( rc == Read::Desync || rc == Read::Oversized )
+    // Only retry when blocking or a complete next part is already buffered.
+    if ( note_bad_part( rc ) && err_streak_ < kErrStreakMax && ( blocking || part_buffered() ) )
     {
-        // Wedged window (Desync) drops the buffer; Oversized already drained to the
-        // next delimiter so buffered bytes stay intact. Only retry when blocking or a
-        // complete next part is already buffered.
-        ++err_streak_;
-        if ( rc == Read::Desync )
-            drop_window();
-        if ( err_streak_ < kErrStreakMax && ( blocking || part_buffered() ) )
-        {
-            n = 0;
-            rc = blocking ? read_part( slot, &n ) : step_nonblocking_part( slot, 0, &n );
-        }
+        n = 0;
+        rc = blocking ? read_part( slot, &n ) : step_nonblocking_part( slot, 0, &n );
+        note_bad_part( rc );  // a bad retry counts too: kErrStreakMax bad parts in a row -> EIO
     }
     if ( rc != Read::Part )
         return rc;
