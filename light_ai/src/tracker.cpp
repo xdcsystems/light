@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 
 #include "tracker.hpp"
 #include "core/box_math.hpp"
@@ -45,11 +46,8 @@ void Tracker::predict_all( int64_t ts_us )
     {
         if ( t.life == TRACK_FREE || t.life == TRACK_DEAD )
             continue;
-        float dt = static_cast<float>( ts_us - t.ts_last_us ) * 1e-6f;
-        if ( dt < 1e-3f )
-            dt = 1e-3f;
-        if ( dt > static_cast<float>( kDtMaxMs ) / 1000.0f )
-            dt = static_cast<float>( kDtMaxMs ) / 1000.0f;
+        const float dt = std::clamp( static_cast<float>( ts_us - t.ts_last_us ) * 1e-6f,
+                                     1e-3f, static_cast<float>( kDtMaxMs ) / 1000.0f );
         predict( t, dt );
         t.ts_last_us = ts_us;
     }
@@ -110,11 +108,9 @@ void Tracker::associate( const DetList& dets, int64_t ts_us, DetTrack& det_trk, 
 Associator::TrackBoxes Tracker::track_boxes() const
 {
     Associator::TrackBoxes boxes {};
-    for ( int i = 0; i < kMaxTracks; ++i )
-    {
-        const Track& t = tracks_[i];
-        boxes[i] = TrackBox { t.fx.x(), t.fy.x(), t.bw, t.bh, t.life };
-    }
+    std::transform( tracks_.begin(), tracks_.end(), boxes.begin(), []( const Track& t ) {
+        return TrackBox { t.fx.x(), t.fy.x(), t.bw, t.bh, t.life };
+    } );
     return boxes;
 }
 
@@ -218,13 +214,17 @@ float Tracker::anchor_clipped( Track& t, float cy, float bh, bool update_bh ) co
             t.bh += ( bh - t.bh ) * a;
         return cy;
     }
-    float w = ( 1.0f - bh / t.hp ) / ( 1.0f - clip_r );
-    if ( w < 0.0f )
-        w = 0.0f;
-    if ( w > 1.0f )
-        w = 1.0f;
-    // bottom edge stays, lost height restored from the prior
-    const float cy_meas = cy + w * ( bh * 0.5f - t.hp * 0.5f );
+    const float w = std::clamp( ( 1.0f - bh / t.hp ) / ( 1.0f - clip_r ), 0.0f, 1.0f );
+    // Anchor to whichever vertical edge remained stationary: if the top edge (head)
+    // stayed put while the bottom edge shrank (seated person / desk occlusion),
+    // extend downward from the top edge; otherwise anchor to the bottom edge (feet).
+    const float det_top = cy - bh * 0.5f;
+    const float det_bot = cy + bh * 0.5f;
+    const float pred_top = t.fy.x() - t.bh * 0.5f;
+    const float pred_bot = t.fy.x() + t.bh * 0.5f;
+    const bool top_anchored = t.bh > 0.0f && ( std::fabs( det_top - pred_top ) + 8.0f < std::fabs( det_bot - pred_bot ) );
+    const float shift = w * ( bh * 0.5f - t.hp * 0.5f );
+    const float cy_meas = top_anchored ? ( cy - shift ) : ( cy + shift );
     // drawn box size: restored from the prior proportionally to w when size-trusted.
     if ( update_bh )
     {
@@ -238,11 +238,23 @@ float Tracker::anchor_clipped( Track& t, float cy, float bh, bool update_bh ) co
 void Tracker::spawn_unmatched( const DetList& dets, const DetTrack& det_trk, int64_t ts_us )
 {
     const int nd = std::min( dets.n, static_cast<int>( DetList::cap ) );
+    const float min_conf = static_cast<float>( kInitConfPct ) / 100.0f;
+    const float contain_thr = static_cast<float>( kSpawnContainGate );
     for ( int k = 0; k < nd; ++k )
     {
         if ( det_trk[k] >= 0 || dets.d[k].cls != 0 )
             continue;
         const Detection& d = dets.d[k];
+        if ( d.conf < min_conf )
+            continue;
+        const float area_d = d.w * d.h;
+        const bool nested_in_det = std::any_of( dets.d.begin(), dets.d.begin() + nd, [&]( const Detection& m ) {
+            if ( m.cls != 0 || m.conf < min_conf || m.w * m.h <= area_d * 1.15f )
+                return false;
+            return box_ioa_min( d.x, d.y, d.w, d.h, m.x, m.y, m.w, m.h ) * 100.0f >= contain_thr;
+        } );
+        if ( nested_in_det )
+            continue;
         spawn( d.x + d.w * 0.5f, d.y + d.h * 0.5f, d.w, d.h, ts_us );
     }
 }
@@ -255,15 +267,11 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
         // synchronous terminal writes cost real latency per frame).
         return;
     }
-    for ( Track& t : tracks_ )
-    {
-        if ( t.life != TRACK_FREE )
-            continue;
-        init_slot( t, cx, cy, bw, bh, ts_us );
-        return;
-    }
-    // No free slot: the detection is dropped (the cap is a safety net,
-    // same policy as PodList::push overflow).
+    auto* const it = std::find_if( tracks_.begin(), tracks_.end(), []( const Track& t ) {
+        return t.life == TRACK_FREE;
+    } );
+    if ( it != tracks_.end() )
+        init_slot( *it, cx, cy, bw, bh, ts_us );
 }
 
 // Dedupe: an unmatched detection overlapping an alive track beyond kSpawnDedupeGate
@@ -286,8 +294,12 @@ bool Tracker::is_duplicate( float cx, float cy, float bw, float bh ) const
     return std::any_of( tracks_.begin(), tracks_.end(), [&]( const Track& t ) {
         if ( ( t.life != TRACK_TENT && t.life != TRACK_CONF ) || t.bw <= 0.0f || t.bh <= 0.0f )
             return false;
-        const float iou = box_iou( nx, ny, bw, bh, t.fx.x() - t.bw * 0.5f, t.fy.x() - t.bh * 0.5f, t.bw, t.bh );
-        return iou * 100.0f >= static_cast<float>( kSpawnDedupeGate );
+        const float tx = t.fx.x() - t.bw * 0.5f;
+        const float ty = t.fy.x() - t.bh * 0.5f;
+        const float iou = box_iou( nx, ny, bw, bh, tx, ty, t.bw, t.bh );
+        const float ioa = box_ioa_min( nx, ny, bw, bh, tx, ty, t.bw, t.bh );
+        return iou * 100.0f >= static_cast<float>( kSpawnDedupeGate ) ||
+               ioa * 100.0f >= static_cast<float>( kSpawnContainGate );
     } );
 }
 
@@ -359,11 +371,8 @@ int Tracker::recent_points( int id, int stride, TrajPoint* dst, int dst_cap ) co
 {
     if ( stride <= 0 || dst == nullptr || dst_cap <= 0 )
         return 0;
-    for ( const Track& t : tracks_ )
-    {
-        if ( t.life == TRACK_FREE || t.id != id )
-            continue;
-        return t.trail.recent( stride, dst, dst_cap );
-    }
-    return 0;
+    const auto* const it = std::find_if( tracks_.begin(), tracks_.end(), [id]( const Track& t ) {
+        return t.life != TRACK_FREE && t.id == id;
+    } );
+    return it != tracks_.end() ? it->trail.recent( stride, dst, dst_cap ) : 0;
 }

@@ -8,6 +8,11 @@ namespace
     {
         return ( v + 15 ) & ~15;
     }
+
+    int align64( int v )
+    {
+        return ( v + 63 ) & ~63;
+    }
 }  // namespace
 
 StreamLayout make_stream_layout( int model_w, int model_h, const LbGeom& band, int nsrc )
@@ -20,7 +25,7 @@ StreamLayout make_stream_layout( int model_w, int model_h, const LbGeom& band, i
     l.tile_h = l.nsrc > 1 ? align16( model_h * 3 / 4 ) : band.h;
     l.w = l.nsrc > 1 ? l.tile_w * 2 : l.tile_w;
     l.h = l.nsrc > 2 ? l.tile_h * 2 : l.tile_h;
-    l.vstride = align16( l.h );
+    l.vstride = align64( l.h );
     l.band.left = std::max( band.left, 0 );
     l.band.w = std::min( band.w, model_w );
     l.band.top = std::max( band.top, 0 );

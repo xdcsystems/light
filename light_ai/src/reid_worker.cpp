@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -47,19 +48,24 @@ namespace
         else if ( attr.type == RKNN_TENSOR_FLOAT16 )
         {
             const auto* fp16 = reinterpret_cast<const uint16_t*>( raw );
-            for ( int i = 0; i < dim; ++i )
-                res.feat[i] = fp16_to_float( fp16[i] );
+            std::transform( fp16, fp16 + dim, res.feat.begin(), fp16_to_float );
         }
         else if ( attr.type == RKNN_TENSOR_INT8 )
         {
-            for ( int i = 0; i < dim; ++i )
-                res.feat[i] = static_cast<float>( static_cast<int>( raw[i] ) - attr.zp ) * attr.scale;
+            const int zp = attr.zp;
+            const float sc = attr.scale;
+            std::transform( raw, raw + dim, res.feat.begin(), [zp, sc]( int8_t q ) {
+                return static_cast<float>( static_cast<int>( q ) - zp ) * sc;
+            } );
         }
         else if ( attr.type == RKNN_TENSOR_UINT8 )
         {
             const auto* u8 = reinterpret_cast<const uint8_t*>( raw );
-            for ( int i = 0; i < dim; ++i )
-                res.feat[i] = static_cast<float>( static_cast<int>( u8[i] ) - attr.zp ) * attr.scale;
+            const int zp = attr.zp;
+            const float sc = attr.scale;
+            std::transform( u8, u8 + dim, res.feat.begin(), [zp, sc]( uint8_t q ) {
+                return static_cast<float>( static_cast<int>( q ) - zp ) * sc;
+            } );
         }
         else
         {

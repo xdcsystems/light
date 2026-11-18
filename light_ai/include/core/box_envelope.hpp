@@ -19,13 +19,10 @@ struct BoxEnvelope
     void reset( float x0, float y0, float x1, float y1 ) noexcept
     {
         const float v[4] = { x0, y0, x1, y1 };
-        for ( int i = 0; i < 4; ++i )
-        {
-            lo[i] = v[i];
-            hi[i] = v[i];
-            sum[i] = v[i];
-            out[i] = v[i];
-        }
+        std::copy_n( v, 4, lo );
+        std::copy_n( v, 4, hi );
+        std::copy_n( v, 4, sum );
+        std::copy_n( v, 4, out );
         count = 1;
         locked = false;
     }
@@ -79,13 +76,12 @@ private:
 
     void unlock_step( const float v[4], float move_alpha ) noexcept
     {
-        for ( int i = 0; i < 4; ++i )
-        {
-            out[i] = move_alpha * out[i] + ( 1.0f - move_alpha ) * v[i];
-            lo[i] = v[i];
-            hi[i] = v[i];
-            sum[i] = v[i];
-        }
+        std::transform( out, out + 4, v, out, [move_alpha]( float o, float x ) {
+            return move_alpha * o + ( 1.0f - move_alpha ) * x;
+        } );
+        std::copy_n( v, 4, lo );
+        std::copy_n( v, 4, hi );
+        std::copy_n( v, 4, sum );
         count = 1;
         locked = false;
     }

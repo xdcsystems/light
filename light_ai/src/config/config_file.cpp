@@ -5,6 +5,7 @@
 // handler is invoked at every section start via
 // INI_CALL_HANDLER_ON_NEW_SECTION=1, set in CMakeLists.txt).
 
+#include <algorithm>
 #include <cctype>
 #include <string>
 #include <string_view>
@@ -46,8 +47,9 @@ namespace
     bool flag_truthy( const char* value )
     {
         std::string v = value ? value : "";
-        for ( char& ch : v )
-            ch = static_cast<char>( std::tolower( static_cast<unsigned char>( ch ) ) );
+        std::transform( v.begin(), v.end(), v.begin(), []( unsigned char ch ) {
+            return static_cast<char>( std::tolower( ch ) );
+        } );
         return v == "1" || v == "true" || v == "yes" || v == "on";
     }
 

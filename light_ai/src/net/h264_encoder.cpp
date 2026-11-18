@@ -64,6 +64,9 @@ H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log
     // a captured stream shows I-frames every 26 for GOP 25.
     ctx->gop_size = cfg.gop();  // 1 s: a late joiner waits at most one GOP
     ctx->max_b_frames = 0;  // no reorder: minimal latency
+    // Synchronous MPP output collection per frame: prevents rkmppenc from holding
+    // 4-5 DRM buffers in flight concurrently with RGA writes and cuts latency by 4 frames.
+    ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
     // Rate control: pass standard AVOption rc_mode=CBR to h264_rkmpp (no private
     // ABI mirror needed). Unconsumed options stay in opts and are logged cleanly.
     AvDictGuard opts;

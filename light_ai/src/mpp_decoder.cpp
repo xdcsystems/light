@@ -1,12 +1,30 @@
 #define MODULE_TAG "light_ai"
 
+#include <algorithm>
 #include <cstring>
 #include <rockchip/mpp_log.h>
 
 #include "mpp_decoder.hpp"
 #include "core/log.hpp"
+#include "dma_sync.hpp"
 #include "jpeg_probe.hpp"
 
+namespace
+{
+    constexpr size_t kPktPad = 64;
+
+    bool is_jpeg_pad( uint8_t b ) noexcept
+    {
+        return b == '\r' || b == '\n' || b == ' ' || b == 0x00;
+    }
+
+    bool has_soi_eoi( const uint8_t* data, size_t& size ) noexcept
+    {
+        while ( size > 2 && is_jpeg_pad( data[size - 1] ) )
+            --size;
+        return size >= 4 && data[0] == 0xFF && data[1] == 0xD8 && data[size - 2] == 0xFF && data[size - 1] == 0xD9;
+    }
+}  // namespace
 
 Status MppDecoder::init( int w, int h )
 {
@@ -209,9 +227,9 @@ Status MppDecoder::make_packet( const uint8_t* data, size_t size )
     // or from a dying camera) can be decoded by MPP "successfully" —
     // no errinfo, no discard — into a partial garbage image that then
     // reaches RGA/NPU. Reject anything without SOI.
-    if ( size < 2 || data[0] != 0xFF || data[1] != 0xD8 )
+    if ( !has_soi_eoi( data, size ) )
     {
-        log_.warn() << "dec[" << frames_ << "]: no SOI, mid-stream fragment (" << size << " bytes) dropped\n";
+        log_.warn() << "dec[" << frames_ << "]: missing SOI/EOI, truncated MJPEG fragment (" << size << " bytes) dropped\n";
         return {};
     }
 
@@ -229,6 +247,7 @@ Status MppDecoder::make_packet( const uint8_t* data, size_t size )
             if ( want != out_fmt_ )
             {
                 out_fmt_ = want;
+                mpp_frame_set_fmt( out_frame_, out_fmt_ );
                 log_.info() << "dec[" << frames_ << "]: jpeg chroma 4:2:" << ( want == MPP_FMT_YUV420SP ? "0" : "2" )
                             << " -> out fmt " << ( out_fmt_ == MPP_FMT_YUV420SP ? "420SP" : "422SP" ) << '\n';
             }
@@ -242,7 +261,7 @@ Status MppDecoder::make_packet( const uint8_t* data, size_t size )
 
     // Safe to overwrite pkt_buf_ unconditionally: decode() is synchronous and every
     // Timeout/Failed path calls reset_and_strip() + drop_packet(), so MPP holds no ref here.
-    if ( Status bst = ensure_pkt_buf( size ); !bst.ok() )
+    if ( Status bst = ensure_pkt_buf( size + kPktPad ); !bst.ok() )
         return bst;
     void* ptr = mpp_buffer_get_ptr( pkt_buf_ );
     if ( !ptr )
@@ -253,7 +272,13 @@ Status MppDecoder::make_packet( const uint8_t* data, size_t size )
         pkt_buf_cap_ = 0;
         return make_status( Errc::Failed, "mpp_buffer_get_ptr failed" );
     }
-    std::memcpy( ptr, data, size );
+    {
+        const dma::DmaSync wr( mpp_buffer_get_fd( pkt_buf_ ), true );
+        auto* dst = static_cast<uint8_t*>( ptr );
+        std::copy_n( data, size, dst );
+        std::fill_n( dst + size, kPktPad, uint8_t { 0 } );
+        dma::cache_clean( dst, size + kPktPad );
+    }
     mpp_packet_init_with_buffer( &pkt_, pkt_buf_ );  // pkt_ holds its own ref while pkt_buf_ stays cached
     mpp_packet_set_size( pkt_, size );
     mpp_packet_set_length( pkt_, size );

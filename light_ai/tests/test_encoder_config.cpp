@@ -22,12 +22,12 @@ namespace
     {
         // The band at its native size.
         const StreamLayout l = make_stream_layout( 640, 640, kBand43, 1 );
-        CHECK( t, size_is( l, 640, 480, 640, 480, 1, 480 ) );
+        CHECK( t, size_is( l, 640, 480, 640, 480, 1, 512 ) );
         CHECK( t, same( l.band, 0, 640, 80, 480 ) );
         // nsrc <= 0 is single view too.
-        CHECK( t, size_is( make_stream_layout( 640, 640, kBand43, 0 ), 640, 480, 640, 480, 1, 480 ) );
+        CHECK( t, size_is( make_stream_layout( 640, 640, kBand43, 0 ), 640, 480, 640, 480, 1, 512 ) );
         // Portrait band: the width is 16-aligned, the height is taken as is,
-        // the vertical stride is 16-aligned.
+        // the vertical stride is 64-aligned.
         const StreamLayout p = make_stream_layout( 640, 640, LbGeom { 140, 360, 0, 639 }, 1 );
         CHECK( t, size_is( p, 368, 639, 368, 639, 1, 640 ) );
         // A band outside the tensor is clamped into it (the stream size is not).
@@ -39,13 +39,13 @@ namespace
     void layout_multi( TestRun& t )
     {
         // 4:3 cells of the model input, 2x1 for two sources, 2x2 from three on.
-        CHECK( t, size_is( make_stream_layout( 640, 640, kBand43, 2 ), 1280, 480, 640, 480, 2, 480 ) );
+        CHECK( t, size_is( make_stream_layout( 640, 640, kBand43, 2 ), 1280, 480, 640, 480, 2, 512 ) );
         CHECK( t, size_is( make_stream_layout( 640, 640, kBand43, 3 ), 1280, 960, 640, 480, 3, 960 ) );
         CHECK( t, size_is( make_stream_layout( 640, 640, kBand43, 4 ), 1280, 960, 640, 480, 4, 960 ) );
         // Beyond the 2x2 grid: clamped to 4.
         CHECK( t, size_is( make_stream_layout( 640, 640, kBand43, 5 ), 1280, 960, 640, 480, 4, 960 ) );
-        // Non-aligned model input: both cell sides 16-aligned (456 -> 464).
-        CHECK( t, size_is( make_stream_layout( 608, 608, kBand43, 3 ), 1216, 928, 608, 464, 3, 928 ) );
+        // Non-aligned model input: both cell sides 16-aligned (456 -> 464), vstride 64-aligned (928 -> 960).
+        CHECK( t, size_is( make_stream_layout( 608, 608, kBand43, 3 ), 1216, 928, 608, 464, 3, 960 ) );
     }
 
     void cells( TestRun& t )

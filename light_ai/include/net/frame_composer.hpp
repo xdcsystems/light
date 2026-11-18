@@ -40,7 +40,7 @@ class FrameComposer
 public:
     enum
     {
-        kBands = 4  // last band per ring slot (single view) / per grid cell (multi-view)
+        kBands = 8  // last band per ring slot (single view) / per grid cell (multi-view)
     };
 
 public:

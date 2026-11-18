@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <numeric>
 #include <string_view>
 
 #include "core/callout.hpp"
@@ -12,7 +13,7 @@ namespace
     constexpr int kMarginPx = 2;
     constexpr int kPadX = 4;
     constexpr int kPadY = 2;
-    constexpr int kPillH = CalloutItem::kGlyphH + 2 * kPadY;  // 16 px (12 px AA glyph + 2 px padding)
+    constexpr int kPillH = CalloutItem::kGlyphH + 2 * kPadY;  // 20 px (16 px AA glyph + 2 px padding)
     constexpr int kMaxTracks = TrajList::cap;
 
     struct TrackCand
@@ -72,12 +73,11 @@ namespace
 
     int find_prev_slot( const CalloutHistory& hist, int disp_id ) noexcept
     {
-        for ( int i = 0; i < hist.entries.n; ++i )
-        {
-            if ( hist.entries.d[i].id == disp_id )
-                return hist.entries.d[i].slot;
-        }
-        return -1;
+        const auto* const end = hist.entries.d.begin() + hist.entries.n;
+        const auto* const it = std::find_if( hist.entries.d.begin(), end, [disp_id]( const CalloutPrevSlot& s ) {
+            return s.id == disp_id;
+        } );
+        return it != end ? it->slot : -1;
     }
 
     CandEval eval_candidate( int idx,
@@ -95,9 +95,9 @@ namespace
         const int y0 = std::clamp( prop[1], work.y0, work.y1 - ph );
         const CalloutRect cand { x0, y0, x0 + pw, y0 + ph };
 
-        int64_t pill_ov = 0;
-        for ( int i = 0; i < placed.n; ++i )
-            pill_ov += rect_overlap( cand, placed.d[i].pill );
+        const int64_t pill_ov = std::accumulate(
+            placed.d.begin(), placed.d.begin() + placed.n, int64_t { 0 },
+            [&cand]( int64_t acc, const CalloutItem& p ) { return acc + rect_overlap( cand, p.pill ); } );
 
         int64_t other_ov = 0;
         for ( int i = 0; i < n_boxes; ++i )

@@ -135,7 +135,7 @@ namespace
                 fill_rect_cpu( rgb, w, h, stride, c.segs[s], c.r, c.g, c.b, 255u );
 
             const CalloutRect fill { c.pill.x0 + 1, c.pill.y0 + 1, c.pill.x1 - 1, c.pill.y1 - 1 };
-            fill_rect_cpu( rgb, w, h, stride, fill, 16, 16, 20, 235u );
+            fill_rect_cpu( rgb, w, h, stride, fill, 12, 12, 16, 245u );
             fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y0, c.pill.x1, c.pill.y0 + 1 }, c.r, c.g, c.b, 255u );
             fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y1 - 1, c.pill.x1, c.pill.y1 }, c.r, c.g, c.b, 255u );
             fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y0 + 1, c.pill.x0 + 1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255u );
@@ -194,7 +194,8 @@ void OverlaySink::init( const StreamConfig& stream,
     // Compare allocated mem against stride_bytes * model_h_ (avoiding tn.size / model_h_
     // which overestimates when native model input is FP16).
     const uint64_t expected_bytes = static_cast<uint64_t>( stride_bytes_ ) * static_cast<uint64_t>( model_h_ );
-    log_.info() << "net: tensor stride check: input mem=" << tensors.d[0].size
+    const size_t t0_size = tensors.n > 0 ? tensors.d[0].size : 0;
+    log_.info() << "net: tensor stride check: input mem=" << t0_size
                 << " stride=" << stride_bytes_ << " expected=" << expected_bytes << "\n";
     if ( stride_bytes_ != fallback_stride )
         log_.warn() << "net: non-packed input tensor stride (" << stride_bytes_ << " != " << fallback_stride
@@ -254,14 +255,13 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
     }
 }
 
-int OverlaySink::find_stab_idx( const TrackStabList& list, int id ) const noexcept
+int OverlaySink::find_stab_idx( const TrackStabList& list, int id, uint32_t gen ) const noexcept
 {
-    for ( int i = 0; i < list.n; ++i )
-    {
-        if ( list.d[i].id == id )
-            return i;
-    }
-    return -1;
+    const auto* const end = list.d.begin() + list.n;
+    const auto* const it = std::find_if( list.d.begin(), end, [id, gen]( const TrackDispStab& e ) {
+        return e.id == id && e.gen == gen;
+    } );
+    return it != end ? static_cast<int>( it - list.d.begin() ) : -1;
 }
 
 void OverlaySink::stabilize_display_tracks( int src_idx, TrajList& disp ) noexcept
@@ -277,9 +277,10 @@ void OverlaySink::stabilize_display_tracks( int src_idx, TrajList& disp ) noexce
         const float y0 = tr.cy - tr.bh * 0.5f;
         const float x1 = tr.cx + tr.bw * 0.5f;
         const float y1 = tr.cy + tr.bh * 0.5f;
-        const int idx = find_stab_idx( prev, tr.id );
+        const int idx = find_stab_idx( prev, tr.id, tr.gen );
         TrackDispStab entry {};
         entry.id = tr.id;
+        entry.gen = tr.gen;
         if ( idx >= 0 )
         {
             entry.env = prev.d[idx].env;
@@ -326,6 +327,8 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
         return false;
     }
     const TensorRef& tn = frame.tensor;
+    if ( tn.data == nullptr )
+        return false;
     dma::DmaSync wr( tn.fd, true );
     dma::cache_drop( tn.data, tn.size );
     const int row_stride = static_cast<int>( tn.stride_bytes > 0 ? tn.stride_bytes : stride_bytes_ );

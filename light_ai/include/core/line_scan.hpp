@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -52,26 +53,18 @@ inline bool eq_ci( uint8_t a, char b )
 inline bool starts_with_ci( const uint8_t* d, size_t len, const char* lit )
 {
     const size_t k = std::strlen( lit );
-    if ( len < k )
-        return false;
-    for ( size_t i = 0; i < k; ++i )
-    {
-        if ( !eq_ci( d[i], lit[i] ) )
-            return false;
-    }
-    return true;
+    return len >= k && std::equal( d, d + k, lit, []( uint8_t a, char b ) { return eq_ci( a, b ); } );
 }
 
 // First position of lit in d[0, len), ASCII case-insensitive; kNpos when absent.
 inline size_t find_ci( const uint8_t* d, size_t len, const char* lit )
 {
     const size_t k = std::strlen( lit );
-    for ( size_t p = 0; p + k <= len; ++p )
-    {
-        if ( starts_with_ci( d + p, len - p, lit ) )
-            return p;
-    }
-    return kNpos;
+    if ( k == 0 )
+        return 0;
+    const uint8_t* const end = d + len;
+    const uint8_t* const hit = std::search( d, end, lit, lit + k, []( uint8_t a, char b ) { return eq_ci( a, b ); } );
+    return hit == end ? kNpos : static_cast<size_t>( hit - d );
 }
 
 }  // namespace line_scan

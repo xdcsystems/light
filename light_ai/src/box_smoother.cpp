@@ -147,23 +147,23 @@ void BoxSmoother::emit_coast( DetList& out ) const
 // through unsmoothed (warm-up). No free slot: no track.
 void BoxSmoother::spawn( const Detection& d )
 {
-    for ( auto& t : tracks_ )
-    {
-        if ( t.alive )
-            continue;
-        t.env.reset( d.x, d.y, d.x + d.w, d.y + d.h );
-        t.x = d.x;
-        t.y = d.y;
-        t.w = d.w;
-        t.h = d.h;
-        t.conf = d.conf;
-        t.cls = d.cls;
-        t.hits = 1;
-        t.miss = 0;
-        t.alive = true;
-        t.matched = true;
-        break;
-    }
+    auto* const it = std::find_if( tracks_.begin(), tracks_.end(), []( const BoxTrack& t ) {
+        return !t.alive;
+    } );
+    if ( it == tracks_.end() )
+        return;
+    BoxTrack& t = *it;
+    t.env.reset( d.x, d.y, d.x + d.w, d.y + d.h );
+    t.x = d.x;
+    t.y = d.y;
+    t.w = d.w;
+    t.h = d.h;
+    t.conf = d.conf;
+    t.cls = d.cls;
+    t.hits = 1;
+    t.miss = 0;
+    t.alive = true;
+    t.matched = true;
 }
 
 void BoxSmoother::log_frame( int frame, const DetList& raw, const DetList& smooth )

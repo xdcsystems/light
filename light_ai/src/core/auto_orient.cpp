@@ -148,7 +148,7 @@ float score_detections( const DetList& dets ) noexcept
 
 void AutoOrient::reset( bool auto_enabled, int manual_rot_deg, bool raw_portrait ) noexcept
 {
-    votes_[0] = votes_[1] = votes_[2] = votes_[3] = 0;
+    std::fill( std::begin( votes_ ), std::end( votes_ ), 0 );
     raw_portrait_ = raw_portrait;
     exif_rot_ = -1;
     enabled_ = auto_enabled;

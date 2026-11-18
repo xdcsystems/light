@@ -60,12 +60,13 @@ private:
     struct TrackDispStab
     {
         int id = 0;
+        uint32_t gen = 0;
         BoxEnvelope env {};
     };
     using TrackStabList = PodList<TrackDispStab, TrajList::cap>;
 
     void init_gpu_drawer( bool cpu_draw, const TensorSet& tensors );
-    int find_stab_idx( const TrackStabList& list, int id ) const noexcept;
+    int find_stab_idx( const TrackStabList& list, int id, uint32_t gen ) const noexcept;
     void stabilize_display_tracks( int src_idx, TrajList& disp ) noexcept;
     bool draw_overlay_into_tensor( const FrameView& frame,
                                    const DetList& dets,

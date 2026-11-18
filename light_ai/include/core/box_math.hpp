@@ -18,10 +18,10 @@
 inline float box_iou( float ax, float ay, float aw, float ah,
                       float bx, float by, float bw, float bh ) noexcept
 {
-    const float x0 = ax > bx ? ax : bx;
-    const float y0 = ay > by ? ay : by;
-    const float x1 = ( ax + aw ) < ( bx + bw ) ? ( ax + aw ) : ( bx + bw );
-    const float y1 = ( ay + ah ) < ( by + bh ) ? ( ay + ah ) : ( by + bh );
+    const float x0 = std::max( ax, bx );
+    const float y0 = std::max( ay, by );
+    const float x1 = std::min( ax + aw, bx + bw );
+    const float y1 = std::min( ay + ah, by + bh );
     const float iw = x1 - x0;
     const float ih = y1 - y0;
     if ( iw <= 0.0f || ih <= 0.0f )
@@ -31,15 +31,33 @@ inline float box_iou( float ax, float ay, float aw, float ah,
     return uni > 0.0f ? inter / uni : 0.0f;
 }
 
+// Intersection over minimum area: detects nested sub-boxes (e.g. head/torso box inside
+// a full-body person box) whose union IoU is small because the outer box is much larger.
+inline float box_ioa_min( float ax, float ay, float aw, float ah,
+                          float bx, float by, float bw, float bh ) noexcept
+{
+    const float x0 = std::max( ax, bx );
+    const float y0 = std::max( ay, by );
+    const float x1 = std::min( ax + aw, bx + bw );
+    const float y1 = std::min( ay + ah, by + bh );
+    const float iw = x1 - x0;
+    const float ih = y1 - y0;
+    if ( iw <= 0.0f || ih <= 0.0f )
+        return 0.0f;
+    const float inter = iw * ih;
+    const float min_a = std::min( aw * ah, bw * bh );
+    return min_a > 0.0f ? inter / min_a : 0.0f;
+}
+
 inline float box_iou_corners( float ax1, float ay1, float ax2, float ay2,
                               float bx1, float by1, float bx2, float by2 ) noexcept
 {
-    const float ix1 = ax1 > bx1 ? ax1 : bx1;
-    const float iy1 = ay1 > by1 ? ay1 : by1;
-    const float ix2 = ax2 < bx2 ? ax2 : bx2;
-    const float iy2 = ay2 < by2 ? ay2 : by2;
-    const float iw = ix2 > ix1 ? ix2 - ix1 : 0.0f;
-    const float ih = iy2 > iy1 ? iy2 - iy1 : 0.0f;
+    const float ix1 = std::max( ax1, bx1 );
+    const float iy1 = std::max( ay1, by1 );
+    const float ix2 = std::min( ax2, bx2 );
+    const float iy2 = std::min( ay2, by2 );
+    const float iw = std::max( 0.0f, ix2 - ix1 );
+    const float ih = std::max( 0.0f, iy2 - iy1 );
     const float inter = iw * ih;
     const float area_a = ( ax2 - ax1 ) * ( ay2 - ay1 );
     const float area_b = ( bx2 - bx1 ) * ( by2 - by1 );

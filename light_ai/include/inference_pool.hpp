@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -118,12 +119,11 @@ public:
     // flight until its own worker finishes (InferSlot).
     int try_acquire() const
     {
-        for ( int k = 0; k < n_; ++k )
-        {
-            if ( slots_[static_cast<size_t>( k )].state() == InferSlot::State::Free )
-                return k;
-        }
-        return -1;
+        const auto end = slots_.begin() + n_;
+        const auto it = std::find_if( slots_.begin(), end, []( const InferSlot& s ) {
+            return s.state() == InferSlot::State::Free;
+        } );
+        return it != end ? static_cast<int>( it - slots_.begin() ) : -1;
     }
 
     // Queues the frame whose pixels are already in tensor(k). false: the

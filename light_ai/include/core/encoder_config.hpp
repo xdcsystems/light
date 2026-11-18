@@ -29,7 +29,7 @@ public:
     int tile_w = 0;  // one cell; single view: the band, the width 16-aligned
     int tile_h = 0;
     int nsrc = 1;     // tiles in the canvas, 1..kMaxTiles
-    int vstride = 0;  // NV12 vertical stride: h 16-aligned (MPP encoders want it)
+    int vstride = 0;  // NV12 vertical stride: h 64-aligned (matches MPP prep_cfg ver_stride)
     LbGeom band {};   // visible letterbox band of the tensor, clamped into it
 };
 

@@ -113,8 +113,7 @@ Status NetMjpegSource::read_headers()
 
 bool NetMjpegSource::part_buffered() const
 {
-    // A wedged-full window counts as ready: the read that follows desyncs.
-    return sock_.full() || parts_.part_buffered( sock_.data(), sock_.size() );
+    return parts_.part_buffered( sock_.data(), sock_.size() );
 }
 
 void NetMjpegSource::drop_window()
@@ -205,17 +204,19 @@ NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
     }
 }
 
-NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size )
+NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size, bool blocking )
 {
     uint32_t n = 0;
     Read rc = read_part( slot, &n );
     if ( rc == Read::Desync )
     {
-        // Desynced stream: drop the buffered window, count the streak,
-        // one resync retry before handing over to the reconnect ladder.
+        // Desynced stream: drop the buffered window and count the streak.
+        // Only block for a retry when dequeue() was called in blocking mode
+        // (timeout_ms < 0) or when a complete next part is already in memory,
+        // so non-blocking multi-source polling never stalls the pipeline thread.
         ++err_streak_;
         drop_window();
-        if ( err_streak_ < kErrStreakMax )
+        if ( err_streak_ < kErrStreakMax && ( blocking || poll_part_ready( 0 ) == Ready::Yes ) )
         {
             n = 0;
             rc = read_part( slot, &n );
@@ -265,8 +266,11 @@ Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms )
         slot = 0;
     }
     uint32_t n = 0;
-    if ( read_latest_part( slot, &n ) != Read::Part )
-        return dequeue_status( EIO );  // EOF / watchdog / recv error, a desync past its retry: recoverable
+    const Read r = read_latest_part( slot, &n, timeout_ms < 0 );
+    if ( r == Read::Desync )
+        return dequeue_status( ( err_streak_ >= kErrStreakMax ) ? EIO : EAGAIN );
+    if ( r != Read::Part )
+        return dequeue_status( EIO );  // EOF / watchdog / recv error: recoverable
     if ( !frame_ok( pool_.data( slot ), n, width_, height_ ) )
     {
         ++err_streak_;

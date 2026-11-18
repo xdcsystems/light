@@ -40,6 +40,8 @@ bool CalDumper::series_due( int frame_idx ) const
 
 Status CalDumper::write_ppm( const std::string& path, const uint8_t* data, size_t size ) const
 {
+    if ( !data )
+        return make_status( Errc::Invalid, "null tensor data" );
     const size_t bytes = static_cast<size_t>( model_w_ ) * model_h_ * 3;
     if ( size < bytes )
         return make_status( Errc::Invalid, "tensor shorter than the model frame" );

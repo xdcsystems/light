@@ -102,12 +102,7 @@ public:
 
     bool any_live() const
     {
-        for ( int s = 0; s < n_; ++s )
-        {
-            if ( ( *this )[s].live() )
-                return true;
-        }
-        return false;
+        return std::any_of( ch_.begin(), ch_.begin() + n_, []( const Chan& c ) { return c.live(); } );
     }
 
     // One round over the Live channels, starting after the cursor (the source
