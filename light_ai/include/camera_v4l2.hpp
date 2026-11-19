@@ -39,6 +39,8 @@ public:
     // Nothing is trusted blindly: a substituted camera mode is caught here exactly like at startup.
     // Non-throwing: a failure tears down and returns its Status (Absent: the node
     // is not there; Busy; Unsupported: the mode; NoMemory: mmap); details are logged here.
+    // Does not adopt the negotiated size: that is reconnect()'s, after STREAMON
+    // (a trial() setup must not lock the session mode).
     Status setup_device( const std::string& dev );
 
     // Release the fd and all mappings; safe on a partially-open or already-dead device
@@ -66,7 +68,9 @@ public:
     uint64_t skip_parts_cnt() const noexcept { return 0; }
 
 private:
-    // The steps of setup_device(), in this order. The Status steps return ok, or the
+    // setup_device() with the negotiated mode in got_w/got_h (adopted by reconnect()).
+    Status setup_steps( const std::string& dev, int& got_w, int& got_h );
+    // The steps of setup_steps(), in this order. The Status steps return ok, or the
     // fail() result; they log the cause first, except the zero-buffer REQBUFS exit
     // of map_buffers(), which reports through its Status only. request_rate() cannot fail.
     Status open_node( const std::string& dev );

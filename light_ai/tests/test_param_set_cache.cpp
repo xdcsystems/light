@@ -143,10 +143,59 @@ namespace
         const ByteSpan bs2 = c2.prepare( big_hdr.data(), big_hdr.size() );
         CHECK( t, bs2.data == big_hdr.data() && count( err2.str(), "too large" ) == 1 );
     }
+
+    // M-15: every non-VCL NAL before the slice is skipped (filler 12, SPS
+    // extension 13, prefix NAL 14 used to end the scan with false); a non-IDR
+    // slice first is false; a truncated type byte is false.
+    void idr_walk( TestRun& t )
+    {
+        const Bytes filler_idr = cat( { nal( kSei, true ), nal( 0x0C, true ), nal( kIdr, true, 8 ) } );
+        const Bytes ext_prefix_idr = cat( { nal( 0x0D, false ), nal( 0x0E, false ), nal( kIdr, false, 8 ) } );
+        const Bytes p_then_idr = cat( { nal( kP, true ), nal( kIdr, true, 8 ) } );
+        const Bytes slice2 = cat( { nal( kAud, true ), nal( 0x02, true, 8 ) } );  // data partition A: non-IDR VCL
+        const Bytes truncated = { 0, 0, 0, 1 };
+        CHECK( t, annexb::is_idr( filler_idr.data(), filler_idr.size() ) );
+        CHECK( t, annexb::is_idr( ext_prefix_idr.data(), ext_prefix_idr.size() ) );
+        CHECK( t, !annexb::is_idr( p_then_idr.data(), p_then_idr.size() ) );
+        CHECK( t, !annexb::is_idr( slice2.data(), slice2.size() ) );
+        CHECK( t, !annexb::is_idr( truncated.data(), truncated.size() ) );
+        CHECK( t, !annexb::is_idr( nullptr, 0 ) );
+    }
+
+    // M-15: the repeat buffer is sized once; an IDR beyond it goes as is
+    // with one warn instead of growing it on the mux thread. The production
+    // capacity (max_h264_packet) bounds any conformant frame: all-I_PCM.
+    void fixed_capacity( TestRun& t )
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        ParamSetCache c( log, 64 );
+        Bytes key = cat( { nal( kSps, true ), nal( kPps, true ), nal( kIdr, true, 8 ) } );
+        Bytes fits = nal( kIdr, true, 40 );
+        Bytes big = nal( kIdr, true, 300 );
+        c.prepare( key.data(), key.size() );
+        ByteSpan s = c.prepare( fits.data(), fits.size() );
+        CHECK( t, s.data != fits.data() && s.size == c.header_size() + fits.size() );
+        s = c.prepare( big.data(), big.size() );
+        CHECK( t, s.data == big.data() && s.size == big.size() );
+        s = c.prepare( big.data(), big.size() );
+        CHECK( t, s.data == big.data() );
+        CHECK( t, count( err.str(), "exceeds the header-repeat buffer" ) == 1 );
+        s = c.prepare( fits.data(), fits.size() );  // a fitting IDR is still repeated afterwards
+        CHECK( t, s.data != fits.data() );
+
+        CHECK( t, max_h264_packet( 0, 960 ) == 0 );
+        CHECK( t, max_h264_packet( 1280, 960 ) == static_cast<size_t>( 80 * 60 ) * 400 + 4096 );
+        CHECK( t, max_h264_packet( 1280, 960 ) > static_cast<size_t>( 1280 ) * 960 * 3 / 2 );  // above raw NV12
+        CHECK( t, max_h264_packet( 1281, 961 ) == static_cast<size_t>( 81 * 61 ) * 400 + 4096 );
+    }
 }  // namespace
 
 void test_param_set_cache( TestRun& t )
 {
     scans( t );
     cache( t );
+    idr_walk( t );
+    fixed_capacity( t );
 }

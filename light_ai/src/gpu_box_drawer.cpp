@@ -80,6 +80,10 @@ namespace
         const float ny0 = y0 * qt.ys - 1.0f;
         const float nx1 = x1 * qt.xs - 1.0f;
         const float ny1 = y1 * qt.ys - 1.0f;
+        // Offscreen cull (M-10): a quad wholly outside the target costs
+        // 6 vertices of the shared budget and rasterizes nothing.
+        if ( nx1 <= -1.0f || nx0 >= 1.0f || ny1 <= -1.0f || ny0 >= 1.0f )
+            return;
         const float pos[6][4] = {
             { nx0, ny0, u0, v0 },
             { nx1, ny0, u1, v0 },
@@ -122,8 +126,14 @@ namespace
                 continue;
             emit_quad( qt, b.x0, b.y0, b.x1, b.y0 + t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
             emit_quad( qt, b.x0, b.y1 - t, b.x1, b.y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
-            emit_quad( qt, b.x0, b.y0, b.x0 + t, b.y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
-            emit_quad( qt, b.x1 - t, b.y0, b.x1, b.y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            // Vertical bars stop short of the horizontal ones: each corner
+            // pixel is blended once (M-10). Porter-Duff over is not
+            // idempotent for a < 255 -- the semi-transparent trail dots had
+            // bright double corners unlike draw_boxes_cpu.
+            if ( b.y1 - t <= b.y0 + t )
+                continue;  // 2 px tall: the two horizontal bars cover it
+            emit_quad( qt, b.x0, b.y0 + t, b.x0 + t, b.y1 - t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            emit_quad( qt, b.x1 - t, b.y0 + t, b.x1, b.y1 - t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
         }
     }
 
@@ -401,7 +411,8 @@ bool GpuBoxDrawer::load_entry_points()
         log_.warn() << "drawer: image entry points missing\n";
         return false;
     }
-    st_.native_fence = has( exts, "EGL_ANDROID_native_fence_sync" ) && st_.create_sync && st_.client_wait;
+    // destroy_sync too: a fence created without it would leak one EGLSync per frame (M-10).
+    st_.native_fence = has( exts, "EGL_ANDROID_native_fence_sync" ) && st_.create_sync && st_.client_wait && st_.destroy_sync;
     return true;
 }
 
@@ -650,8 +661,7 @@ void GpuBoxDrawer::sync_cpu()
             // driver has not flushed the command stream. Bounded wait:
             // a wedged GPU must not hang the pipeline.
             const EGLint r = st_.client_wait( st_.dpy, sync, EGL_SYNC_FLUSH_COMMANDS_BIT_KHR, kFenceWaitNs );
-            if ( st_.destroy_sync )
-                st_.destroy_sync( st_.dpy, sync );
+            st_.destroy_sync( st_.dpy, sync );  // non-null: part of the native_fence gate
             if ( r == EGL_CONDITION_SATISFIED_KHR )
                 return;
             ++fence_tmo_cnt_;

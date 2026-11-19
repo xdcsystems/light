@@ -43,7 +43,7 @@ class GpuBoxDrawer
     using P_DestroyImage = EGLBoolean( EGLAPIENTRYP )( EGLDisplay, EGLImageKHR );
     using P_CreateSync = EGLSyncKHR( EGLAPIENTRYP )( EGLDisplay, EGLenum, const EGLint * );
     using P_DestroySync = EGLBoolean( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR );
-    using P_ClientWaitSync = EGLBoolean( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR, EGLint, EGLTimeKHR );
+    using P_ClientWaitSync = EGLint( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR, EGLint, EGLTimeKHR );  // EGL_KHR_fence_sync
     using P_GetPlatformDisplayEXT = EGLDisplay( EGLAPIENTRYP )( EGLenum, void *, const EGLint * );
     using P_ImageTargetTexture2DOES = void( GL_APIENTRYP )( GLenum, GLeglImageOES );
     using P_GenVertexArrays = void( GL_APIENTRYP )( GLsizei, GLuint * );
@@ -65,7 +65,10 @@ public:
     enum
     {
         kVertsPerBox = 4 * 6,
-        kVertsPerCallout = 192,
+        // Connector segments + the longest label: kLabelCap - 1 glyphs, 6
+        // vertices each (M-10: was 192 < 6 * (2 + 31) = 198, a 31-glyph
+        // label lost its tail). Checked against CalloutItem below.
+        kVertsPerCallout = 6 * ( 2 + ( glyph_font::kLabelCap - 1 ) ),
         kMaxVerts = GpuBoxList::cap * kVertsPerBox + CalloutList::cap * kVertsPerCallout
     };
 
@@ -181,3 +184,9 @@ private:
     bool ready_ = false;
     uint64_t fence_tmo_cnt_ = 0;
 };
+
+// The per-callout budget covers every connector segment and the longest
+// label CalloutItem can hold (kLabelCap - 1 single-byte glyphs).
+static_assert( GpuBoxDrawer::kVertsPerCallout >=
+                   6 * ( static_cast<int>( sizeof( CalloutItem::segs ) / sizeof( CalloutRect ) ) + glyph_font::kLabelCap - 1 ),
+               "kVertsPerCallout below the longest callout" );

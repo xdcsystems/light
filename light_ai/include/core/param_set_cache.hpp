@@ -6,8 +6,11 @@
 //
 // Byte-level Annex B over a buffer: SDK-free, host-tested
 // (tests/test_param_set_cache.cpp). Thread: the mux (serve) thread only.
-// No allocation per packet: the IDR buffer is reserved once (256 KiB);
-// only a larger IDR grows it.
+// No allocation per packet: the IDR buffer is sized once, at construction,
+// for the largest packet the stream can carry (max_packet_bytes, see
+// max_h264_packet()) and never grows (M-15). A packet beyond it -- not
+// reachable for a conformant stream of that frame size -- goes out as is,
+// without the prefix, with one warn.
 
 #pragma once
 
@@ -21,7 +24,10 @@
 // The Annex B scans, exposed for the tests.
 namespace annexb
 {
-    // True when the first slice NAL (after any SEI/SPS/PPS/AUD) is an IDR (type 5).
+    // True when the access unit's first VCL NAL is an IDR slice (type 5).
+    // Every non-VCL NAL before it (SEI, SPS, PPS, AUD, filler, SPS
+    // extension, prefix NAL, ...) is skipped NAL by NAL; a non-IDR slice
+    // (types 1..4) first means false.
     bool is_idr( const uint8_t* d, size_t n );
 
     // True when the packet carries SPS or PPS NAL units before its first slice.
@@ -31,6 +37,19 @@ namespace annexb
     // slice / end-of-sequence NAL, if it holds an SPS; 0 = no prefix.
     size_t header_len( const uint8_t* d, size_t n );
 }  // namespace annexb
+
+// The largest coded H.264 frame of a w x h 4:2:0 picture: every macroblock
+// as I_PCM (384 sample bytes per 16x16 MB) plus a per-MB header allowance
+// and one slice/NAL overhead. A conformant encoder cannot exceed it (an
+// I_PCM MB is the costliest MB coding), so a buffer of this size never
+// overflows on a real stream.
+inline size_t max_h264_packet( int w, int h ) noexcept
+{
+    if ( w <= 0 || h <= 0 )
+        return 0;
+    const size_t mbs = static_cast<size_t>( ( w + 15 ) / 16 ) * static_cast<size_t>( ( h + 15 ) / 16 );
+    return mbs * ( 384 + 16 ) + 4096;
+}
 
 struct ByteSpan
 {
@@ -42,7 +61,9 @@ class ParamSetCache
 {
 public:
     // log: the process diagnostics, owned by main(); outlives the cache.
-    explicit ParamSetCache( const Log& log );
+    // max_packet_bytes: the largest packet to repeat the prefix on
+    // (max_h264_packet() of the stream size); the buffer holds the prefix too.
+    explicit ParamSetCache( const Log& log, size_t max_packet_bytes = kDefaultPacketCap );
 
     // One packet about to be muxed. An IDR before the capture: the prefix
     // is captured, the packet goes as is. A later IDR without SPS/PPS: the
@@ -53,9 +74,10 @@ public:
     size_t header_size() const noexcept { return hdr_len_; }
 
 private:
-    enum
+    enum : size_t
     {
-        kHdrCap = 256
+        kHdrCap = 256,
+        kDefaultPacketCap = 256 * 1024,  // the tests' default; MuxSession passes max_h264_packet()
     };
 
 private:
@@ -65,4 +87,5 @@ private:
     std::vector<uint8_t> idr_buf_;
     bool repeat_logged_ = false;
     bool oversized_logged_ = false;
+    bool too_big_logged_ = false;  // an IDR beyond idr_buf_ capacity went out without the prefix
 };

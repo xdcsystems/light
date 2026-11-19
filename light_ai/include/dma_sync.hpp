@@ -4,6 +4,7 @@
 // Header-only: guards are trivial RAII, cache ops are per-line one-liners.
 
 #pragma once
+#include <cerrno>   // EINTR
 #include <cstddef>  // size_t
 #include <cstdint>  // uintptr_t
 #include <cstring>  // std::memset
@@ -29,26 +30,28 @@ namespace dma
 // this RAII guard keeps the bracket unbreakable.
 struct DmaSync
 {
-    DmaSync( int fd, bool write_access ) : fd_( fd ), write_( write_access )
+    DmaSync( int fd, bool write_access ) noexcept : fd_( fd ), write_( write_access )
     {
-        if ( fd_ < 0 )
-            return;
-        dma_buf_sync s {};
-        s.flags = write_ ? ( DMA_BUF_SYNC_RW | DMA_BUF_SYNC_START )
-                         : ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_START );
-        ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s );  // best effort
+        sync( write_ ? ( DMA_BUF_SYNC_RW | DMA_BUF_SYNC_START ) : ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_START ) );
     }
-    ~DmaSync()
-    {
-        if ( fd_ < 0 )
-            return;
-        dma_buf_sync s {};
-        s.flags = write_ ? ( DMA_BUF_SYNC_RW | DMA_BUF_SYNC_END )
-                         : ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_END );
-        ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s );
-    }
+    ~DmaSync() { sync( write_ ? ( DMA_BUF_SYNC_RW | DMA_BUF_SYNC_END ) : ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_END ) ); }
     DmaSync( const DmaSync& ) = delete;
     DmaSync& operator=( const DmaSync& ) = delete;
+
+private:
+    // Best effort, but not lost to a signal: DMA_BUF_IOCTL_SYNC can return
+    // EINTR (the kernel waits on the buffer's fences interruptibly), and an
+    // unretried START/END leaves the bracket half-open (M-15).
+    void sync( unsigned long long flags ) const noexcept
+    {
+        if ( fd_ < 0 )
+            return;
+        dma_buf_sync s {};
+        s.flags = flags;
+        while ( ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s ) < 0 && errno == EINTR )
+        {
+        }
+    }
 
 private:
     int fd_;
@@ -78,12 +81,12 @@ inline void cache_clean( const void* p, size_t len )
     uintptr_t addr = reinterpret_cast<uintptr_t>( p ) & ~uintptr_t( 63 );
     const uintptr_t end = reinterpret_cast<uintptr_t>( p ) + len;
     for ( ; addr < end; addr += 64 )
-        __asm__ volatile( "dc cvac, %0" :: "r"( addr ) : "memory" );  // NOLINT(hicpp-no-assembler): DMA cache maintenance, no portable substitute
+        // NOLINTNEXTLINE(hicpp-no-assembler): DMA cache maintenance, no portable substitute
+        __asm__ volatile( "dc cvac, %0" :: "r"( addr ) : "memory" );
     __asm__ volatile( "dsb sy" ::: "memory" );  // NOLINT(hicpp-no-assembler): barrier required after DC ops
 #else
     // No cache-maintenance instruction on this arch; the builtin is
     // a no-op there - the cross-check build compiles and stays honest.
-    
     auto* b = static_cast<char*>( const_cast<void*>( p ) );
     __builtin___clear_cache( b, b + len );
 #endif
@@ -107,7 +110,8 @@ inline void cache_drop( const void* p, size_t len )
     uintptr_t addr = reinterpret_cast<uintptr_t>( p ) & ~uintptr_t( 63 );
     const uintptr_t end = reinterpret_cast<uintptr_t>( p ) + len;
     for ( ; addr < end; addr += 64 )
-        __asm__ volatile( "dc civac, %0" :: "r"( addr ) : "memory" );  // NOLINT(hicpp-no-assembler): DMA cache maintenance, no portable substitute
+        // NOLINTNEXTLINE(hicpp-no-assembler): DMA cache maintenance, no portable substitute
+        __asm__ volatile( "dc civac, %0" :: "r"( addr ) : "memory" );
     __asm__ volatile( "dsb sy" ::: "memory" );  // NOLINT(hicpp-no-assembler): barrier required after DC ops
 #else
     // x86 is DMA-coherent; nothing to drop.

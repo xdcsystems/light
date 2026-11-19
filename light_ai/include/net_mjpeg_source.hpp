@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -47,7 +48,8 @@ class NetMjpegSource
 {
     enum
     {
-        kPollMs = 2000,     // per-fill watchdog, same window as the camera
+        kPollMs = 2000,     // per-fill watchdog, same window as the camera; also the whole-head deadline
+        kPartMs = 4000,     // wall-clock deadline of one blocking part (a 300 KB JPEG at 0.6 Mbit/s still fits)
         kErrStreakMax = 4,  // corrupt/short-frame streak tolerance
         kSkipMax = 4,       // read_latest_part: parts skipped per dequeue at most
         kDrainMax = 64,     // start(): parts drained at most
@@ -127,9 +129,13 @@ private:
     // retry, and every bad part (the retry too) counts toward kErrStreakMax.
     Read read_latest_part( int slot, uint32_t* size, int timeout_ms );
     // One part into slot (core/multipart_reader.hpp), refilling with the
-    // kPollMs watchdog. Any result but Part resyncs the reader (the next read
-    // starts at a delimiter line); only the callers drop the window on Desync.
+    // kPollMs watchdog under the kPartMs wall-clock deadline. Any result but
+    // Part resyncs the reader (the next read starts at a delimiter line); only
+    // the callers drop the window on Desync.
     Read read_part( int slot, uint32_t* size );
+    // fill_until( kPollMs ) cut to what is left before deadline: a server that
+    // drips a byte per window no longer resets the watchdog forever (M-15).
+    BufferedSocket::Fill fill_before( std::chrono::steady_clock::time_point deadline );
 
 private:
     const Log& log_;

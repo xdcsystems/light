@@ -64,6 +64,13 @@ namespace
 // here.
 Status CameraV4L2::setup_device( const std::string& dev )
 {
+    int got_w = 0;
+    int got_h = 0;
+    return setup_steps( dev, got_w, got_h );
+}
+
+Status CameraV4L2::setup_steps( const std::string& dev, int& got_w, int& got_h )
+{
     // Idempotent entry: the startup fallback calls setup_device() twice
     // (direct setup first, then discovery re-runs it). Without this call
     // a failed direct setup leaks its fd and leaves dead buffer pointers
@@ -71,8 +78,8 @@ Status CameraV4L2::setup_device( const std::string& dev )
     // teardown() is a no-op when nothing is open.
     teardown();
 
-    int got_w = 0;
-    int got_h = 0;
+    got_w = 0;
+    got_h = 0;
     if ( Status st = open_node( dev ); !st.ok() )
         return st;
     if ( Status st = negotiate_format( got_w, got_h ); !st.ok() )
@@ -80,10 +87,9 @@ Status CameraV4L2::setup_device( const std::string& dev )
     request_rate();
     if ( Status st = map_buffers(); !st.ok() )
         return st;
-    // Adopted only after the whole setup succeeded: a failed attempt
+    // Not adopted here (M-15): a trial() setup is torn down right after, and
+    // reconnect() adopts only once STREAMON succeeded -- any failed attempt
     // leaves the locked session dimensions as they were.
-    width_ = got_w;
-    height_ = got_h;
     return {};
 }
 
@@ -232,12 +238,13 @@ void CameraV4L2::teardown()
     {
         v4l2_buf_type t = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         ioctl( fd_, VIDIOC_STREAMOFF, &t );
-        close( fd_ );
-        fd_ = -1;
     }
-    // Do not stop at the first empty slot: slot indices are dense
+    // Unmap before close (Low §2): the mappings belong to the open file;
+    // releasing them first is the V4L2 teardown order (STREAMOFF, munmap,
+    // close) and frees the driver buffers on close instead of on the last
+    // munmap. Do not stop at the first empty slot: slot indices are dense
     // today, but a future "skip a slot" logic in setup would silently leak
-    // every mapping after it. Skip empty slots instead of breaking out.
+    // every mapping after it.
     for ( auto& b : bufs_ )
     {
         if ( !b.start )
@@ -245,6 +252,11 @@ void CameraV4L2::teardown()
         munmap( b.start, b.length );
         b.start = nullptr;
         b.length = 0;
+    }
+    if ( fd_ >= 0 )
+    {
+        close( fd_ );
+        fd_ = -1;
     }
 }
 
@@ -254,7 +266,9 @@ void CameraV4L2::teardown()
 Status CameraV4L2::reconnect( const std::string& dev )
 {
     teardown();
-    if ( Status st = setup_device( dev ); !st.ok() )
+    int got_w = 0;
+    int got_h = 0;
+    if ( Status st = setup_steps( dev, got_w, got_h ); !st.ok() )
     {
         teardown();
         return st;
@@ -267,6 +281,10 @@ Status CameraV4L2::reconnect( const std::string& dev )
         teardown();
         return setup_errno( "STREAMON", e );
     }
+    // The stream runs: the negotiated mode becomes the session's (startup)
+    // or is the locked one already (negotiate_format checked the match).
+    width_ = got_w;
+    height_ = got_h;
     err_streak_ = 0;  // fresh device session (stream running) — the corrupt streak starts over
     return {};
 }

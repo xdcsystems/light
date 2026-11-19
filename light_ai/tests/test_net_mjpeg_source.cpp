@@ -499,6 +499,41 @@ namespace
         waker.join();
         CHECK( t, !st.ok() && st.code() == Errc::Lost && el < 1000 );
     }
+
+    // M-15: a server that drips the response head a byte every 250 ms kept
+    // resetting the 2 s per-fill watchdog; the wall-clock deadline ends the
+    // setup with Timeout after kPollMs (2 s) whatever the drip rate.
+    void slow_drip_head_times_out( TestRun& t )
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        NetMjpegSource src( log );
+        Listener l;
+        std::atomic<bool> stop { false };
+        std::thread drip( [&l, &stop] {
+            const int fd = l.accept();
+            if ( fd < 0 )
+                return;
+            static_cast<void>( loopback::read_request( fd ) );
+            const std::string head = "HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nX-Pad: ";
+            for ( size_t i = 0; !stop.load(); ++i )
+            {
+                const char c = i < head.size() ? head[i] : 'x';
+                if ( ::send( fd, &c, 1, MSG_NOSIGNAL ) != 1 )
+                    break;
+                std::this_thread::sleep_for( std::chrono::milliseconds( 250 ) );
+            }
+            ::close( fd );
+        } );
+        const auto t0 = std::chrono::steady_clock::now();
+        const Status st = src.setup_device( "http://127.0.0.1:" + std::to_string( l.port() ) + "/video" );
+        const auto el = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - t0 ).count();
+        stop.store( true );
+        drip.join();
+        CHECK( t, !st.ok() && st.code() == Errc::Timeout );
+        CHECK( t, el >= 1900 && el < 3500 );
+    }
 }  // namespace
 
 void test_net_mjpeg_source( TestRun& t )
@@ -516,4 +551,5 @@ void test_net_mjpeg_source( TestRun& t )
     bad_retry_counts_blocking( t, a );
     refused( t, a, wide );
     cancel_stops_blocking_read( t, a );
+    slow_drip_head_times_out( t );
 }

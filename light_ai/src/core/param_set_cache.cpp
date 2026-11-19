@@ -36,26 +36,29 @@ namespace
         return t == 5 || t == 1 || t == 10;
     }
 
-    enum
-    {
-        kIdrReserve = 256 * 1024
-    };
 }  // namespace
 
 namespace annexb
 {
     bool is_idr( const uint8_t* d, size_t n )
     {
-        for ( size_t i = 0; i + 4 <= n; ++i )
-            if ( d[i] == 0 && d[i + 1] == 0 && d[i + 2] == 1 )
-            {
-                const uint8_t t = d[i + 3] & 0x1F;
-                if ( t == 5 )
-                    return true;
-                if ( t == 6 || t == 7 || t == 8 || t == 9 )
-                    continue;
-                return false;
-            }
+        // NAL by NAL (the shared start-code walk of has_param_sets /
+        // header_len): the old byte scan returned false on any non-VCL NAL
+        // other than 6..9 (filler 12, SPS extension 13, prefix 14, ...)
+        // before the IDR slice and the IDR went out without its prefix.
+        size_t i = next_code( d, 0, n );
+        while ( i < n && is_code_at( d, i, n ) )
+        {
+            const size_t cl = code_len_at( d, i );
+            if ( i + cl >= n )
+                return false;  // truncated NAL type byte
+            const uint8_t t = d[i + cl] & 0x1F;
+            if ( t == 5 )
+                return true;
+            if ( t >= 1 && t <= 4 )
+                return false;  // a non-IDR slice comes first
+            i = next_code( d, i + cl, n );
+        }
         return false;
     }
 
@@ -105,9 +108,10 @@ namespace annexb
     }
 }  // namespace annexb
 
-ParamSetCache::ParamSetCache( const Log& log ) : log_( log )
+ParamSetCache::ParamSetCache( const Log& log, size_t max_packet_bytes ) : log_( log )
 {
-    idr_buf_.reserve( kIdrReserve );
+    // Startup-only allocation: prefix + the largest packet; prepare() never resizes past it.
+    idr_buf_.resize( kHdrCap + max_packet_bytes );
 }
 
 ByteSpan ParamSetCache::prepare( uint8_t* data, size_t size )
@@ -137,7 +141,19 @@ ByteSpan ParamSetCache::prepare( uint8_t* data, size_t size )
     if ( annexb::has_param_sets( data, size ) )
         return as_is;
     const size_t total = hdr_len_ + size;
-    idr_buf_.resize( total );
+    if ( total > idr_buf_.size() )
+    {
+        // Not reachable with the max_h264_packet() capacity; kept so a
+        // misconfigured cap degrades (this IDR without the repeat) instead
+        // of allocating on the mux thread.
+        if ( !too_big_logged_ )
+        {
+            too_big_logged_ = true;
+            log_.warn() << "enc: IDR of " << size << " bytes exceeds the header-repeat buffer (" << idr_buf_.size() - hdr_len_
+                        << "), sent without the SPS/PPS prefix\n";
+        }
+        return as_is;
+    }
     std::memcpy( idr_buf_.data(), hdr_.data(), hdr_len_ );
     std::memcpy( idr_buf_.data() + hdr_len_, data, size );
     if ( !repeat_logged_ )

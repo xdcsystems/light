@@ -1,4 +1,5 @@
 #include <cerrno>
+#include <chrono>
 #include <string>
 
 #include "net_mjpeg_source.hpp"
@@ -88,10 +89,20 @@ Status NetMjpegSource::send_get( const std::string& host, int port, const std::s
     return sock_.send_all( req );
 }
 
+BufferedSocket::Fill NetMjpegSource::fill_before( std::chrono::steady_clock::time_point deadline )
+{
+    const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>( deadline - std::chrono::steady_clock::now() ).count();
+    if ( rem <= 0 )
+        return BufferedSocket::Fill::Timeout;
+    return sock_.fill_until( static_cast<int>( rem < kPollMs ? rem : static_cast<long long>( kPollMs ) ) );
+}
+
 Status NetMjpegSource::read_headers()
 {
-    // parse_http_head owns the grammar and the kHeadMax cap (a server that
-    // drips headers forever is a data-volume cap, not a wall-clock one).
+    // parse_http_head owns the grammar and the kHeadMax byte cap; the
+    // deadline caps the wall clock: a head dripped a byte per watchdog
+    // window used to keep the prober (or the frame thread) here forever.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds( kPollMs );
     while ( true )
     {
         const HttpHead h = parse_http_head( sock_.data(), sock_.size() );
@@ -106,7 +117,7 @@ Status NetMjpegSource::read_headers()
         }
         if ( h.parse == HttpHead::Parse::Error )
             return h.err;
-        if ( sock_.fill_until( kPollMs ) == BufferedSocket::Fill::Data )
+        if ( fill_before( deadline ) == BufferedSocket::Fill::Data )
             continue;
         return make_status( Errc::Timeout, "no HTTP response within the watchdog window" );
     }
@@ -206,6 +217,7 @@ void NetMjpegSource::start()
 NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
 {
     uint8_t* const dst = pool_.data( slot );
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds( kPartMs );
     while ( true )
     {
         const MultipartReader::Step st = parts_.feed( sock_.data(), sock_.size(), dst );
@@ -222,10 +234,10 @@ NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
             rx_slot_ = -1;
             return Read::Oversized;
         }
-        const BufferedSocket::Fill r = sock_.fill_until( kPollMs );
+        const BufferedSocket::Fill r = fill_before( deadline );
         if ( r == BufferedSocket::Fill::Data )
             continue;
-        parts_.resync();  // cancelled, watchdog, EOF / error, or a wedged-full window
+        parts_.resync();  // cancelled, watchdog / deadline, EOF / error, or a wedged-full window
         rx_slot_ = -1;
         return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
     }
