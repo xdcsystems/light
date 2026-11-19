@@ -362,10 +362,10 @@ HANGS=0
 if [ -s "$OUT/HANGS.txt" ]; then
   HANGS=$(wc -l < "$OUT/HANGS.txt")
 fi
-if [ "$TOTAL" -gt 0 ] || [ "$HANGS" -gt 0 ] || [ "$SELF_FAIL" -ne 0 ] || [ "$LINT_RC" -ne 0 ]; then
+# (a failed self-test exited above, before the passes)
+if [ "$TOTAL" -gt 0 ] || [ "$HANGS" -gt 0 ] || [ "$LINT_RC" -ne 0 ]; then
   echo "tidy: FAIL${SEL:+ (subset: $(echo "$TUS" | wc -l) TUs)} -- findings: $TOTAL" \
-       "(main $MAIN_FINDINGS, rules $RULES_FINDINGS), hangs/errors: $HANGS," \
-       "self-test: $([ "$SELF_FAIL" -eq 0 ] && echo PASS || echo FAIL), rules-lint rc: $LINT_RC"
+       "(main $MAIN_FINDINGS, rules $RULES_FINDINGS), hangs/errors: $HANGS, rules-lint rc: $LINT_RC"
   exit 1
 fi
 if [ -n "$SEL" ]; then

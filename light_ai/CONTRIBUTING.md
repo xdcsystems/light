@@ -8,15 +8,15 @@ Each rule is marked **(gate)**, **(review)** or both. **(gate)** means `scripts/
 
 - **No GStreamer, no OpenCV** (gate: `banned-include`).
 - **Zero-copy frame path** (review)**:** Frames exist only as `dma-buf` descriptors; CPU pixel copies are forbidden. The only permitted copies are compressed MJPEG input packets (\~25 KB) into the decoder packet buffer and compressed H.264 packets out of the encoder.
-- **I/O & logging** (gate: `custom-no-printf`, `custom-no-std-stream`, not in the test harness; the `Log` injection itself: review)**:** Use `iostream` only (`printf`/`sprintf`/`snprintf` are forbidden). All diagnostics go through `Log` ([`include/core/log.hpp`](include/core/log.hpp)) injected as `const Log&`. Only [`src/main.cpp`](src/main.cpp) owns `Log(std::cout, std::cerr)` and `print_usage(std::cout)`.
+- **I/O & logging** (gate: `custom-no-printf`, `custom-no-std-stream`, not in the test harness; the `Log` injection itself: review)**:** Use `iostream` only: no C stdio output (the printf family, `puts`, `fputc`, `fwrite`, `perror` and the wide forms), and no `std::cout`/`cerr`/`clog` (or their `w` forms) outside `src/main.cpp`. All diagnostics go through `Log` ([`include/core/log.hpp`](include/core/log.hpp)) injected as `const Log&`. Only [`src/main.cpp`](src/main.cpp) owns `Log(std::cout, std::cerr)` and `print_usage(std::cout)`.
 - **Include order** (gate: `include-order`)**:** System and SDK headers first (`<...>`), project headers last (`"..."`). Reference: [`src/gpu_box_drawer.cpp`](src/gpu_box_drawer.cpp).
 - **Header layout** (review)**:** Within each visibility section (`public:` / `private:`), member functions and data members live in separate blocks — functions first, then a fresh visibility label for data. Reference: [`include/camera_v4l2.hpp`](include/camera_v4l2.hpp).
 - **Header extensions** (gate: `header-ext`; the nine legacy names are in the allowlist)**:** New C++ headers use `.hpp`. Nine legacy headers still use `.h` (`box_mapper.h`, `box_smoother.h`, `coco_names.h`, `console_reporter.h`, `frame_trace.h`, `net_encoder.h`, `rga_resizer.h`, `config/config_file.h`, `config/option_registry.h`); keep existing names unchanged unless refactoring the module.
-- **No manual heap allocation** (gate: `custom-no-new-delete` incl. the `malloc` family, `custom-no-smart-ptr` by type incl. `weak_ptr`; no heap growth on recovery and frame paths: review)**:** No `new`/`delete`, no `std::unique_ptr`/`std::shared_ptr`, no heap allocations in recovery or frame paths. Data lives in fixed-size members (`std::vector`/`std::string` are permitted only as startup RAII containers). Reference: [`include/pod_list.hpp`](include/pod_list.hpp).
+- **No manual heap allocation** (gate: `custom-no-new-delete`, which covers `new`/`delete` including placement new, `::operator new`/`delete` and the `malloc` family; `custom-no-smart-ptr`, which covers `unique_ptr`/`shared_ptr`/`weak_ptr` in any declared or written type (template arguments, `sizeof`) and the `make_unique`/`make_shared`/`allocate_shared` calls; no heap growth on recovery and frame paths: review)**:** No `new`/`delete`, no `std::unique_ptr`/`std::shared_ptr`, no heap allocations in recovery or frame paths. Data lives in fixed-size members (`std::vector`/`std::string` are permitted only as startup RAII containers). Reference: [`include/pod_list.hpp`](include/pod_list.hpp).
 - **No statics** (gate: `custom-no-static-local`, `custom-no-static-member`, `custom-no-file-static`, `custom-no-global-var`, `custom-no-thread-local`)**:** No static data members, no static member functions, no function-local statics. Shared state belongs to the owning layer as a regular member; file-local helpers belong in an anonymous namespace inside the `.cpp`. Compile-time class constants use an unscoped `enum`; block- and namespace-scope constants use plain `constexpr` without `static`.
-  - *Exceptions:* disposable probes in `tools/` and vendored header-only libraries in `externals/` (`stb_easy_font.h`), which must only be included from `.cpp` files (e.g. [`src/core/bitmap_font.cpp`](src/core/bitmap_font.cpp)), never from a project header.
+  - *Exceptions* (review)*:* disposable probes in `tools/` and vendored header-only libraries in `externals/` (`stb_easy_font.h`), which must only be included from `.cpp` files (e.g. [`src/core/bitmap_font.cpp`](src/core/bitmap_font.cpp)), never from a project header.
 - **No virtuals or inheritance** (gate: `custom-no-virtual`, `custom-no-inheritance`)**:** Zero vtables and zero dynamic polymorphism. Layer boundaries use composition of concrete members; static polymorphism uses templates (e.g. [`PodList<T, N>`](include/pod_list.hpp), [`PodRing<T, N>`](include/pod_ring.hpp), [`InferencePool`](include/inference_pool.hpp)).
-- **No `const_cast`** (gate: `custom-no-const-cast`)**:** Fix the constness at the source. The one SDK-signature site (`rknn_init` in [`src/rknn_engine.cpp`](src/rknn_engine.cpp)) is allowlisted with its reason. A `#else` branch for another arch (`include/dma_sync.hpp`) is invisible to the gate on this board, so it is (review).
+- **No `const_cast`** (gate: `custom-no-const-cast`)**:** Fix the constness at the source. The one SDK-signature site (`rknn_init` in [`src/rknn_engine.cpp`](src/rknn_engine.cpp)) is allowlisted with its reason. A `#else` branch for another arch is invisible to the gate on this board, so it is (review). The one such site, in the non-aarch64 `#else` of `include/dma_sync.hpp`, is an accepted exception: `__builtin___clear_cache` takes `char*` and does not write the bytes.
 - **`const` by default** (review; `misc-const-correctness` is tracked in #94)**:** Non-mutating methods are `const`; read-only parameters are passed by `const&`; hot-path outputs go through out-parameters (e.g. `YoloDecoder::decode` fills `DetList& out`).
 - **Branch tables over `if`-chains** (review)**:** Dispatch over fixed sets via `switch` or `constexpr` tables (reference: `BoxMapper::det_color` in [`src/box_mapper.cpp`](src/box_mapper.cpp)).
 - **Preallocated buffer contract** (review)**:** Cross-frame output parameters are never assumed empty — the callee clears them at entry (e.g. `out.clear()` in `YoloDecoder::decode`).
@@ -32,7 +32,7 @@ Each rule is marked **(gate)**, **(review)** or both. **(gate)** means `scripts/
 
   `MediaSource` catches `std::bad_variant_access` only on the startup `emplace`.
 
-## Output Side vs. Recognition Invariant
+## Output Side vs. Recognition Invariant (review)
 
 1. **No viewer connected:** The output side sleeps completely (no box drawing, no RGA compose, no `NO SIGNAL` frames, no H.264 encode; `enc` reads `0.0`).
 2. **Recognition never sleeps:** Capture, decode, NPU inference, and tracking always run regardless of viewer state.
@@ -41,8 +41,8 @@ Each rule is marked **(gate)**, **(review)** or both. **(gate)** means `scripts/
 ## Comment Style & Formatting
 
 - Max line length: **140 characters** ([`.clang-format`](.clang-format); gate: `line-length` in `rules_lint.sh`).
-- Structured comments (header line ending with `:`, one item per line, indented continuations) instead of long prose.
-- Do not repeat rules from this file inside code comments; reference local invariants or verified behavior only.
+- Structured comments (review; header line ending with `:`, one item per line, indented continuations) instead of long prose.
+- (review) Do not repeat rules from this file inside code comments; reference local invariants or verified behavior only.
 
 ## Pre-PR Verification Gate
 

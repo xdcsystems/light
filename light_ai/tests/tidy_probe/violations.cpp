@@ -66,6 +66,8 @@ int use()
     const int* q = const_cast<int*>( &k ); // custom-no-const-cast
     std::printf( "%d\n", v );              // custom-no-printf
     std::fwrite( "x", 1, 1, stdout );      // custom-no-printf (C stdio output)
+    char* text = nullptr;
+    asprintf( &text, "%d", v );            // custom-no-printf and custom-no-new-delete (prints and allocates)
     std::cout << local;                    // custom-no-std-stream
     std::wcout << L"w";                    // custom-no-std-stream (the w- form)
     try

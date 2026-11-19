@@ -29,7 +29,7 @@ that change anything (add, commit, checkout, merge, stash, reset, push).
    injected by reference, `const` by default, preallocated outputs cleared by the callee, branch tables.
    A `#else` branch for another arch is invisible to the gate on this board: review it for every rule.
    Every new or changed `NOLINT(...)`: its reason after `: ` is true for the code at that line, and a
-   NOLINT(custom-...) also has its line in scripts/rules_allow.txt and its site in CONTRIBUTING.md.
+   NOLINT(custom-...) site is described in CONTRIBUTING.md (its allowlist line is checked by the gate).
 5. Comments and docs: every changed comment matches the code; docs/state.md or AUDIT_REPORT.md
    status is not claimed as done when the code says otherwise.
 6. Behavioural invariants: output side sleeps without viewer, recognition never sleeps,

@@ -2,7 +2,7 @@
 # One line per allowed finding: <path> <rule> [<detail>]. A finding not listed fails the gate, and so does a
 # line that matches no finding (stale). Every site here is documented in CONTRIBUTING.md.
 
-# NOLINT(custom-...) sites (CONTRIBUTING, Error & Exception Model; I/O & SDK casts). The reason sits in the NOLINT.
+# NOLINT(custom-...) sites (CONTRIBUTING, Error & Exception Model; No const_cast). The reason sits in the NOLINT.
 include/inference_pool.hpp nolint custom-no-catch-all
 src/net_preview.cpp nolint custom-no-catch-all
 src/reid_worker.cpp nolint custom-no-catch-all

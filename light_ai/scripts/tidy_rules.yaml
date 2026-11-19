@@ -76,10 +76,12 @@ CustomChecks:
       - BindName: d
         Message: "class with a base: use composition of concrete members (CONTRIBUTING, No virtuals or inheritance)"
         Level: Warning
-  # No manual heap allocation.
+  # No manual heap allocation. The C library names count only as declared in a system header (hasAnyName("::x")
+  # also matches an x of an anonymous namespace: http_head.cpp has its own error()); operator new / delete are
+  # implicitly declared, so they have no such filter.
   - Name: no-new-delete
     Query: |
-      match stmt(anyOf(cxxNewExpr(), cxxDeleteExpr(), callExpr(callee(functionDecl(hasAnyName("::malloc", "::calloc", "::realloc", "::free", "::aligned_alloc", "::posix_memalign", "::valloc", "::strdup", "::strndup", "::operator new", "::operator new[]", "::operator delete", "::operator delete[]")))))).bind("d")
+      match stmt(anyOf(cxxNewExpr(), cxxDeleteExpr(), callExpr(callee(functionDecl(isExpansionInSystemHeader(), hasAnyName("::malloc", "::calloc", "::realloc", "::free", "::aligned_alloc", "::posix_memalign", "::valloc", "::strdup", "::strndup", "::reallocarray", "::memalign", "::pvalloc", "::asprintf", "::vasprintf", "::getline", "::getdelim")))), callExpr(callee(functionDecl(hasAnyName("::operator new", "::operator new[]", "::operator delete", "::operator delete[]")))))).bind("d")
     Diagnostic:
       - BindName: d
         Message: "new / delete (placement new too), operator new / delete or the malloc family: use fixed-size members (CONTRIBUTING, No manual heap allocation)"
@@ -87,7 +89,8 @@ CustomChecks:
   - Name: no-smart-ptr
     # by type: a declaration of that type (variable, field, parameter, return; through a typedef, reference or
     # pointer), any written type (also a template argument: std::vector<std::unique_ptr<T>>, sizeof), and the
-    # make_unique / make_shared / allocate_shared calls (a discarded temporary, a deduced type)
+    # make_unique / make_shared / allocate_shared calls (a discarded temporary, a deduced type). An alias template
+    # (template <class T> using UP = std::unique_ptr<T>) is caught where it is used, not where it is declared.
     Query: |
       let SP cxxRecordDecl(hasAnyName("::std::unique_ptr", "::std::shared_ptr", "::std::weak_ptr"))
       let T qualType(hasCanonicalType(anyOf(hasDeclaration(SP), references(hasDeclaration(SP)), pointsTo(hasDeclaration(SP)))))
@@ -109,7 +112,7 @@ CustomChecks:
   # I/O and logging: iostream only, diagnostics through Log, only src/main.cpp owns std::cout / std::cerr.
   - Name: no-printf
     Query: |
-      match callExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), callee(functionDecl(hasAnyName("::printf", "::fprintf", "::sprintf", "::snprintf", "::vprintf", "::vfprintf", "::vsprintf", "::vsnprintf", "::dprintf", "::puts", "::fputs", "::putchar", "::fputc", "::putc", "::fwrite", "::perror", "::wprintf", "::fwprintf", "::swprintf", "::fputws")))).bind("d")
+      match callExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), callee(functionDecl(isExpansionInSystemHeader(), hasAnyName("::printf", "::fprintf", "::sprintf", "::snprintf", "::vprintf", "::vfprintf", "::vsprintf", "::vsnprintf", "::dprintf", "::vdprintf", "::asprintf", "::vasprintf", "::puts", "::fputs", "::putchar", "::fputc", "::putc", "::fwrite", "::perror", "::fputs_unlocked", "::fputc_unlocked", "::putc_unlocked", "::putchar_unlocked", "::fwrite_unlocked", "::wprintf", "::fwprintf", "::swprintf", "::vwprintf", "::vfwprintf", "::vswprintf", "::fputws", "::fputwc", "::putwc", "::putwchar", "::err", "::errx", "::warn", "::warnx", "::verr", "::vwarn", "::error")))).bind("d")
     Diagnostic:
       - BindName: d
         Message: "C stdio output (printf family, puts, fwrite, perror, ...): use iostream through Log (CONTRIBUTING, I/O & logging)"

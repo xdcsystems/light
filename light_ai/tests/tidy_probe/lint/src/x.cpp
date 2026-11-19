@@ -14,3 +14,4 @@ int e();
 int g();  // NOLINT(readability-x): a reason NOLINT(custom-no-catch-all): a second one in the same line
 int h();  // NOLINT(*-catch-all,cust*): globs that clang-tidy expands
 int i();  // NOLINT(custom-no-such-check): not a real check, switches nothing off
+int j();  // NOLINT(custom-no-v?rtual): a ? is literal in clang-tidy, switches nothing off

@@ -11,8 +11,8 @@
 #   core-include     include/core/ and src/core/ include only the C++17 standard library headers (the C++ names:
 #                    <cstdint>, not <stdint.h>), core/*, pod_list.hpp and pod_ring.hpp (SDK-free core: host tests)
 #   nolint           a NOLINT / NOLINTNEXTLINE / NOLINTBEGIN whose check list switches a custom-* check off: an
-#                    entry matching one of the names in scripts/tidy_rules.yaml as clang-tidy globs it ('*',
-#                    'cust*', '*-catch-all'); every NOLINT of a line counts. Each one must be in the allowlist
+#                    entry matching one of the names in scripts/tidy_rules.yaml as clang-tidy globs it ('*' the
+#                    only wildcard: '*', 'cust*', '*-catch-all'); every NOLINT of a line counts. Each one must be in the allowlist
 #                    (CONTRIBUTING lists the sites)
 #   nolint-reason    such a NOLINT(...) without ": <reason>" after it
 #   nolint-blanket   a NOLINT without a check list, prose included (clang-tidy honours one anywhere in a line):
@@ -21,7 +21,7 @@
 # numbers: an edit above a site does not break it). A finding not on it fails, and so does an entry that matches
 # no finding (stale).
 # Output: one "path:line: rule: detail -- message" line per failing finding, sorted, then the summary line
-# "rules-lint: PASS|FAIL ...". Exit 0 clean, 1 findings, 2 usage.
+# "rules-lint: PASS|FAIL ...". Exit 0 clean, 1 findings, 2 usage (no root, no scripts/tidy_rules.yaml).
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd -P)"
 ROOT=${1:-"$HERE/.."}
 if [ ! -d "$ROOT" ]; then
@@ -30,9 +30,12 @@ if [ ! -d "$ROOT" ]; then
 fi
 ROOT="$(cd "$ROOT" && pwd -P)"
 exec python3 -I - "$ROOT" "$HERE/tidy_rules.yaml" <<'PYEOF'
-import fnmatch, os, re, sys
+import os, re, sys
 
 root = sys.argv[1]
+if not os.path.exists(sys.argv[2]):
+    print("rules-lint: no such config: " + sys.argv[2] + " (the custom check names come from it)")
+    sys.exit(2)
 with open(sys.argv[2], encoding="utf-8") as f:  # the custom check names, as clang-tidy names them
     CUSTOM = ["custom-" + m for m in re.findall(r'^\s*-\s*Name:\s*(\S+)', f.read(), re.M)]
 if not CUSTOM:
@@ -59,6 +62,11 @@ def add(path, line, rule, detail, message):
     findings.append((path, line, rule, detail, message))
 
 
+def glob_re(entry):
+    # clang-tidy's NOLINT globs: '*' is the only wildcard ('?' and '[' are literal)
+    return re.compile(".*".join(re.escape(p) for p in entry.split("*")))
+
+
 def check_nolint(rel, n, text):
     # every NOLINT of the line: its own (...) right after it, its reason up to the next NOLINT
     marks = list(NOLINT.finditer(text))
@@ -74,7 +82,7 @@ def check_nolint(rel, n, text):
                 "switches the custom checks off")
             continue
         entries = [c.strip() for c in paren.group(1).split(",") if c.strip()]
-        custom = [c for c in entries if any(fnmatch.fnmatchcase(name, c) for name in CUSTOM)]
+        custom = [c for c in entries if any(glob_re(c).fullmatch(name) for name in CUSTOM)]
         for c in custom:
             add(rel, n, "nolint", c, "a project rule switched off: only at the sites of scripts/rules_allow.txt")
         if custom and not re.match(r'\s*:\s*\S', after[paren.end():]):

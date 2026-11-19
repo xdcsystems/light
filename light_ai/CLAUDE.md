@@ -92,27 +92,27 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Project rules (full text: [CONTRIBUTING.md](CONTRIBUTING.md))
 (gate) = enforced by `scripts/tidy_run.sh` (`custom-*` checks of the `rules` pass, `scripts/rules_lint.sh`, both
 self-tested on `tests/tidy_probe/`): nobody re-checks it by hand. Fix a (gate) finding like any other gate finding;
-`NOLINT(custom-...)` only with `: <reason>` and a line in `scripts/rules_allow.txt` (a CONTRIBUTING-listed site),
-decided by the main session. (review) = only `commit-reviewer` can judge it.
-- C++17. No virtuals or inheritance hierarchies (gate); templates for static polymorphism.
+a NOLINT that switches a `custom-*` check off (by name or glob: `*`, `cust*`; every NOLINT of a line counts) only
+with `: <reason>` and a line in `scripts/rules_allow.txt` (a CONTRIBUTING-listed site), decided by the main session. (review) = only `commit-reviewer` can judge it.
+- C++17 (review). No virtuals or inheritance hierarchies (gate); templates for static polymorphism.
 - No manual heap (`new`/`delete`, `malloc` family, `unique_ptr`/`shared_ptr`/`weak_ptr`), no statics of any
   kind, no globals, no `const_cast` (gate). Frame path: no allocation; preallocated members cleared at entry
   by the callee (review).
 - Pixels exist only as `dma-buf`s: no CPU pixel copies (review).
 - Dependencies injected by reference to a concrete class (`StopFlag&`, `const Log&`) (review).
-- Diagnostics through `Log` (`include/core/log.hpp`); only `main.cpp` owns `std::cout`/`std::cerr`; no printf
-  family (gate).
+- Diagnostics through `Log` (`include/core/log.hpp`); only `main.cpp` owns `std::cout`/`std::cerr`/`std::clog`;
+  no C stdio output (gate).
 - Header layout: in each visibility section, functions first, then a fresh label for data (review).
 - Header extensions: new headers use `.hpp`; nine legacy `.h` headers stay as-is unless refactored (gate).
 - `core/` includes only the C++17 standard library and `pod_list.hpp`/`pod_ring.hpp` (keeps tests SDK-free)
   (gate); include order: system and SDK headers first (gate); no GStreamer / OpenCV (gate).
-- Exception: header-only libraries in `externals/` (`stb_easy_font.h`) may keep file
+- Exception (review): header-only libraries in `externals/` (`stb_easy_font.h`) may keep file
   statics; include them only from `.cpp` files, never from a project header.
 - Errors (`Status` / `noexcept`): recoverable failures return `Status` (`include/core/status.hpp`);
   exceptions (`std::runtime_error` via `throw_on`) are startup-only; frame path and thread bodies are
-  `noexcept` (no `throw`: review; no `catch (...)` outside the three allowlisted startup sites: gate). Exit codes: `0` clean, `1` runtime fatal, `2` bad CLI/config,
-  `3` startup failure.
-- Output side vs recognition: no viewer -> output side sleeps completely (`enc=0.0`); recognition never
+  `noexcept` (no `throw`: review; no `catch (...)` outside the three allowlisted sites of CONTRIBUTING: gate).
+  Exit codes (review): `0` clean, `1` runtime fatal, `2` bad CLI/config, `3` startup failure.
+- Output side vs recognition (review): no viewer -> output side sleeps completely (`enc=0.0`); recognition never
   sleeps; with viewer, online sources run full path and absent sources show `NO SIGNAL`.
 - Comments match the code and docs (review); max line length `140` (`.clang-format`; gate).
 

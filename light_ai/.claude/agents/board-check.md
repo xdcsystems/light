@@ -45,7 +45,9 @@ Logs are long: use tail and grep, never read a whole log.
 - Build/gate: `tail -n 40 build/gate.log`; on failure grep for `error:` / `FAILED`
   and show the FIRST error with \~15 lines of context.
 - Tidy: first the lines `tidy self-test: rules|lint PASS|FAIL` and `rules-lint: PASS|FAIL` (a FAIL prints
-  the diff against tests/tidy_probe/expected_*.txt or the lint findings: report them verbatim), then two
+  the diff against tests/tidy_probe/expected_*.txt or the lint findings: report them verbatim). A self-test
+  FAIL stops the run there (`tidy: FAIL -- the rules self-test failed`): no passes run, and the per-TU logs
+  under build/tidy/ are from an earlier run, so do not read them. Otherwise two
   passes (main = clang-tidy 11, rules = clang-tidy 23 with cognitive complexity and the custom-* project
   rules), each with its block "---- <pass>: findings by check ----" in build/gate.log; per-file
   details in build/tidy/{src,tests}/<path>.log (main) and build/tidy/rules/{src,tests}/<path>.log, e.g.
