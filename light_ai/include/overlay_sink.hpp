@@ -13,7 +13,7 @@
 
 #include "box_mapper.h"          // BoxMapper
 #include "config/config.hpp"     // LabelLang
-#include "core/box_envelope.hpp" // BoxEnvelope
+#include "core/box_filter.hpp"   // TrackBoxFilters, BoxFilterParams
 #include "core/callout.hpp"      // CalloutHistory, CalloutList
 #include "core/detection.hpp"    // DetList
 #include "core/frame_view.hpp"   // FrameView, TensorSet
@@ -65,19 +65,9 @@ public:
     EncPerfWindow take_enc_perf() noexcept;
 
 private:
-    struct TrackDispStab
-    {
-        int id = 0;
-        uint32_t gen = 0;
-        BoxEnvelope env {};
-    };
-    using TrackStabList = PodList<TrackDispStab, TrajList::cap>;
-
     void init_gpu_drawer( bool cpu_draw, const TensorSet& tensors );
     void reset_all_sources() noexcept;
     void sync_viewer_session() noexcept;
-    int find_stab_idx( const TrackStabList& list, int id, uint32_t gen ) const noexcept;
-    void stabilize_display_tracks( int src_idx, TrajList& disp ) noexcept;
     bool draw_overlay_into_tensor( const FrameView& frame,
                                    const DetList& dets,
                                    const TrajList& trajs,
@@ -92,7 +82,11 @@ private:
     GpuBoxList boxes_ {};
     CalloutList callouts_ {};
     std::array<CalloutHistory, reid_cfg::kMaxSources> callout_hist_ {};
-    std::array<TrackStabList, reid_cfg::kMaxSources> track_stab_ {};
+    std::array<TrackBoxFilters, reid_cfg::kMaxSources> track_filt_ {};
+    // Person boxes come from the Kalman posterior, already smooth in position:
+    // a higher still cutoff and speed gain than the raw boxes of BoxSmoother keep
+    // the box on a walking person (the dead zone still holds a standing one still).
+    const BoxFilterParams kTrackFilter { 1.0f, 0.05f, 1.0f, 0.01f, 2.0f, 0.5f };
     LabelLang label_lang_ = LabelLang::En;
     int label_scale_ = 1;
     int model_w_ = 0;

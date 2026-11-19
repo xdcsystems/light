@@ -41,6 +41,7 @@ add_executable(light_ai_tests
     test_mjpeg_slot_pool.cpp
     test_net_mjpeg_source.cpp
     test_box_smoother.cpp
+    test_box_filter.cpp
     test_kalman_axis.cpp
     test_associator.cpp
     test_auto_orient.cpp

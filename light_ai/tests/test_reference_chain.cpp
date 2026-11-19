@@ -230,7 +230,7 @@ namespace
         {
             smoother_.update( raw, sm_ );
             tracker_.update( raw, ts, tracks_ );
-            mapper_.fill( sm_, tracks_, tracker_, boxes_, lb_, sx_, sy_, ts );
+            mapper_.fill( sm_, tracks_, tracks_, tracker_, boxes_, lb_, sx_, sy_, ts );
             if ( frames_ > 0 )
                 cover( prev_, tracks_, ts - prev_ts_, cov_ );
             prev_ = tracks_;

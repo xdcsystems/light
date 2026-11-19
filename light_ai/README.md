@@ -125,7 +125,7 @@ The codebase contains **88 headers** under [`include/`](include/) and **55 trans
 | `inference_pool.hpp`, `infer_slot.hpp` | Multi-core NPU worker pool (`--pool 1` / `3`), ordered FIFO, bounded `5 s` wait & `Abandoned` slot handoff |
 | `reid_worker.hpp` | Asynchronous Re-ID embedding runner (`RknnEngine` with 4 zero-copy slots + `BasicReidQueue` thread) |
 | `yolo_postprocess.hpp`, `coco_names.h` | Worker-local `YoloDecode` wrapper and 80-class COCO label lookup table |
-| `box_smoother.h`, `tracker.hpp` | 32-slot EMA smoother for non-person boxes (`cls != 0`) and 8-slot Kalman + greedy IoU tracker (`kMaxMiss = 6`, `global_id`, `gen`) |
+| `box_smoother.h`, `tracker.hpp` | 32-slot matcher / coaster for non-person boxes (`cls != 0`, display-filtered by `BoxFilter`) and 8-slot Kalman + greedy IoU tracker (`kMaxMiss = 6`, `global_id`, `gen`) |
 | `box_mapper.h`, `overlay_sink.hpp` | Maps tracks, trails, EN/RU callouts, and non-person boxes; owns GPU/CPU draw parity + network output |
 | `gpu_box_drawer.hpp` | Mali G610 EGL/GBM + GLES2/3 batched box, trail & `GL_ALPHA` callout label renderer (with CPU fallback) |
 | `net_encoder.h`, `net_preview.hpp` | `h264_rkmpp` MPEG-TS encoder facade (`= default` dtor) and raw RGB24 NUT preview server |
@@ -141,7 +141,7 @@ The codebase contains **88 headers** under [`include/`](include/) and **55 trans
 
 - **Primitives & Errors:** `status.hpp` (`Status`, `Errc`, `Sys`, `ErrnoText`), `log.hpp` (`Log`, thread-safe RAII `Line`), `stop_flag.hpp` (`StopFlag`, `sleep_interruptible`), `fixed_fmt.hpp`, `line_scan.hpp`.
 - **Geometry & Detection:** `geometry.hpp` (`LbGeom`, `band_geom`), `detection.hpp` (`Detection`, `DetList`), `frame_view.hpp` (`TensorRef` with `stride_bytes`, `TensorSet`, `FrameView`), `fp16.hpp` (`fp16_to_float`), `box_math.hpp` (`box_iou`, `box_iou_corners`, `greedy_iou_match`), `yolo_decoder.hpp` (`YoloDecoder`, `yolo_head_shape`, `Box::seq` NMS ordering).
-- **Tracking, Re-ID & Overlay:** `track.hpp` (`TrackLife`, `TrajPoint`, `TrackState`, `TrajList`), `kalman_axis.hpp`, `associator.hpp`, `trail_window.hpp`, `gpu_box.hpp` (`GpuBox`, `GpuBoxList`), `glyph_font.hpp` (ASCII + Cyrillic `128×96` atlas, zero-heap UTF-8), `callout.hpp` (`compute_callouts` with per-camera `CalloutHistory` hysteresis), `auto_orient.hpp` (`AutoOrient` EXIF + 4-angle scoring), `global_track.hpp` (`GlobalTrackTable`, crop scheduler), `reid_queue.hpp` (`BasicReidQueue`).
+- **Tracking, Re-ID & Overlay:** `track.hpp` (`TrackLife`, `TrajPoint`, `TrackState`, `TrajList`), `kalman_axis.hpp`, `associator.hpp`, `trail_window.hpp`, `box_filter.hpp` (`BoxFilter` One-Euro + backlash dead zone, `TrackBoxFilters`: the one display filter of every drawn box), `gpu_box.hpp` (`GpuBox`, `GpuBoxList`), `glyph_font.hpp` (ASCII + Cyrillic `128×96` atlas, zero-heap UTF-8), `callout.hpp` (`compute_callouts` with per-camera `CalloutHistory` hysteresis), `auto_orient.hpp` (`AutoOrient` EXIF + 4-angle scoring), `global_track.hpp` (`GlobalTrackTable`, crop scheduler), `reid_queue.hpp` (`BasicReidQueue`).
 - **HTTP/MJPEG Parsing:** `byte_window.hpp`, `http_url.hpp`, `http_head.hpp`, `multipart_reader.hpp`.
 - **Encoder/Stream State:** `encoder_config.hpp`, `param_set_cache.hpp`, `pts_clock.hpp` (`PtsClock`, `SessionPtsFilter`), `encode_pacer.hpp`, `session_warmup.hpp`, `bitmap_font.hpp`, `idle_plate.hpp`, `packet_queue.hpp`, `session_gate.hpp`.
 
@@ -233,7 +233,7 @@ python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4
 ### Covered Test Suites (54 Total in `tests/test_main.cpp`)
 
 - **Core & Containers:** `check_harness`, `pod_containers`, `geometry`, `fp16`, `box_math`, `status`, `stop_flag`, `log`, `timings`
-- **Detection, Tracking, Labels, Re-ID & Reference:** `yolo_decoder`, `yolo_head_shape`, `box_smoother`, `kalman_axis`, `associator`, `auto_orient`, `trail_window`, `tracker`, `glyph_font`, `callout_layout`, `box_mapper`, `global_track`, `reid_worker_tsan` *(TSan)*, `reference_chain` (Layer B golden check; see [`tests/data/README`](tests/data/README))
+- **Detection, Tracking, Labels, Re-ID & Reference:** `yolo_decoder`, `yolo_head_shape`, `box_filter`, `box_smoother`, `kalman_axis`, `associator`, `auto_orient`, `trail_window`, `tracker`, `glyph_font`, `callout_layout`, `box_mapper`, `global_track`, `reid_worker_tsan` *(TSan)*, `reference_chain` (Layer B golden check; see [`tests/data/README`](tests/data/README))
 - **Config, CLI & Signals:** `config`, `signals`, `console_reporter`, `cal_dumper`
 - **Inference Pool:** `inference_pool`, `infer_slot_threads`
 - **Sources & HTTP MJPEG:** `jpeg_probe`, `byte_window`, `http_url`, `http_head`, `multipart_reader`, `buffered_socket`, `mjpeg_slot_pool`, `net_mjpeg_source`, `usb_node_locator`, `source_channel`, `source_threads` *(TSan)*, `source_set`, `source_prober`, `source_prober_threads` *(TSan)*

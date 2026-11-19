@@ -229,7 +229,7 @@ void OverlaySink::reset_source( int src_idx ) noexcept
     if ( src_idx < 0 || src_idx >= reid_cfg::kMaxSources )
         return;
     callout_hist_[src_idx].entries.clear();
-    track_stab_[src_idx].clear();
+    track_filt_[src_idx].clear();
 }
 
 void OverlaySink::reset_all_sources() noexcept
@@ -307,50 +307,6 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
     }
 }
 
-int OverlaySink::find_stab_idx( const TrackStabList& list, int id, uint32_t gen ) const noexcept
-{
-    const auto* const end = list.d.begin() + list.n;
-    const auto* const it = std::find_if( list.d.begin(), end, [id, gen]( const TrackDispStab& e ) {
-        return e.id == id && e.gen == gen;
-    } );
-    return it != end ? static_cast<int>( it - list.d.begin() ) : -1;
-}
-
-void OverlaySink::stabilize_display_tracks( int src_idx, TrajList& disp ) noexcept
-{
-    TrackStabList& prev = track_stab_[src_idx];
-    TrackStabList next {};
-    for ( int k = 0; k < disp.n; ++k )
-    {
-        TrackState& tr = disp.d[k];
-        if ( tr.state != TRACK_TENT && tr.state != TRACK_CONF )
-            continue;
-        const float x0 = tr.cx - tr.bw * 0.5f;
-        const float y0 = tr.cy - tr.bh * 0.5f;
-        const float x1 = tr.cx + tr.bw * 0.5f;
-        const float y1 = tr.cy + tr.bh * 0.5f;
-        const int idx = find_stab_idx( prev, tr.id, tr.gen );
-        TrackDispStab entry {};
-        entry.id = tr.id;
-        entry.gen = tr.gen;
-        if ( idx >= 0 )
-        {
-            entry.env = prev.d[idx].env;
-            entry.env.step( x0, y0, x1, y1, 0.0f );
-        }
-        else
-        {
-            entry.env.reset( x0, y0, x1, y1 );
-        }
-        tr.cx = entry.env.cx();
-        tr.cy = entry.env.cy();
-        tr.bw = entry.env.bw();
-        tr.bh = entry.env.bh();
-        next.push( entry );
-    }
-    prev = next;
-}
-
 bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
                                             const DetList& dets,
                                             const TrajList& trajs,
@@ -358,12 +314,15 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
 {
     const float sx = frame.lb.w / static_cast<float>( frame.src_w );
     const float sy = frame.lb.h / static_cast<float>( frame.src_h );
+    // disp: the display copy of the tracks, boxes through BoxFilter; trajs keeps
+    // the posteriors the trail was recorded from (BoxMapper bends the trail's head
+    // onto the filtered box).
     TrajList disp = trajs;
     const bool valid_src = frame.src_idx >= 0 && frame.src_idx < reid_cfg::kMaxSources;
     if ( valid_src )
-        stabilize_display_tracks( frame.src_idx, disp );
+        track_filt_[frame.src_idx].apply( disp, frame.ts_us, kTrackFilter );
     boxes_.clear();
-    mapper_.fill( dets, disp, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
+    mapper_.fill( dets, disp, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
     callouts_.clear();
     if ( valid_src )
         compute_callouts( disp, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru, label_scale_ }, callout_hist_[frame.src_idx], callouts_ );

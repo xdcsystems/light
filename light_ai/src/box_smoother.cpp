@@ -69,7 +69,7 @@ int BoxSmoother::collect_pairs( const DetList& in )
     return np;
 }
 
-// The EMA step of every accepted pair (pairs_[0 .. na), compacted by the matcher).
+// The filter step of every accepted pair (pairs_[0 .. na), compacted by the matcher).
 void BoxSmoother::apply_matches( const DetList& in, int na )
 {
     for ( int p = 0; p < na; ++p )
@@ -77,11 +77,12 @@ void BoxSmoother::apply_matches( const DetList& in, int na )
         const Pair& pr = pairs_[p];
         BoxTrack& t = tracks_[pr.trk];
         const Detection& d = in.d[pr.det];
-        t.env.step( d.x, d.y, d.x + d.w, d.y + d.h, kAlpha );
-        t.x = t.env.x();
-        t.y = t.env.y();
-        t.w = t.env.w();
-        t.h = t.env.h();
+        t.filt.step( BoxCWH { d.x + 0.5f * d.w, d.y + 0.5f * d.h, d.w, d.h }, kFrameDtS, kFilter );
+        const BoxCWH o = t.filt.out();
+        t.x = o.cx - 0.5f * o.w;
+        t.y = o.cy - 0.5f * o.h;
+        t.w = o.w;
+        t.h = o.h;
         t.conf = d.conf;
         t.hits = std::min( t.hits + 1, static_cast<int>( kCoastMinHits ) );
         t.miss = 0;
@@ -155,8 +156,8 @@ void BoxSmoother::spawn( const Detection& d )
     if ( it == tracks_.end() )
         return;
     BoxTrack& t = *it;
-    t.env = BoxEnvelope {};  // a reused slot must not inherit the previous object's window
-    t.env.reset( d.x, d.y, d.x + d.w, d.y + d.h );
+    t.filt = BoxFilter {};  // a reused slot must not inherit the previous object's state
+    t.filt.reset( BoxCWH { d.x + 0.5f * d.w, d.y + 0.5f * d.h, d.w, d.h } );
     t.x = d.x;
     t.y = d.y;
     t.w = d.w;

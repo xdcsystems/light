@@ -4,12 +4,13 @@
 #include <fstream>
 #include <string>
 
-#include "core/box_envelope.hpp"
+#include "core/box_filter.hpp"
 #include "core/box_math.hpp"
 #include "core/detection.hpp"  // Detection, DetList
 #include "core/log.hpp"
 
-// Interval-envelope + EMA smoothing of non-person (cls != 0) detection boxes. Persons (cls == 0) pass
+// Display filtering (BoxFilter: One-Euro + hysteresis dead zone, core/box_filter.hpp) of
+// non-person (cls != 0) detection boxes. Persons (cls == 0) pass
 // through unsmoothed without consuming track slots, since BoxMapper draws persons
 // solely from Tracker while Tracker consumes raw detections directly.
 // Global greedy IoU matching: pairs sorted by IoU, best-first;
@@ -26,7 +27,7 @@ class BoxSmoother
     {
         float x = 0, y = 0, w = 0, h = 0;
         float conf = 0.0f;
-        BoxEnvelope env {};
+        BoxFilter filt {};
         int cls = -1;
         int hits = 0;
         int miss = 0;
@@ -70,11 +71,17 @@ private:
     void spawn( const Detection& d );
 
 private:
-    // Named constants, one place to tune;
-    // kAlpha is the EMA weight of the TRACK (0.5 = plain average).
+    // Named constants, one place to tune.
     const float kMatchThr = 0.3f;
-    const float kAlpha = 0.5f;
     const float kInstantConf = 0.35f;
+    // The filter steps once per update() with a nominal frame period, not the
+    // frame time: the --box-log of a replay (layer A, reference/README.md) must not
+    // depend on the dequeue timing. 0.05 s ~ the 20-22 FPS of the USB camera.
+    const float kFrameDtS = 0.05f;
+    // Raw YOLO boxes of mostly static objects: jitter 2-4 px median, 5-9 px p90
+    // frame to frame (chairs in reference/ref_evening.csv) -- a low still cutoff
+    // and a 2 % dead zone.
+    const BoxFilterParams kFilter { 0.5f, 0.01f, 1.0f, 0.02f, 2.0f, 0.5f };
 
     // Preallocated member: the ~48 KB matching array used to live on
     // update()'s stack, once per call.

@@ -32,6 +32,7 @@ int main( int argc, char** argv )
         { "buffered_socket", &test_buffered_socket },
         { "mjpeg_slot_pool", &test_mjpeg_slot_pool },
         { "net_mjpeg_source", &test_net_mjpeg_source },
+        { "box_filter", &test_box_filter },
         { "box_smoother", &test_box_smoother },
         { "kalman_axis", &test_kalman_axis },
         { "associator", &test_associator },

@@ -28,6 +28,7 @@ void test_buffered_socket( TestRun& t );
 void test_mjpeg_slot_pool( TestRun& t );
 void test_net_mjpeg_source( TestRun& t );
 void test_box_smoother( TestRun& t );
+void test_box_filter( TestRun& t );
 void test_kalman_axis( TestRun& t );
 void test_associator( TestRun& t );
 void test_auto_orient( TestRun& t );
