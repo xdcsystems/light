@@ -21,7 +21,8 @@
 //
 // trajs: the display tracks (boxes through BoxFilter); post: the same list as the
 // tracker produced it (Kalman posteriors, the coordinates the trail was recorded
-// in), entry k of both the same track. The trail head of a TENT / CONF track is
+// in), entry k of both the same track. The trail head of a CONF track (the only
+// state that draws both a box and a trail) is
 // bent onto its displayed box: the newest point moves by the full box offset
 // (display center - posterior center), the shift fades out linearly over the
 // kTrailBlend newest points, older points stay where they were recorded. With
@@ -54,6 +55,12 @@ private:
         float left, top, right, bottom;
         float sx, sy;
     };
+    // The scene-pixel shift of the newest trail point: display box - posterior (0 when not drawn as a box).
+    struct Shift
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+    };
     // The spatial dedup state of one track's trail.
     struct PrevDot
     {
@@ -65,13 +72,6 @@ private:
     bool band_box( float x, float y, float w, float h, const Band& b, GpuBox& out ) const noexcept;
     void det_boxes( const DetList& dets, const Band& b, GpuBoxList& boxes ) const noexcept;
     void track_box( const TrackState& t, const Band& b, GpuBoxList& boxes ) const noexcept;
-    // The scene-pixel shift of the newest trail point: display box - posterior (0 when not drawn as a box).
-    struct Shift
-    {
-        float x = 0.0f;
-        float y = 0.0f;
-    };
-
     Shift head_shift( const TrackState& t, const TrajList& post, int k ) const noexcept;
     void trail_points( const Tracker& tracker, const TrackState& t, const Shift& sh, int64_t now_us, const Band& b,
                        GpuBoxList& boxes ) noexcept;

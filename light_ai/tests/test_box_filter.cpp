@@ -58,8 +58,8 @@ namespace
         CHECK_EQ( t, moved, 0 );
         // ...and the still box sits within one dead zone (+ 1 px of filtered jitter) of the true box.
         const float tc[BoxFilter::kAxes] = { truth.cx, truth.cy, truth.w, truth.h };
-        CHECK_NEAR( t, settled.cx, truth.cx, BoxFilter::dead_zone( 0, tc, p ) + 1.0f );
-        CHECK_NEAR( t, settled.cy, truth.cy, BoxFilter::dead_zone( 1, tc, p ) + 1.0f );
+        CHECK_NEAR( t, settled.cx, truth.cx, box_filter::dead_zone( 0, tc, p ) + 1.0f );
+        CHECK_NEAR( t, settled.cy, truth.cy, box_filter::dead_zone( 1, tc, p ) + 1.0f );
     }
 
     // A box steps 60 px to the right: converges, never overshoots, never steps back.

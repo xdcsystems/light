@@ -51,29 +51,70 @@ struct BoxCWH
     float h = 0.0f;
 };
 
-class BoxFilter
+namespace box_filter
 {
-public:
     enum
     {
-        kAxes = 4
+        kAxes = 4  // cx, cy, w, h
     };
 
-    static bool usable( const BoxCWH& b ) noexcept
+    // One axis of the One-Euro filter.
+    struct Axis
+    {
+        float x = 0.0f;   // filtered value
+        float dx = 0.0f;  // filtered speed, units/s
+    };
+
+    // Finite with a positive size: a box the filter accepts.
+    inline bool usable( const BoxCWH& b ) noexcept
     {
         return std::isfinite( b.cx ) && std::isfinite( b.cy ) && std::isfinite( b.w ) && std::isfinite( b.h ) && b.w > 0.0f &&
                b.h > 0.0f;
     }
 
+    // Dead zone of axis i around box f (cx, cy, w, h): cx and w scale with the width, cy and h with the height.
+    inline float dead_zone( int i, const float f[kAxes], const BoxFilterParams& p ) noexcept
+    {
+        const float size = ( i == 0 || i == 2 ) ? f[2] : f[3];
+        return std::max( p.dz_min_px, p.dz_frac * size );
+    }
+
+    // The One-Euro smoothing factor of a first-order low-pass at cutoff_hz.
+    inline float alpha( float cutoff_hz, float dt_s ) noexcept
+    {
+        constexpr float two_pi = 6.2831853f;
+        const float r = two_pi * cutoff_hz * dt_s;
+        return r / ( r + 1.0f );
+    }
+
+    // One One-Euro step of axis a towards x; returns the filtered value.
+    inline float one_euro( Axis& a, float x, float dt_s, const BoxFilterParams& p ) noexcept
+    {
+        const float dx_raw = ( x - a.x ) / dt_s;
+        a.dx += alpha( p.d_cutoff_hz, dt_s ) * ( dx_raw - a.dx );
+        const float fc = p.min_cutoff_hz + p.beta * std::fabs( a.dx );
+        a.x += alpha( fc, dt_s ) * ( x - a.x );
+        return a.x;
+    }
+}  // namespace box_filter
+
+class BoxFilter
+{
+public:
+    enum
+    {
+        kAxes = box_filter::kAxes
+    };
+
     // Starts at b (output = b). An unusable b is ignored.
     void reset( const BoxCWH& b ) noexcept
     {
-        if ( !usable( b ) )
+        if ( !box_filter::usable( b ) )
             return;
         const float v[kAxes] = { b.cx, b.cy, b.w, b.h };
         for ( int i = 0; i < kAxes; ++i )
         {
-            ax_[i] = Axis { v[i], 0.0f };
+            ax_[i] = box_filter::Axis { v[i], 0.0f };
             out_[i] = v[i];
         }
         primed_ = true;
@@ -82,7 +123,7 @@ public:
     // One input box, dt_s after the previous one. The first usable box primes the filter.
     void step( const BoxCWH& b, float dt_s, const BoxFilterParams& p ) noexcept
     {
-        if ( !usable( b ) )
+        if ( !box_filter::usable( b ) )
             return;
         if ( !primed_ || dt_s > p.max_dt_s )
         {
@@ -94,10 +135,10 @@ public:
         const float v[kAxes] = { b.cx, b.cy, b.w, b.h };
         float f[kAxes] {};
         for ( int i = 0; i < kAxes; ++i )
-            f[i] = one_euro( ax_[i], v[i], dt_s, p );
+            f[i] = box_filter::one_euro( ax_[i], v[i], dt_s, p );
         for ( int i = 0; i < kAxes; ++i )
         {
-            const float dz = dead_zone( i, f, p );
+            const float dz = box_filter::dead_zone( i, f, p );
             out_[i] = std::clamp( out_[i], f[i] - dz, f[i] + dz );
         }
     }
@@ -105,39 +146,8 @@ public:
     BoxCWH out() const noexcept { return BoxCWH { out_[0], out_[1], out_[2], out_[3] }; }
     bool primed() const noexcept { return primed_; }
 
-    // Dead zone of axis i around box f (cx, cy, w, h): cx and w scale with the width, cy and h with the height.
-    static float dead_zone( int i, const float f[kAxes], const BoxFilterParams& p ) noexcept
-    {
-        const float size = ( i == 0 || i == 2 ) ? f[2] : f[3];
-        return std::max( p.dz_min_px, p.dz_frac * size );
-    }
-
 private:
-    struct Axis
-    {
-        float x = 0.0f;   // filtered value
-        float dx = 0.0f;  // filtered speed, units/s
-    };
-
-    // The One-Euro smoothing factor of a first-order low-pass at cutoff_hz.
-    static float alpha( float cutoff_hz, float dt_s ) noexcept
-    {
-        constexpr float two_pi = 6.2831853f;
-        const float r = two_pi * cutoff_hz * dt_s;
-        return r / ( r + 1.0f );
-    }
-
-    static float one_euro( Axis& a, float x, float dt_s, const BoxFilterParams& p ) noexcept
-    {
-        const float dx_raw = ( x - a.x ) / dt_s;
-        a.dx += alpha( p.d_cutoff_hz, dt_s ) * ( dx_raw - a.dx );
-        const float fc = p.min_cutoff_hz + p.beta * std::fabs( a.dx );
-        a.x += alpha( fc, dt_s ) * ( x - a.x );
-        return a.x;
-    }
-
-private:
-    Axis ax_[kAxes] {};
+    box_filter::Axis ax_[kAxes] {};
     float out_[kAxes] {};
     bool primed_ = false;
 };

@@ -90,7 +90,8 @@ void BoxMapper::det_boxes( const DetList& dets, const Band& b, GpuBoxList& boxes
     }
 }
 
-// Track box from the Kalman posterior: the single drawing source for persons
+// Track box: the display box of the track (in OverlaySink the BoxFilter output of
+// the Kalman posterior; the posterior itself when no filter runs) -- the single drawing source for persons
 // after the EMA person boxes were removed (anti-jitter stage 1). TENT draws
 // too -- a new person appears at once; the confirmation gate stays a
 // stability concept, not a visibility gate. Same transform as the det boxes.
