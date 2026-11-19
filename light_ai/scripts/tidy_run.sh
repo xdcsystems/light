@@ -42,7 +42,7 @@ TESTS_BUILD=$PROJ_ROOT/build/tests
 CACHE=$PROJ_ROOT/build/tidy-cache
 CACHE_DAYS=14        # cache entries not used for this many days are pruned after the run
 # TIDY_FILES first: a bad list fails before any work. SEL: the checked TU paths, relative to the project root.
-# The entries are split on blanks, never globbed (set -f): a path is taken as written.
+# The entries are split on blanks, never globbed (set -f); each one is resolved by realpath (below).
 SEL=""
 set -f
 for arg in ${TIDY_FILES:-}; do
@@ -50,6 +50,7 @@ for arg in ${TIDY_FILES:-}; do
   # resolved, then made relative; anything outside the project is left absolute and rejected below
   f=$(realpath -m -- "$arg")
   f=${f#"$PROJ_ROOT"/}
+  case $arg in */) f="" ;; esac   # realpath drops a trailing /, but "x.cpp/" names no file
   case $f in
     src/*.cpp) ;;
     tests/*/*) f="" ;;
