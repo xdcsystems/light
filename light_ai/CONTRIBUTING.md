@@ -51,5 +51,7 @@ This runs:
 3. Two-pass `clang-tidy` gate ([`scripts/tidy_run.sh`](scripts/tidy_run.sh)):
    - **main:** system `clang-tidy-11` against [`.clang-tidy`](.clang-tidy) (`tests/` uses [`tests/.clang-tidy`](tests/.clang-tidy)).
    - **cognitive:** `venv/bin/clang-tidy` (`23.1.4`) against [`scripts/tidy_cognitive.yaml`](scripts/tidy_cognitive.yaml) (`Threshold: 20`).
+   - **Function-size limits (`src/`):** variables 20 and branches 15 (raised in #93: every `const` local counts, and a flat sequence of checks is cheap to read), lines 90, statements 60, nesting 4. Cognitive complexity 20 is the real limit, for `src/` and `tests/` alike: split a function into helpers instead of relaxing it.
+   - While editing: `clangd` diagnostics ([`.clangd`](.clangd)) and `TIDY_FILES="src/a.cpp" bash scripts/tidy_run.sh` on the changed TUs are hints; only the full gate above decides.
 
 For pure-logic or multi-threaded changes, also verify Layer A reference parity (`bash tools/ref_replay.sh misc/ref_evening.mjpeg build/ref_p3.csv 3 reference/ref_evening.csv`) and live hardware execution on the board.

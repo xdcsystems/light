@@ -196,14 +196,20 @@ Checks all translation units under `src/` and `tests/` (with [`tests/.clang-tidy
 1. **`main` pass:** system `clang-tidy-11` using [`.clang-tidy`](.clang-tidy) (all enabled checks).
 2. **`cognitive` pass:** pinned PyPI `clang-tidy==23.1.4` inside `light_ai/venv` using [`scripts/tidy_cognitive.yaml`](scripts/tidy_cognitive.yaml) (`readability-function-cognitive-complexity`, `Threshold: 20`).
 
-One-time venv setup from `light_ai/` on the target board:
+One-time venv setup from `light_ai/` on the target board (`clangd` is for the editor only, see below):
 
 ```bash
-python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4
+python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4 clangd==22.1.1
 ```
 
 - **Logs & hangs:** `build/tidy/{src,tests}/<path>.log`, `build/tidy/cognitive/{src,tests}/<path>.log`, `build/tidy/HANGS.txt`.
 - **Cache & parallelism:** Result cache in `build/tidy-cache` (`scripts/tidy_cache.py`; disable with `TIDY_NO_CACHE=1`), parallel jobs via `TIDY_JOBS=N` (defaults to `min(nproc, MemAvailable / 400 MB)`).
+- **Subset run (`TIDY_FILES`):** `TIDY_FILES="src/a.cpp tests/b.cpp" bash scripts/tidy_run.sh` runs both passes on only those translation units (`src/**/*.cpp`, `tests/*.cpp`; a header or a missing file exits with `2`), with the same cache, compile DBs and log paths; only their logs are replaced. It is a quick check while editing, not the gate: `scripts/build.sh` always runs every TU.
+- **Function-size limits (`src/`):** lines 90, statements 60, nesting 4, parameters 20, **variables 20** and **branches 15**. The last two were raised in #93 (from 14 and 11): every `const` local counts as a variable, which forced artificial structs such as `GlyphQuad`; cognitive complexity 20 is the real limit and is not relaxed. `tests/.clang-tidy` relaxes lines / statements / variables / nesting for table-driven suites and pins branches at 11.
+
+### Editor Diagnostics (`clangd`)
+
+[`.clangd`](.clangd) configures `clangd` 22.1.1 from `light_ai/venv`: it uses both compile DBs (`build/`, `build/tests/`), strips `-mtune`/`-mcpu`, skips the background index (RAM), adds `readability-function-cognitive-complexity` (`Threshold: 20`), and removes the LLVM 12+ checks that the `clang-tidy-11` gate does not have. A quick command-line check of one file: `venv/bin/clangd --check=src/a.cpp`. Editor diagnostics are hints only; the gate stays the authority (one known difference: LLVM 22 counts constructor initializers as statements, so `Pipeline::Pipeline` shows up at 67 > 60 in the editor only).
 
 ### Storage Layout & Models
 
