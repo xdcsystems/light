@@ -10,13 +10,17 @@ CheckOptions:
   # to the ten, the counts exact): lines 87 (MppDecoder::init), statements 60 (GpuBoxDrawer::draw_slot),
   # branches 11 (MppDecoder::init, TcpPullServer::accept_client), nesting 4 (YoloDecoder::collect_head,
   # draw_boxes_cpu, MppDecoder::make_packet, NetMjpegSource::read_headers, CliOptions::prepass / apply_argv),
-  # variables 14 (BufferedSocket::connect).
+  # variables 14 (BufferedSocket::connect). Lines, statements and nesting stay at those maxima.
+  # Raised in #93 above the maxima: variables 14 -> 20 (every const local counts, so a function that names its
+  # intermediate values hits the limit and gets split into artificial structs such as GlyphQuad in
+  # overlay_sink.cpp), branches 11 -> 15 (a flat sequence of checks is cheap to read). Cognitive complexity 20
+  # (below; the second pass) stays the real limit on how hard a function is to follow.
   - { key: readability-function-size.LineThreshold,      value: '90' }  # Flag functions exceeding this number of lines.
   - { key: readability-function-size.StatementThreshold, value: '60' }  # Flag functions exceeding this number of statements.
-  - { key: readability-function-size.BranchThreshold,    value: '11' }  # Flag functions exceeding this number of control statements.
+  - { key: readability-function-size.BranchThreshold,    value: '15' }  # Flag functions exceeding this number of control statements.
   - { key: readability-function-size.ParameterThreshold, value: '20' }  # Flag functions that exceed a specified number of parameters.
   - { key: readability-function-size.NestingThreshold,   value: '4' }   # Flag compound statements which create next nesting level after NestingThreshold.
-  - { key: readability-function-size.VariableThreshold,  value: '14' }  # Flag functions exceeding this number of variables declared in the body.
+  - { key: readability-function-size.VariableThreshold,  value: '20' }  # Flag functions exceeding this number of variables declared in the body.
   - { key: readability-identifier-length.MinimumVariableNameLength, value: '1' } # minimum variable name length
   - { key: readability-identifier-length.MinimumParameterNameLength, value: '1' } # minimum parameter name length
   - { key: readability-identifier-length.MinimumLoopCounterNameLength, value: '1' } # minimum loop counter name length
@@ -34,7 +38,7 @@ CheckOptions:
   # readability-function-cognitive-complexity: clang-tidy 11 (the main pass) does not know this check, so these
   # two lines are inert here. It is enforced by the second pass of the gate (scripts/tidy_run.sh, #43): the
   # pinned clang-tidy 23 in light_ai/venv with scripts/tidy_cognitive.yaml (the same Threshold 20 and
-  # IgnoreMacros; a change goes into both files). After stage 6e no function is above 20 (at 20:
+  # IgnoreMacros; a change goes into both files, and into .clangd for the editor). After stage 6e no function is above 20 (at 20:
   # NetMjpegSource::read_headers, MppDecoder::init, draw_boxes_cpu).
   - { key: readability-function-cognitive-complexity.Threshold,    value: '20' } # flag functions above this cognitive complexity
   - { key: readability-function-cognitive-complexity.IgnoreMacros, value: true } # ignore macros when computing cognitive complexity
