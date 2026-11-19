@@ -44,21 +44,23 @@ using CalloutList = PodList<CalloutItem, TrajList::cap>;  // one per track of a 
 
 struct CalloutConfig
 {
+    enum
+    {
+        kLabelPx = 16  // letter size per --label-scale step on the output tile
+    };
+
+public:
     bool lang_ru = false;
     float scale = 0.5f;  // atlas px -> tensor px: callout_text_scale()
 };
 
 // The glyph scale that gives every source the same letter size on the output
-// tile (#91 item 5): kLabelPx px per --label-scale step, measured in the stream,
+// tile (#91 item 5): CalloutConfig::kLabelPx px per --label-scale step, measured in the stream,
 // divided by tile_scale (output tile px per tensor px: place_tile dst.h / src.h,
 // 1 when there is no tiled stream). label_scale is clamped to 1..4; a
 // non-positive or non-finite tile_scale counts as 1.
 //   USB 4:3 band 640x480 -> 640x480 tile: 1.0  -> 0.5 (16 px letters in the tensor)
 //   phone 360x640 band   -> 270x480 tile: 0.75 -> 0.667 (21.3 px in the tensor, 16 px on the tile)
-enum : int
-{
-    kLabelPx = 16
-};
 float callout_text_scale( int label_scale, float tile_scale ) noexcept;
 
 struct CalloutPrevSlot

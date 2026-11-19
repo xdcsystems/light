@@ -22,11 +22,11 @@
 // trajs: the display tracks (boxes through BoxFilter); post: the same list as the
 // tracker produced it (Kalman posteriors, the coordinates the trail was recorded
 // in), entry k of both the same track. The trail head of a CONF track (the only
-// state that draws both a box and a trail) is
-// bent onto its displayed box: the newest point moves by the full box offset
-// (display center - posterior center), the shift fades out linearly over the
-// kTrailBlend newest points, older points stay where they were recorded. With
-// post == trajs (no display filter) the trail is the recorded one.
+// state that draws both a box and a trail) is bent onto its displayed box: the
+// newest point moves by the full box offset (display center - posterior center),
+// the shift fades out linearly over the kTrailBlend newest points, older points
+// stay where they were recorded. With post == trajs (no display filter) the
+// trail is the recorded one.
 //
 // now_us: current frame timestamp, drives the per-point alpha fade:
 // newest point opaque, fades to 0 over the tracker's trail_max_age_us() --

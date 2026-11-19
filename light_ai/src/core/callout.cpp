@@ -15,10 +15,11 @@ namespace
     constexpr int kPadY = 2;
     constexpr int kMaxTracks = TrajList::cap;
 
-    // A usable glyph scale: finite and positive, else the 16 px default.
+    // A usable glyph scale: finite and positive, else the 16 px default; clamped
+    // to [0.05, 8] (1.6..256 px text) so the integer label rects never overflow.
     float clean_scale( float scale ) noexcept
     {
-        return std::isfinite( scale ) && scale > 0.0f ? scale : 0.5f;
+        return std::isfinite( scale ) && scale > 0.0f ? std::clamp( scale, 0.05f, 8.0f ) : 0.5f;
     }
 
     // The layout unit: 1 px at the 16 px default (scale 0.5), growing with the
@@ -328,7 +329,7 @@ float callout_text_scale( int label_scale, float tile_scale ) noexcept
 {
     const float ts = std::isfinite( tile_scale ) && tile_scale > 0.0f ? tile_scale : 1.0f;
     const float k = static_cast<float>( std::clamp( label_scale, 1, 4 ) );
-    return k * static_cast<float>( kLabelPx ) / static_cast<float>( glyph_font::kAtlasPx ) / ts;
+    return k * static_cast<float>( CalloutConfig::kLabelPx ) / static_cast<float>( glyph_font::kAtlasPx ) / ts;
 }
 
 void compute_callouts( const TrajList& trajs,

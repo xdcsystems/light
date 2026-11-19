@@ -16,7 +16,7 @@
 #include "core/box_filter.hpp"   // TrackBoxFilters, BoxFilterParams
 #include "core/callout.hpp"      // CalloutHistory, CalloutList
 #include "core/detection.hpp"    // DetList
-#include "core/encoder_config.hpp" // StreamLayout
+#include "core/encoder_config.hpp"  // StreamLayout, place_tile
 #include "core/frame_view.hpp"   // FrameView, TensorSet
 #include "core/global_track.hpp" // reid_cfg::kMaxSources
 #include "core/net_perf.hpp"     // OverlayPerfWindow, EncPerfWindow

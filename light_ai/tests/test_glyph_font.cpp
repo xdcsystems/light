@@ -17,8 +17,8 @@ namespace
 
     // The atlas contract of tools/gen_glyph_font.py (#91 item 5): every glyph rect
     // inside the atlas with a transparent 1 px border, antialiased ink inside, and
-    // at least 1 px of clear texels to every other rect -- GL_LINEAR never reads a
-    // neighbour; the opaque solid block at (0, 0).
+    // the generator's 2 px gap to every other rect and to the opaque solid block at
+    // (0, 0) -- GL_LINEAR never reads a neighbour.
     void check_atlas( TestRun& t )
     {
         bool solid = true;
@@ -47,11 +47,11 @@ namespace
                     has_aa = has_aa || ( texel( x, y ) > 0u && texel( x, y ) < 255u );
             }
             aa = aa && has_aa;
-            // Rect i grown by 1 px must not touch rect j, nor the solid block.
-            const int x0 = m.ax - 1;
-            const int y0 = m.ay - 1;
-            const int x1 = m.ax + m.w + 1;
-            const int y1 = m.ay + m.h + 1;
+            // Rect i grown by the 2 px gap must not overlap rect j, nor the solid block.
+            const int x0 = m.ax - 2;
+            const int y0 = m.ay - 2;
+            const int x1 = m.ax + m.w + 2;
+            const int y1 = m.ay + m.h + 2;
             apart = apart && ( x0 >= 4 || y0 >= 4 );
             for ( int j = i + 1; j < glyph_font::kGlyphCount; ++j )
             {
