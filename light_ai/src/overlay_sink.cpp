@@ -104,40 +104,59 @@ namespace
         }
     }
 
+    // A glyph's padded atlas rect placed in tensor px: tensor (x, y) maps to
+    // atlas (ax0 + (x - x0) * inv, ay0 + (y - y0) * inv).
+    struct GlyphQuad
+    {
+        int idx = 0;
+        float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;  // the quad in tensor px
+        float ax0 = 0.0f, ay0 = 0.0f;                      // its top-left in the atlas
+        float inv = 1.0f;                                  // atlas px per tensor px
+    };
+
+    // One tensor row of quad q at atlas row ay: every pixel center inside the
+    // quad takes the bilinear alpha (the GL_LINEAR equivalent of the GPU path).
+    void draw_glyph_row_cpu( uint8_t* line, int w, const GlyphQuad& q, float ay, uint8_t r, uint8_t g, uint8_t b,
+                             unsigned a_mul ) noexcept
+    {
+        const int px0 = std::max( 0, static_cast<int>( std::floor( q.x0 ) ) );
+        const int px1 = std::min( w, static_cast<int>( std::ceil( q.x1 ) ) );
+        for ( int px = px0; px < px1; ++px )
+        {
+            const float cx = static_cast<float>( px ) + 0.5f;
+            if ( cx < q.x0 || cx >= q.x1 )
+                continue;
+            const float cov = glyph_font::sample( q.idx, q.ax0 + ( cx - q.x0 ) * q.inv, ay ) * static_cast<float>( a_mul ) / 255.0f;
+            const auto a = static_cast<unsigned>( std::lround( cov ) );
+            if ( a != 0u )
+                blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, a );
+        }
+    }
+
     // One glyph at float pen position (x0, y0) = its padded rect's top-left in
-    // tensor px, scaled by sc: every covered pixel center maps back into the atlas
-    // and takes the bilinear alpha (the GL_LINEAR equivalent of the GPU path).
+    // tensor px, scaled by sc: every covered pixel center maps back into the atlas.
     void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, float x0, float y0, int glyph_idx, float sc,
                          uint8_t r, uint8_t g, uint8_t b, unsigned a_mul ) noexcept
     {
         const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( glyph_idx );
         if ( m.w == 0 || m.h == 0 || !( sc > 0.0f ) )
             return;
-        const float x1 = x0 + static_cast<float>( m.w ) * sc;
-        const float y1 = y0 + static_cast<float>( m.h ) * sc;
-        const int px0 = std::max( 0, static_cast<int>( std::floor( x0 ) ) );
-        const int py0 = std::max( 0, static_cast<int>( std::floor( y0 ) ) );
-        const int px1 = std::min( w, static_cast<int>( std::ceil( x1 ) ) );
-        const int py1 = std::min( h, static_cast<int>( std::ceil( y1 ) ) );
-        const float inv = 1.0f / sc;
+        const GlyphQuad q { glyph_idx,
+                            x0,
+                            y0,
+                            x0 + static_cast<float>( m.w ) * sc,
+                            y0 + static_cast<float>( m.h ) * sc,
+                            static_cast<float>( m.ax ),
+                            static_cast<float>( m.ay ),
+                            1.0f / sc };
+        const int py0 = std::max( 0, static_cast<int>( std::floor( q.y0 ) ) );
+        const int py1 = std::min( h, static_cast<int>( std::ceil( q.y1 ) ) );
         for ( int py = py0; py < py1; ++py )
         {
             const float cy = static_cast<float>( py ) + 0.5f;
-            if ( cy < y0 || cy >= y1 )
+            if ( cy < q.y0 || cy >= q.y1 )
                 continue;
-            const float ay = static_cast<float>( m.ay ) + ( cy - y0 ) * inv;
-            uint8_t* line = rgb + static_cast<size_t>( py ) * stride;
-            for ( int px = px0; px < px1; ++px )
-            {
-                const float cx = static_cast<float>( px ) + 0.5f;
-                if ( cx < x0 || cx >= x1 )
-                    continue;
-                const float ax = static_cast<float>( m.ax ) + ( cx - x0 ) * inv;
-                const float cov = glyph_font::sample( glyph_idx, ax, ay ) * static_cast<float>( a_mul ) / 255.0f;
-                const unsigned a = static_cast<unsigned>( cov + 0.5f );
-                if ( a != 0u )
-                    blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, a );
-            }
+            draw_glyph_row_cpu( rgb + static_cast<size_t>( py ) * stride, w, q, q.ay0 + ( cy - q.y0 ) * q.inv, r, g, b, a_mul );
         }
     }
 

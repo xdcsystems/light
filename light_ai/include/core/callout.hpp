@@ -56,6 +56,11 @@ public:
     float scale = 0.5f;  // atlas px -> tensor px: callout_text_scale()
 };
 
+// The 0.5f default scales (CalloutItem, CalloutConfig, callout.cpp clean_scale) and
+// the layout unit (2 * scale, 1 px at the default) assume the atlas is baked at
+// 2x the default text size: rebaking at another ATLAS_PX must revisit them.
+static_assert( glyph_font::kAtlasPx == 2 * CalloutConfig::kLabelPx, "callout defaults assume a 2x atlas" );
+
 // The glyph scale that gives every source the same letter size on the output
 // tile (#91 item 5): CalloutConfig::kLabelPx px per --label-scale step, measured in the stream,
 // divided by tile_scale (output tile px per tensor px: place_tile dst.h / src.h,

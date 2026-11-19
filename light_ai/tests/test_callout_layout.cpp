@@ -102,6 +102,16 @@ namespace
         CalloutList bad {};
         compute_callouts( trajs, lb, 1.0f, 1.0f, { false, std::nanf( "" ) }, bad );
         CHECK( t, bad.n == 1 && bad.d[0].scale == 0.5f );
+        // An out-of-range config scale is clamped to [0.05, 8]; the label rect stays inside the band.
+        const LbGeom wide { 0, 2048, 0, 2048 };
+        CalloutList big {};
+        compute_callouts( trajs, wide, 1.0f, 1.0f, { false, 1e9f }, big );
+        CHECK( t, big.n == 1 && big.d[0].scale == 8.0f );
+        CHECK( t, big.n == 1 && big.d[0].label.x0 >= 0 && big.d[0].label.x1 <= 2048 && big.d[0].label.y0 >= 0 &&
+                      big.d[0].label.y1 <= 2048 );
+        CalloutList tiny {};
+        compute_callouts( trajs, lb, 1.0f, 1.0f, { false, 1e-6f }, tiny );
+        CHECK( t, tiny.n == 1 && tiny.d[0].scale == 0.05f && tiny.d[0].label.x1 > tiny.d[0].label.x0 );
     }
 
 }  // namespace

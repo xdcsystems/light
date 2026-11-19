@@ -537,9 +537,9 @@ namespace
 
     // M-15: a part that has started (headers or body) and then drips (a byte
     // every 250 ms, each inside the 2 s per-fill watchdog) ends with Lost
-    // kPartMs (5 s) after its first header byte -- not never, and not from the entry: the
-    // next delimiter line arrives first and sits in the window through a
-    // 1.5 s idle gap, which must not count toward the part deadline.
+    // kPartMs (5 s) after its first header byte -- not never, and not from
+    // the entry: the next delimiter line arrives first and sits in the window
+    // through a 1.5 s idle gap, which must not count toward the part deadline.
     // drip_headers: the part's header lines drip too (else they come in one
     // burst with 8 body bytes and only the body drips).
     void slow_drip_part_times_out( TestRun& t, const Bytes& a, bool drip_headers )

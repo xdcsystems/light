@@ -10,8 +10,8 @@
 namespace glyph_font
 {
     constexpr int kGlyphCount = 147;
-    constexpr int kAtlasPx = 22;   // the pixel size the atlas was rendered at
-    constexpr int kLineH = 25;     // line box height: highest ink top to lowest ink bottom
+    constexpr int kAtlasPx = 22;  // the pixel size the atlas was rendered at
+    constexpr int kLineH = 25;    // line box height: highest ink top to lowest ink bottom
     constexpr int kSpaceAdv = 7;  // advance of the space (no glyph)
     constexpr int kAtlasW = 256;
     constexpr int kAtlasH = 196;

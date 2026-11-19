@@ -15,6 +15,44 @@ namespace
         return glyph_font::atlas()[y * glyph_font::kAtlasW + x];
     }
 
+    // The 1 px border of glyph rect m is transparent.
+    bool border_clear( const glyph_font::GlyphMetric& m )
+    {
+        bool ok = true;
+        for ( int x = m.ax; x < m.ax + m.w; ++x )
+            ok = ok && texel( x, m.ay ) == 0u && texel( x, m.ay + m.h - 1 ) == 0u;
+        for ( int y = m.ay; y < m.ay + m.h; ++y )
+            ok = ok && texel( m.ax, y ) == 0u && texel( m.ax + m.w - 1, y ) == 0u;
+        return ok;
+    }
+
+    // Some texel of glyph rect m is partly covered (antialiased ink).
+    bool has_aa( const glyph_font::GlyphMetric& m )
+    {
+        for ( int y = m.ay; y < m.ay + m.h; ++y )
+            for ( int x = m.ax; x < m.ax + m.w; ++x )
+                if ( texel( x, y ) > 0u && texel( x, y ) < 255u )
+                    return true;
+        return false;
+    }
+
+    // Glyph rect i grown by the generator's 2 px gap overlaps no later rect, nor the 4x4 solid block.
+    bool rect_apart( int i )
+    {
+        const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( i );
+        const int x0 = m.ax - 2;
+        const int y0 = m.ay - 2;
+        const int x1 = m.ax + m.w + 2;
+        const int y1 = m.ay + m.h + 2;
+        bool ok = x0 >= 4 || y0 >= 4;
+        for ( int j = i + 1; j < glyph_font::kGlyphCount; ++j )
+        {
+            const glyph_font::GlyphMetric& n = glyph_font::glyph_metrics( j );
+            ok = ok && ( x1 <= n.ax || n.ax + n.w <= x0 || y1 <= n.ay || n.ay + n.h <= y0 );
+        }
+        return ok;
+    }
+
     // The atlas contract of tools/gen_glyph_font.py (#91 item 5): every glyph rect
     // inside the atlas with a transparent 1 px border, antialiased ink inside, and
     // the generator's 2 px gap to every other rect and to the opaque solid block at
@@ -37,27 +75,9 @@ namespace
             inside = inside && m.w >= 3 && m.h >= 3 && m.ax + m.w <= glyph_font::kAtlasW && m.ay + m.h <= glyph_font::kAtlasH;
             if ( !inside )
                 break;
-            bool has_aa = false;
-            for ( int x = m.ax; x < m.ax + m.w; ++x )
-                border = border && texel( x, m.ay ) == 0u && texel( x, m.ay + m.h - 1 ) == 0u;
-            for ( int y = m.ay; y < m.ay + m.h; ++y )
-            {
-                border = border && texel( m.ax, y ) == 0u && texel( m.ax + m.w - 1, y ) == 0u;
-                for ( int x = m.ax; x < m.ax + m.w; ++x )
-                    has_aa = has_aa || ( texel( x, y ) > 0u && texel( x, y ) < 255u );
-            }
-            aa = aa && has_aa;
-            // Rect i grown by the 2 px gap must not overlap rect j, nor the solid block.
-            const int x0 = m.ax - 2;
-            const int y0 = m.ay - 2;
-            const int x1 = m.ax + m.w + 2;
-            const int y1 = m.ay + m.h + 2;
-            apart = apart && ( x0 >= 4 || y0 >= 4 );
-            for ( int j = i + 1; j < glyph_font::kGlyphCount; ++j )
-            {
-                const glyph_font::GlyphMetric& n = glyph_font::glyph_metrics( j );
-                apart = apart && ( x1 <= n.ax || n.ax + n.w <= x0 || y1 <= n.ay || n.ay + n.h <= y0 );
-            }
+            border = border && border_clear( m );
+            aa = aa && has_aa( m );
+            apart = apart && rect_apart( i );
         }
         CHECK( t, inside );
         CHECK( t, border );

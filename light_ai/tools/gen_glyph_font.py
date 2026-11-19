@@ -105,9 +105,10 @@ def main():
     w("namespace glyph_font")
     w("{")
     w("    constexpr int kGlyphCount = %d;" % len(glyphs))
-    w("    constexpr int kAtlasPx = %d;   // the pixel size the atlas was rendered at" % ATLAS_PX)
-    w("    constexpr int kLineH = %d;     // line box height: highest ink top to lowest ink bottom" % line_h)
-    w("    constexpr int kSpaceAdv = %d;  // advance of the space (no glyph)" % space_adv)
+    for decl, note in (("kAtlasPx = %d;" % ATLAS_PX, "the pixel size the atlas was rendered at"),
+                       ("kLineH = %d;" % line_h, "line box height: highest ink top to lowest ink bottom"),
+                       ("kSpaceAdv = %d;" % space_adv, "advance of the space (no glyph)")):
+        w("    constexpr int %-16s// %s" % (decl, note))
     w("    constexpr int kAtlasW = %d;" % ATLAS_W)
     w("    constexpr int kAtlasH = %d;" % atlas_h)
     w("    constexpr int kAtlasBytes = kAtlasW * kAtlasH;")
