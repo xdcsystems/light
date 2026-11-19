@@ -13,6 +13,11 @@
 # Env:   TIDY_JOBS=N      parallel jobs (default min(nproc, MemAvailable / 400 MB): one clang-tidy 11 peaks
 #                         at ~330 MB on pipeline.cpp; RAM, not the cores, is the limit on this board)
 #        TIDY_NO_CACHE=1  no cache lookup, no store
+#        TIDY_FILES="src/a.cpp tests/b.cpp"
+#                         a subset run (#93): both passes on only these TUs (src/**/*.cpp, tests/*.cpp; a header or
+#                         a missing file -> exit 2), the same cache, DBs and log paths; only their logs and status
+#                         are replaced, the summaries cover only them. Not the gate: scripts/build.sh unsets it.
+#                         Unset or empty: every TU (the gate).
 # Logs:  main: build/tidy/<path of the TU without .cpp>.log (src/net/h264_encoder.log, tests/test_log.log: a tree
 #        like the sources, never a flat name -- src/foo.cpp and src/net/foo.cpp must not share a log); cognitive: the same tree
 #        under build/tidy/cognitive/; HANGS.txt in build/tidy (a cognitive entry starts with "cognitive: ");
@@ -36,6 +41,30 @@ TDB_TESTS=$OUT/cc-tests
 TESTS_BUILD=$PROJ_ROOT/build/tests
 CACHE=$PROJ_ROOT/build/tidy-cache
 CACHE_DAYS=14        # cache entries not used for this many days are pruned after the run
+# TIDY_FILES first: a bad list fails before any work. SEL: the checked TU paths, relative to the project root.
+# The entries are split on blanks, never globbed (set -f): a path is taken as written.
+SEL=""
+set -f
+for arg in ${TIDY_FILES:-}; do
+  f=${arg#./}
+  # an absolute path: resolved first (~/Projects/light is a symlink to the NVMe checkout, PROJ_ROOT is physical)
+  case $f in /*) f=$(realpath -m -- "$f"); f=${f#"$PROJ_ROOT"/} ;; esac
+  case $f in
+    *..*) f="" ;;
+    src/*.cpp) ;;
+    tests/*/*) f="" ;;
+    tests/*.cpp) ;;
+    *) f="" ;;
+  esac
+  if [ -z "$f" ] || [ ! -f "$f" ]; then
+    echo "tidy: bad TIDY_FILES entry '$arg' -- a TU is src/**/*.cpp or tests/*.cpp and must exist" \
+         "(a header: pass a .cpp that includes it)"
+    exit 2
+  fi
+  case " $SEL " in *" $f "*) ;; *) SEL="$SEL $f" ;; esac
+done
+set +f
+SEL=${SEL# }
 mkdir -p "$OUT"
 # shellcheck source=storage_guard.sh
 . "$HERE/storage_guard.sh"
@@ -91,8 +120,16 @@ for e in json.load(open(src)):
         keep[f] = (e, tsan)
 json.dump([v[0] for v in keep.values()], open(dst, "w"))
 PYEOF
-rm -rf "$OUT"/src "$OUT"/tests "$OUT"/st/* "$OUT"/cognitive/src "$OUT"/cognitive/tests "$OUT"/cognitive/st/* "$OUT"/HANGS.txt
-rm -f "$OUT"/*.log   # flat logs of the script before #46
+if [ -z "$SEL" ]; then
+  rm -rf "$OUT"/src "$OUT"/tests "$OUT"/st/* "$OUT"/cognitive/src "$OUT"/cognitive/tests "$OUT"/cognitive/st/*
+  rm -f "$OUT"/*.log   # flat logs of the script before #46
+else
+  # a subset run: only its own TUs; the logs of the others (the last full gate) stay as they were
+  for f in $SEL; do
+    rm -f "$OUT/${f%.cpp}.log" "$OUT/st/${f%.cpp}" "$OUT/cognitive/${f%.cpp}.log" "$OUT/cognitive/st/${f%.cpp}"
+  done
+fi
+rm -f "$OUT"/HANGS.txt   # the hangs of this run only
 
 # MemAvailable is printed either way: a FAIL from an OOM kill (rc=137 in HANGS.txt) is recognizable
 MEM_MB=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
@@ -107,6 +144,8 @@ else
 fi
 echo "tidy: $JOBS jobs ($JOBS_WHY), MemAvailable ${MEM_MB} MB, timeout ${TMO}s," \
      "cache $([ "${TIDY_NO_CACHE:-0}" = 1 ] && echo off || echo "$CACHE")"
+# shellcheck disable=SC2086  # SEL: paths without blanks
+[ -n "$SEL" ] && echo "tidy: TIDY_FILES subset, $(echo $SEL | wc -w) TUs -- not the gate: $SEL"
 
 # One TU of the current pass: key -> hit (copy the stored log) or run (store a clean / findings result only).
 # The pass: P_TIDY (binary), P_ARGS (extra clang-tidy arguments, no blanks inside one), P_OUT (log root),
@@ -169,10 +208,16 @@ export CLANGXX TMO TDB TDB_TESTS CACHE HERE TIDY_NO_CACHE
 # The TU list is the same for both passes; each pass orders it slowest first by its own times, so the tail is
 # short: a TU never timed yet first (it may be slow), then by the last measured time, descending; the line count
 # breaks ties and orders the TUs of a cold cache.
-TUS=$( { find src -name '*.cpp'; find tests -maxdepth 1 -name '*.cpp'; } | xargs -r wc -l | awk '$2!="total" {print $2, $1}')
-if ! echo "$TUS" | grep -q '^src/' || ! echo "$TUS" | grep -q '^tests/'; then
-  echo "tidy: FAIL -- no TU found under src/ or tests/"
-  exit 1
+# A subset run takes SEL instead (checked above).
+if [ -n "$SEL" ]; then
+  # shellcheck disable=SC2086  # SEL: paths without blanks
+  TUS=$(printf '%s\n' $SEL | xargs -r wc -l | awk '$2!="total" {print $2, $1}')
+else
+  TUS=$( { find src -name '*.cpp'; find tests -maxdepth 1 -name '*.cpp'; } | xargs -r wc -l | awk '$2!="total" {print $2, $1}')
+  if ! echo "$TUS" | grep -q '^src/' || ! echo "$TUS" | grep -q '^tests/'; then
+    echo "tidy: FAIL -- no TU found under src/ or tests/"
+    exit 1
+  fi
 fi
 order_tus() {  # $1: the times dir of the pass
   echo "$TUS" | while read -r f lines; do
@@ -210,8 +255,9 @@ run_pass() {
     fi
   done
   echo "---- $name: findings by check ----"
-  logs=$(find "$P_OUT/src" "$P_OUT/tests" -name '*.log' 2>/dev/null | sort)
-  stats=$(find "$P_ST" -type f | sort)
+  # the logs and status files of this run's TUs only (a subset run leaves the others' in place)
+  logs=$(for f in $files; do [ -f "$P_OUT/${f%.cpp}.log" ] && echo "$P_OUT/${f%.cpp}.log"; done | sort)
+  stats=$(for f in $files; do [ -f "$P_ST/${f%.cpp}" ] && echo "$P_ST/${f%.cpp}"; done | sort)
   # /dev/null after $logs / $stats, -r on xargs: an empty list must not make grep / cat / wc read stdin (a hang)
   # shellcheck disable=SC2086  # paths without blanks
   grep -h ': error: ' $logs /dev/null | awk '{print $NF}' | sort | uniq -c | sort -rn
@@ -234,7 +280,9 @@ COG_FINDINGS=$PASS_FINDINGS COG_WALL=$PASS_WALL
 
 echo "---- hangs / errors ----"
 cat "$OUT/HANGS.txt" 2>/dev/null || echo "(none)"
-STATS=$(find "$OUT/st" "$OUT/cognitive/st" -type f | sort)
+STATS=$(echo "$TUS" | while read -r f _; do
+          for s in "$OUT/st/${f%.cpp}" "$OUT/cognitive/st/${f%.cpp}"; do [ -f "$s" ] && echo "$s"; done
+        done)
 # shellcheck disable=SC2086
 HITS=$(cat $STATS /dev/null | awk '$3 == "hit"' | wc -l)
 # shellcheck disable=SC2086
@@ -254,7 +302,12 @@ if [ -s "$OUT/HANGS.txt" ]; then
   HANGS=$(wc -l < "$OUT/HANGS.txt")
 fi
 if [ "$TOTAL" -gt 0 ] || [ "$HANGS" -gt 0 ]; then
-  echo "tidy: FAIL -- findings: $TOTAL (main $MAIN_FINDINGS, cognitive $COG_FINDINGS), hangs/errors: $HANGS"
+  echo "tidy: FAIL${SEL:+ (subset: $(echo "$TUS" | wc -l) TUs)} -- findings: $TOTAL" \
+       "(main $MAIN_FINDINGS, cognitive $COG_FINDINGS), hangs/errors: $HANGS"
   exit 1
 fi
-echo "tidy: PASS (0 findings: main + cognitive)"
+if [ -n "$SEL" ]; then
+  echo "tidy: PASS (subset: $(echo "$TUS" | wc -l) TUs, 0 findings: main + cognitive) -- not the gate"
+else
+  echo "tidy: PASS (0 findings: main + cognitive)"
+fi

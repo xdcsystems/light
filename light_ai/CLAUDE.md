@@ -36,6 +36,21 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   `cognitive` = pinned `clang-tidy==23.1.4` in `venv/` (`scripts/tidy_cognitive.yaml`, Threshold 20).
   Per-file logs: `build/tidy/{src,tests}/<path>.log` and `build/tidy/cognitive/{src,tests}/<path>.log`.
   Result cache: `build/tidy-cache` (`TIDY_NO_CACHE=1` disables it). See [README.md](README.md#build--static-analysis).
+- Quick tidy on changed files (#93): the main session may run it itself on 1-3 changed TUs and print only
+  the findings, never the full output:
+      TIDY_FILES="src/a.cpp tests/b.cpp" bash scripts/tidy_run.sh > build/tidy-files.log 2>&1; echo rc=$?
+      grep -E ': error: |^tidy: (PASS|FAIL)' build/tidy-files.log
+  Both passes, the same cache and logs, only those TUs (`.cpp` only; a header -> a TU that includes it;
+  exit 2 on a bad entry). It is not the gate: the full gate and live runs stay with `board-check` before
+  every push, and the per-commit `commit-reviewer` review does not change.
+- Editor diagnostics: `clangd 22.1.1` in `venv/` with the tracked `.clangd` (both compile DBs, cognitive
+  complexity 20, no background index). The `clangd-lsp` plugin starts `clangd` from `PATH`, so a user-level
+  link points at the venv: `~/.local/bin/clangd -> /mnt/nvme_data/linaro/Projects/light/light_ai/venv/bin/clangd`
+  (remove: `rm ~/.local/bin/clangd`, then clangd 11 from `/usr/bin` is used again; a rebuilt venv without
+  `clangd` leaves the link dangling -> reinstall: `venv/bin/pip install --no-cache-dir clangd==22.1.1`).
+  CLI check of one file: `venv/bin/clangd --check=src/a.cpp 2>&1 | grep -E '^E\[[^]]*\] \['` (diagnostics only;
+  the exit code is not a verdict: `--check` also fails on refactoring tweaks it cannot apply).
+  The diagnostics are hints only; the gate stays the authority.
 - Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 61 suites / 9,012 checks + 6 TSan suites / 23 checks).
   Single suite / flake hunt: `./build/tests/light_ai_tests [substr...] [--repeat N]` (also `light_ai_tests_tsan`;
   exit 2 on bad args).
