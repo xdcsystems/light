@@ -39,7 +39,7 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 - Quick tidy on changed files (#93): the main session may run it itself on 1-3 changed TUs and print only
   the findings, never the full output:
       TIDY_FILES="src/a.cpp tests/b.cpp" bash scripts/tidy_run.sh > build/tidy-files.log 2>&1; echo rc=$?
-      grep -E ': error: |^tidy: (PASS|FAIL)' build/tidy-files.log
+      grep -E ': error: |^tidy: (PASS|FAIL|bad)' build/tidy-files.log
   Both passes, the same cache and logs, only those TUs (`.cpp` only; a header -> a TU that includes it;
   exit 2 on a bad entry). It is not the gate: the full gate and live runs stay with `board-check` before
   every push, and the per-commit `commit-reviewer` review does not change.

@@ -46,11 +46,11 @@ CACHE_DAYS=14        # cache entries not used for this many days are pruned afte
 SEL=""
 set -f
 for arg in ${TIDY_FILES:-}; do
-  f=${arg#./}
-  # an absolute path: resolved first (~/Projects/light is a symlink to the NVMe checkout, PROJ_ROOT is physical)
-  case $f in /*) f=$(realpath -m -- "$f"); f=${f#"$PROJ_ROOT"/} ;; esac
+  # one spelling per TU (./, //, ., .., an absolute path, ~/Projects/light: a symlink to the physical PROJ_ROOT):
+  # resolved, then made relative; anything outside the project is left absolute and rejected below
+  f=$(realpath -m -- "$arg")
+  f=${f#"$PROJ_ROOT"/}
   case $f in
-    *..*) f="" ;;
     src/*.cpp) ;;
     tests/*/*) f="" ;;
     tests/*.cpp) ;;
@@ -261,6 +261,12 @@ run_pass() {
   # /dev/null after $logs / $stats, -r on xargs: an empty list must not make grep / cat / wc read stdin (a hang)
   # shellcheck disable=SC2086  # paths without blanks
   grep -h ': error: ' $logs /dev/null | awk '{print $NF}' | sort | uniq -c | sort -rn
+  if [ -n "$SEL" ]; then
+    # a subset run prints the findings themselves (a few TUs): `grep ': error: '` on its output is enough
+    echo "---- $name: findings ----"
+    # shellcheck disable=SC2086
+    grep -h ': error: ' $logs /dev/null | sort -u
+  fi
   echo "---- $name: per-file finding counts ----"
   for l in $logs; do
     n=$(grep -c ': error: ' "$l")
