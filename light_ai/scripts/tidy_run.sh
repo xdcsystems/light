@@ -20,7 +20,7 @@
 #        --config-file bytes). All inside the project (#48: nothing of the project is written outside it,
 #        not even to $TMPDIR or /tmp), git-ignored with build/. One run at a time (flock on $OUT/.lock; a second
 #        run waits). The output filesystem is printed first, with a warning when it is the eMMC (storage_guard.sh).
-TIDY=clang-tidy
+TIDY=clang-tidy-11   # by name, not "clang-tidy": venv/bin on PATH (its clang-tidy 23, clangd) must not replace the main pass
 CLANGXX=clang++-11   # the preprocessor of the cache key, both passes: the LLVM driver of clang-tidy 11 (the wheel has none)
 DB=build
 TMO=${1:-600}
