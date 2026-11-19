@@ -1312,9 +1312,11 @@ Design record:
   stroke glyphs emitted as 1-px axis-aligned quads, scaled bbox-fill
   into the Y plane (stamp_text in net_encoder.cpp; the C API takes
   char*, so the project's const_cast ban is honored via a fixed
-  copy buffer). The same quad geometry is the planned renderer for
-  per-box labels via GpuBoxDrawer. font8x8 remains in
-  externals/fonts as a spare.
+  copy buffer). The same quad geometry was the planned renderer for
+  per-box labels via GpuBoxDrawer. Later superseded: per-box
+  labels use the proportional DejaVu atlas in
+  include/core/glyph_font_table.hpp; font8x8 was removed from
+  externals/fonts.
 
 Live verification (2026-11-12):
 - Multi-view timed run (--frames 600): a \~13 s partial-absence window

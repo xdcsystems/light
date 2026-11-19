@@ -34,6 +34,7 @@ struct CalloutItem
     int n_segs = 0;
     int text_x = 0;
     int text_y = 0;
+    int scale = 1;  // glyph scale used when laying out this callout
     uint8_t r = 255;
     uint8_t g = 255;
     uint8_t b = 255;
@@ -46,6 +47,7 @@ using CalloutList = PodList<CalloutItem, 8>;
 struct CalloutConfig
 {
     bool lang_ru = false;
+    int scale_k = 1;  // integer glyph scale (1..4), clamped
 };
 
 struct CalloutPrevSlot

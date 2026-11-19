@@ -147,11 +147,13 @@ namespace
             float u1 = 0.0f;
             float v1 = 0.0f;
             glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
-            const float fx = static_cast<float>( gx );
-            const float fy = static_cast<float>( c.text_y );
-            emit_quad( qt, fx, fy, fx + static_cast<float>( CalloutItem::kGlyphW ),
-                       fy + static_cast<float>( CalloutItem::kGlyphH ), u0, v0, u1, v1, 255, 255, 255, 255 );
-            gx += CalloutItem::kGlyphW;
+            const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( gi );
+            const int sk = c.scale;
+            const float fx = static_cast<float>( gx + m.dx * sk );
+            const float fy = static_cast<float>( c.text_y + m.dy * sk );
+            emit_quad( qt, fx, fy, fx + static_cast<float>( m.w * sk ),
+                       fy + static_cast<float>( m.h * sk ), u0, v0, u1, v1, 255, 255, 255, 255 );
+            gx += m.adv * sk;
         }
     }
 

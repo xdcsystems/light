@@ -57,7 +57,7 @@ namespace
             TrajList tr2 {};
             tr2.push( TrackState { 1, TRACK_CONF, 640.0f, 110.0f, 0.0f, 0.0f, 100.0f, 200.0f, 5, 7, 10 } );
             compute_callouts( tr2, lb, 0.5f, 0.5f, { false }, hist, out );
-            CHECK( t, out.n == 1 && std::string( out.d[0].text ) == "person 7" );
+            CHECK( t, out.n == 1 && std::string( out.d[0].text ) == "Person #7" );
             CHECK( t, out.d[0].pill.x1 <= out.d[0].box.x0 );  // kept left side across global_id change
 
             TrajList tr3 {};
@@ -84,10 +84,10 @@ void test_callout_layout( TestRun& t )
         CalloutList out {};
         compute_callouts( trajs, lb, sx, sy, { false }, out );
         CHECK( t, out.n == 1 );
-        CHECK( t, std::string( out.d[0].text ) == "person 99" );
+        CHECK( t, std::string( out.d[0].text ) == "Person #99" );
         CHECK( t, inside_even( out.d[0].pill, lb ) );
         CHECK( t, out.d[0].pill.y1 - out.d[0].pill.y0 >= CalloutItem::kGlyphH );
-        CHECK( t, out.d[0].pill.x1 - out.d[0].pill.x0 >= 9 * CalloutItem::kGlyphW );
+        CHECK( t, out.d[0].pill.x1 - out.d[0].pill.x0 >= glyph_font::text_width( "Person #99" ) + 2 * 4 );  // pill = text_width + 2*kPadX
     }
 
     // 2. Russian label + up to 8 clustered people -> all pills stay inside band and non-overlapping.

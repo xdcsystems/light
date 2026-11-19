@@ -82,7 +82,7 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 - Header layout: in each visibility section, functions first, then a fresh label for data.
 - Header extensions: new headers use `.hpp`; nine legacy `.h` headers stay as-is unless refactored.
 - `core/` includes only the C++17 standard library and `pod_list.hpp`/`pod_ring.hpp` (keeps tests SDK-free).
-- Exception: header-only libraries in `externals/` (`stb_easy_font.h`, `font8x8_basic.h`) may keep file
+- Exception: header-only libraries in `externals/` (`stb_easy_font.h`) may keep file
   statics; include them only from `.cpp` files, never from a project header.
 - Errors (`Status` / `noexcept`): recoverable failures return `Status` (`include/core/status.hpp`);
   exceptions (`std::runtime_error` via `throw_on`) are startup-only; frame path and thread bodies are

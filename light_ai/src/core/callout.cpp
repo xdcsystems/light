@@ -13,7 +13,11 @@ namespace
     constexpr int kMarginPx = 2;
     constexpr int kPadX = 4;
     constexpr int kPadY = 2;
-    constexpr int kPillH = CalloutItem::kGlyphH + 2 * kPadY;  // 16 px (12 px AA glyph + 2 px padding)
+    int pill_h( int sk ) noexcept
+    {
+        const int k = std::clamp( sk, 1, 4 );
+        return CalloutItem::kGlyphH * k + 2 * kPadY;
+    }
     constexpr int kMaxTracks = TrajList::cap;
 
     struct TrackCand
@@ -131,6 +135,7 @@ namespace
                              int prev_slot,
                              int pw,
                              int ph,
+                             int sk,
                              const CalloutRect& work,
                              const CalloutList& placed,
                              const TrackCand* all_boxes,
@@ -138,23 +143,25 @@ namespace
     {
         const CalloutRect& b = all_boxes[self_idx].box;
         const int cx = ( b.x0 + b.x1 - pw ) / 2;
-        const int row2_off = 10 + ph;
-        const int side2_off = ph + 2;
+        const int gap = 8 * sk;
+        const int top = 10 * sk;
+        const int row2_off = top + ph;
+        const int side2_off = ph + 2 * sk;
         const int proposals[14][2] = {
-            { b.x0, b.y0 - 10 - ph },
-            { cx, b.y0 - 10 - ph },
-            { b.x1 - pw, b.y0 - 10 - ph },
+            { b.x0, b.y0 - top - ph },
+            { cx, b.y0 - top - ph },
+            { b.x1 - pw, b.y0 - top - ph },
             { b.x0, b.y0 - row2_off - ph },
             { cx, b.y0 - row2_off - ph },
             { b.x1 - pw, b.y0 - row2_off - ph },
-            { b.x1 + 8, b.y0 },
-            { b.x0 - 8 - pw, b.y0 },
-            { b.x1 + 8, b.y0 + side2_off },
-            { b.x0 - 8 - pw, b.y0 + side2_off },
-            { b.x0, b.y1 + 8 },
-            { cx, b.y1 + 8 },
-            { b.x1 - pw, b.y1 + 8 },
-            { b.x0 + 2, b.y0 + 2 },
+            { b.x1 + gap, b.y0 },
+            { b.x0 - gap - pw, b.y0 },
+            { b.x1 + gap, b.y0 + side2_off },
+            { b.x0 - gap - pw, b.y0 + side2_off },
+            { b.x0, b.y1 + gap },
+            { cx, b.y1 + gap },
+            { b.x1 - pw, b.y1 + gap },
+            { b.x0 + 2 * sk, b.y0 + 2 * sk },
         };
 
         CandEval best {};
@@ -173,7 +180,7 @@ namespace
         {
             const bool prev_clean = ( prev_eval.ov_cost == 0 && prev_eval.clamp_shift <= 4 );
             const bool promote_top = ( prev_slot >= 6 && best.idx <= 2 && best.ov_cost == 0 &&
-                                       best.clamp_shift == 0 && b.y0 - 14 - ph >= work.y0 );
+                                       best.clamp_shift == 0 && b.y0 - top - 4 * sk - ph >= work.y0 );
             if ( prev_clean && !promote_top )
                 return prev_eval;
         }
@@ -279,14 +286,17 @@ namespace
         CalloutItem item {};
         item.box = cands[i].box;
         item.text_bytes = glyph_font::format_person( item.text, glyph_font::kLabelCap, disp_id, cfg.lang_ru );
-        const int ng = glyph_font::text_len( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
-        const int pw = ng * CalloutItem::kGlyphW + 2 * kPadX;
+        const int sk = std::clamp( cfg.scale_k, 1, 4 );
+        const int tw = glyph_font::text_width( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
+        const int pw = tw * sk + 2 * kPadX;
+        const int ph = pill_h( sk );
         // Guard before std::clamp: degenerate narrow crops must never trigger lo > hi UB.
-        if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < kPillH )
+        if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < ph )
             return;
         const CandEval best =
-            pick_best_pill( i, find_prev_slot( hist, tr.id, tr.gen ), pw, kPillH, work, out, cands, nc );
+            pick_best_pill( i, find_prev_slot( hist, tr.id, tr.gen ), pw, ph, sk, work, out, cands, nc );
         item.pill = best.rect;
+        item.scale = sk;
         item.text_x = item.pill.x0 + kPadX;
         item.text_y = item.pill.y0 + kPadY;
         assign_accent( disp_id, item );
@@ -308,7 +318,7 @@ void compute_callouts( const TrajList& trajs,
     out.clear();
     const CalloutRect crop = make_even_bounds( lb );
     const CalloutRect work { crop.x0 + kMarginPx, crop.y0 + kMarginPx, crop.x1 - kMarginPx, crop.y1 - kMarginPx };
-    if ( work.x1 - work.x0 <= 0 || work.y1 - work.y0 < kPillH )
+    if ( work.x1 - work.x0 <= 0 || work.y1 - work.y0 < pill_h( cfg.scale_k ) )
     {
         hist.entries.clear();
         return;

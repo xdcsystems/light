@@ -103,23 +103,24 @@ namespace
         }
     }
 
-    void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, int gx, int gy, int glyph_idx,
+    void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, int gx, int gy, int glyph_idx, int sk,
                          uint8_t r, uint8_t g, uint8_t b ) noexcept
     {
+        const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( glyph_idx );
         const uint8_t* alpha = glyph_font::glyph_alpha( glyph_idx );
-        for ( int pr = 0; pr < glyph_font::kGlyphH; ++pr )
+        for ( int pr = 0; pr < m.h * sk; ++pr )
         {
-            const int py = gy + pr;
+            const int py = gy + m.dy * sk + pr;
             if ( py < 0 || py >= h )
                 continue;
-            const uint8_t* row = alpha + pr * glyph_font::kGlyphW;
+            const uint8_t* row = alpha + ( m.dy + pr / sk ) * glyph_font::kGlyphWMax + m.dx;
             uint8_t* line = rgb + static_cast<size_t>( py ) * stride;
-            for ( int pc = 0; pc < glyph_font::kGlyphW; ++pc )
+            for ( int pc = 0; pc < m.w * sk; ++pc )
             {
-                const unsigned a = row[pc];
+                const unsigned a = row[pc / sk];
                 if ( a == 0u )
                     continue;
-                const int px = gx + pc;
+                const int px = gx + m.dx * sk + pc;
                 if ( px >= 0 && px < w )
                     blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, a );
             }
@@ -143,8 +144,9 @@ namespace
                 const uint32_t cp = glyph_font::next_utf8( c.text, c.text_bytes, pos );
                 if ( cp == 0 )
                     break;
-                draw_glyph_cpu( rgb, w, h, stride, gx, c.text_y, glyph_font::glyph_index( cp ), 255, 255, 255 );
-                gx += CalloutItem::kGlyphW;
+                const int gi = glyph_font::glyph_index( cp );
+                draw_glyph_cpu( rgb, w, h, stride, gx, c.text_y, gi, c.scale, 255, 255, 255 );
+                gx += glyph_font::glyph_metrics( gi ).adv * c.scale;
             }
         }
     }
@@ -179,6 +181,7 @@ void OverlaySink::init( const StreamConfig& stream,
                         int nsrc )
 {
     label_lang_ = stream.label_lang;
+    label_scale_ = stream.label_scale;
     model_w_ = model_w;
     model_h_ = model_h;
     const uint32_t fallback_stride = static_cast<uint32_t>( model_w_ ) * 3;
@@ -361,9 +364,9 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
     mapper_.fill( dets, disp, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
     callouts_.clear();
     if ( valid_src )
-        compute_callouts( disp, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callout_hist_[frame.src_idx], callouts_ );
+        compute_callouts( disp, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru, label_scale_ }, callout_hist_[frame.src_idx], callouts_ );
     else
-        compute_callouts( disp, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callouts_ );
+        compute_callouts( disp, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru, label_scale_ }, callouts_ );
     if ( boxes_.n <= 0 && callouts_.n <= 0 )
         return false;
 

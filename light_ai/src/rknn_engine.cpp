@@ -65,15 +65,20 @@ void RknnEngine::parse_input_dims()
     in_w_ = 0;
     in_h_ = 0;
     in_c_ = 0;
+    
     if ( in_attr_.n_dims != 4 )
         return;
+    
     if ( in_attr_.fmt == RKNN_TENSOR_NHWC )
     {
         in_h_ = static_cast<int>( in_attr_.dims[1] );
         in_w_ = static_cast<int>( in_attr_.dims[2] );
         in_c_ = static_cast<int>( in_attr_.dims[3] );
+
+        return;
     }
-    else if ( in_attr_.fmt == RKNN_TENSOR_NCHW )
+    
+    if ( in_attr_.fmt == RKNN_TENSOR_NCHW )
     {
         in_c_ = static_cast<int>( in_attr_.dims[1] );
         in_h_ = static_cast<int>( in_attr_.dims[2] );

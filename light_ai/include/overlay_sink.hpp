@@ -94,6 +94,7 @@ private:
     std::array<CalloutHistory, reid_cfg::kMaxSources> callout_hist_ {};
     std::array<TrackStabList, reid_cfg::kMaxSources> track_stab_ {};
     LabelLang label_lang_ = LabelLang::En;
+    int label_scale_ = 1;
     int model_w_ = 0;
     int model_h_ = 0;
     uint32_t stride_bytes_ = 0;

@@ -1,5 +1,7 @@
-// Fixed 7x12 8-bit high-contrast bitmap font (ASCII + Cyrillic) with bounds-checked UTF-8
-// decoding and 1-px-padded atlas builder for zero-heap GPU and CPU label rendering.
+// Proportional DejaVu Sans bitmap font (ASCII + Cyrillic + punctuation), 8-bit
+// alpha atlas with per-glyph metrics. Drop-in replacement for the old fixed
+// 7x12 font: API names are preserved, and the compatibility constants below
+// map the old cell math onto the single-column atlas (one 18x18 cell per row).
 
 #pragma once
 
@@ -7,46 +9,61 @@
 #include <cstdint>
 #include <string_view>
 
+#include "core/glyph_font_table.hpp"
 namespace glyph_font
 {
-    enum
+    enum : int
     {
-        kGlyphW = 7,
-        kGlyphH = 12,
-        kGlyphBytes = kGlyphW * kGlyphH,
-        kCellPad = 1,
-        kCellW = kGlyphW + 2 * kCellPad,
-        kCellH = kGlyphH + 2 * kCellPad,
-        kSlotCount = 162,
-        kAtlasCols = 16,
-        kAtlasRows = ( kSlotCount + kAtlasCols - 1 ) / kAtlasCols,
-        kAtlasW = kAtlasCols * kCellW,
-        kAtlasH = kAtlasRows * kCellH,
-        kAtlasBytes = kAtlasW * kAtlasH,
-        kLabelCap = 32
+        // Cell geometry for the single-column atlas (compat with old call sites).
+        kGlyphW = kGlyphWMax,
+        kGlyphBytes = kGlyphWMax * kGlyphH,
+        kCellPad = 0,
+        kCellW = kGlyphWMax,
+        kCellH = kGlyphH,
+        kAtlasCols = 1,
+        kAtlasRows = kGlyphCount,
+        kSlotCount = kGlyphCount,
+        kLabelCap = 32,
+
+        // Virtual blank glyph: space has advance but no ink, not stored in the atlas.
+        kGlyphSpace = kGlyphCount,
+        kSpaceAdv = 5,
+
+        // Guaranteed-opaque texel for solid frame quads (inside glyph 'f').
+        kSolidX = 2,
+        kSolidY = 744
     };
 
-    // 7x12 8-bit alpha coverage bitmap for slot [0..kSlotCount-1]. Slot 0 is solid 0xFF.
+    // 18x18 alpha cell for glyph idx; bounds-checked, falls back to '?'.
     const uint8_t* glyph_alpha( int idx ) noexcept;
 
-    // Maps Unicode codepoint to slot [1..161]; unknown -> '?' slot.
+    // Unicode codepoint -> glyph index; space -> kGlyphSpace; unknown -> '?'.
     int glyph_index( uint32_t cp ) noexcept;
 
-    // Decodes next UTF-8 codepoint starting at pos; advances pos cleanly on any invalid
-    // or truncated byte sequence and returns '?'. Returns 0 when pos reaches len.
+    // Decodes the next UTF-8 codepoint at pos; advances pos cleanly on any
+    // invalid or truncated sequence (returns '?'); returns 0 at end of input.
     uint32_t next_utf8( const char* str, int len, int& pos ) noexcept;
 
     // Counts decoded glyphs in a UTF-8 string.
     int text_len( std::string_view text ) noexcept;
 
-    // Populates kAtlasW x kAtlasH GL_ALPHA atlas with 1-px padding per glyph cell.
+    // Copies the built-in atlas into a GL_ALPHA texture buffer (compat wrapper;
+    // the GPU path switches to kAtlas directly in the following parts).
     void build_atlas( std::array<uint8_t, kAtlasBytes>& atlas ) noexcept;
 
-    // Texture atlas UVs for a glyph cell interior, or the center of padded solid slot 0.
+    // Ink-rect UVs of glyph idx: u0/v0 = ink origin, u1/v1 = ink end (texel units).
     void glyph_uv( int idx, float& u0, float& v0, float& u1, float& v1 ) noexcept;
+
+    // Center UV of the guaranteed-opaque texel (kSolidX, kSolidY).
     void solid_uv( float& u, float& v ) noexcept;
 
     // Zero-heap person label formatting into dst[dst_cap]; returns byte length.
     int format_person( char* dst, int dst_cap, int id, bool lang_ru ) noexcept;
+
+    // Width of a UTF-8 string in atlas pixels: sum of per-glyph advances.
+    int text_width( std::string_view text ) noexcept;
+
+    // Per-glyph metrics (dx, dy, w, h, adv); bounds-checked, space allowed.
+    const GlyphMetric& glyph_metrics( int idx ) noexcept;
 
 }  // namespace glyph_font

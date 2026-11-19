@@ -84,6 +84,7 @@ struct StreamConfig
     std::string host;          // --net-host: UDP push destination; empty = TCP pull on port
     bool cpu_draw = false;                // --cpu-draw: force the CPU box-drawing path (A/B vs the GPU drawer)
     LabelLang label_lang = LabelLang::En; // --label-lang: callout text language (en | ru)
+    int label_scale = 1;                  // --label-scale: callout glyph scale 1..4
 };
 
 struct Config

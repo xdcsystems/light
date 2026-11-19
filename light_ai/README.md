@@ -386,4 +386,4 @@ All **26 options** (plus `--help` / `-h`) are shared between the CLI parser and 
   - [`misc/README.md`](misc/README.md) — local untracked YOLOv5s + OSNet Re-ID models and artifact inventory.
 - **Licensing:**
   - `light_ai` source code is licensed under the **[MIT License](LICENSE)**.
-  - Third-party dependencies (`inih` BSD-3-Clause, `font8x8_basic.h` Public Domain, `stb_easy_font.h` MIT/Unlicense, `rockchip_mpp`/`librga` Apache-2.0, `FFmpeg` LGPL-2.1+/GPL note, `librknnrt.so` proprietary Rockchip runtime, and untracked `YOLOv5` / `OSNet` `.rknn` models) are detailed in **[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)**.
+  - Third-party dependencies (`inih` BSD-3-Clause, `stb_easy_font.h` MIT/Unlicense, `rockchip_mpp`/`librga` Apache-2.0, `FFmpeg` LGPL-2.1+/GPL note, `librknnrt.so` proprietary Rockchip runtime, and untracked `YOLOv5` / `OSNet` `.rknn` models) are detailed in **[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)**.

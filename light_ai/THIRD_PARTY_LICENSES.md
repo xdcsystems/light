@@ -8,7 +8,6 @@
 |---|---|---|---|---|
 | **Project source** | `light_ai` (`include/`, `src/`, `tests/`, `scripts/`, `tools/`) | **MIT** | Yes | Retain copyright and MIT permission notice ([LICENSE](LICENSE)) |
 | **Vendored C/C++** | [`externals/inih`](externals/inih/LICENSE.txt) (`ini.c`, `ini.h`) | **BSD-3-Clause** (New BSD) | Yes | Retain Ben Hoyt copyright notice and BSD-3 disclaimer |
-| **Vendored fonts** | [`externals/fonts/font8x8_basic.h`](externals/fonts/font8x8_basic.h) | **Public Domain** | Yes | Retained in tree (unused at runtime; [`src/core/glyph_font.cpp`](src/core/glyph_font.cpp) embeds a built-in MIT 8×8 ASCII+Cyrillic table) |
 | **Vendored fonts** | [`externals/fonts/stb_easy_font.h`](externals/fonts/stb_easy_font.h) | **MIT or Unlicense** (dual) | Yes | Either MIT notice or public domain terms apply |
 | **System SDK (OS)** | `rockchip_mpp` (`rk_mpi.h`) | **Apache-2.0** | No (system lib) | Apache-2.0 notice and patent grant |
 | **System SDK (OS)** | `librga` (`im2d.h`, `rga.h`) | **Apache-2.0** | No (system lib) | Apache-2.0 notice and patent grant |
