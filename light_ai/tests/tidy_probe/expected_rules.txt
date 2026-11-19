@@ -1,17 +1,58 @@
-# expected_rules.txt: the rules-pass self-test of scripts/tidy_run.sh (#93): "<fixture> <check> <count>", the hits
-# per check. A fixture with no line here must have no hit at all (tidy_probe/src/main.cpp: the std::cout owner).
-tests/tidy_probe/tests/harness.cpp custom-no-static-local 1
-tests/tidy_probe/violations.cpp custom-no-catch-all 1
-tests/tidy_probe/violations.cpp custom-no-const-cast 1
-tests/tidy_probe/violations.cpp custom-no-file-static 1
-tests/tidy_probe/violations.cpp custom-no-global-var 2
-tests/tidy_probe/violations.cpp custom-no-inheritance 1
-tests/tidy_probe/violations.cpp custom-no-new-delete 9
-tests/tidy_probe/violations.cpp custom-no-printf 4
-tests/tidy_probe/violations.cpp custom-no-smart-ptr 4
-tests/tidy_probe/violations.cpp custom-no-static-local 1
-tests/tidy_probe/violations.cpp custom-no-static-member 1
-tests/tidy_probe/violations.cpp custom-no-std-stream 3
-tests/tidy_probe/violations.cpp custom-no-thread-local 1
-tests/tidy_probe/violations.cpp custom-no-virtual 1
-tests/tidy_probe/violations.cpp readability-function-cognitive-complexity 1
+# expected_rules.txt: the rules-pass self-test of scripts/tidy_run.sh (#93): "<fixture>:<line> <check>", one line per
+# hit (a line with two hits of one check: two lines), in any order (tidy_run.sh sorts both sides). The per-line
+# comments of the fixtures say the same in prose. A fixture line not listed must have no hit at all: the near misses
+# at the end of violations.cpp, and tidy_probe/src/main.cpp (the std::cout owner).
+tests/tidy_probe/tests/harness.cpp:9 custom-no-static-local
+tests/tidy_probe/violations.cpp:19 custom-no-global-var
+tests/tidy_probe/violations.cpp:20 custom-no-file-static
+tests/tidy_probe/violations.cpp:24 custom-no-thread-local
+tests/tidy_probe/violations.cpp:30 custom-no-inheritance
+tests/tidy_probe/violations.cpp:37 custom-no-inheritance
+tests/tidy_probe/violations.cpp:41 custom-no-inheritance
+tests/tidy_probe/violations.cpp:46 custom-no-virtual
+tests/tidy_probe/violations.cpp:50 custom-no-static-member
+tests/tidy_probe/violations.cpp:53 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:54 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:56 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:59 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:59 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:60 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:61 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:62 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:62 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:64 custom-no-global-var
+tests/tidy_probe/violations.cpp:64 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:65 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:65 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:66 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:66 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:68 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:68 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:70 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:74 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:74 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:81 readability-function-cognitive-complexity
+tests/tidy_probe/violations.cpp:96 custom-no-printf
+tests/tidy_probe/violations.cpp:97 custom-no-printf
+tests/tidy_probe/violations.cpp:98 custom-no-printf
+tests/tidy_probe/violations.cpp:103 custom-no-static-local
+tests/tidy_probe/violations.cpp:104 custom-no-new-delete
+tests/tidy_probe/violations.cpp:106 custom-no-new-delete
+tests/tidy_probe/violations.cpp:107 custom-no-new-delete
+tests/tidy_probe/violations.cpp:108 custom-no-new-delete
+tests/tidy_probe/violations.cpp:109 custom-no-new-delete
+tests/tidy_probe/violations.cpp:110 custom-no-new-delete
+tests/tidy_probe/violations.cpp:112 custom-no-new-delete
+tests/tidy_probe/violations.cpp:113 custom-no-smart-ptr
+tests/tidy_probe/violations.cpp:115 custom-no-const-cast
+tests/tidy_probe/violations.cpp:116 custom-no-printf
+tests/tidy_probe/violations.cpp:117 custom-no-printf
+tests/tidy_probe/violations.cpp:118 custom-no-printf
+tests/tidy_probe/violations.cpp:119 custom-no-new-delete
+tests/tidy_probe/violations.cpp:119 custom-no-new-delete
+tests/tidy_probe/violations.cpp:121 custom-no-new-delete
+tests/tidy_probe/violations.cpp:121 custom-no-printf
+tests/tidy_probe/violations.cpp:122 custom-no-std-stream
+tests/tidy_probe/violations.cpp:123 custom-no-std-stream
+tests/tidy_probe/violations.cpp:126 custom-no-std-stream
+tests/tidy_probe/violations.cpp:128 custom-no-catch-all

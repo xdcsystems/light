@@ -93,7 +93,8 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 (gate) = enforced by `scripts/tidy_run.sh` (`custom-*` checks of the `rules` pass, `scripts/rules_lint.sh`, both
 self-tested on `tests/tidy_probe/`): nobody re-checks it by hand. Fix a (gate) finding like any other gate finding;
 a NOLINT that switches a `custom-*` check off (by name or glob: `*`, `cust*`; every NOLINT of a line counts) only
-with `: <reason>` and a line in `scripts/rules_allow.txt` (a CONTRIBUTING-listed site), decided by the main session.
+with `: <reason>` and a line in `scripts/rules_allow.txt` (a CONTRIBUTING-listed site), decided by the main session;
+only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
 (review) = only `commit-reviewer` can judge it.
 - C++17 (review). No virtuals or inheritance hierarchies (gate); templates for static polymorphism.
 - No manual heap (`new`/`delete`, `malloc` family, `unique_ptr`/`shared_ptr`/`weak_ptr`), no statics of any

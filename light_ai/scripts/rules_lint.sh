@@ -10,11 +10,14 @@
 #   banned-include   GStreamer or OpenCV (<gst/...>, <gstreamer...>, <opencv...>)
 #   core-include     include/core/ and src/core/ include only the C++17 standard library headers (the C++ names:
 #                    <cstdint>, not <stdint.h>), core/*, pod_list.hpp and pod_ring.hpp (SDK-free core: host tests)
-#   nolint           a NOLINT / NOLINTNEXTLINE / NOLINTBEGIN whose check list switches a custom-* check off: an
-#                    entry matching one of the names in scripts/tidy_rules.yaml as clang-tidy globs it ('*' the
-#                    only wildcard: '*', 'cust*', '*-catch-all'); every NOLINT of a line counts. Each one must be in the allowlist
+#   nolint           a NOLINT / NOLINTNEXTLINE whose check list switches a custom-* check off: an entry matching
+#                    one of the names in scripts/tidy_rules.yaml as clang-tidy globs it ('*' the only wildcard: '*',
+#                    'cust*', '*-catch-all'); every NOLINT of a line counts. Each one must be in the allowlist
 #                    (CONTRIBUTING lists the sites)
 #   nolint-reason    such a NOLINT(...) without ": <reason>" after it
+#   nolint-range     a NOLINTBEGIN / NOLINTEND whose check list names a custom-* check (the same globs): never
+#                    allowed, an allowlist line (no line number) must not cover a whole range; an allowlist line
+#                    for it fails as well
 #   nolint-blanket   a NOLINT without a check list, prose included (clang-tidy honours one anywhere in a line):
 #                    it would switch the custom checks off too
 # Allowlist: <root>/scripts/rules_allow.txt, one line per allowed finding: "<path> <rule> [<detail>]" (no line
@@ -74,15 +77,19 @@ def check_nolint(rel, n, text):
         kind = m.group(1) or ""
         after = text[m.end():marks[i + 1].start() if i + 1 < len(marks) else len(text)]
         paren = PAREN.match(after)
-        if kind == "END":  # an END only closes a BEGIN, reported there
-            continue
         if paren is None:
-            add(rel, n, "nolint-blanket", "",
-                "NOLINT without a check list (clang-tidy reads one anywhere in a line, prose too) "
-                "switches the custom checks off")
+            if kind != "END":  # a bare END only closes a bare BEGIN, reported there
+                add(rel, n, "nolint-blanket", "",
+                    "NOLINT without a check list (clang-tidy reads one anywhere in a line, prose too) "
+                    "switches the custom checks off")
             continue
         entries = [c.strip() for c in paren.group(1).split(",") if c.strip()]
         custom = [c for c in entries if any(glob_re(c).fullmatch(name) for name in CUSTOM)]
+        if kind in ("BEGIN", "END"):
+            for c in custom:
+                add(rel, n, "nolint-range", c,
+                    "NOLINTBEGIN / NOLINTEND cannot switch a project rule off: NOLINT or NOLINTNEXTLINE at the site")
+            continue
         for c in custom:
             add(rel, n, "nolint", c, "a project rule switched off: only at the sites of scripts/rules_allow.txt")
         if custom and not re.match(r'\s*:\s*\S', after[paren.end():]):
@@ -144,14 +151,17 @@ out = []
 allowed = 0
 for path, line, rule, detail, message in sorted(findings, key=lambda x: (x[0], x[1], x[2], x[3])):
     for a in allow:
-        if not a[2] and a[0] == (path, rule, detail):
+        if not a[2] and a[0] == (path, rule, detail) and rule != "nolint-range":
             a[2] = True
             allowed += 1
             break
     else:
         out.append("%s:%d: %s%s -- %s" % (path, line, rule, ": " + detail if detail else "", message))
 for key, n, used in allow:
-    if not used:
+    if key[1] == "nolint-range":
+        out.append("scripts/rules_allow.txt:%d: not allowable: %s -- a NOLINTBEGIN / NOLINTEND range is never allowed"
+                   % (n, " ".join(k for k in key if k)))
+    elif not used:
         out.append("scripts/rules_allow.txt:%d: stale: %s -- matches no finding" % (n, " ".join(k for k in key if k)))
 for line in out:
     print(line)

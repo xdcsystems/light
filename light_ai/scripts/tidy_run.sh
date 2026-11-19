@@ -156,7 +156,7 @@ echo "tidy: $JOBS jobs ($JOBS_WHY), MemAvailable ${MEM_MB} MB, timeout ${TMO}s,"
 
 # Self-test of the rules (#93), in both modes, before any TU: a matcher with a typo matches nothing and a broken
 # lint rule finds nothing, and the gate would stay green with the rule off. The rules pass runs on the fixtures of
-# tests/tidy_probe/ (no compile DB: -std=c++17) and must give exactly the hits per check of expected_rules.txt;
+# tests/tidy_probe/ (no compile DB: -std=c++17) and must give exactly the hit sites of expected_rules.txt;
 # rules_lint.sh runs on the fixture tree tests/tidy_probe/lint/ and must print exactly expected_lint.txt.
 # Then rules_lint.sh on the project (every file, also in a subset run: it takes well under a second).
 SELF=$OUT/selftest
@@ -169,18 +169,20 @@ for f in $PROBE_TUS; do
     > "$SELF/$(echo "$f" | tr / _).log" 2>&1 &
 done
 wait
-# "<fixture> <check> <count>": the check is the first name in the trailing [...]; a line without one (a processing
-# error) stays whole, so it can never match the expected list
+# "<fixture>:<line> <check>", one line per hit: the site of the diagnostic (from tests/tidy_probe/ on: clang prints
+# the absolute path, through a symlink when $PWD is one) and the first name in its trailing [...]; a check that
+# drifts to another construct moves its hit off the expected line. A line without both (a processing error, a hit
+# outside the fixtures) stays whole, so it can never match the expected list.
 for f in $PROBE_TUS; do
-  grep -E ': (error|warning): |^Error' "$SELF/$(echo "$f" | tr / _).log" | sed -E 's/.*\[([^],]+)[],][^[]*$/\1/' |
-    LC_ALL=C sort | uniq -c | awk -v f="$f" '{c = $1; $1 = ""; sub(/^ /, ""); print f, $0, c}'
+  grep -E ': (error|warning): |^Error' "$SELF/$(echo "$f" | tr / _).log" |
+    sed -E 's#^/[^:]*/(tests/tidy_probe/[^: ]+:[0-9]+):[0-9]+: (error|warning): .*\[([^],]+)[],][^[]*$#\1 \3#'
 done | LC_ALL=C sort > "$SELF/rules.txt"
 grep -v '^#' "$PROBE/expected_rules.txt" | LC_ALL=C sort > "$SELF/rules.expected"
 SELF_FAIL=0
 if diff -u "$SELF/rules.expected" "$SELF/rules.txt" > "$SELF/rules.diff"; then
-  echo "tidy self-test: rules PASS ($(awk '{n += $3} END {print n + 0}' "$SELF/rules.txt") hits as expected_rules.txt)"
+  echo "tidy self-test: rules PASS ($(wc -l < "$SELF/rules.txt") hits at the sites of expected_rules.txt)"
 else
-  echo "tidy self-test: rules FAIL -- the hits per check differ from $PROBE/expected_rules.txt (logs: $SELF):"
+  echo "tidy self-test: rules FAIL -- the hit sites differ from $PROBE/expected_rules.txt (logs: $SELF):"
   tail -n +3 "$SELF/rules.diff"
   SELF_FAIL=1
 fi
