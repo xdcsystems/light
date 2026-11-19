@@ -239,7 +239,7 @@ OptionRegistry::OptionRegistry( const Log& log )
                               +[]( Config& c, const char* v ) { return set_float_01( v, c.infer.iou_thr ); } } },
         { "--label-lang",   { true, "callout label language (en|ru; default en)", "en|ru",
                               &apply_label_lang } },
-        { "--label-scale",  { true, "callout text size 1..4, 16 px steps on the output tile (default 1)", "1..4",
+        { "--label-scale",  { true, "callout text size 1..4, 11 px steps on the output tile (default 1)", "1..4",
                               +[]( Config& c, const char* v ) { return set_int( v, 1, 4, c.stream.label_scale ); } } },
         { "--log-level",    { true, "diagnostic verbosity: debug|info|warn|error|off (default info)",
                               "debug|info|warn|error|off", &apply_log_level } },

@@ -46,7 +46,9 @@ struct CalloutConfig
 {
     enum
     {
-        kLabelPx = 16  // letter size per --label-scale step on the output tile
+        // Text size (font px) per --label-scale step on the output tile: 11 px DejaVu
+        // has ~8 px capitals, the size of the former 1-px-stroke bitmap font.
+        kLabelPx = 11
     };
 
 public:
@@ -59,8 +61,8 @@ public:
 // divided by tile_scale (output tile px per tensor px: place_tile dst.h / src.h,
 // 1 when there is no tiled stream). label_scale is clamped to 1..4; a
 // non-positive or non-finite tile_scale counts as 1.
-//   USB 4:3 band 640x480 -> 640x480 tile: 1.0  -> 0.5 (16 px letters in the tensor)
-//   phone 360x640 band   -> 270x480 tile: 0.75 -> 0.667 (21.3 px in the tensor, 16 px on the tile)
+//   USB 4:3 band 640x480 -> 640x480 tile: 1.0  -> 0.5 (11 px text in the tensor)
+//   phone 360x640 band   -> 270x480 tile: 0.75 -> 0.667 (14.7 px in the tensor, 11 px on the tile)
 float callout_text_scale( int label_scale, float tile_scale ) noexcept;
 
 struct CalloutPrevSlot

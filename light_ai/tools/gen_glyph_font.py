@@ -9,7 +9,7 @@ rendered at ATLAS_PX px with 8-bit antialiasing, one shelf-packed GL_ALPHA atlas
     the edge falloff is kept inside the quad;
   - a 4x4 opaque block at (0, 0): the texel the solid quads (box outlines, connector
     lines) sample, safe under GL_LINEAR at its center (2, 2).
-The atlas is baked at 2x the default on-screen size (16 px at --label-scale 1, #91
+The atlas is baked at 2x the default on-screen size (11 px at --label-scale 1, #91
 item 5): the renderers only ever scale it DOWN for the usual tile scales (0.5 for a
 4:3 USB tile, 0.67 for a portrait phone tile), so the glyphs stay crisp.
 
@@ -26,7 +26,7 @@ import sys
 
 from PIL import Image, ImageDraw, ImageFont
 
-ATLAS_PX = 32
+ATLAS_PX = 22
 ATLAS_W = 256
 GAP = 2
 SOLID = 4

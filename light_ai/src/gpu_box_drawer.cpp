@@ -482,7 +482,7 @@ void GpuBoxDrawer::create_atlas()
     glActiveTexture( GL_TEXTURE0 );
     glBindTexture( GL_TEXTURE_2D, st_.atlas_tex );
     glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
-    // GL_LINEAR: the 32 px atlas is resampled to the label size (#91 item 5); every
+    // GL_LINEAR: the 22 px atlas is resampled to the label size (#91 item 5); every
     // glyph rect has a transparent border and 2 px gaps, the solid block is 4x4,
     // so no sample ever reaches a neighbour.
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );

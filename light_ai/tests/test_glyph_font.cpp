@@ -163,8 +163,8 @@ void test_glyph_font( TestRun& t )
     const int n_min = glyph_font::format_person( buf, glyph_font::kLabelCap, INT_MIN, true );
     CHECK( t, n_min > 15 && buf[n_min] == '\0' );
 
-    // Proportional metrics at the 32 px atlas: 'Person #7' is 166 atlas px (sum of
-    // the advances), 83 px at the 16 px default -- the width of the former 16 px table.
-    CHECK( t, glyph_font::kAtlasPx == 32 );
-    CHECK( t, glyph_font::text_width( "Person #7" ) == 166 );
+    // Proportional metrics at the 22 px atlas: 'Person #7' is 113 atlas px (sum of
+    // the advances), 56.5 px at the 11 px default.
+    CHECK( t, glyph_font::kAtlasPx == 22 );
+    CHECK( t, glyph_font::text_width( "Person #7" ) == 113 );
 }

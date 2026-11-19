@@ -15,14 +15,14 @@ namespace
     constexpr int kPadY = 2;
     constexpr int kMaxTracks = TrajList::cap;
 
-    // A usable glyph scale: finite and positive, else the 16 px default; clamped
-    // to [0.05, 8] (1.6..256 px text) so the integer label rects never overflow.
+    // A usable glyph scale: finite and positive, else the 11 px default; clamped
+    // to [0.05, 8] (1.1..176 px text) so the integer label rects never overflow.
     float clean_scale( float scale ) noexcept
     {
         return std::isfinite( scale ) && scale > 0.0f ? std::clamp( scale, 0.05f, 8.0f ) : 0.5f;
     }
 
-    // The layout unit: 1 px at the 16 px default (scale 0.5), growing with the
+    // The layout unit: 1 px at the 11 px default (scale 0.5), growing with the
     // text -- the gaps, paddings and the outline scale with it.
     int layout_unit( float scale ) noexcept
     {

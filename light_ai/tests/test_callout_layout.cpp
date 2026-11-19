@@ -98,7 +98,7 @@ namespace
         const float h_phone = static_cast<float>( phone.d[0].label.y1 - phone.d[0].label.y0 );
         CHECK_NEAR( t, h_phone * 0.75f, h_usb, 2.0f );  // within the integer rounding of the rect
         CHECK( t, phone.d[0].scale > usb.d[0].scale && phone.d[0].outline == 1.0f );
-        // A bad config scale falls back to the 16 px default instead of a degenerate label.
+        // A bad config scale falls back to the 11 px default instead of a degenerate label.
         CalloutList bad {};
         compute_callouts( trajs, lb, 1.0f, 1.0f, { false, std::nanf( "" ) }, bad );
         CHECK( t, bad.n == 1 && bad.d[0].scale == 0.5f );
@@ -123,7 +123,7 @@ void test_callout_layout( TestRun& t )
         CHECK( t, out.n == 1 );
         CHECK( t, std::string( out.d[0].text ) == "Person #99" );
         CHECK( t, inside_even( out.d[0].label, lb ) );
-        // Default scale 0.5 (16 px): the label rect = the scaled text + 4 / 2 px padding, outline 1 px.
+        // Default scale 0.5 (11 px): the label rect = the scaled text + 4 / 2 px padding, outline 1 px.
         const int text_w = ( glyph_font::text_width( "Person #99" ) + 1 ) / 2;
         CHECK( t, out.d[0].label.y1 - out.d[0].label.y0 >= ( glyph_font::kLineH + 1 ) / 2 + 2 * 2 );
         CHECK( t, out.d[0].label.x1 - out.d[0].label.x0 >= text_w + 2 * 4 );
