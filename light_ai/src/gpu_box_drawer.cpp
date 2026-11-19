@@ -132,12 +132,7 @@ namespace
         for ( int s = 0; s < c.n_segs; ++s )
             emit_solid_rect( qt, c.segs[s], c.r, c.g, c.b, 255 );
 
-        const CalloutRect fill { c.pill.x0 + 1, c.pill.y0 + 1, c.pill.x1 - 1, c.pill.y1 - 1 };
-        emit_solid_rect( qt, fill, 12, 12, 16, 245 );
-        emit_solid_rect( qt, { c.pill.x0, c.pill.y0, c.pill.x1, c.pill.y0 + 1 }, c.r, c.g, c.b, 255 );
-        emit_solid_rect( qt, { c.pill.x0, c.pill.y1 - 1, c.pill.x1, c.pill.y1 }, c.r, c.g, c.b, 255 );
-        emit_solid_rect( qt, { c.pill.x0, c.pill.y0 + 1, c.pill.x0 + 1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255 );
-        emit_solid_rect( qt, { c.pill.x1 - 1, c.pill.y0 + 1, c.pill.x1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255 );
+        // pill fill/border removed (PR3): only connector + text are drawn
 
         int gx = c.text_x;
         int pos = 0;
