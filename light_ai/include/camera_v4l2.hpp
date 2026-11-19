@@ -45,9 +45,9 @@ public:
 
     // Release the fd and all mappings; safe on a partially-open or already-dead device
     // (STREAMOFF errors are ignored on purpose).
-    void teardown();
+    void teardown() noexcept;
 
-    // Full teardown + setup_device() + STREAMON: the only way the camera starts
+    // Full teardown + setup_steps() + STREAMON (+ adopting the mode): the only way the camera starts
     // streaming (startup, hot attach, re-attach -- SourceChannel::attach).
     // Not ok: the setup Status, or "STREAMON: <errno>" (the cause is logged here).
     Status reconnect( const std::string& dev );
@@ -59,9 +59,9 @@ public:
     // Corrupt buffers (BUF_FLAG_ERROR) are counted ACROSS calls --
     // the err_streak_ member, reset only by a clean frame or by reconnect();
     // kBufCount in a row = recoverable stall.
-    Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 );
-    void requeue( int index );
-    void* buffer( int index ) const { return bufs_[index].start; }
+    Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 ) noexcept;
+    void requeue( int index ) noexcept;
+    void* buffer( int index ) const noexcept { return bufs_[index].start; }
     size_t buffer_size( int index ) const { return bufs_[index].length; }
     int width() const { return width_; }
     int height() const { return height_; }

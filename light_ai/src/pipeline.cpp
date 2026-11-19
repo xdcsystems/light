@@ -638,7 +638,7 @@ int Pipeline::publish_oldest()
     }
 
     res_.job.tr.enc = enc_ms;
-    t_.add( res_.job.tr );
+    t_.add( res_.job.tr, res_.npu_ok );
     return res_.npu_ok ? 1 : 0;
 }
 

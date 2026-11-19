@@ -137,8 +137,8 @@ public:
     // (batched VBO, per-vertex color), alpha-blended
     // (Porter-Duff over; the trail fade of BoxMapper is the alpha source).
     // Switching FBOs between slots is the only added cost vs the single-tensor path.
-    void draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts = nullptr );
-    void draw( const GpuBox *boxes, int n, const CalloutList *callouts = nullptr )
+    void draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept;
+    void draw( const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept
     {
         draw_slot( 0, boxes, n, callouts );
     }
@@ -146,7 +146,7 @@ public:
     // Native fence (EGL_ANDROID_native_fence_sync) when available, glFinish() otherwise.
     // The fence wait is bounded (100 ms cap) with a glFinish() fallback --
     // a wedged GPU must not hang the pipeline.
-    void sync_cpu();
+    void sync_cpu() noexcept;
     // Draw -> RGA/CPU ordering is sync_cpu() only: this RGA driver
     // ignores acquire fences, so a fence fd handoff is not a valid
     // mechanism on this board (retired, see docs/state.md).

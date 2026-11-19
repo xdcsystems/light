@@ -38,11 +38,11 @@ namespace annexb
     size_t header_len( const uint8_t* d, size_t n );
 }  // namespace annexb
 
-// The largest coded H.264 frame of a w x h 4:2:0 picture: every macroblock
-// as I_PCM (384 sample bytes per 16x16 MB) plus a per-MB header allowance
-// and one slice/NAL overhead. A conformant encoder cannot exceed it (an
-// I_PCM MB is the costliest MB coding), so a buffer of this size never
-// overflows on a real stream.
+// A practical bound on one coded H.264 frame of a w x h 4:2:0 picture: the
+// A.3.1 macroblock_layer limit (128 + RawMbBits = 3200 bits = 400 B per MB)
+// plus 4 KiB for slice headers, AUD and SEI. It bounds the RBSP; emulation
+// prevention bytes or many slices could in theory exceed it -- that case is
+// covered by prepare()'s pass-through. A real CBR IDR is a few percent of it.
 inline size_t max_h264_packet( int w, int h ) noexcept
 {
     if ( w <= 0 || h <= 0 )

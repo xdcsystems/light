@@ -1,8 +1,7 @@
-#include "cpu_affinity.hpp"
-
 #include <sched.h>
 
 #include "core/log.hpp"
+#include "cpu_affinity.hpp"
 
 namespace
 {

@@ -245,7 +245,7 @@ bool NetPreview::viewer_connected() const
     return next_us == 0 || now_steady_us() + step_us / 8 >= next_us;
 }
 
-void NetPreview::publish( const uint8_t* rgb )
+void NetPreview::publish( const uint8_t* rgb ) noexcept
 {
     if ( !connected_.load( std::memory_order_acquire ) || quit_.load( std::memory_order_relaxed ) || rgb == nullptr )
         return;

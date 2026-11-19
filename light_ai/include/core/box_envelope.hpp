@@ -18,11 +18,6 @@ struct BoxEnvelope
 
     // A non-finite or empty box (M-14) leaves the envelope as it was: reset
     // keeps the old state, step holds the last output.
-    bool usable( float x0, float y0, float x1, float y1 ) const noexcept
-    {
-        return std::isfinite( x0 ) && std::isfinite( y0 ) && std::isfinite( x1 ) && std::isfinite( y1 ) && x1 > x0 && y1 > y0;
-    }
-
     void reset( float x0, float y0, float x1, float y1 ) noexcept
     {
         if ( !usable( x0, y0, x1, y1 ) )
@@ -75,6 +70,11 @@ struct BoxEnvelope
     float bh() const noexcept { return h(); }
 
 private:
+    bool usable( float x0, float y0, float x1, float y1 ) const noexcept
+    {
+        return std::isfinite( x0 ) && std::isfinite( y0 ) && std::isfinite( x1 ) && std::isfinite( y1 ) && x1 > x0 && y1 > y0;
+    }
+
     bool within_bounds( const float v[4], const float max_span[4] ) const noexcept
     {
         for ( int i = 0; i < 4; ++i )

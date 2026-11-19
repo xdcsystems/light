@@ -104,8 +104,8 @@ bool YoloDecoder::band_fits( const YoloFrame& f ) const noexcept
 // the width divides the model input, the stride is 8/16/32 (the head index is
 // not trusted: RKNN does not promise the P3/P4/P5 order, and 8 << gi silently
 // shifts every box when the heads come out in another order), the height
-// matches the model at that stride and ch is a 3-anchor layout (ch % 3 == 0;
-// the strict ch == 255 of the standard 80-class model is the startup check's
+// (> 0) matches the model at that stride and ch is a 3-anchor layout
+// (ch % 3 == 0, ch >= 18: at least one class channel; the strict ch == 255 of the standard 80-class model is the startup check's
 // job). One warn per failure; the caller decides fatal (the startup check)
 // vs skip (decode).
 bool yolo_head_shape( const YoloHead& hd, int gi, int mw, int mh, const Log& log, int& stride, int& head )
@@ -131,7 +131,8 @@ bool yolo_head_shape( const YoloHead& hd, int gi, int mw, int mh, const Log& log
         return false;
     }
     // At least one class channel per anchor (4 box + 1 obj + 1 class = 6,
-    // ch >= 18): below that best_class() would read past the head (M-14).
+    // ch >= 18; M-14): with ch < 15 (per < 5) decode_anchor() would read obj
+    // and the box past the head; ch 15 holds no class channel at all.
     const int per = hd.ch / 3;  // 85 = 4+1+80
     if ( hd.ch < 18 || per * 3 != hd.ch )
     {
@@ -185,11 +186,11 @@ bool YoloDecoder::decode_anchor( const HeadScan& s, size_t off, int k, int gx, i
 
     int best = 0;
     const float best_cls = best_class( s, off, best );
-    // Class scan gate: best_cls <= 0 means no class channel
-    // beat zero (NaN never passes '>'), the pre-scan best
-    // would map to an invalid class id. No evidence -> no
+    // Class scan gate: best_cls <= 0 means no finite class
+    // channel beat zero (best_class skips NaN / Inf), the pre-scan
+    // best would map to an invalid class id. No evidence -> no
     // candidate (also kills conf==0 phantoms at thr <= 0).
-    if ( !std::isfinite( best_cls ) || best_cls <= 0.0f )
+    if ( best_cls <= 0.0f )
         return false;
     const float conf = obj * best_cls;
     if ( !std::isfinite( conf ) || !( conf >= conf_thr_ ) )

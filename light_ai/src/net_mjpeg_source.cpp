@@ -217,9 +217,15 @@ void NetMjpegSource::start()
 NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
 {
     uint8_t* const dst = pool_.data( slot );
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds( kPartMs );
+    // The part deadline runs from the part's first byte, not from entry: the
+    // idle gap before a frame stays a plain kPollMs watchdog (fill_until), and
+    // only a part that has started arriving is bounded to kPartMs in total.
+    using clk = std::chrono::steady_clock;
+    clk::time_point deadline = clk::time_point::max();
     while ( true )
     {
+        if ( deadline == clk::time_point::max() && sock_.size() > 0 )
+            deadline = clk::now() + std::chrono::milliseconds( kPartMs );
         const MultipartReader::Step st = parts_.feed( sock_.data(), sock_.size(), dst );
         sock_.consume( st.consumed );
         if ( st.ev == MultipartReader::Event::Part )
@@ -234,7 +240,7 @@ NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
             rx_slot_ = -1;
             return Read::Oversized;
         }
-        const BufferedSocket::Fill r = fill_before( deadline );
+        const BufferedSocket::Fill r = deadline == clk::time_point::max() ? sock_.fill_until( kPollMs ) : fill_before( deadline );
         if ( r == BufferedSocket::Fill::Data )
             continue;
         parts_.resync();  // cancelled, watchdog / deadline, EOF / error, or a wedged-full window
@@ -309,7 +315,7 @@ NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size,
     return Read::Part;
 }
 
-Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms )
+Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms ) noexcept
 {
     if ( !sock_.is_open() )
         return dequeue_status( ENODEV );
@@ -349,7 +355,7 @@ Status NetMjpegSource::take_primed( int& index, uint32_t& size )
     return {};
 }
 
-void NetMjpegSource::requeue( int index )
+void NetMjpegSource::requeue( int index ) noexcept
 {
     pool_.release( index );
 }

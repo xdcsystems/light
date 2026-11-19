@@ -87,4 +87,34 @@ void test_timings( TestRun& t )
         out << 1.25;
         CHECK( t, out.str().substr( out.str().size() - 4 ) == "1.25" );
     }
+    // Low §2: a failed NPU frame stays out of the averages and is reported
+    // on its own non-"[timing]" line; no frame at all -> no line either.
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        Timings tm( log );
+        FrameTrace bad {};
+        bad.cam = 1000.0;
+        tm.add( bad, false );
+        tm.add( bad, false );
+        FrameTrace good {};
+        good.cam = 10.0;
+        tm.add( good );
+        tm.report_total();
+        CHECK( t, tm.frames() == 1 && tm.npu_fail() == 2 );
+        CHECK( t, total_line( out.str() ).find( "[timing] TOTAL  cam=10.0 " ) == 0 );
+        CHECK( t, out.str().find( "timings: 2 frame(s) with a failed NPU job left out of the averages\n" ) != std::string::npos );
+    }
+    // Pool mode right after the first frame: a finite FPS, never "inf".
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        Timings tm( log );
+        tm.set_pool( 3 );
+        tm.add( FrameTrace {} );
+        tm.report_total();
+        CHECK( t, out.str().find( "~inf" ) == std::string::npos && out.str().find( "~nan" ) == std::string::npos );
+    }
 }

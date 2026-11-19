@@ -18,10 +18,12 @@ class TcpPullServer
 public:
     struct WriteCtx
     {
+        explicit WriteCtx( int to ) noexcept : sndtimeo_sec( to ) {}
+
+    public:
         std::atomic<int> cfd { -1 };
         const int sndtimeo_sec;
         mutable std::atomic<uint64_t> wait_writable_cnt { 0 };
-        explicit WriteCtx( int to ) noexcept : sndtimeo_sec( to ) {}
     };
 
     TcpPullServer( int port, int sndbuf_bytes, int sndtimeo_sec );

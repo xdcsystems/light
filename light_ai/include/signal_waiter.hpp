@@ -60,6 +60,7 @@ private:
     void loop() noexcept;
     void on_signal( int sig );
 
+private:
     const ProcessEnv& env_;
     StopFlag& stop_;
     const pthread_t owner_;  // the constructing thread: woken on an armed stop

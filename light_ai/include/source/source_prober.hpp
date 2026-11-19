@@ -69,6 +69,10 @@ public:
         cv_.notify_all();
         if ( th_.joinable() )
             th_.join();
+        // The channels must not keep a pointer to stop_req_: it dies with this
+        // prober (a local of Pipeline::run()) while the set outlives it (Low §2).
+        // After the join no prober thread reads it; the caller's thread owns the set.
+        set_.set_prober_quit( nullptr );
     }
 
     // One round: attaches every non-Live channel once, never throws on an

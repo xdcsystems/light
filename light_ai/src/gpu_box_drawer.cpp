@@ -54,7 +54,8 @@ namespace
             "varying vec2 v_uv; varying vec4 v_col; "
             "void main(){ gl_FragColor=vec4(v_col.rgb, v_col.a * texture2D(u_tex, v_uv).a); }";
 
-    // One VBO for boxes (128 * 24) + callouts (8 * 192), allocated once in init().
+    // One VBO for boxes (GpuBoxList::cap * kVertsPerBox) + callouts
+    // (CalloutList::cap * kVertsPerCallout), allocated once in init().
     constexpr GLsizeiptr kVboBytes =
             static_cast<GLsizeiptr>( GpuBoxDrawer::kMaxVerts ) *
             static_cast<GLsizeiptr>( sizeof( GpuBoxDrawer::BatchVert ) );
@@ -579,7 +580,7 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     return {};
 }
 
-void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts )
+void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts ) noexcept
 {
     const bool have_boxes = boxes != nullptr && n > 0;
     const bool have_callouts = callouts != nullptr && callouts->n > 0;
@@ -641,7 +642,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const Callou
     glFlush();
 }
 
-void GpuBoxDrawer::sync_cpu()
+void GpuBoxDrawer::sync_cpu() noexcept
 {
     if ( st_.dpy == EGL_NO_DISPLAY )
         return;

@@ -534,6 +534,38 @@ namespace
         CHECK( t, !st.ok() && st.code() == Errc::Timeout );
         CHECK( t, el >= 1900 && el < 3500 );
     }
+
+    // M-15: a part that has started arriving and then drips (a byte every
+    // 250 ms, each inside the 2 s per-fill watchdog) ends with Lost after
+    // kPartMs (5 s) from its first byte instead of never.
+    void slow_drip_part_times_out( TestRun& t, const Bytes& a )
+    {
+        Rig r;
+        std::string why;
+        CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+        int idx = -1;
+        uint32_t sz = 0;
+        CHECK( t, r.src.dequeue( idx, sz, -1 ).ok() );  // the primed first frame
+        r.src.requeue( idx );
+
+        const std::string next = parts( { a }, true );
+        std::atomic<bool> stop { false };
+        std::thread drip( [&r, &stop, &next] {
+            r.send( next.substr( 0, 40 ) );  // the delimiter, the part head and a few body bytes
+            for ( size_t i = 40; i + 1 < next.size() && !stop.load(); ++i )
+            {
+                r.send( next.substr( i, 1 ) );
+                std::this_thread::sleep_for( std::chrono::milliseconds( 250 ) );
+            }
+        } );
+        const auto t0 = std::chrono::steady_clock::now();
+        const Status st = r.src.dequeue( idx, sz, -1 );
+        const auto el = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - t0 ).count();
+        stop.store( true );
+        drip.join();
+        CHECK( t, !st.ok() && st.code() == Errc::Lost );
+        CHECK( t, el >= 4800 && el < 6500 );
+    }
 }  // namespace
 
 void test_net_mjpeg_source( TestRun& t )
@@ -552,4 +584,5 @@ void test_net_mjpeg_source( TestRun& t )
     refused( t, a, wide );
     cancel_stops_blocking_read( t, a );
     slow_drip_head_times_out( t );
+    slow_drip_part_times_out( t, a );
 }

@@ -155,6 +155,7 @@ void BoxSmoother::spawn( const Detection& d )
     if ( it == tracks_.end() )
         return;
     BoxTrack& t = *it;
+    t.env = BoxEnvelope {};  // a reused slot must not inherit the previous object's window
     t.env.reset( d.x, d.y, d.x + d.w, d.y + d.h );
     t.x = d.x;
     t.y = d.y;

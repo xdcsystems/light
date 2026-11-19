@@ -73,7 +73,7 @@ public:
     // Identical ladder on both kinds (dequeue_status, source/source_types.hpp):
     // Lost = a recoverable stall or closed by teardown, Timeout = nothing
     // ready in timeout_ms (timeout_ms < 0 = the blocking single-source mode).
-    Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 )
+    Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 ) noexcept
     {
         try
         {
@@ -84,7 +84,7 @@ public:
             return make_status( Errc::Unsupported, "source: variant is valueless" );
         }
     }
-    void requeue( int idx )
+    void requeue( int idx ) noexcept
     {
         try
         {
@@ -93,7 +93,7 @@ public:
         catch ( const std::bad_variant_access& ) {}  // only after a failed use_net() emplace
     }
     // mmap'd MJPEG payload of the dequeued buffer (both: void* bufs_[i].start).
-    void* buffer( int idx ) const
+    void* buffer( int idx ) const noexcept
     {
         try
         {
@@ -137,7 +137,7 @@ public:
             return 0;
         }
     }
-    void teardown()
+    void teardown() noexcept
     {
         try
         {

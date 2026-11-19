@@ -1,10 +1,10 @@
-#include "signal_waiter.hpp"
-
 #include <pthread.h>
 
 #include <csignal>
 #include <cstdlib>
 #include <ctime>
+
+#include "signal_waiter.hpp"
 
 namespace
 {

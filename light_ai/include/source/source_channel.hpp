@@ -130,7 +130,7 @@ public:
     }
 
     // Frame thread, after a Detached/Fatal poll: closes the source and hands back to prober.
-    void detach()
+    void detach() noexcept
     {
         warmup_left_ = 0;
         dec_err_streak_ = 0;
@@ -141,7 +141,7 @@ public:
 
     // Frame thread, Live only. wait_ms < 0: the blocking single-source dequeue
     // (the camera's own 2 s watchdog reports EIO).
-    FrameStatus poll( int wait_ms, EncodedFrame& out )
+    FrameStatus poll( int wait_ms, EncodedFrame& out ) noexcept
     {
         out.src = idx_;
         out.buf = -1;

@@ -111,9 +111,10 @@ Status CameraV4L2::open_node( const std::string& dev )
 }
 
 // Read back the actual mode negotiated by the driver (VIDIOC_G_FMT).
-// At startup (width_ == 0) we adopt the device's negotiated MJPEG
-// dimensions; on a mid-run reconnect (width_ > 0) the dimensions are
-// already locked into the decoder/encoder and must match.
+// At startup (width_ == 0) any negotiated MJPEG mode is accepted and
+// reconnect() adopts it after STREAMON; on a mid-run reconnect
+// (width_ > 0) the dimensions are already locked into the
+// decoder/encoder and must match.
 Status CameraV4L2::negotiate_format( int& got_w, int& got_h )
 {
     const unsigned req_w = width_ > 0 ? static_cast<unsigned>( width_ ) : kDefaultWidth;
@@ -232,7 +233,7 @@ Status CameraV4L2::map_buffers()
 // on an already-dead one: STREAMOFF errors are ignored on purpose
 // (the fd may not exist anymore), unmapped slots are skipped via the
 // start==nullptr guard.
-void CameraV4L2::teardown()
+void CameraV4L2::teardown() noexcept
 {
     if ( fd_ >= 0 )
     {
@@ -305,7 +306,7 @@ int CameraV4L2::xioctl_r( unsigned long req, void* arg ) const
     return r;
 }
 
-Status CameraV4L2::dequeue( int& index, uint32_t& size, int timeout_ms )  // NOLINT(readability-make-member-function-const)
+Status CameraV4L2::dequeue( int& index, uint32_t& size, int timeout_ms ) noexcept  // NOLINT(readability-make-member-function-const)
 {
     v4l2_buffer buf {};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -374,7 +375,7 @@ void CameraV4L2::skip_to_newest( v4l2_buffer& buf )
     }
 }
 
-void CameraV4L2::requeue( int index )  // NOLINT(readability-make-member-function-const)
+void CameraV4L2::requeue( int index ) noexcept  // NOLINT(readability-make-member-function-const)
 {
     v4l2_buffer buf {};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;

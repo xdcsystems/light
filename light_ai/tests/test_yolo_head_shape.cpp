@@ -70,9 +70,9 @@ void test_yolo_head_shape( TestRun& t )
         CHECK( t, stride == 8 );
         CHECK( t, head == 0 );
     }
-    // M-14: 3 anchors with no class channel (ch 15 = 3 x (4 + 1)) or none at
-    // all would let best_class() read past the head; ch 18 (one class) is the
-    // smallest usable head. A zero-height head (model height below the
+    // M-14: ch < 15 (per < 5) would let decode_anchor() read obj / box past
+    // the head; ch 15 = 3 x (4 + 1) has no class channel; ch 18 (one class) is
+    // the smallest usable head. A zero-height head (model height below the
     // stride) is rejected too.
     {
         int stride = 0;

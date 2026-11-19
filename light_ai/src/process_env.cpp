@@ -1,9 +1,9 @@
-#include "process_env.hpp"
-
 #include <pthread.h>
 
 #include <csignal>
 #include <stdexcept>
+
+#include "process_env.hpp"
 
 namespace
 {
