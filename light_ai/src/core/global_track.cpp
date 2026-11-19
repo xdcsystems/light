@@ -274,7 +274,8 @@ void GlobalTrackTable::apply_bound_result( const ReidResult& res, LiveLocal& lv,
     const bool clean_crop = !res.clipped && !res.occluded;
     // Switch only when current affinity drops below threshold and another gallery entry clears sim_thr_.
     const bool cur_weak = m.cur_sim < ( sim_thr_ - 0.05f );
-    if ( cur_weak && m.best_slot >= 0 && m.best_slot != cur_slot &&
+    const bool margin_ok = m.second_sim < -1.0f || ( m.best_sim - m.second_sim ) >= kReidMargin;
+    if ( cur_weak && margin_ok && m.best_slot >= 0 && m.best_slot != cur_slot &&
          m.best_sim >= sim_thr_ && m.best_sim > m.cur_sim + kSwitchMargin )
     {
         const int cand_gid = tracks_[m.best_slot].global_id;
@@ -331,8 +332,8 @@ void GlobalTrackTable::apply_unbound_result( const ReidResult& res, LiveLocal& l
 
 void GlobalTrackTable::apply_result( const ReidResult& res ) noexcept
 {
-    if ( !res.ok || res.src_idx < 0 || res.src_idx >= reid_cfg::kMaxSources ||
-         res.dim <= 0 || res.dim > reid_cfg::kReidDimMax )
+    if ( !res.ok || res.clipped || res.occluded || res.src_idx < 0 ||
+         res.src_idx >= reid_cfg::kMaxSources || res.dim <= 0 || res.dim > reid_cfg::kReidDimMax )
         return;
 
     const int lidx = find_live_idx( res.src_idx, res.local_id, res.gen );
@@ -380,7 +381,10 @@ bool GlobalTrackTable::try_pick_crop( int src_idx,
     bool clipped = false;
     if ( !build_crop_rect( tr, lb, { sx, sy, min_w, min_h }, srect, clipped ) )
         return false;
-    out = { tr.id, tr.gen, srect, clipped, max_peer_iou( trajs, k ) >= kMaxOtherIoU };
+    const bool occluded = max_peer_iou( trajs, k ) >= kMaxOtherIoU;
+    if ( clipped || occluded )
+        return false;
+    out = { tr.id, tr.gen, srect, false, false };
     return true;
 }
 

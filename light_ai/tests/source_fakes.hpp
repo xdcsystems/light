@@ -74,6 +74,7 @@ public:
     void* buffer( int ) const { return bytes_.data(); }
     int width() const { return d_.w; }
     int height() const { return d_.h; }
+    uint64_t skip_parts_cnt() const noexcept { return 0; }
     void teardown() { ++d_.teardowns; }
 
 private:

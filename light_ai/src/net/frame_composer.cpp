@@ -149,6 +149,14 @@ Status FrameComposer::compose( int tensor_fd, const TilePlacement& tp, int slot,
     return {};
 }
 
+Status FrameComposer::flush_canvas( MppBuffer out )
+{
+    if ( lay_.nsrc <= 1 || out == nullptr )
+        return {};
+    rga_buffer_t cvs = nv12( canvas_.buf[0], lay_ );
+    return rga_ok( imcopy( cvs, nv12( out, lay_ ) ), log_, "RGA composite flush" );
+}
+
 Status FrameComposer::compose_idle( const bool* absent, int nabs, int slot, MppBuffer out )
 {
     rga_buffer_t idl = nv12( idle_.buf[0], lay_ );

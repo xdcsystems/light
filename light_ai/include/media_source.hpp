@@ -126,6 +126,17 @@ public:
             return -1;
         }
     }
+    uint64_t skip_parts_cnt() const noexcept
+    {
+        try
+        {
+            return std::visit( []( const auto& s ) { return s.skip_parts_cnt(); }, src_ );
+        }
+        catch ( const std::bad_variant_access& )  // only after a failed use_net() emplace
+        {
+            return 0;
+        }
+    }
     void teardown()
     {
         try

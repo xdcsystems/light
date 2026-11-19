@@ -24,6 +24,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -125,6 +126,7 @@ public:
                 cursor_ = s;
                 return st;
             }
+            ++eagain_cnt_[static_cast<std::size_t>( s )];
             if ( clk::now() - c.last_ok() >= std::chrono::milliseconds( kStallMs ) )
             {
                 log_.warn() << "source s" << s << ": no frame in " << static_cast<int>( kStallMs )
@@ -145,7 +147,18 @@ public:
         cursor_ = 0;
         if ( n_ == 0 || !ch_[0].live() )
             return FrameStatus::NotReady;
-        return ch_[0].poll( -1, out );
+        const FrameStatus st = ch_[0].poll( -1, out );
+        if ( st == FrameStatus::NotReady )
+            ++eagain_cnt_[0];
+        return st;
+    }
+
+    uint32_t take_eagain_cnt( int s ) noexcept
+    {
+        const auto idx = static_cast<std::size_t>( s );
+        const uint32_t v = eagain_cnt_[idx];
+        eagain_cnt_[idx] = 0;
+        return v;
     }
 
     // Restarts the stall clocks: the start of run(), and after a failure was
@@ -199,6 +212,7 @@ private:
 private:
     const Log& log_;
     std::array<Chan, N> ch_;
+    std::array<uint32_t, N> eagain_cnt_ {};
     const std::atomic<bool>* stop_ = nullptr;
     const std::atomic<bool>* prober_quit_ = nullptr;
     int n_ = 0;       // configured channels (<= N), fixed after configure()

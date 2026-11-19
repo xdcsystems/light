@@ -38,6 +38,8 @@ public:
     // True while a TCP viewer is attached. The pipeline gates GPU box
     // drawing on it: no viewer - no draw.
     bool viewer_connected() const;
+    bool session_open() const noexcept;
+    uint32_t session_epoch() const noexcept;
 
     // Called once per frame from the pipeline loop (same thread every time).
     // Copies the tensor frame into the 2-slot drop-oldest ring without waiting on socket I/O.
@@ -62,6 +64,7 @@ private:
     std::thread thread_;
     std::atomic<bool> quit_ { false };
     std::atomic<bool> connected_ { false };
+    std::atomic<uint32_t> session_epoch_ { 0 };
     std::atomic<int64_t> next_send_us_ { 0 };
 
     std::mutex tcp_mx_;

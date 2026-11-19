@@ -20,6 +20,7 @@ public:
     {
         std::atomic<int> cfd { -1 };
         const int sndtimeo_sec;
+        mutable std::atomic<uint64_t> wait_writable_cnt { 0 };
         explicit WriteCtx( int to ) noexcept : sndtimeo_sec( to ) {}
     };
 
@@ -53,6 +54,11 @@ public:
 
     // Closes both the client session and the listening socket.
     void close_all() noexcept;
+
+    uint64_t wait_writable_cnt() const noexcept
+    {
+        return write_ctx_.wait_writable_cnt.load( std::memory_order_relaxed );
+    }
 
 private:
     bool adopt_client( int cfd ) noexcept;

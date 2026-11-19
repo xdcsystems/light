@@ -73,6 +73,7 @@ namespace
         {
             if ( sent > 0 && has_to )
             {
+                ctx->wait_writable_cnt.fetch_add( 1, std::memory_order_relaxed );
                 if ( const int wr = wait_writable( fd, deadline ); wr < 0 )
                     return wr;
             }

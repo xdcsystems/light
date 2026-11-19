@@ -178,12 +178,15 @@ namespace
         return true;
     }
 
+    bool parse_src_rot( const char* v, int& deg )
+    {
+        return set_int( v, 0, 270, deg ) && ( deg == 0 || deg == 90 || deg == 180 || deg == 270 );
+    }
+
     bool apply_src_rot( Config& c, const char* v )
     {
         int deg = -1;
-        if ( !set_int( v, 0, 270, deg ) )
-            return false;
-        if ( deg != 0 && deg != 90 && deg != 180 && deg != 270 )
+        if ( !parse_src_rot( v, deg ) )
             return false;
         if ( c.sources.empty() )
             return false;
@@ -280,6 +283,12 @@ bool OptionRegistry::apply( const Entry& e, Config& cfg, const char* val ) const
 {
     if ( e.opt.apply( cfg, val ) )
         return true;
+    int deg = -1;
+    if ( std::strcmp( e.name, "--src-rot" ) == 0 && cfg.sources.empty() && parse_src_rot( val, deg ) )
+    {
+        log_.error() << "--src-rot requires a preceding --device or --net-src (or --config source)\n";
+        return false;
+    }
     Log::Line line = log_.error();
     line << "invalid value for " << e.name << ": '" << ( val ? val : "" ) << '\'';
     if ( e.opt.expected )

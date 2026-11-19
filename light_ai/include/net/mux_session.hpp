@@ -24,12 +24,14 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
 
 #include "core/encoder_config.hpp"
+#include "core/net_perf.hpp"
 #include "core/param_set_cache.hpp"
 #include "core/session_gate.hpp"
 #include "core/status.hpp"
@@ -103,7 +105,12 @@ private:
     // frame_step: muxer ticks per codec pts, handed to the encoder in the gate session.
     Status setup_stream( AVFormatContext* fc, AVStream** st, int64_t* frame_step, bool tcp_pull );
     // The wait/pop loop and one packet write with the IDR prepend.
-    DrainEnd drain_queue( AVFormatContext* fc );
+    DrainEnd drain_queue( AVFormatContext* fc, const TcpPullServer* tcp );
+    void maybe_log_perf( MuxPerfWindow& mperf,
+                         std::chrono::steady_clock::time_point& win_t0,
+                         uint64_t& prev_ww,
+                         const TcpPullServer* tcp,
+                         bool force ) noexcept;
     int mux_write( AVFormatContext* fc, AVPacket* pkt );
 
 private:

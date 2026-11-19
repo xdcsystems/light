@@ -31,22 +31,33 @@ namespace
         return { l, t, l + w, t + h };
     }
 
-    bool map_track_box( const TrackState& tr, const CalloutRect& crop, float sx, float sy, CalloutRect& out ) noexcept
+    bool map_track_box( const TrackState& tr,
+                        const LbGeom& lb,
+                        const CalloutRect& crop,
+                        float sx,
+                        float sy,
+                        CalloutRect& out ) noexcept
     {
-        const float x0f = ( tr.cx - tr.bw * 0.5f ) * sx + static_cast<float>( crop.x0 );
-        const float y0f = ( tr.cy - tr.bh * 0.5f ) * sy + static_cast<float>( crop.y0 );
-        const float x1f = ( tr.cx + tr.bw * 0.5f ) * sx + static_cast<float>( crop.x0 );
-        const float y1f = ( tr.cy + tr.bh * 0.5f ) * sy + static_cast<float>( crop.y0 );
-        const float cl = static_cast<float>( crop.x0 );
-        const float ct = static_cast<float>( crop.y0 );
-        const float cr = static_cast<float>( crop.x1 );
-        const float cb = static_cast<float>( crop.y1 );
-        if ( x1f <= cl || y1f <= ct || x0f >= cr || y0f >= cb )
+        if ( !std::isfinite( tr.cx ) || !std::isfinite( tr.cy ) ||
+             !std::isfinite( tr.bw ) || !std::isfinite( tr.bh ) ||
+             !std::isfinite( sx ) || !std::isfinite( sy ) ||
+             tr.bw <= 0.0f || tr.bh <= 0.0f || sx <= 0.0f || sy <= 0.0f )
             return false;
-        const int x0 = std::clamp( static_cast<int>( std::floor( x0f ) ), crop.x0, crop.x1 );
-        const int y0 = std::clamp( static_cast<int>( std::floor( y0f ) ), crop.y0, crop.y1 );
-        const int x1 = std::clamp( static_cast<int>( std::ceil( x1f ) ), crop.x0, crop.x1 );
-        const int y1 = std::clamp( static_cast<int>( std::ceil( y1f ) ), crop.y0, crop.y1 );
+        const float x0f = ( tr.cx - tr.bw * 0.5f ) * sx + static_cast<float>( lb.left );
+        const float y0f = ( tr.cy - tr.bh * 0.5f ) * sy + static_cast<float>( lb.top );
+        const float x1f = ( tr.cx + tr.bw * 0.5f ) * sx + static_cast<float>( lb.left );
+        const float y1f = ( tr.cy + tr.bh * 0.5f ) * sy + static_cast<float>( lb.top );
+        if ( x1f <= static_cast<float>( crop.x0 ) || y1f <= static_cast<float>( crop.y0 ) ||
+             x0f >= static_cast<float>( crop.x1 ) || y0f >= static_cast<float>( crop.y1 ) )
+            return false;
+        const int x0 = static_cast<int>(
+            std::clamp( std::floor( x0f ), static_cast<float>( crop.x0 ), static_cast<float>( crop.x1 ) ) );
+        const int y0 = static_cast<int>(
+            std::clamp( std::floor( y0f ), static_cast<float>( crop.y0 ), static_cast<float>( crop.y1 ) ) );
+        const int x1 = static_cast<int>(
+            std::clamp( std::ceil( x1f ), static_cast<float>( crop.x0 ), static_cast<float>( crop.x1 ) ) );
+        const int y1 = static_cast<int>(
+            std::clamp( std::ceil( y1f ), static_cast<float>( crop.y0 ), static_cast<float>( crop.y1 ) ) );
         if ( x1 - x0 < 2 || y1 - y0 < 2 )
             return false;
         out = { x0, y0, x1, y1 };
@@ -71,11 +82,11 @@ namespace
         int idx = 0;
     };
 
-    int find_prev_slot( const CalloutHistory& hist, int disp_id ) noexcept
+    int find_prev_slot( const CalloutHistory& hist, int id, uint32_t gen ) noexcept
     {
         const auto* const end = hist.entries.d.begin() + hist.entries.n;
-        const auto* const it = std::find_if( hist.entries.d.begin(), end, [disp_id]( const CalloutPrevSlot& s ) {
-            return s.id == disp_id;
+        const auto* const it = std::find_if( hist.entries.d.begin(), end, [id, gen]( const CalloutPrevSlot& s ) {
+            return s.id == id && s.gen == gen;
         } );
         return it != end ? it->slot : -1;
     }
@@ -235,6 +246,7 @@ namespace
     }
 
     int collect_track_cands( const TrajList& trajs,
+                             const LbGeom& lb,
                              const CalloutRect& crop,
                              float sx,
                              float sy,
@@ -247,14 +259,14 @@ namespace
             if ( tr.state != TRACK_TENT && tr.state != TRACK_CONF )
                 continue;
             CalloutRect box {};
-            if ( map_track_box( tr, crop, sx, sy, box ) )
+            if ( map_track_box( tr, lb, crop, sx, sy, box ) )
                 cands[nc++] = { k, box };
         }
         return nc;
     }
 
     void append_callout_for_track( int i,
-                                   int disp_id,
+                                   const TrackState& tr,
                                    const CalloutConfig& cfg,
                                    const CalloutRect& work,
                                    const CalloutHistory& hist,
@@ -263,6 +275,7 @@ namespace
                                    CalloutList& out,
                                    CalloutHistory& next_hist ) noexcept
     {
+        const int disp_id = tr.display_id();
         CalloutItem item {};
         item.box = cands[i].box;
         item.text_bytes = glyph_font::format_person( item.text, glyph_font::kLabelCap, disp_id, cfg.lang_ru );
@@ -271,14 +284,15 @@ namespace
         // Guard before std::clamp: degenerate narrow crops must never trigger lo > hi UB.
         if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < kPillH )
             return;
-        const CandEval best = pick_best_pill( i, find_prev_slot( hist, disp_id ), pw, kPillH, work, out, cands, nc );
+        const CandEval best =
+            pick_best_pill( i, find_prev_slot( hist, tr.id, tr.gen ), pw, kPillH, work, out, cands, nc );
         item.pill = best.rect;
         item.text_x = item.pill.x0 + kPadX;
         item.text_y = item.pill.y0 + kPadY;
         assign_accent( disp_id, item );
         build_connector( item );
         out.push( item );
-        next_hist.entries.push( { disp_id, best.idx } );
+        next_hist.entries.push( { tr.id, tr.gen, best.idx } );
     }
 
 }  // namespace
@@ -301,10 +315,10 @@ void compute_callouts( const TrajList& trajs,
     }
 
     std::array<TrackCand, kMaxTracks> cands {};
-    const int nc = collect_track_cands( trajs, crop, sx, sy, cands );
+    const int nc = collect_track_cands( trajs, lb, crop, sx, sy, cands );
     CalloutHistory next_hist {};
     for ( int i = 0; i < nc && out.n < CalloutList::cap; ++i )
-        append_callout_for_track( i, trajs.d[cands[i].track_idx].display_id(), cfg, work, hist, cands.data(), nc, out, next_hist );
+        append_callout_for_track( i, trajs.d[cands[i].track_idx], cfg, work, hist, cands.data(), nc, out, next_hist );
     hist = next_hist;
 }
 

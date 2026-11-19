@@ -50,8 +50,9 @@ struct CalloutConfig
 
 struct CalloutPrevSlot
 {
-    int id = 0;    // TrackState::display_id()
-    int slot = -1; // last winning proposal index [0..13]
+    int id = 0;        // local TrackState::id
+    uint32_t gen = 0;  // monotonic TrackState::gen
+    int slot = -1;     // last winning proposal index [0..13]
 };
 
 struct CalloutHistory

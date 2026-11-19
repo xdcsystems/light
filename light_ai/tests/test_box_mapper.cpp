@@ -22,6 +22,55 @@ namespace
     {
         return b.r == r && b.g == g && b.b == bl;
     }
+
+    void check_m4_m6_color_and_priority( TestRun& t )
+    {
+        BoxMapper mapper;
+        GpuBoxList boxes;
+
+        // [M-4]: trail_color follows display_id() when global_id > 0 (palette[5] = {200, 0, 0}).
+        {
+            Tracker trk;
+            TrajList trajs;
+            int64_t ts = 0;
+            for ( int i = 0; i < 15; ++i, ts += 40000 )
+            {
+                DetList dets;
+                dets.push( Detection { 200.0f + 10.0f * static_cast<float>( i ), 300.0f, 100.0f, 200.0f, 0, 0.9f } );
+                trk.update( dets, ts, trajs );
+            }
+            CHECK( t, trajs.n == 1 && trajs.d[0].id == 1 );
+            trajs.d[0].global_id = 5;
+            mapper.fill( DetList {}, trajs, trk, boxes, kBand, kScale, kScale, ts - 40000 );
+            CHECK( t, boxes.n > 1 );
+            CHECK( t, color( boxes.d[0], 255, 64, 64 ) );
+            CHECK( t, color( boxes.d[1], 200, 0, 0 ) );
+        }
+
+        // [M-6]: 8 tracks x >20 trail dots saturates 128-cap, yet all 8 track_boxes emit first.
+        {
+            Tracker trk;
+            TrajList trajs;
+            int64_t ts = 0;
+            for ( int f = 0; f < 30; ++f, ts += 40000 )
+            {
+                DetList dets;
+                for ( int k = 0; k < 8; ++k )
+                {
+                    const float x = 60.0f + static_cast<float>( k ) * 140.0f + 8.0f * static_cast<float>( f );
+                    dets.push( Detection { x, 200.0f, 60.0f, 140.0f, 0, 0.9f } );
+                }
+                trk.update( dets, ts, trajs );
+            }
+            CHECK( t, trajs.n == 8 );
+            mapper.fill( DetList {}, trajs, trk, boxes, kBand, kScale, kScale, ts - 40000 );
+            CHECK( t, boxes.n == 128 );
+            bool all_boxes_first = true;
+            for ( int i = 0; i < 8; ++i )
+                all_boxes_first = all_boxes_first && color( boxes.d[i], 255, 64, 64 ) && boxes.d[i].a == 255;
+            CHECK( t, all_boxes_first );
+        }
+    }
 }  // namespace
 
 void test_box_mapper( TestRun& t )
@@ -125,4 +174,5 @@ void test_box_mapper( TestRun& t )
         mapper.fill( many, trajs, idle, boxes, kBand, kScale, kScale, 0 );
         CHECK( t, boxes.n == 128 );
     }
+    check_m4_m6_color_and_priority( t );
 }

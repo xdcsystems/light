@@ -81,6 +81,20 @@ namespace
         CHECK( t, f.stamp_packet( true, 54003601, false, fpts2, out_ts ) && out_ts == 7200 );
         // Duplicate/missing-PTS fallback keeps strict monotonicity.
         CHECK( t, f.stamp_packet( false, -1, false, fpts2, out_ts ) && out_ts == 7201 );
+
+        // EAGAIN drain of an older missing-PTS packet using prev_fpts does not steal the new frame's PTS.
+        SessionPtsFilter g( true );
+        g.on_epoch( 1 );
+        int64_t f0 = -1;
+        CHECK( t, g.next_frame_pts( 1000000, 0, f0 ) == 0 && f0 == 0 );
+        g.advance();
+        int64_t f1 = -1;
+        const int64_t c1 = g.next_frame_pts( 1040000, 1, f1 );
+        CHECK( t, f1 == 3600 && c1 == 3600 );
+        int64_t drained_ts = -1;
+        CHECK( t, g.stamp_packet( false, -1, true, f0, drained_ts ) && drained_ts == 0 );
+        int64_t new_ts = -1;
+        CHECK( t, g.stamp_packet( true, c1, false, f1, new_ts ) && new_ts == 3600 );
     }
 
     void vfr( TestRun& t )

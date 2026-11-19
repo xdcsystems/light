@@ -151,6 +151,7 @@ public:
         {
             case Errc::Ok:
                 last_ok_.store( clk::now() );
+                skip_parts_ = src_.skip_parts_cnt();
                 return FrameStatus::Frame;
             case Errc::Timeout:
                 return FrameStatus::NotReady;
@@ -225,6 +226,7 @@ public:
 
     clk::time_point last_ok() const { return last_ok_.load(); }
     void stamp_ok( clk::time_point tp ) { last_ok_.store( tp ); }
+    uint64_t skip_parts_cnt() const noexcept { return skip_parts_; }
 
 private:
     // Camera node lookup with the startup / hot-attach / re-attach log texts.
@@ -342,4 +344,5 @@ private:
     bool dec_ready_ = false;  // decoder initialized (replaces the old w = h = 0 rollbacks)
     int dec_w_ = 0;
     int dec_h_ = 0;  // the geometry the decoder was initialized for
+    uint64_t skip_parts_ = 0;
 };

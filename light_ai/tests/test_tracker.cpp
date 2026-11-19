@@ -1,4 +1,5 @@
 #include <array>
+#include <cmath>
 #include <cstdint>
 
 #include "check.hpp"
@@ -50,6 +51,105 @@ namespace
     }
 
     // A tentative track expires straight to FREE (never enters TRACK_DEAD or hogs a slot).
+    void check_walk_and_recent( TestRun& t )
+    {
+        Tracker trk;
+        TrajList out;
+        int64_t ts = 0;
+        for ( int i = 0; i < 100; ++i, ts += kFrameUs )
+            trk.update( one( person( 200.0f + 4.0f * static_cast<float>( i ), 400, 100, 200 ) ), ts, out );
+        const float cx = 200.0f + 4.0f * 99.0f;  // the last fed position
+        CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
+        CHECK_NEAR( t, out.d[0].cx, cx, 6.0f );
+        CHECK_NEAR( t, out.d[0].cy, 400.0f, 1.0f );
+        CHECK_NEAR( t, out.d[0].vx, 100.0f, 10.0f );
+        CHECK_NEAR( t, out.d[0].vy, 0.0f, 5.0f );
+        CHECK( t, out.d[0].n_pts > 10 );
+
+        std::array<TrajPoint, 20> pts {};
+        const int n = trk.recent_points( 1, 1, pts.data(), 20 );
+        CHECK( t, n == 20 );  // capped by dst_cap
+        bool ordered = true;
+        for ( int k = 1; k < n; ++k )
+            ordered = ordered && pts[k].ts_us > pts[k - 1].ts_us && pts[k].x > pts[k - 1].x;
+        CHECK( t, ordered );
+        CHECK_NEAR( t, pts[n - 1].x, cx, 20.0f );  // the newest point is always included
+
+        std::array<TrajPoint, 20> sparse {};
+        const int ns = trk.recent_points( 1, 4, sparse.data(), 20 );
+        CHECK( t, ns == ( out.d[0].n_pts + 3 ) / 4 || ns == 20 );
+        CHECK( t, sparse[ns - 1].ts_us == pts[n - 1].ts_us );  // stride keeps the newest
+
+        CHECK( t, trk.recent_points( 99, 1, pts.data(), 20 ) == 0 );  // unknown id
+        CHECK( t, trk.recent_points( 1, 0, pts.data(), 20 ) == 0 );   // bad stride
+        CHECK( t, trk.recent_points( 1, 1, nullptr, 20 ) == 0 );
+        CHECK( t, trk.recent_points( 1, 1, pts.data(), 0 ) == 0 );
+    }
+
+    void check_ch10_dead_eviction( TestRun& t )
+    {
+        Tracker trk;
+        TrajList out;
+        int64_t ts = 0;
+        for ( int f = 0; f < 3; ++f, ts += kFrameUs )
+        {
+            DetList crowd;
+            for ( int i = 0; i < 8; ++i )
+                crowd.push( person( 100.0f + static_cast<float>( i ) * 140.0f, 300.0f, 60.0f, 120.0f ) );
+            trk.update( crowd, ts, out );
+        }
+        // Drop track idx 2 (id==3) first so it becomes oldest TRACK_DEAD (ts_last_match_us = 2*kFrameUs).
+        for ( int f = 0; f < 7; ++f, ts += kFrameUs )
+        {
+            DetList seven;
+            for ( int i = 0; i < 8; ++i )
+            {
+                if ( i != 2 )
+                    seven.push( person( 100.0f + static_cast<float>( i ) * 140.0f, 300.0f, 60.0f, 120.0f ) );
+            }
+            trk.update( seven, ts, out );
+        }
+        for ( int f = 0; f < 7; ++f, ts += kFrameUs )
+            trk.update( DetList {}, ts, out );
+        CHECK( t, out.n == 8 );
+
+        // 9th spawn must evict oldest TRACK_DEAD (id==3), leaving 7 DEAD + 1 TENT (id==9).
+        trk.update( one( person( 1250.0f, 600.0f, 60.0f, 120.0f ) ), ts, out );
+        bool saw_new = false;
+        bool saw_id3 = false;
+        for ( int k = 0; k < out.n; ++k )
+        {
+            saw_new = saw_new || ( out.d[k].id == 9 && out.d[k].state == TRACK_TENT );
+            saw_id3 = saw_id3 || ( out.d[k].id == 3 );
+        }
+        CHECK( t, out.n == 8 && saw_new && !saw_id3 );
+
+        const uint32_t prev_gen = out.d[0].gen;
+        trk.reset();
+        trk.update( one( person( 500.0f, 400.0f, 80.0f, 160.0f ) ), ts + kFrameUs, out );
+        CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].gen > prev_gen );
+    }
+
+    void check_ch11_clipped_ramp( TestRun& t )
+    {
+        // Sweep cy across [394..406] with bh=100 (delta in [+12..-12]); smooth ramp keeps steps small.
+        float prev_cy = 0.0f;
+        float max_step = 0.0f;
+        for ( int step = 0; step <= 12; ++step )
+        {
+            Tracker trk;
+            TrajList out;
+            const int64_t ts = stand( trk, out, 5, 0 );
+            const float det_cy = 394.0f + static_cast<float>( step );
+            trk.update( one( person( 500.0f, det_cy, 100.0f, 100.0f ) ), ts, out );
+            CHECK( t, out.n == 1 );
+            if ( step > 0 )
+                max_step = std::fmax( max_step, std::fabs( out.d[0].cy - prev_cy ) );
+            prev_cy = out.d[0].cy;
+        }
+        CHECK( t, max_step < 15.0f );
+    }
+
     void check_tent_expiry( TestRun& t )
     {
         Tracker trk;
@@ -213,41 +313,7 @@ void test_tracker( TestRun& t )
         CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
     }
     check_tent_expiry( t );
-    // Constant-velocity walk (100 px/s): one stable id, the filter follows
-    // position and velocity, the trail grows oldest-first.
-    {
-        Tracker trk;
-        TrajList out;
-        int64_t ts = 0;
-        for ( int i = 0; i < 100; ++i, ts += kFrameUs )
-            trk.update( one( person( 200.0f + 4.0f * static_cast<float>( i ), 400, 100, 200 ) ), ts, out );
-        const float cx = 200.0f + 4.0f * 99.0f;  // the last fed position
-        CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
-        CHECK_NEAR( t, out.d[0].cx, cx, 6.0f );
-        CHECK_NEAR( t, out.d[0].cy, 400.0f, 1.0f );
-        CHECK_NEAR( t, out.d[0].vx, 100.0f, 10.0f );
-        CHECK_NEAR( t, out.d[0].vy, 0.0f, 5.0f );
-        CHECK( t, out.d[0].n_pts > 10 );
-
-        std::array<TrajPoint, 20> pts {};
-        const int n = trk.recent_points( 1, 1, pts.data(), 20 );
-        CHECK( t, n == 20 );  // capped by dst_cap
-        bool ordered = true;
-        for ( int k = 1; k < n; ++k )
-            ordered = ordered && pts[k].ts_us > pts[k - 1].ts_us && pts[k].x > pts[k - 1].x;
-        CHECK( t, ordered );
-        CHECK_NEAR( t, pts[n - 1].x, cx, 20.0f );  // the newest point is always included
-
-        std::array<TrajPoint, 20> sparse {};
-        const int ns = trk.recent_points( 1, 4, sparse.data(), 20 );
-        CHECK( t, ns == ( out.d[0].n_pts + 3 ) / 4 || ns == 20 );
-        CHECK( t, sparse[ns - 1].ts_us == pts[n - 1].ts_us );  // stride keeps the newest
-
-        CHECK( t, trk.recent_points( 99, 1, pts.data(), 20 ) == 0 );  // unknown id
-        CHECK( t, trk.recent_points( 1, 0, pts.data(), 20 ) == 0 );   // bad stride
-        CHECK( t, trk.recent_points( 1, 1, nullptr, 20 ) == 0 );
-        CHECK( t, trk.recent_points( 1, 1, pts.data(), 0 ) == 0 );
-    }
+    check_walk_and_recent( t );
     // Two persons far apart keep two distinct stable ids.
     {
         Tracker trk;
@@ -310,4 +376,6 @@ void test_tracker( TestRun& t )
     }
     check_p2_9( t );
     check_trail_restart( t );
+    check_ch10_dead_eviction( t );
+    check_ch11_clipped_ramp( t );
 }

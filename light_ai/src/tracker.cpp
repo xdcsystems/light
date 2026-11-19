@@ -222,9 +222,10 @@ float Tracker::anchor_clipped( Track& t, float cy, float bh, bool update_bh ) co
     const float det_bot = cy + bh * 0.5f;
     const float pred_top = t.fy.x() - t.bh * 0.5f;
     const float pred_bot = t.fy.x() + t.bh * 0.5f;
-    const bool top_anchored = t.bh > 0.0f && ( std::fabs( det_top - pred_top ) + 8.0f < std::fabs( det_bot - pred_bot ) );
+    const float delta = std::fabs( det_bot - pred_bot ) - std::fabs( det_top - pred_top );
+    const float alpha = ( t.bh > 0.0f ) ? std::clamp( ( delta + 8.0f ) / 16.0f, 0.0f, 1.0f ) : 0.0f;
     const float shift = w * ( bh * 0.5f - t.hp * 0.5f );
-    const float cy_meas = top_anchored ? ( cy - shift ) : ( cy + shift );
+    const float cy_meas = cy + ( 1.0f - 2.0f * alpha ) * shift;
     // drawn box size: restored from the prior proportionally to w when size-trusted.
     if ( update_bh )
     {
@@ -267,11 +268,19 @@ void Tracker::spawn( float cx, float cy, float bw, float bh, int64_t ts_us )
         // synchronous terminal writes cost real latency per frame).
         return;
     }
-    auto* const it = std::find_if( tracks_.begin(), tracks_.end(), []( const Track& t ) {
-        return t.life == TRACK_FREE;
-    } );
-    if ( it != tracks_.end() )
-        init_slot( *it, cx, cy, bw, bh, ts_us );
+    Track* slot = nullptr;
+    for ( Track& t : tracks_ )
+    {
+        if ( t.life == TRACK_FREE )
+        {
+            slot = &t;
+            break;
+        }
+        if ( t.life == TRACK_DEAD && ( slot == nullptr || t.ts_last_match_us < slot->ts_last_match_us ) )
+            slot = &t;
+    }
+    if ( slot != nullptr )
+        init_slot( *slot, cx, cy, bw, bh, ts_us );
 }
 
 // Dedupe: an unmatched detection overlapping an alive track beyond kSpawnDedupeGate

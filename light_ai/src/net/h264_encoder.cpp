@@ -193,6 +193,8 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Sessi
         seen_epoch_ = s.epoch;
         pts_.on_epoch( s.frame_step );
         force_idr_ = true;
+        prev_fpts_ = 0;
+        has_prev_fpts_ = false;
     }
     int64_t fpts = 0;
     fr->pts = pts_.next_frame_pts( ts_us, frames_sent_, fpts );
@@ -227,9 +229,10 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Sessi
         }
         if ( ret != AVERROR( EAGAIN ) )
             break;
+        ++eagain_cnt_;
         if ( avcodec_receive_packet( ctx_, pkt ) < 0 )
             break;  // nothing ready to drain: bounded retries exhausted
-        enqueue( s.stream_index, fpts, queue );
+        enqueue( s.stream_index, has_prev_fpts_ ? prev_fpts_ : fpts, queue );
     }
     if ( ret < 0 && ret != AVERROR( EAGAIN ) )
     {
@@ -259,6 +262,8 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Sessi
         log_.error() << "enc: receive_packet: " << av_err_str( ret ) << '\n';
         return sdk_status( Errc::Failed, "receive_packet", ret );
     }
+    prev_fpts_ = fpts;
+    has_prev_fpts_ = true;
     pts_.advance();
     ++frames_sent_;
     return {};
@@ -287,6 +292,7 @@ void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
     const PacketQueue::Pushed pu = queue.push( pkt_.slot() );
     if ( pu.flushed > 0 )
     {
+        ++q_flush_cnt_;
         force_idr_ = true;
         log_.warn() << "enc: packet queue overflow: flushed " << pu.flushed << " pkts (drop " << pu.drops
                     << "), IDR next frame\n";
