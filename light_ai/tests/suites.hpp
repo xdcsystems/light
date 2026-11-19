@@ -13,6 +13,7 @@ void test_yolo_head_shape( TestRun& t );
 void test_pod_containers( TestRun& t );
 void test_box_math( TestRun& t );
 void test_fp16( TestRun& t );
+void test_rga_limits( TestRun& t );
 void test_yolo_decoder( TestRun& t );
 void test_geometry( TestRun& t );
 void test_jpeg_probe( TestRun& t );

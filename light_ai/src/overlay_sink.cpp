@@ -12,6 +12,7 @@
 #include "core/glyph_font.hpp"
 #include "core/log.hpp"
 #include "core/status.hpp"
+#include "core/rga_limits.hpp"  // rgb888_stride_px
 #include "dma_sync.hpp"
 #include "timings.hpp"
 
@@ -196,12 +197,13 @@ void OverlaySink::init( const StreamConfig& stream,
     log_.info() << "net: tensor stride check: input mem=" << t0_size
                 << " stride=" << stride_bytes_ << " expected=" << expected_bytes << "\n";
     if ( stride_bytes_ != fallback_stride )
-        log_.warn() << "net: non-packed input tensor stride (" << stride_bytes_ << " != " << fallback_stride
-                    << "); RGA producers assume packed RGB888\n";
+        log_.info() << "net: padded input tensor rows (" << stride_bytes_ << " bytes, packed " << fallback_stride
+                    << "): every consumer reads the stride\n";
 
     if ( stream.h264 )
     {
-        const EncoderConfig ec = encoder_config( stream, model_w_, model_h_, primary_band, nsrc, log_ );
+        EncoderConfig ec = encoder_config( stream, model_w_, model_h_, primary_band, nsrc, log_ );
+        ec.model_stride_px = rga_limits::rgb888_stride_px( stride_bytes_, model_w_ );
         enc_.emplace( ec, log_ );
         // kbps(): the rate the encoder runs at (the <= 0 fallback applied).
         if ( stream.host.empty() )

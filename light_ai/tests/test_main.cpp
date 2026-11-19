@@ -14,6 +14,7 @@ int main( int argc, char** argv )
         { "pod_containers", &test_pod_containers },
         { "box_math", &test_box_math },
         { "fp16", &test_fp16 },
+        { "rga_limits", &test_rga_limits },
         { "yolo_decoder", &test_yolo_decoder },
         { "geometry", &test_geometry },
         { "jpeg_probe", &test_jpeg_probe },

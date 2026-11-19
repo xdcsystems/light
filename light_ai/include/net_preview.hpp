@@ -59,6 +59,7 @@ private:
 private:
     const Log& log_;
     const int w_, h_, fps_, pace_fps_, port_;
+    const size_t src_stride_;  // tensor row stride in bytes (>= w_ * 3); the ring holds packed rows
     PreviewRing ring_;
     std::vector<uint8_t> send_buf_;
     std::thread thread_;

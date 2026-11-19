@@ -56,8 +56,9 @@ NetPreview::NetPreview( int w, int h, int stride, int fps, int port, const Log& 
   , fps_( fps > 0 ? fps : 25 )
   , pace_fps_( fps > 0 ? fps : 0 )
   , port_( port )
-  , ring_( frame_byte_size( h, stride ) )
-  , send_buf_( frame_byte_size( h, stride ) )
+  , src_stride_( stride > w * 3 ? static_cast<size_t>( stride ) : static_cast<size_t>( w ) * 3 )
+  , ring_( frame_byte_size( h, w * 3 ) )
+  , send_buf_( frame_byte_size( h, w * 3 ) )
 {
     avformat_network_init();
     pkt_ = av_packet_alloc();
@@ -258,5 +259,7 @@ void NetPreview::publish( const uint8_t* rgb )
         const int64_t target = next_us > 0 ? next_us + step_us : now_us + step_us;
         next_send_us_.store( target > now_us ? target : now_us + step_us, std::memory_order_relaxed );
     }
-    static_cast<void>( ring_.push( rgb ) );
+    // The NUT rawvideo stream is packed w x h RGB24: padded tensor rows are
+    // packed on the copy into the ring (the copy happens anyway).
+    static_cast<void>( ring_.push_rows( rgb, static_cast<size_t>( w_ ) * 3, src_stride_ ) );
 }

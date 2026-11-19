@@ -15,6 +15,16 @@ class Log;
 class RgaResizer
 {
 public:
+    // One RGB888 image of crop_resize: dma-buf fd, size, row stride in pixels (0 = tight).
+    struct CropImage
+    {
+        int fd = -1;
+        int w = 0;
+        int h = 0;
+        int w_stride = 0;
+    };
+
+
     // Pins the jobs to RGA3 core0; failures go to log (`err` stream).
     explicit RgaResizer( const Log& log );
     // src: YUVSP (w_src x h_src; 420SP by default, see src_fmt below),
@@ -32,17 +42,20 @@ public:
     // The MJPEG decoder follows the stream subsampling and ignores
     // the fmt pre-set on its frame; the RGA read side must match.
     // Ok: *geom receives the band geometry. A failure Status carries the
-    // cause (aspect mismatch, no aux for the two-pass path, an im2d error
+    // cause (aspect mismatch, a band outside the RGA3 limits of
+    // core/rga_limits.hpp, no aux for the two-pass path, an im2d error
     // with the raw IM_STATUS in sys()); geom stays untouched then.
+    // An odd source side is cropped down to even (YUV rects need even sides).
     Status resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux,
-                   LbGeom* geom, int src_fmt = 0, int rot_deg = 0, int src_w_stride = 0, int src_h_stride = 0 );
+                   LbGeom* geom, int src_fmt = 0, int rot_deg = 0, int src_w_stride = 0, int src_h_stride = 0 ) const;
     // Crops RGB888 sub-rect from model tensor -> dst RGB888 Re-ID tensor: routes >= 68x68
     // crops to RGA3 (IOMMU) and < 68 px crops to RGA2 (< 4G DMA32). Enforces 1/8x .. 8x scale bounds.
-    // src / dst are tight (stride = width). A > 8x downscale needs aux: an RGB888
+    // src / dst carry their row strides (TensorRef::stride_bytes / 3; 0 = tight).
+    // A > 8x downscale needs aux: an RGB888
     // w_aux x h_aux intermediate with 16-aligned strides (RGA rejects an unaligned
     // RGB888 width stride), so the caller allocates at least
     // align16(w_aux) * align16(h_aux) * 3 bytes; without aux that case fails.
-    Status crop_resize( int src_fd, int w_src, int h_src, LbGeom crop_roi, int dst_fd, int w_dst, int h_dst,
+    Status crop_resize( const CropImage& src, LbGeom crop_roi, const CropImage& dst,
                         int aux_fd = -1, int w_aux = 0, int h_aux = 0 ) const noexcept;
 
 private:

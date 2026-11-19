@@ -11,6 +11,7 @@
 #include "core/fixed_fmt.hpp"
 #include "core/frame_view.hpp"
 #include "core/log.hpp"
+#include "core/rga_limits.hpp"
 #include "core/status.hpp"
 #include "cpu_affinity.hpp"
 #include "dma_sync.hpp"
@@ -107,7 +108,7 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
                                       std::to_string( outs.size() ) );
     }
 
-    cal_dumper_.init( cfg_.cal, model_w_, model_h_ );
+    cal_dumper_.init( cfg_.cal, model_w_, model_h_, pool_.engine( 0 ).input_stride_bytes() );
 
     // Channels know their kind, node and the model geometry; no device is
     // opened yet (attach_sources, last).
@@ -451,7 +452,7 @@ bool Pipeline::submit_orient_probe( int src, int fd_src, int rot, int job_idx, i
     LbGeom lg {};
     const int yuv_fmt = ( ch.out_fmt() == MPP_FMT_YUV420SP ) ? 0 : 1;
     const Status rga_st = rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd,
-                                       ( ( raw_w / 2 ) + 1 ) & ~1, ( ( raw_h / 2 ) + 1 ) & ~1,
+                                       rga_limits::aux_side( raw_w ), rga_limits::aux_side( raw_h ),
                                        &lg, yuv_fmt, rot, ch.hor_stride(), ch.ver_stride() );
     if ( rga_st.ok() )
         tensor_band_[static_cast<size_t>( slot )] = elb;
@@ -559,7 +560,7 @@ void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int
     LbGeom lg {};
     const Status rga_st =
             rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd,
-                         ( ( raw_w / 2 ) + 1 ) & ~1, ( ( raw_h / 2 ) + 1 ) & ~1, &lg,
+                         rga_limits::aux_side( raw_w ), rga_limits::aux_side( raw_h ), &lg,
                          ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1, rot, ch.hor_stride(), ch.ver_stride() );
     if ( rga_st.ok() )
     {
@@ -662,8 +663,18 @@ void Pipeline::run_reid_stage( const FrameView& view ) noexcept
         const TensorRef dst = reid_worker_->input_tensor( rslot );
         if ( dst.fd < 0 )
             break;
-        if ( !rga_.crop_resize( view.tensor.fd, model_w_, model_h_, reqs[i].srect, dst.fd, rw, rh ).ok() )
+        const RgaResizer::CropImage src_img { view.tensor.fd, model_w_, model_h_,
+                                              rga_limits::rgb888_stride_px( view.tensor.stride_bytes, model_w_ ) };
+        const RgaResizer::CropImage dst_img { dst.fd, rw, rh, rga_limits::rgb888_stride_px( dst.stride_bytes, rw ) };
+        if ( const Status cst = rga_.crop_resize( src_img, reqs[i].srect, dst_img ); !cst.ok() )
+        {
+            // A failed crop only skips this Re-ID sample (the slot stays free),
+            // but a persistent cause must be visible: first failure, then every 256th.
+            if ( reid_crop_fail_++ % 256 == 0 )
+                log_.warn() << "reid: crop " << reqs[i].srect.w << 'x' << reqs[i].srect.h << " failed: " << cst
+                            << " (" << reid_crop_fail_ << " so far)\n";
             continue;
+        }
         const ReidJob job { rslot, view.src_idx, reqs[i].local_id, reqs[i].gen, view.ts_us, reqs[i].clipped, reqs[i].occluded };
         if ( reid_worker_->submit( job ) )
             global_tracks_.mark_dispatched( view.src_idx, reqs[i].local_id, reqs[i].gen );

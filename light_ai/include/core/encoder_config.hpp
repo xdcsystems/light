@@ -73,6 +73,7 @@ public:
     StreamLayout layout {};
     int model_w = 0;  // NPU tensor geometry (RGB888)
     int model_h = 0;
+    int model_stride_px = 0;  // tensor row stride in pixels (TensorRef::stride_bytes / 3); 0 = model_w
     int fps = 25;            // stream fps; <= 0 = VFR
     int port = 1234;         // TCP pull listen port / UDP destination port
     std::string host;        // UDP push destination; empty = TCP pull

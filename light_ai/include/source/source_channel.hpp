@@ -29,6 +29,7 @@
 #include "config/config.hpp"  // SourceKind, SourceEndpoint
 #include "core/geometry.hpp"
 #include "core/log.hpp"
+#include "core/rga_limits.hpp"  // needs_two_pass, aux_bytes: shared with RgaResizer
 #include "core/status.hpp"
 #include "jpeg_probe.hpp"
 #include "source/source_types.hpp"
@@ -41,7 +42,6 @@ class BasicSourceChannel
     enum
     {
         kWarmupFrames = 3,  // valid decodes discarded after a hot attach (mid-stream start)
-        kAuxRatio = 8,      // over 8x the model input: the two-pass RGA path needs the aux buffer
         kDecErrMax = 4,     // consecutive decoder failures before detaching
     };
 
@@ -267,9 +267,9 @@ private:
 
     bool needs_aux( int w, int h ) const noexcept
     {
-        if ( w > kAuxRatio * model_w_ || h > kAuxRatio * model_h_ )
+        if ( rga_limits::needs_two_pass( w, h, model_w_, model_h_, false ) )
             return true;
-        return ( rot_auto_ || quarter_turn() ) && ( h > kAuxRatio * model_w_ || w > kAuxRatio * model_h_ );
+        return ( rot_auto_ || quarter_turn() ) && rga_limits::needs_two_pass( w, h, model_w_, model_h_, true );
     }
 
     // Decoder (first attach only), geometry guard, aux buffer, letterbox.
@@ -299,11 +299,7 @@ private:
         }
         if ( needs_aux( w, h ) && geom_.aux_fd < 0 )
         {
-            const int w_aux = ( ( w / 2 ) + 1 ) & ~1;
-            const int h_aux = ( ( h / 2 ) + 1 ) & ~1;
-            const int w_aux_stride = ( w_aux + 15 ) & ~15;
-            const int h_aux_stride = ( h_aux + 15 ) & ~15;
-            geom_.aux_fd = dec_.aux_fd( static_cast<size_t>( w_aux_stride ) * static_cast<size_t>( h_aux_stride ) * 2 );
+            geom_.aux_fd = dec_.aux_fd( rga_limits::aux_bytes( w, h ) );
             if ( geom_.aux_fd < 0 )
             {
                 if ( hot )

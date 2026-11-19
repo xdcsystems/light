@@ -42,14 +42,17 @@ public:
     explicit CalDumper( const Log& log ) : log_( log ) {}
 
     // Called once by Pipeline after the model geometry is known.
-    void init( const CalConfig& cal, int model_w, int model_h );
+    // stride_bytes: the tensor row stride (TensorRef::stride_bytes); 0 or
+    // anything below model_w * 3 = tight rows.
+    void init( const CalConfig& cal, int model_w, int model_h, uint32_t stride_bytes = 0 );
 
     // data/size are the NPU input tensor bytes.
     void maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t size );
 
 private:
     bool series_due( int frame_idx ) const;
-    // One P6 file of the model size; Invalid on a short tensor, Failed
+    // One P6 file of the model size, written row by row (padded rows drop
+    // their padding); Invalid on a short tensor, Failed
     // on an unopenable path or a failed write (the caller logs the path).
     Status write_ppm( const std::string& path, const uint8_t* data, size_t size ) const;
 
@@ -57,6 +60,7 @@ private:
     CalConfig cal_;
     int model_w_ = 0;
     int model_h_ = 0;
+    size_t stride_ = 0;  // tensor row stride in bytes (>= model_w_ * 3)
     bool inited_ = false;
     // Single shot: set by the first attempt, a success or a failure (no retry).
     bool single_done_ = false;

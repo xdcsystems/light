@@ -22,6 +22,7 @@ add_executable(light_ai_tests
     test_pod_containers.cpp
     test_box_math.cpp
     test_fp16.cpp
+    test_rga_limits.cpp
     test_yolo_decoder.cpp
     test_geometry.cpp
     test_jpeg_probe.cpp

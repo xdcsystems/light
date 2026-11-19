@@ -188,6 +188,39 @@ namespace
             CHECK( t, !std::filesystem::exists( sub + "/cal_0002.ppm" ) );  // the series stopped
         }
     }
+
+    // M-11: a padded tensor (row stride > model_w * 3) dumps the packed
+    // picture -- padding dropped, no diagonal shift -- and the size check
+    // counts the last row as model_w * 3, not a full stride.
+    void check_padded_stride( TestRun& t, const std::string& dir )
+    {
+        const std::vector<uint8_t> px = pixels();
+        constexpr size_t row = static_cast<size_t>( kW ) * 3;
+        constexpr size_t stride = row + 6;  // two padding pixels per row
+        std::vector<uint8_t> padded( stride * ( kH - 1 ) + row, 0xEE );
+        for ( int y = 0; y < kH; ++y )
+            std::copy( px.begin() + static_cast<std::ptrdiff_t>( row * y ), px.begin() + static_cast<std::ptrdiff_t>( row * ( y + 1 ) ),
+                       padded.begin() + static_cast<std::ptrdiff_t>( stride * y ) );
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        CalDumper d( log );
+        const std::string sub = dir + "/padded";
+        std::filesystem::create_directories( sub );
+        d.init( cal_of( true, 0, 15, sub ), kW, kH, static_cast<uint32_t>( stride ) );
+        d.maybe( 0, -1, padded.data(), padded.size() );
+        CHECK_STR_EQ( t, read_file( sub + "/cal.ppm" ), ppm_of( px ) );
+        CHECK_STR_EQ( t, err.str(), "" );
+
+        // One byte short of the last row: Invalid, nothing written.
+        CalDumper s( log );
+        const std::string shrt = dir + "/padded_short";
+        std::filesystem::create_directories( shrt );
+        s.init( cal_of( true, 0, 15, shrt ), kW, kH, static_cast<uint32_t>( stride ) );
+        s.maybe( 0, -1, padded.data(), padded.size() - 1 );
+        CHECK( t, !std::filesystem::exists( shrt + "/cal.ppm" ) || read_file( shrt + "/cal.ppm" ).empty() );
+        CHECK( t, err.str().find( "tensor shorter than the model frame" ) != std::string::npos );
+    }
 }  // namespace
 
 void test_cal_dumper( TestRun& t )
@@ -203,5 +236,6 @@ void test_cal_dumper( TestRun& t )
     check_series( t, dir );
     check_both( t, dir );
     check_failures( t, dir );
+    check_padded_stride( t, dir );
     std::filesystem::remove_all( dir, ec );
 }
