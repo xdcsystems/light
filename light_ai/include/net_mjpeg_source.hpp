@@ -49,7 +49,7 @@ class NetMjpegSource
     enum
     {
         kPollMs = 2000,     // per-fill watchdog, same window as the camera; also the whole-head deadline
-        kPartMs = 5000,     // one blocking part, from its first byte: a 300 KB JPEG needs >= 0.48 Mbit/s
+        kPartMs = 5000,     // one blocking part, from its body's start: a 300 KB JPEG needs >= 0.48 Mbit/s
         kErrStreakMax = 4,  // corrupt/short-frame streak tolerance
         kSkipMax = 4,       // read_latest_part: parts skipped per dequeue at most
         kDrainMax = 64,     // start(): parts drained at most
@@ -82,7 +82,7 @@ public:
         sock_.set_cancel( stop, prober_quit );
     }
     Status setup_device( const std::string& url );
-    void teardown();
+    void teardown() noexcept;
     // Drains frames accumulated in the TCP socket during Pipeline init
     // so run() starts at the live edge alongside CameraV4L2::start().
     void start();
@@ -129,7 +129,7 @@ private:
     // retry, and every bad part (the retry too) counts toward kErrStreakMax.
     Read read_latest_part( int slot, uint32_t* size, int timeout_ms );
     // One part into slot (core/multipart_reader.hpp), refilling with the
-    // kPollMs watchdog; once the part's first byte is in, under the kPartMs
+    // kPollMs watchdog; once the part's body has started, under the kPartMs
     // wall-clock deadline (blocking single-source mode and setup only: the
     // non-blocking multi-source path is bounded by the SourceSet stall timer).
     // Any result but

@@ -535,9 +535,11 @@ namespace
         CHECK( t, el >= 1900 && el < 3500 );
     }
 
-    // M-15: a part that has started arriving and then drips (a byte every
-    // 250 ms, each inside the 2 s per-fill watchdog) ends with Lost after
-    // kPartMs (5 s) from its first byte instead of never.
+    // M-15: a part whose body has started and then drips (a byte every
+    // 250 ms, each inside the 2 s per-fill watchdog) ends with Lost kPartMs
+    // (5 s) after its body began -- not never, and not from the entry: the
+    // next delimiter line arrives first and sits in the window through a
+    // 1.5 s idle gap, which must not count toward the part deadline.
     void slow_drip_part_times_out( TestRun& t, const Bytes& a )
     {
         Rig r;
@@ -549,10 +551,14 @@ namespace
         r.src.requeue( idx );
 
         const std::string next = parts( { a }, true );
+        const size_t delim_end = next.find( "--frame" ) + std::string( "--frame\r\n" ).size();
         std::atomic<bool> stop { false };
-        std::thread drip( [&r, &stop, &next] {
-            r.send( next.substr( 0, 40 ) );  // the delimiter, the part head and a few body bytes
-            for ( size_t i = 40; i + 1 < next.size() && !stop.load(); ++i )
+        std::thread drip( [&r, &stop, &next, delim_end] {
+            r.send( next.substr( 0, delim_end ) );  // the delimiter line only
+            std::this_thread::sleep_for( std::chrono::milliseconds( 1500 ) );
+            const size_t burst = next.find( "\r\n\r\n", delim_end ) + 4 + 8;  // part headers + 8 body bytes
+            r.send( next.substr( delim_end, burst - delim_end ) );
+            for ( size_t i = burst; i + 1 < next.size() && !stop.load(); ++i )
             {
                 r.send( next.substr( i, 1 ) );
                 std::this_thread::sleep_for( std::chrono::milliseconds( 250 ) );
@@ -564,7 +570,7 @@ namespace
         stop.store( true );
         drip.join();
         CHECK( t, !st.ok() && st.code() == Errc::Lost );
-        CHECK( t, el >= 4800 && el < 6500 );
+        CHECK( t, el >= 6300 && el < 8000 );
     }
 }  // namespace
 

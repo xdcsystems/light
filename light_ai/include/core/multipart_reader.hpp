@@ -72,6 +72,8 @@ public:
     bool part_buffered( const uint8_t* data, size_t n ) const;
 
     const char* boundary() const { return boundary_; }
+    // A part's delimiter and headers are parsed: its body is arriving.
+    bool in_body() const noexcept { return cur_.phase == Phase::Body; }
 
 private:
     enum class Phase : uint8_t

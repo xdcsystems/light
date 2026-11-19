@@ -143,9 +143,9 @@ ByteSpan ParamSetCache::prepare( uint8_t* data, size_t size )
     const size_t total = hdr_len_ + size;
     if ( total > idr_buf_.size() )
     {
-        // Not reachable with the max_h264_packet() capacity; kept so a
-        // misconfigured cap degrades (this IDR without the repeat) instead
-        // of allocating on the mux thread.
+        // Unlikely with the max_h264_packet() capacity (emulation prevention
+        // bytes or many slices can exceed it): this IDR goes without the
+        // repeat instead of allocating on the mux thread.
         if ( !too_big_logged_ )
         {
             too_big_logged_ = true;

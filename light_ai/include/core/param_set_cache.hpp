@@ -8,9 +8,9 @@
 // (tests/test_param_set_cache.cpp). Thread: the mux (serve) thread only.
 // No allocation per packet: the IDR buffer is sized once, at construction,
 // for the largest packet the stream can carry (max_packet_bytes, see
-// max_h264_packet()) and never grows (M-15). A packet beyond it -- not
-// reachable for a conformant stream of that frame size -- goes out as is,
-// without the prefix, with one warn.
+// max_h264_packet()) and never grows (M-15). A packet beyond it -- unlikely:
+// only emulation prevention bytes or many slices can exceed the bound --
+// goes out as is, without the prefix, with one warn.
 
 #pragma once
 

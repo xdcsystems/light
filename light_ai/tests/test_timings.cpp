@@ -50,7 +50,8 @@ void test_timings( TestRun& t )
         CHECK( t, out.str().find( "[timing] avg/60 cam=90.5 " ) != std::string::npos );
         tm.report_total();
         CHECK( t, tm.frames() == 120 );
-        CHECK( t, total_line( out.str() ) == "[timing] TOTAL  cam=60.5 dec=0.0 rga=0.0 infer=0.0 post=0.0 enc=0.0 | sum=60.5 ms -> ~16.5 FPS" );
+        CHECK( t, total_line( out.str() )
+                      == "[timing] TOTAL  cam=60.5 dec=0.0 rga=0.0 infer=0.0 post=0.0 enc=0.0 | sum=60.5 ms -> ~16.5 FPS" );
         CHECK( t, err.str().empty() );
     }
     // 125 frames: TOTAL covers all 125 (63.0), not the 5-frame tail (123.0).
@@ -106,7 +107,8 @@ void test_timings( TestRun& t )
         CHECK( t, total_line( out.str() ).find( "[timing] TOTAL  cam=10.0 " ) == 0 );
         CHECK( t, out.str().find( "timings: 2 frame(s) with a failed NPU job left out of the averages\n" ) != std::string::npos );
     }
-    // Pool mode right after the first frame: a finite FPS, never "inf".
+    // Smoke test of the pool wall-FPS line right after the first frame: the
+    // dur > 0 guard itself is not forced here (steady_clock moved on already).
     {
         std::ostringstream out;
         std::ostringstream err;

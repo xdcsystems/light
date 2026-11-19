@@ -65,7 +65,8 @@ RgaResizer::RgaResizer( const Log& log ) : log_( log )
     // back to RGA2 (core[4]). All jobs are pinned to RGA3 core0 for the
     // process lifetime; RGA2 is never needed here.
     // Best effort: an unpinned RGA still works, rga_check logs the cause.
-    static_cast<void>( rga_check( imconfig( IM_CONFIG_SCHEDULER_CORE, IM_SCHEDULER_RGA3_CORE0 ), log_, "RGA: imconfig RGA3_CORE0 pin failed" ) );
+    static_cast<void>(
+            rga_check( imconfig( IM_CONFIG_SCHEDULER_CORE, IM_SCHEDULER_RGA3_CORE0 ), log_, "RGA: imconfig RGA3_CORE0 pin failed" ) );
 }
 
 Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux,
