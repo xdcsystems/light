@@ -241,8 +241,8 @@ Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
     const uint32_t packed_u8 = row_bytes * static_cast<uint32_t>( in_h_ );
     const uint32_t raw_sz = in_attr_.size_with_stride ? in_attr_.size_with_stride : in_attr_.size;
     const uint32_t in_size = ( native_type == RKNN_TENSOR_UINT8 || native_type == RKNN_TENSOR_INT8 )
-                                 ? ( raw_sz >= packed_u8 ? raw_sz : packed_u8 )
-                                 : packed_u8;
+            ? ( raw_sz >= packed_u8 ? raw_sz : packed_u8 )
+            : packed_u8;
     in_attr_.size = in_size;
 
     in_mems_.assign( static_cast<size_t>( input_slots ), nullptr );
@@ -272,9 +272,8 @@ Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
 
     in_stride_bytes_ = row_bytes;
 
-    log_.info() << "model input: " << in_w_ << 'x' << in_h_ << ' '
-                << get_type_string( in_attr_.type ) << " zp=" << in_attr_.zp << " scale=" << in_attr_.scale
-                << ", outputs: " << out_attrs_.size() << "\n";
+    log_.info() << "model input: " << in_w_ << 'x' << in_h_ << ' ' << get_type_string( in_attr_.type ) << " zp=" << in_attr_.zp
+                << " scale=" << in_attr_.scale << ", outputs: " << out_attrs_.size() << "\n";
     for ( size_t i = 0; i < out_attrs_.size(); ++i )
     {
         log_.info() << "  out[" << i << "]: " << out_attrs_[i].n_elems << " elems, " << get_type_string( out_attrs_[i].type ) << "\n";
@@ -343,7 +342,7 @@ Status RknnEngine::run() const
     if ( !ctx_ )
         return make_status( Errc::Failed, "engine not initialized" );
     const int rc = rknn_run( ctx_, nullptr );
-    return rc == RKNN_SUCC ? Status{} : sdk_status( Errc::Failed, "rknn_run failed", rc );
+    return rc == RKNN_SUCC ? Status {} : sdk_status( Errc::Failed, "rknn_run failed", rc );
 }
 
 Status RknnEngine::set_core_mask( unsigned mask ) const
