@@ -67,6 +67,7 @@ void test_tcp_send( TestRun& t )
             }
         } );
         const int r = tcp_send_chunk( ctx, data.data(), static_cast<int>( data.size() ) );
+        ::shutdown( p.fd[0], SHUT_WR );  // a short send must not leave the reader blocked in read() forever
         reader.join();
         CHECK( t, r == static_cast<int>( data.size() ) );
         CHECK( t, got == data );

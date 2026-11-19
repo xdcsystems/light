@@ -217,17 +217,20 @@ void NetMjpegSource::start()
 NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
 {
     uint8_t* const dst = pool_.data( slot );
-    // The part deadline runs from the part's body, not from entry: the idle
-    // gap before a frame (the previous part's delimiter tail may already sit
-    // in the window) stays a plain kPollMs watchdog (fill_until), and only a
-    // part whose delimiter and headers are in is bounded to kPartMs in total.
+    // The part deadline runs from the part's first header byte, not from
+    // entry: the idle gap before a frame (the previous part's delimiter line
+    // may already sit in the window) stays a plain kPollMs watchdog
+    // (fill_until). Once the delimiter is consumed, any byte left in the
+    // window is part header or body, and the part is bounded to kPartMs in
+    // total. Accepted limit: junk dripped before a delimiter line is bounded
+    // only by the window filling up (BufferedSocket Full -> Desync).
     using clk = std::chrono::steady_clock;
     clk::time_point deadline = clk::time_point::max();
     while ( true )
     {
         const MultipartReader::Step st = parts_.feed( sock_.data(), sock_.size(), dst );
         sock_.consume( st.consumed );
-        if ( deadline == clk::time_point::max() && parts_.in_body() )
+        if ( deadline == clk::time_point::max() && ( parts_.in_body() || ( parts_.in_header() && sock_.size() > 0 ) ) )
             deadline = clk::now() + std::chrono::milliseconds( kPartMs );
         if ( st.ev == MultipartReader::Event::Part )
         {
