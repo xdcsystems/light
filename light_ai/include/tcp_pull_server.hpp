@@ -77,6 +77,14 @@ private:
     AVIOContext* pb_ = nullptr;
 };
 
+// One AVIO chunk onto the client socket of ctx, all of it or an error
+// (src/tcp_send.cpp: POSIX only, no FFmpeg -- host-tested). Returns
+// buf_size, or a negative code: -EPIPE (no client, peer gone, shut down by
+// abort_client), -ETIMEDOUT (the chunk missed its sndtimeo_sec deadline),
+// -EIO (any other errno), kTcpSendEof (send returned 0).
+constexpr int kTcpSendEof = -0x10000;
+int tcp_send_chunk( const TcpPullServer::WriteCtx& ctx, const uint8_t* buf, int buf_size ) noexcept;
+
 // The serve-thread bind with a retry: every listen() failure is retried,
 // not only EADDRINUSE -- the run keeps going without a viewer whatever the
 // errno (the policy: recognition never sleeps for the output side; README,

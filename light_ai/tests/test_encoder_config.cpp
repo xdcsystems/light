@@ -101,6 +101,11 @@ namespace
         const LbGeom g = band_geom( 360, 640, 640, 480 );
         CHECK( t, p.cell == 2 );
         CHECK( t, same( p.dst, g.left & ~1, g.w & ~1, ( 480 + g.top ) & ~1, g.h & ~1 ) );
+        // The tile scale the callout font compensates (#91 item 5): the phone
+        // portrait band 360x640 lands as 270x480 (0.75), a 4:3 USB band 1:1.
+        const TilePlacement usb = place_tile( l, kBand43, 0 );
+        CHECK( t, usb.dst.h * 4 == usb.src.h * 4 && usb.dst.w == usb.src.w );           // 1.0
+        CHECK( t, p.src.h == 640 && p.dst.h == 480 && p.dst.w == 270 );                    // 0.75
         // Cell 3 of a 3-source layout does not exist: out-of-range indices fall back to cell 0.
         CHECK( t, place_tile( l, kBand43, 3 ).cell == 0 );
         CHECK( t, place_tile( l, kBand43, -1 ).cell == 0 );
