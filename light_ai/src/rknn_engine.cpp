@@ -14,7 +14,9 @@ RknnEngine::RknnEngine( const char* model_path, const Log& log ) : log_( log )
 {
     log_.info() << "loading model: " << model_path << '\n';
 
-    if ( rknn_init( &ctx_, const_cast<char*>( model_path ), 0, 0, nullptr ) != RKNN_SUCC ) // NOLINT(cppcoreguidelines-pro-type-const-cast)
+    // rknn_init takes the model as a non-const void*; with size 0 it is the .rknn path, which it only reads.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast,custom-no-const-cast): SDK signature, read-only path
+    if ( rknn_init( &ctx_, const_cast<char*>( model_path ), 0, 0, nullptr ) != RKNN_SUCC )
     {
         ctx_ = 0;
         throw std::runtime_error( std::string( "rknn_init failed for " ) + model_path );

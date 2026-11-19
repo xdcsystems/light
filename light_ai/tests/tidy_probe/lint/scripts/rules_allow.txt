@@ -1,0 +1,4 @@
+# The allowlist of the rules_lint.sh self-test tree (#93): one allowed NOLINT, one allowed legacy .h, one stale line.
+src/ok.cpp nolint custom-no-virtual
+include/old.h header-ext
+src/gone.cpp nolint custom-no-catch-all

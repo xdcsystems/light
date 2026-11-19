@@ -1,0 +1,23 @@
+# rules_allow.txt: the allowed exceptions of the rules gate (#93), read by scripts/rules_lint.sh.
+# One line per allowed finding: <path> <rule> [<detail>]. A finding not listed fails the gate, and so does a
+# line that matches no finding (stale). Every site here is documented in CONTRIBUTING.md.
+
+# NOLINT(custom-...) sites (CONTRIBUTING, Error & Exception Model; I/O & SDK casts). The reason sits in the NOLINT.
+include/inference_pool.hpp nolint custom-no-catch-all
+src/net_preview.cpp nolint custom-no-catch-all
+src/reid_worker.cpp nolint custom-no-catch-all
+src/rknn_engine.cpp nolint custom-no-const-cast
+
+# The vendored header-only stb_easy_font (externals/), included from one core .cpp (CONTRIBUTING, No statics).
+src/core/bitmap_font.cpp core-include stb_easy_font.h
+
+# The nine legacy .h headers (CONTRIBUTING, Header extensions).
+include/box_mapper.h header-ext
+include/box_smoother.h header-ext
+include/coco_names.h header-ext
+include/console_reporter.h header-ext
+include/frame_trace.h header-ext
+include/net_encoder.h header-ext
+include/rga_resizer.h header-ext
+include/config/config_file.h header-ext
+include/config/option_registry.h header-ext

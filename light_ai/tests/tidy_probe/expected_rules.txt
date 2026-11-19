@@ -1,0 +1,17 @@
+# expected_rules.txt: the rules-pass self-test of scripts/tidy_run.sh (#93): "<fixture> <check> <count>", the hits
+# per check. A fixture with no line here must have no hit at all (tidy_probe/src/main.cpp: the std::cout owner).
+tests/tidy_probe/tests/harness.cpp custom-no-static-local 1
+tests/tidy_probe/violations.cpp custom-no-catch-all 1
+tests/tidy_probe/violations.cpp custom-no-const-cast 1
+tests/tidy_probe/violations.cpp custom-no-file-static 1
+tests/tidy_probe/violations.cpp custom-no-global-var 1
+tests/tidy_probe/violations.cpp custom-no-inheritance 1
+tests/tidy_probe/violations.cpp custom-no-new-delete 4
+tests/tidy_probe/violations.cpp custom-no-printf 1
+tests/tidy_probe/violations.cpp custom-no-smart-ptr 1
+tests/tidy_probe/violations.cpp custom-no-static-local 1
+tests/tidy_probe/violations.cpp custom-no-static-member 1
+tests/tidy_probe/violations.cpp custom-no-std-stream 2
+tests/tidy_probe/violations.cpp custom-no-thread-local 1
+tests/tidy_probe/violations.cpp custom-no-virtual 1
+tests/tidy_probe/violations.cpp readability-function-cognitive-complexity 1

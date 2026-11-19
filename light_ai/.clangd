@@ -9,7 +9,8 @@ Index:
 Diagnostics:
   ClangTidy:
     # The checks come from the .clang-tidy files of the tree ('*' minus the disabled ones), read by clang-tidy 22 here.
-    # The cognitive pass of the gate (scripts/tidy_cognitive.yaml): the same check and options.
+    # The rules pass of the gate (scripts/tidy_rules.yaml): the same check and options. Its custom-* project rules
+    # need --experimental-custom-checks, which clangd does not run: TIDY_FILES (CLAUDE.md) covers them.
     Add: [readability-function-cognitive-complexity]
     # Checks that LLVM 11 (the main pass) does not have and that '*' turns on here: they fired on the tree when
     # measured (#93: venv clang-tidy 23.1.4, the root config, the checks missing from `clang-tidy-11 --list-checks`,

@@ -36,10 +36,10 @@ CheckOptions:
   - { key: readability-identifier-naming.GlobalConstantPrefix, value: k }
   - { key: readability-identifier-naming.GlobalVariablePrefix, value: g_ }
   # readability-function-cognitive-complexity: clang-tidy 11 (the main pass) does not know this check, so these
-  # two lines are inert here. It is enforced by the second pass of the gate (scripts/tidy_run.sh, #43): the
-  # pinned clang-tidy 23 in light_ai/venv with scripts/tidy_cognitive.yaml (the same Threshold 20 and
-  # IgnoreMacros; a change goes into both files, and into .clangd for the editor). After stage 6e no function is above 20 (at 20:
-  # NetMjpegSource::read_headers, MppDecoder::init, draw_boxes_cpu).
+  # two lines are inert here. It is enforced by the second pass of the gate, rules (scripts/tidy_run.sh, #43, #93):
+  # the pinned clang-tidy 23 in light_ai/venv with scripts/tidy_rules.yaml (the same Threshold 20 and IgnoreMacros;
+  # a change goes into both files, and into .clangd for the editor). After stage 6e no function is above 20
+  # (at 20: NetMjpegSource::read_headers, MppDecoder::init, draw_boxes_cpu).
   - { key: readability-function-cognitive-complexity.Threshold,    value: '20' } # flag functions above this cognitive complexity
   - { key: readability-function-cognitive-complexity.IgnoreMacros, value: true } # ignore macros when computing cognitive complexity
 

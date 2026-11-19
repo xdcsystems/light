@@ -1,0 +1,127 @@
+# tidy_rules.yaml: the config of the second pass of the clang-tidy gate, "rules" (scripts/tidy_run.sh; #43, #93).
+# The main pass is the system clang-tidy 11 with the .clang-tidy files of the tree. This pass runs the pinned PyPI
+# clang-tidy in light_ai/venv (README, Build) with --config-file and --experimental-custom-checks, and only:
+#   readability-function-cognitive-complexity  LLVM 12+, not in clang-tidy 11 (#43);
+#   custom-*                                   the project rules of CONTRIBUTING.md (Coding Rules, Error Model)
+#                                              as clang-query matchers (#93): LLVM 21+ query-based custom checks.
+# The other checks stay on clang-tidy 11. LLVM 23 can parse the root .clang-tidy since #93 (its
+# AnalyzeTemporaryDtors key is gone), but this pass keeps its own file.
+# Self-test: a matcher with a typo matches nothing and the gate stays green, so tidy_run.sh first runs this config
+# on tests/tidy_probe/ (one violation of each rule, plus the exempt files) and fails unless the hits per check are
+# exactly tests/tidy_probe/expected_rules.txt. A change of a check here goes with a change of the probe.
+# Suppression: NOLINT(custom-...) only with a reason and only at the sites of scripts/rules_allow.txt
+# (scripts/rules_lint.sh fails on any other).
+# Scopes: every check covers src/, include/ and tests/ (the header filter), except:
+#   custom-no-printf, custom-no-std-stream  not in the test harness (a file directly in tests/: check.hpp,
+#                                           test_main.cpp, ... print with them); custom-no-std-stream also not in
+#                                           src/main.cpp, the one owner of std::cout / std::cerr.
+#   (clang-query takes a regex string as written: "[.]" for a dot, never "\\.")
+Checks: '-*,readability-function-cognitive-complexity,custom-*'
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/light_ai/(src|include|tests)/.*'
+CheckOptions:
+  - { key: readability-function-cognitive-complexity.Threshold,    value: '20' }  # flag functions above this
+  - { key: readability-function-cognitive-complexity.IgnoreMacros, value: true }  # code expanded from a macro is not counted
+CustomChecks:
+  # No statics (Coding Rules: no static data members, no static member functions, no function-local statics;
+  # file-local helpers go in an anonymous namespace; no globals).
+  - Name: no-static-local
+    Query: |
+      match varDecl(isStaticLocal()).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "function-local static: keep the state in a member of the owning layer (CONTRIBUTING, No statics)"
+        Level: Warning
+  - Name: no-static-member
+    # without implicit decls: the static __invoke of a capture-less lambda is the compiler's, not ours
+    Query: |
+      match decl(unless(isImplicit()), anyOf(varDecl(isStaticStorageClass(), hasParent(cxxRecordDecl())), cxxMethodDecl(isStaticStorageClass(), unless(ofClass(cxxRecordDecl(isLambda())))))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "static member: use a regular member, an unscoped enum constant or a free function (CONTRIBUTING, No statics)"
+        Level: Warning
+  - Name: no-file-static
+    Query: |
+      match decl(anyOf(varDecl(isStaticStorageClass(), unless(isStaticLocal()), unless(hasParent(cxxRecordDecl()))), functionDecl(isStaticStorageClass(), unless(cxxMethodDecl())))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "namespace-scope static: put a file-local helper in an anonymous namespace (CONTRIBUTING, No statics)"
+        Level: Warning
+  - Name: no-global-var
+    Query: |
+      match varDecl(hasGlobalStorage(), unless(isStaticLocal()), unless(hasType(isConstQualified())), unless(isConstexpr()), unless(hasParent(cxxRecordDecl()))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "mutable global: shared state belongs to the owning layer as a member (CONTRIBUTING, No statics)"
+        Level: Warning
+  - Name: no-thread-local
+    Query: |
+      match varDecl(hasThreadStorageDuration()).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "thread_local: no statics of any kind (CONTRIBUTING, No statics)"
+        Level: Warning
+  # No virtuals or inheritance.
+  - Name: no-virtual
+    Query: |
+      match cxxMethodDecl(isVirtual()).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "virtual function: use composition or templates (CONTRIBUTING, No virtuals or inheritance)"
+        Level: Warning
+  - Name: no-inheritance
+    Query: |
+      match cxxRecordDecl(isDefinition(), anyOf(hasDirectBase(cxxBaseSpecifier()), isDerivedFrom(anything()))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "class with a base: use composition of concrete members (CONTRIBUTING, No virtuals or inheritance)"
+        Level: Warning
+  # No manual heap allocation.
+  - Name: no-new-delete
+    Query: |
+      match stmt(anyOf(cxxNewExpr(), cxxDeleteExpr(), callExpr(callee(functionDecl(hasAnyName("::malloc", "::calloc", "::realloc", "::free", "::aligned_alloc", "::posix_memalign", "::valloc", "::strdup", "::strndup", "::std::malloc", "::std::calloc", "::std::realloc", "::std::free", "::std::aligned_alloc")))))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "manual heap allocation (new / delete / malloc family): use fixed-size members (CONTRIBUTING, No manual heap allocation)"
+        Level: Warning
+  - Name: no-smart-ptr
+    # by type: any variable, field, parameter or return type, also through a typedef, a reference or a pointer
+    Query: |
+      let SP cxxRecordDecl(hasAnyName("::std::unique_ptr", "::std::shared_ptr", "::std::weak_ptr"))
+      let T qualType(hasCanonicalType(anyOf(hasDeclaration(SP), references(hasDeclaration(SP)), pointsTo(hasDeclaration(SP)))))
+      match decl(anyOf(declaratorDecl(hasType(T)), functionDecl(returns(T)))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "std::unique_ptr / shared_ptr / weak_ptr: use fixed-size members (CONTRIBUTING, No manual heap allocation)"
+        Level: Warning
+  # No const_cast (docs/state.md, stage 6: banned by the gate).
+  - Name: no-const-cast
+    Query: |
+      match cxxConstCastExpr().bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "const_cast: fix the constness at the source (an SDK signature: NOLINT with the reason, scripts/rules_allow.txt)"
+        Level: Warning
+  # I/O and logging: iostream only, diagnostics through Log, only src/main.cpp owns std::cout / std::cerr.
+  - Name: no-printf
+    Query: |
+      match callExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), callee(functionDecl(hasAnyName("::printf", "::fprintf", "::sprintf", "::snprintf", "::vprintf", "::vfprintf", "::vsprintf", "::vsnprintf", "::puts", "::fputs", "::putchar", "::std::printf", "::std::fprintf", "::std::sprintf", "::std::snprintf", "::std::vsnprintf", "::std::puts", "::std::fputs")))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "printf family: use iostream through Log (CONTRIBUTING, I/O & logging)"
+        Level: Warning
+  - Name: no-std-stream
+    Query: |
+      match declRefExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), unless(isExpansionInFileMatching("/src/main[.]cpp$")), to(varDecl(hasAnyName("::std::cout", "::std::cerr", "::std::clog")))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "std::cout / cerr / clog outside src/main.cpp: use the injected const Log& (CONTRIBUTING, I/O & logging)"
+        Level: Warning
+  # Error model: no catch (...) except the documented startup sites (CONTRIBUTING, scripts/rules_allow.txt).
+  - Name: no-catch-all
+    Query: |
+      match cxxCatchStmt(isCatchAll()).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "catch (...): only the documented startup sites (CONTRIBUTING, Error & Exception Model)"
+        Level: Warning

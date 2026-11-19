@@ -10,9 +10,9 @@ The key covers every input of the run:
   - the clang-tidy argv and the timeout, `clang-tidy --version`, `<clang++> --version`;
   - the TU's command line from the (stripped) compile DB;
   - the bytes of every .clang-tidy from the TU's directory up to /, and of the file named by a
-    --config-file= argument (the cognitive pass of tidy_run.sh: its argv holds only the file name);
+    --config-file= argument (the rules pass of tidy_run.sh: its argv holds only the file name);
   - the output of `<clang++> <same args> -E -CC` (an LLVM driver, not the DB's gcc: clang++-11, the
-    driver of the main pass; the cognitive pass's LLVM 23 wheel ships none, so its include set is the one
+    driver of the main pass; the rules pass's LLVM 23 wheel ships none, so its include set is the one
     LLVM 11's predefined macros select -- a difference is possible only in system headers);
   - the raw bytes of every file named in its line markers. -E drops or normalizes what some checks
     read (comments with NOLINT, intra-line columns), so the raw files make any edit of any

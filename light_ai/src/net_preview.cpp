@@ -71,7 +71,7 @@ NetPreview::NetPreview( int w, int h, int stride, int fps, int port, const Log& 
     {
         thread_ = std::thread( &NetPreview::serve, this );
     }
-    catch ( ... )
+    catch ( ... )  // NOLINT(custom-no-catch-all): startup (ctor), a failed std::thread start; frees, then rethrows
     {
         av_packet_free( &pkt_ );
         avformat_network_deinit();
