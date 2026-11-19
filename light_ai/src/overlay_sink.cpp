@@ -224,10 +224,62 @@ void OverlaySink::init( const StreamConfig& stream,
 // NO SIGNAL idle publish: h264 path only -- the encoder RGA-copies the
 // pre-rendered gray plate into the absent tiles. The raw NUT preview
 // keeps its live-only diagnostic role (no idle frames there).
+void OverlaySink::reset_source( int src_idx ) noexcept
+{
+    if ( src_idx < 0 || src_idx >= reid_cfg::kMaxSources )
+        return;
+    callout_hist_[src_idx].entries.clear();
+    track_stab_[src_idx].clear();
+}
+
+void OverlaySink::reset_all_sources() noexcept
+{
+    for ( int s = 0; s < reid_cfg::kMaxSources; ++s )
+        reset_source( s );
+}
+
+void OverlaySink::sync_viewer_session() noexcept
+{
+    const bool enc_open = enc_ && enc_->viewer_active();
+    const bool prev_open = preview_ && preview_->session_open();
+    const bool any_open = enc_open || prev_open;
+    const uint32_t enc_ep = enc_ ? enc_->session_epoch() : 0;
+    const uint32_t prev_ep = preview_ ? preview_->session_epoch() : 0;
+
+    if ( !any_open )
+    {
+        if ( was_viewer_live_ )
+        {
+            reset_all_sources();
+            was_viewer_live_ = false;
+        }
+        return;
+    }
+
+    const bool ep_changed = ( enc_open && enc_ep != last_enc_epoch_ ) ||
+                            ( prev_open && prev_ep != last_prev_epoch_ );
+    if ( !was_viewer_live_ || ep_changed )
+        reset_all_sources();
+
+    was_viewer_live_ = true;
+    if ( enc_open )
+        last_enc_epoch_ = enc_ep;
+    if ( prev_open )
+        last_prev_epoch_ = prev_ep;
+}
+
 void OverlaySink::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept
 {
+    sync_viewer_session();
     if ( enc_ )
         enc_->publish_idle( ts_us, absent, nabs );
+}
+
+void OverlaySink::flush_dirty() noexcept
+{
+    sync_viewer_session();
+    if ( enc_ )
+        enc_->flush_dirty();
 }
 
 void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
@@ -322,8 +374,13 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
 
     if ( drawer_ )
     {
+        const auto tg0 = clk::now();
         drawer_->draw_slot( frame.tensor_idx, boxes_.d.data(), boxes_.n, &callouts_ );
+        const auto tg1 = clk::now();
         drawer_->sync_cpu();
+        const auto tg2 = clk::now();
+        perf_.gpu_draw_ms_max = std::max( perf_.gpu_draw_ms_max, ms( tg0, tg1 ) );
+        perf_.sync_cpu_ms_max = std::max( perf_.sync_cpu_ms_max, ms( tg1, tg2 ) );
         return false;
     }
     const TensorRef& tn = frame.tensor;
@@ -342,8 +399,10 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
 double OverlaySink::draw_and_publish( const FrameView& frame,
                                       const DetList& dets,
                                       const TrajList& trajs,
-                                      const Tracker& tracker ) noexcept
+                                      const Tracker& tracker,
+                                      bool defer_encode ) noexcept
 {
+    sync_viewer_session();
     double enc_ms = 0.0;
     const bool enc_live = enc_ && enc_->viewer_active();
     const bool prev_live = preview_ && preview_->viewer_connected();
@@ -367,9 +426,27 @@ double OverlaySink::draw_and_publish( const FrameView& frame,
     if ( enc_live )
     {
         const auto t5 = clk::now();
-        enc_->publish( tn.fd, frame.lb, frame.ts_us, frame.src_idx );
+        enc_->publish( tn.fd, frame.lb, frame.ts_us, frame.src_idx, defer_encode );
         const auto t6 = clk::now();
         enc_ms = ms( t5, t6 );
     }
     return enc_ms;
+}
+
+OverlayPerfWindow OverlaySink::take_perf() noexcept
+{
+    if ( drawer_ )
+    {
+        const uint64_t ft = drawer_->fence_timeouts();
+        perf_.fence_tmo_cnt = static_cast<uint32_t>( ft - prev_fence_tmo_ );
+        prev_fence_tmo_ = ft;
+    }
+    const OverlayPerfWindow out = perf_;
+    perf_.reset();
+    return out;
+}
+
+EncPerfWindow OverlaySink::take_enc_perf() noexcept
+{
+    return enc_ ? enc_->take_perf() : EncPerfWindow {};
 }

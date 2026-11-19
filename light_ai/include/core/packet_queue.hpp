@@ -104,6 +104,8 @@ public:
             ++drops_;
         }
         ops_.move( ring_.push_slot(), src );  // !full() guaranteed above
+        if ( ring_.n > max_depth_ )
+            max_depth_ = ring_.n;
         cv_.notify_one();
         return Pushed { flushed, drops_ };
     }
@@ -112,6 +114,14 @@ public:
     {
         std::lock_guard<std::mutex> lk( mx_ );
         return ring_.n;
+    }
+
+    int take_max_depth() noexcept
+    {
+        std::lock_guard<std::mutex> lk( mx_ );
+        const int m = max_depth_;
+        max_depth_ = ring_.n;
+        return m;
     }
 
     // Producer: an encode-side error in session `epoch`.
@@ -193,6 +203,7 @@ private:
     std::condition_variable cv_;
     PodRing<Pkt, N> ring_ {};
     int drops_ = 0;
+    int max_depth_ = 0;
     uint32_t epoch_ = 0;
     bool open_ = false;
     bool wait_key_ = true;

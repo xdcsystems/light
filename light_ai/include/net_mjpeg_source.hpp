@@ -99,6 +99,7 @@ public:
     size_t buffer_size( int ) const { return pool_.capacity(); }
     int width() const { return width_; }
     int height() const { return height_; }
+    uint64_t skip_parts_cnt() const noexcept { return skip_parts_cnt_; }
 
 private:
     Status send_get( const std::string& host, int port, const std::string& path ) const;
@@ -139,4 +140,5 @@ private:
     int width_ = 0, height_ = 0;
     uint32_t primed_len_ = 0;  // first frame read during setup_device to extract SOF dims
     int rx_slot_ = -1;         // in-progress slot for non-blocking multi-call JPEG reads
+    uint64_t skip_parts_cnt_ = 0;
 };

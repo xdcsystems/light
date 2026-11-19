@@ -8,11 +8,13 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 #include "core/encode_pacer.hpp"       // EncodePacer: which publishes are encoded
 #include "core/encoder_config.hpp"     // EncoderConfig, StreamLayout
 #include "core/geometry.hpp"           // LbGeom: band geometry arrives as one object
+#include "core/net_perf.hpp"           // EncPerfWindow: zero-heap telemetry
 #include "core/session_gate.hpp"       // SessionGate: the session hand-over
 #include "core/session_warmup.hpp"     // SessionWarmup: when a session's first frame is encoded
 #include "net/av_packet_queue.hpp"     // PacketQueue: encoder -> serve thread
@@ -47,7 +49,7 @@ public:
     // publish of a session resets the multi-view canvas gray; the session's
     // first frame is encoded once every source cell has a picture of this
     // session, or 200 ms after its start (core/session_warmup.hpp).
-    void publish( int tensor_fd, const LbGeom& band, int64_t ts_us = -1, int src_idx = 0 ) noexcept;
+    void publish( int tensor_fd, const LbGeom& band, int64_t ts_us = -1, int src_idx = 0, bool defer_encode = false ) noexcept;
 
     // NO SIGNAL publish (idle): RGA-copies the pre-rendered idle canvas
     // (gray + the plate) into the ring slot / composite canvas cells of
@@ -57,14 +59,18 @@ public:
     // without a session. Idle encodes share the pacer budget with live
     // ones and are NOT counted in --frames or the timing stats.
     void publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept;
+    void flush_dirty() noexcept;
 
     // True while the stream path is live (viewer connected in PULL
     // mode / UDP path open). The pipeline gates GPU box drawing on it:
     // recognition never sleeps, the output side sleeps without a viewer
     // (README, "Output side and recognition").
     bool viewer_active() const;
+    uint32_t session_epoch() const noexcept;
+    EncPerfWindow take_perf() noexcept;
 
 private:
+    void run_encoded( uint32_t epoch, std::chrono::steady_clock::time_point now ) noexcept;
     // Declaration order IS the shutdown order, read bottom-up (destruction
     // runs in reverse):
     //   1. session_  -- the serve thread: quit, queue stop, join. Nothing
@@ -97,6 +103,15 @@ private:
     EncodePacer pacer_;
     SessionWarmup warmup_;
     int64_t ts_us_ = -1;
+    bool canvas_dirty_ = false;
+    int64_t dirty_ts_us_ = -1;
+    EncPerfWindow perf_ {};
+    uint32_t perf_epoch_ = 0;
+    bool has_last_enc_ = false;
+    std::chrono::steady_clock::time_point last_enc_tp_ {};
+    uint64_t prev_eagain_cnt_ = 0;
+    uint64_t prev_pts_clamp_cnt_ = 0;
+    uint64_t prev_q_flush_cnt_ = 0;
     // Encoder -> serve thread packet queue (net/av_packet_queue.hpp): its
     // own mutex, separate from the gate's: network-side wakeups never touch
     // the encode critical section. Overflow flush, key gate, fail( epoch ).

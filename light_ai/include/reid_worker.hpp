@@ -20,8 +20,14 @@ class ReidWorker
         bool operator()( const ReidJob& job, ReidResult& res ) const noexcept;
     };
 
+    struct BigCorePin
+    {
+        const Log* log = nullptr;
+        void operator()() const noexcept;
+    };
+
 public:
-    ReidWorker( const char* model_path, int pool_size, const Log& log );
+    ReidWorker( const char* model_path, int pool_size, int infer_core, const Log& log );
     ~ReidWorker() = default;
     ReidWorker( const ReidWorker& ) = delete;
     ReidWorker& operator=( const ReidWorker& ) = delete;
@@ -40,5 +46,5 @@ public:
 private:
     RknnEngine engine_;
     int feat_dim_ = 0;
-    BasicReidQueue<EngineRunner> queue_;
+    BasicReidQueue<EngineRunner, BigCorePin> queue_;
 };

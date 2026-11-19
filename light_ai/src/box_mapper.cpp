@@ -15,6 +15,10 @@ void BoxMapper::fill( const DetList& dets, const TrajList& trajs, const Tracker&
         const TrackState& t = trajs.d[k];
         if ( t.state == TRACK_TENT || t.state == TRACK_CONF )
             track_box( t, b, boxes );
+    }
+    for ( int k = 0; k < trajs.n; ++k )
+    {
+        const TrackState& t = trajs.d[k];
         // trail after confirmation; DEAD ghosts keep drawing too: their
         // points fade by age and the ring drains via the tracker-side
         // per-frame eviction, so a ghost trail self-terminates when its
@@ -121,7 +125,7 @@ void BoxMapper::trail_points( const Tracker& tracker, const TrackState& t, int64
         p.y0 = py - 1.5f;
         p.x1 = px + 1.5f;
         p.y1 = py + 1.5f;
-        trail_color( t.id, p );
+        trail_color( t.display_id(), p );
         p.a = static_cast<uint8_t>( a );
         boxes.push( p );
     }

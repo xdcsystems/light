@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cmath>
 
 #include "core/auto_orient.hpp"
 
@@ -47,7 +48,8 @@ namespace
 
     float aspect_weight( const Detection& d ) noexcept
     {
-        if ( d.w <= 1.0f || d.h <= 1.0f )
+        if ( !std::isfinite( d.w ) || !std::isfinite( d.h ) || !std::isfinite( d.conf ) ||
+             d.w <= 1.0f || d.h <= 1.0f )
             return 0.0f;
         if ( is_vertical_coco( d.cls ) )
         {
@@ -61,6 +63,19 @@ namespace
             return d.conf * 0.25f;
         }
         return 0.0f;
+    }
+
+    std::array<float, 4> sanitize_scores( const float scores[4] ) noexcept
+    {
+        std::array<float, 4> adj {};
+        if ( scores == nullptr )
+            return adj;
+        for ( int i = 0; i < 4; ++i )
+        {
+            const float s = scores[i];
+            adj[i] = ( std::isfinite( s ) && s > 0.0f ) ? s : 0.0f;
+        }
+        return adj;
     }
 
     void find_top_two( const std::array<float, 4>& adj, int& best_idx, float& best_sc, float& second_sc ) noexcept
@@ -132,7 +147,8 @@ float score_detections( const DetList& dets ) noexcept
     for ( int i = 0; i < dets.n; ++i )
     {
         const Detection& d = dets.d[i];
-        if ( d.conf < kMinConf )
+        if ( !std::isfinite( d.conf ) || !std::isfinite( d.w ) || !std::isfinite( d.h ) ||
+             d.conf < kMinConf )
             continue;
         ++n_valid;
         if ( n_valid <= 8 )
@@ -229,11 +245,11 @@ AutoOrient::Result AutoOrient::commit_all4( const float scores[4] ) noexcept
     if ( !enabled_ || locked_ )
         return res;
 
-    std::array<float, 4> adj { scores[0], scores[1], scores[2], scores[3] };
+    std::array<float, 4> adj = sanitize_scores( scores );
     if ( exif_rot_ >= 0 )
     {
         const int ei = auto_orient::deg_to_idx( exif_rot_ );
-        if ( adj[ei] > 0.0f || !raw_portrait_ )
+        if ( adj[ei] > 0.0f )
             adj[ei] += kExifTieBoost;
     }
 
@@ -265,7 +281,7 @@ AutoOrient::Result AutoOrient::commit_all4( const float scores[4] ) noexcept
 
 bool AutoOrient::observe_single( int rot_deg, float score ) noexcept
 {
-    if ( !enabled_ || locked_ )
+    if ( !enabled_ || locked_ || !std::isfinite( score ) )
         return false;
     if ( phase_ == Phase::Watch )
     {

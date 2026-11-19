@@ -177,7 +177,18 @@ void NetPreview::go_live() noexcept
 {
     next_send_us_.store( 0, std::memory_order_relaxed );
     ring_.open();
+    session_epoch_.fetch_add( 1, std::memory_order_acq_rel );
     connected_.store( true, std::memory_order_release );
+}
+
+bool NetPreview::session_open() const noexcept
+{
+    return connected_.load( std::memory_order_acquire );
+}
+
+uint32_t NetPreview::session_epoch() const noexcept
+{
+    return session_epoch_.load( std::memory_order_acquire );
 }
 
 bool NetPreview::drain_session( AVFormatContext* fc, AVStream* st, uint64_t frame_step ) noexcept

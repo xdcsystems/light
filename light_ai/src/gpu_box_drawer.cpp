@@ -657,7 +657,12 @@ void GpuBoxDrawer::sync_cpu()
                 st_.destroy_sync( st_.dpy, sync );
             if ( r == EGL_CONDITION_SATISFIED_KHR )
                 return;
+            ++fence_tmo_cnt_;
             log_.warn() << "drawer: fence wait timed out, glFinish fallback\n";
+        }
+        else
+        {
+            ++fence_tmo_cnt_;
         }
     }
     // Known limit: glFinish() has no timeout. If the fence timed out

@@ -38,6 +38,8 @@ namespace
         CHECK( t, p.admit( 10000, EncodePacer::kBusyDepth - 1, 1 ) );
         CHECK( t, !p.admit( 29999, EncodePacer::kBusyDepth, 1 ) );
         CHECK( t, p.admit( 30000, EncodePacer::kBusyDepth, 1 ) );
+        CHECK( t, !p.admit( 69999, EncodePacer::kHeavyDepth, 1 ) );
+        CHECK( t, p.admit( 70000, EncodePacer::kHeavyDepth, 1 ) );
     }
 
     void epochs( TestRun& t )
@@ -77,6 +79,11 @@ namespace
         // A skipped idle tick still enters the new session: the stale stamp is dropped.
         CHECK( t, !p.admit_idle( 5000, EncodePacer::kBusyDepth, 3 ) );
         CHECK( t, p.admit( 6000, 0, 3 ) );
+        // [M-1]: out-of-order or negative admit_idle must not rewind a newer last_ts_us_.
+        CHECK( t, p.admit_idle( 4000, 0, 3 ) );
+        CHECK( t, p.admit_idle( -1, 0, 3 ) );
+        CHECK( t, !p.admit( 45000, 0, 3 ) );
+        CHECK( t, p.admit( 46000, 0, 3 ) );
     }
 }  // namespace
 

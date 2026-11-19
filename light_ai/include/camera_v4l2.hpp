@@ -63,6 +63,7 @@ public:
     size_t buffer_size( int index ) const { return bufs_[index].length; }
     int width() const { return width_; }
     int height() const { return height_; }
+    uint64_t skip_parts_cnt() const noexcept { return 0; }
 
 private:
     // The steps of setup_device(), in this order. The Status steps return ok, or the

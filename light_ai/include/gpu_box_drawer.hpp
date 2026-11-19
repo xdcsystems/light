@@ -148,6 +148,7 @@ public:
     // ignores acquire fences, so a fence fd handoff is not a valid
     // mechanism on this board (retired, see docs/state.md).
     bool ok() const { return ready_; }
+    uint64_t fence_timeouts() const noexcept { return fence_tmo_cnt_; }
 
 private:
     // The steps of init(), in this order. Each one logs its own failure;
@@ -178,4 +179,5 @@ private:
     const Log& log_;
     State st_ {};
     bool ready_ = false;
+    uint64_t fence_tmo_cnt_ = 0;
 };

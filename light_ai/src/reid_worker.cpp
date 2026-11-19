@@ -4,19 +4,31 @@
 #include <string>
 
 #include "core/fp16.hpp"
+#include "cpu_affinity.hpp"
 #include "reid_worker.hpp"
 
 namespace
 {
-    RknnEngine make_reid_engine( const char* model_path, int pool_size, const Log& log, int& out_dim )
+    unsigned choose_reid_core_mask( int pool_size, int infer_core ) noexcept
+    {
+        if ( pool_size > 1 )
+            return 0u;
+        if ( infer_core == 4 )
+            return 1u;
+        if ( infer_core == 7 )
+            return 0u;
+        return 4u;
+    }
+
+    RknnEngine make_reid_engine( const char* model_path, int pool_size, int infer_core, const Log& log, int& out_dim )
     {
         RknnEngine eng( model_path, log );
         const Status io_st = eng.setup_io( true, reid_cfg::kReidSlots );
         if ( !io_st.ok() )
             throw std::runtime_error( std::string( "reid: setup_io failed: " ) + io_st.what() );
 
-        // Pool 1 keeps YOLO on core 0/1 and pins Re-ID to core 2; pool 3 uses NPU auto.
-        const unsigned mask = ( pool_size <= 1 ) ? 4u : 0u;
+        // Pool 1 avoids colliding with YOLO's configured NPU core; pool 3 uses NPU auto.
+        const unsigned mask = choose_reid_core_mask( pool_size, infer_core );
         static_cast<void>( eng.set_core_mask( mask ) );
 
         if ( eng.input_width() < 32 || eng.input_height() < 32 )
@@ -93,8 +105,21 @@ bool ReidWorker::EngineRunner::operator()( const ReidJob& job, ReidResult& res )
     return extract_embedding( outs[0], engine->output_data( 0 ), res );
 }
 
-ReidWorker::ReidWorker( const char* model_path, int pool_size, const Log& log )
-  : engine_( make_reid_engine( model_path, pool_size, log, feat_dim_ ) )
-  , queue_( EngineRunner { &engine_ } )
+void ReidWorker::BigCorePin::operator()() const noexcept
+{
+    if ( log == nullptr )
+        return;
+    try
+    {
+        pin_current_thread_to_big_cores( "reid worker", *log );
+    }
+    catch ( ... )
+    {
+    }
+}
+
+ReidWorker::ReidWorker( const char* model_path, int pool_size, int infer_core, const Log& log )
+  : engine_( make_reid_engine( model_path, pool_size, infer_core, log, feat_dim_ ) )
+  , queue_( EngineRunner { &engine_ }, BigCorePin { &log } )
 {
 }

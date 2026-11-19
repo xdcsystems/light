@@ -169,6 +169,15 @@ namespace
         r.set.reset_stall_clocks( clk::now() );
         f = {};
         CHECK( t, r.set.next( 0, f ) == FrameStatus::NotReady );  // the clocks restarted: no stall
+
+        // Neighbor s0 keeps an independent stall clock when s1 detaches.
+        r.set[0].stamp_ok( clk::now() - std::chrono::milliseconds( 1900 ) );
+        r.set[1].stamp_ok( clk::now() - std::chrono::seconds( 3 ) );
+        CHECK( t, r.set.next( 0, f ) == FrameStatus::Detached && f.src == 1 );
+        r.set[1].detach();
+        r.set[0].stamp_ok( clk::now() - std::chrono::milliseconds( 2050 ) );
+        f = {};
+        CHECK( t, r.set.next( 0, f ) == FrameStatus::Detached && f.src == 0 && f.st.sys() == EIO );
     }
 
     void blocking( TestRun& t )

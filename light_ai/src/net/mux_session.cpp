@@ -14,6 +14,7 @@ extern "C"
 }
 
 #include "av_common.hpp"  // av_err_str
+#include "core/fixed_fmt.hpp"
 #include "core/log.hpp"
 #include "muxer_teardown.hpp"
 #include "net/mux_session.hpp"
@@ -58,7 +59,7 @@ void MuxSession::serve() noexcept
     const std::string url = tcp_pull ? std::string() 
                                      : ( "udp://" + cfg_.host + ':' + std::to_string( cfg_.port ) + "?pkt_size=1316" );
 
-    TcpPullServer tcp( cfg_.port, 2 * 1024 * 1024, 15 );
+    TcpPullServer tcp( cfg_.port, 256 * 1024, 5 );
     struct TcpReg
     {
         std::mutex& mx;
@@ -105,29 +106,41 @@ void MuxSession::serve() noexcept
 // (readability-function-size). drain_queue() owns the wait/pop loop;
 // mux_write() writes one packet with the late-join IDR-prepend logic
 // (ParamSetCache; the Annex B scans are annexb:: in core/param_set_cache.hpp).
-MuxSession::DrainEnd MuxSession::drain_queue( AVFormatContext* fc )
+MuxSession::DrainEnd MuxSession::drain_queue( AVFormatContext* fc, const TcpPullServer* tcp )
 {
+    MuxPerfWindow mperf {};
+    auto win_t0 = std::chrono::steady_clock::now();
+    uint64_t prev_ww = tcp != nullptr ? tcp->wait_writable_cnt() : 0;
     // The queue's key gate was armed by open() (late join mid-GOP must
     // not decode P-frames against a missing reference) and is re-armed by
     // an overflow flush; pop() drops packets until the first IDR.
     for ( ;; )
     {
+        const auto pop_t0 = std::chrono::steady_clock::now();
         const PacketQueue::Popped got = queue_.pop( mux_pkt_.slot() );
-        if ( got.what == PacketQueue::Pop::Stopped )
-            return DrainEnd::Stopped;
-        if ( got.what == PacketQueue::Pop::Failed )
-            return DrainEnd::Failed;
+        const double pop_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - pop_t0 ).count();
+        if ( pop_ms > mperf.pop_wait_ms_max )
+            mperf.pop_wait_ms_max = pop_ms;
+        if ( got.what == PacketQueue::Pop::Stopped || got.what == PacketQueue::Pop::Failed )
+        {
+            maybe_log_perf( mperf, win_t0, prev_ww, tcp, true );
+            return got.what == PacketQueue::Pop::Stopped ? DrainEnd::Stopped : DrainEnd::Failed;
+        }
         const int q_rem = got.left;
         // Ownership of the packet buffer moved into mux_pkt_ via
         // av_packet_move_ref; mux_write consumes and unrefs it without
         // freeing the preallocated AVPacket struct.
         const auto mw_t0 = std::chrono::steady_clock::now();
         const int r = mux_write( fc, mux_pkt_.get() );
-        const long mw_ms = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - mw_t0 ).count();
-        if ( mw_ms > 20 )
-            log_.warn() << "enc: mux_write stalled " << mw_ms << " ms (queue was " << q_rem << ")\n";
+        const double mw_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - mw_t0 ).count();
+        mperf.add_mux_write( mw_ms );
+        ++mperf.pkts;
+        if ( mw_ms > 20.0 )
+            log_.warn() << "enc: mux_write stalled " << static_cast<long>( mw_ms ) << " ms (queue was " << q_rem << ")\n";
+        maybe_log_perf( mperf, win_t0, prev_ww, tcp, false );
         if ( r < 0 )
         {
+            maybe_log_perf( mperf, win_t0, prev_ww, tcp, true );
             if ( r == AVERROR( EPIPE ) )
                 log_.info() << "enc: viewer disconnected (tcp), session ends\n";
             else if ( r == AVERROR( ETIMEDOUT ) )
@@ -137,6 +150,30 @@ MuxSession::DrainEnd MuxSession::drain_queue( AVFormatContext* fc )
             return DrainEnd::WriteFailed;
         }
     }
+}
+
+void MuxSession::maybe_log_perf( MuxPerfWindow& mperf,
+                                 std::chrono::steady_clock::time_point& win_t0,
+                                 uint64_t& prev_ww,
+                                 const TcpPullServer* tcp,
+                                 bool force ) noexcept
+{
+    const auto now = std::chrono::steady_clock::now();
+    const double elapsed = std::chrono::duration<double, std::milli>( now - win_t0 ).count();
+    if ( ( !force && elapsed < 5000.0 ) || mperf.pkts == 0 )
+        return;
+    const uint64_t ww_now = tcp != nullptr ? tcp->wait_writable_cnt() : 0;
+    mperf.wait_writable_cnt = static_cast<uint32_t>( ww_now - prev_ww );
+    prev_ww = ww_now;
+    mperf.pkt_q_max_depth = static_cast<uint32_t>( queue_.take_max_depth() );
+    log_.info() << "[perf] mux pkts=" << mperf.pkts
+                << " pop_max=" << Fixed { mperf.pop_wait_ms_max, 1 }
+                << " mw_hist=[" << mperf.mux_write_hist[0] << ',' << mperf.mux_write_hist[1] << ','
+                << mperf.mux_write_hist[2] << ',' << mperf.mux_write_hist[3]
+                << "] ww=" << mperf.wait_writable_cnt
+                << " pq_max=" << mperf.pkt_q_max_depth << '\n';
+    mperf.reset();
+    win_t0 = now;
 }
 
 int MuxSession::mux_write( AVFormatContext* fc, AVPacket* pkt )
@@ -338,7 +375,7 @@ void MuxSession::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
     // viewer stalls this loop, not publish(). The wait/pop loop and the
     // per-packet write with the IDR-prepend logic moved to drain_queue()
     // and mux_write() (tidy: readability-function-size).
-    const DrainEnd end = drain_queue( fc.p );
+    const DrainEnd end = drain_queue( fc.p, tcp_pull ? &tcp : nullptr );
 
     // Close order: the gate first (waits for an encode in progress, so
     // nothing is pushed after it), then the queue (the leftover packets

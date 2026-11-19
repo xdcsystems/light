@@ -35,12 +35,15 @@ public:
     // One frame consumed a CFR slot (encoded, or dropped on a full input queue).
     void advance() noexcept { ++counter_; }
 
+    uint64_t clamp_cnt() const noexcept { return clamp_cnt_; }
+
 private:
     bool vfr_;
     uint64_t counter_ = 0;    // CFR pts
     int64_t base_us_ = -1;    // VFR: session base
     int64_t last_pts_ = -1;   // VFR: last pts handed out
     int64_t frame_step_ = 1;  // muxer ticks per codec pts
+    uint64_t clamp_cnt_ = 0;  // VFR non-monotonic clamp counter
 };
 
 // Session-aware codec->muxer PTS filter for persistent encoders: shifts each
@@ -67,6 +70,8 @@ public:
     // (caller must av_packet_unref and discard).
     bool stamp_packet( bool has_pts, int64_t raw_pkt_pts, bool is_key, int64_t session_fpts,
                        int64_t& mux_pts_out ) noexcept;
+
+    uint64_t clamp_cnt() const noexcept { return pts_.clamp_cnt(); }
 
 private:
     PtsClock pts_;

@@ -234,13 +234,18 @@ NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
 void NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )
 {
     const int scratch = pool_.free_slot( slot );
-    // If multiple frames queued up in the TCP buffer during a Wi-Fi burst,
-    // advance to the freshest complete frame via a scratch slot so a failed
-    // or corrupt skip never clobbers the frame already in `slot`.
-    for ( int skip = 0; scratch >= 0 && skip < kSkipMax && part_buffered(); ++skip )
+    if ( scratch < 0 )
+        return;
+    // Pull any bytes already queued in the kernel socket buffer (0 ms poll)
+    // so a multi-frame Wi-Fi burst is collapsed to the freshest complete frame.
+    while ( !part_buffered() && sock_.fill( 0 ) == BufferedSocket::Fill::Data )
+    {
+    }
+    for ( int skip = 0; skip < kSkipMax && part_buffered(); ++skip )
     {
         uint32_t next_n = 0;
-        const Read sr = read_part( scratch, &next_n );
+        rx_slot_ = scratch;
+        const Read sr = step_nonblocking_part( scratch, 0, &next_n );
         if ( sr == Read::Oversized )
             continue;
         if ( sr != Read::Part )
@@ -253,6 +258,10 @@ void NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )
         {
             pool_.swap( slot, scratch );
             n = next_n;
+        }
+        ++skip_parts_cnt_;
+        while ( !part_buffered() && sock_.fill( 0 ) == BufferedSocket::Fill::Data )
+        {
         }
     }
 }

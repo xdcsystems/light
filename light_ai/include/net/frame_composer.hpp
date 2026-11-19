@@ -56,6 +56,9 @@ public:
     // imStrError detail is logged before the return).
     Status compose( int tensor_fd, const TilePlacement& tp, int slot, MppBuffer out );
 
+    // Multi-view deferred flush: copies the composite canvas into `out`.
+    Status flush_canvas( MppBuffer out );
+
     // NO SIGNAL frame: tile_absent( absent, nabs, s ) selects the cells that
     // get the plate. Multi-view: out == nullptr updates the canvas only.
     // Single view: out is required (the idle canvas is the frame).

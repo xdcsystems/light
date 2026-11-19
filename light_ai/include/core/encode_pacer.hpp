@@ -30,7 +30,8 @@ class EncodePacer
 public:
     enum
     {
-        kBusyDepth = 4  // queued packets at which the mux side counts as lagging
+        kBusyDepth = 4,   // queued packets at which the mux side counts as lagging
+        kHeavyDepth = 12  // deeper queue backlog: throttle VFR to 40 ms (25 fps)
     };
 
 public:

@@ -234,6 +234,25 @@ namespace
         CHECK( t, rejected( { "--log-level", "" } ) );
         CHECK( t, rejected( { "--log-level", "INFO" } ) );
     }
+
+    void check_ini_src_rot( TestRun& t )
+    {
+        using Status = CliOptions::ParseStatus;
+        const TempIni ini( "device = /dev/video5\n" );
+
+        Cli ini_rot;
+        CHECK( t, parse( ini_rot, { "--config", ini.path(), "--src-rot", "90" } ) == Status::Run );
+        CHECK( t, ini_rot.config().sources.size() == 1 && ini_rot.config().sources[0].uri == "/dev/video5" );
+        CHECK( t, !ini_rot.config().sources[0].rot_auto && ini_rot.config().sources[0].rot_deg == 90 );
+
+        Cli over_rot;
+        CHECK( t, parse( over_rot, { "--config", ini.path(), "--device", "/dev/video9", "--src-rot", "180" } ) == Status::Run );
+        CHECK( t, over_rot.config().sources.size() == 1 && over_rot.config().sources[0].uri == "/dev/video9" );
+        CHECK( t, !over_rot.config().sources[0].rot_auto && over_rot.config().sources[0].rot_deg == 180 );
+
+        CHECK( t, error_text( { "--src-rot", "90" },
+                              "--src-rot requires a preceding --device or --net-src (or --config source)\n" ) );
+    }
 }  // namespace
 
 void test_config( TestRun& t )
@@ -381,7 +400,9 @@ void test_config( TestRun& t )
         CHECK( t, parse( over, { "--frames", "7", "--config", ini.path(), "--device", "/dev/video9" } ) == Status::Run );
         CHECK( t, over.config().frames == 7 && over.config().stream.port == 4321 );
         CHECK( t, over.config().sources.size() == 1 && over.config().sources[0].uri == "/dev/video9" );
+
     }
+    check_ini_src_rot( t );
     {
         const TempIni unknown_key( "no_such_key = 1\n" );
         CHECK( t, rejected( { "--config", unknown_key.path() } ) );

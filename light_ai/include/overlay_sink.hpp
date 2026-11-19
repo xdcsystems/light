@@ -18,6 +18,7 @@
 #include "core/detection.hpp"    // DetList
 #include "core/frame_view.hpp"   // FrameView, TensorSet
 #include "core/global_track.hpp" // reid_cfg::kMaxSources
+#include "core/net_perf.hpp"     // OverlayPerfWindow, EncPerfWindow
 #include "core/track.hpp"        // TrajList
 #include "gpu_box_drawer.hpp"
 #include "net_encoder.h"
@@ -50,11 +51,18 @@ public:
     double draw_and_publish( const FrameView& frame,
                              const DetList& dets,
                              const TrajList& trajs,
-                             const Tracker& tracker ) noexcept;
+                             const Tracker& tracker,
+                             bool defer_encode = false ) noexcept;
 
     // NO SIGNAL idle publish (h264 path only): forwards to the encoder's
     // idle path; the raw NUT preview keeps its live-only diagnostic role.
     void publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept;
+    void flush_dirty() noexcept;
+    void reset_source( int src_idx ) noexcept;
+
+    OverlayPerfWindow take_perf() noexcept;
+    bool has_enc_perf() const noexcept { return enc_.has_value(); }
+    EncPerfWindow take_enc_perf() noexcept;
 
 private:
     struct TrackDispStab
@@ -66,6 +74,8 @@ private:
     using TrackStabList = PodList<TrackDispStab, TrajList::cap>;
 
     void init_gpu_drawer( bool cpu_draw, const TensorSet& tensors );
+    void reset_all_sources() noexcept;
+    void sync_viewer_session() noexcept;
     int find_stab_idx( const TrackStabList& list, int id, uint32_t gen ) const noexcept;
     void stabilize_display_tracks( int src_idx, TrajList& disp ) noexcept;
     bool draw_overlay_into_tensor( const FrameView& frame,
@@ -87,4 +97,9 @@ private:
     int model_w_ = 0;
     int model_h_ = 0;
     uint32_t stride_bytes_ = 0;
+    OverlayPerfWindow perf_ {};
+    uint64_t prev_fence_tmo_ = 0;
+    bool was_viewer_live_ = false;
+    uint32_t last_enc_epoch_ = 0;
+    uint32_t last_prev_epoch_ = 0;
 };

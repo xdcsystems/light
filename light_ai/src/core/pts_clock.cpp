@@ -33,7 +33,10 @@ int64_t PtsClock::next( int64_t ts_us, uint64_t frames_sent ) noexcept
         p = us_to_90k( ts_us - base_us_ );
     }
     if ( last_pts_ >= 0 && p <= last_pts_ )
+    {
         p = last_pts_ + 1;
+        ++clamp_cnt_;
+    }
     last_pts_ = p;
     return p;
 }

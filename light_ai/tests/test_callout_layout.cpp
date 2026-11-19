@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <limits>
 #include <string>
 
 #include "check.hpp"
@@ -21,6 +22,49 @@ namespace
         const int cr = ( lb.left & ~1 ) + ( lb.w & ~1 ) - 2;
         const int cb = ( lb.top & ~1 ) + ( lb.h & ~1 ) - 2;
         return r.x0 >= cl && r.y0 >= ct && r.x1 <= cr && r.y1 <= cb && r.x1 > r.x0 && r.y1 > r.y0;
+    }
+
+    void check_m4_m7_callout_fixes( TestRun& t )
+    {
+        // [M-7]: odd lb.left projects from lb.left (3) rather than even crop.x0 (2).
+        const LbGeom odd { 3, 637, 15, 363 };
+        {
+            TrajList trajs {};
+            trajs.push( TrackState { 1, TRACK_CONF, 20.0f, 100.0f, 0.0f, 0.0f, 40.0f, 80.0f, 2, 0, 1 } );
+            CalloutList out {};
+            compute_callouts( trajs, odd, 0.5f, 0.5f, { false }, out );
+            CHECK( t, out.n == 1 && out.d[0].box.x0 == 3 );
+        }
+        // [M-7]: NaN/non-positive dimensions are skipped cleanly without crash or UB.
+        {
+            TrajList trajs {};
+            trajs.push( TrackState { 1, TRACK_CONF, std::numeric_limits<float>::quiet_NaN(), 100.0f, 0.0f, 0.0f, 40.0f, 80.0f, 2, 0, 1 } );
+            trajs.push( TrackState { 2, TRACK_CONF, 200.0f, 100.0f, 0.0f, 0.0f, 0.0f, 80.0f, 2, 0, 2 } );
+            CalloutList out {};
+            compute_callouts( trajs, { 0, 640, 140, 360 }, 0.5f, 0.5f, { false }, out );
+            CHECK( t, out.n == 0 );
+        }
+        // [M-4]: (id, gen) hysteresis persists across global_id change, does not cross gen.
+        {
+            const LbGeom lb { 0, 640, 140, 360 };
+            CalloutHistory hist {};
+            CalloutList out {};
+            TrajList tr1 {};
+            tr1.push( TrackState { 1, TRACK_CONF, 1200.0f, 110.0f, 0.0f, 0.0f, 120.0f, 200.0f, 5, 0, 10 } );
+            compute_callouts( tr1, lb, 0.5f, 0.5f, { false }, hist, out );
+            CHECK( t, out.n == 1 && out.d[0].pill.x1 <= out.d[0].box.x0 );  // left side (slot 7)
+
+            TrajList tr2 {};
+            tr2.push( TrackState { 1, TRACK_CONF, 640.0f, 110.0f, 0.0f, 0.0f, 100.0f, 200.0f, 5, 7, 10 } );
+            compute_callouts( tr2, lb, 0.5f, 0.5f, { false }, hist, out );
+            CHECK( t, out.n == 1 && std::string( out.d[0].text ) == "person 7" );
+            CHECK( t, out.d[0].pill.x1 <= out.d[0].box.x0 );  // kept left side across global_id change
+
+            TrajList tr3 {};
+            tr3.push( TrackState { 1, TRACK_CONF, 640.0f, 110.0f, 0.0f, 0.0f, 100.0f, 200.0f, 5, 0, 11 } );
+            compute_callouts( tr3, lb, 0.5f, 0.5f, { false }, hist, out );
+            CHECK( t, out.n == 1 && out.d[0].pill.x0 >= out.d[0].box.x1 );  // new gen resets to right side
+        }
     }
 
 }  // namespace
@@ -119,4 +163,5 @@ void test_callout_layout( TestRun& t )
         compute_callouts( edge_tr, lb, sx, sy, { false }, hist, out_edge );
         CHECK( t, out_edge.n == 1 && out_edge.d[0].pill.x1 <= out_edge.d[0].box.x0 );
     }
+    check_m4_m7_callout_fixes( t );
 }

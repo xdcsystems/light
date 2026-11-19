@@ -22,11 +22,18 @@ enum class ReidSlotState : uint8_t
     Busy
 };
 
-template <class Runner>
+struct ReidNoopStart
+{
+    void operator()() const noexcept {}
+};
+
+template <class Runner, class OnStart = ReidNoopStart>
 class BasicReidQueue
 {
 public:
-    explicit BasicReidQueue( Runner runner ) : runner_( std::move( runner ) )
+    explicit BasicReidQueue( Runner runner, OnStart on_start = OnStart {} )
+      : runner_( std::move( runner ) )
+      , on_start_( std::move( on_start ) )
     {
         for ( auto& s : states_ )
             s.store( ReidSlotState::Free, std::memory_order_relaxed );
@@ -89,6 +96,7 @@ public:
 private:
     void worker_loop() noexcept
     {
+        on_start_();
         while ( true )
         {
             ReidJob job {};
@@ -122,6 +130,7 @@ private:
 
 private:
     Runner runner_;
+    OnStart on_start_;
     std::array<std::atomic<ReidSlotState>, reid_cfg::kReidSlots> states_ {};
     PodRing<ReidJob, reid_cfg::kReidQueueCap> jobs_ {};
     PodRing<ReidResult, reid_cfg::kReidQueueCap> results_ {};
