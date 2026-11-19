@@ -258,4 +258,4 @@
 |---|---|---|---|
 | PR 1 (Critical/High) | Завершён | 2026-11-19 | `fix/audit-p2-pr1` → PR #88 → влит в `fix/audit-p2` |
 | PR 2 (High/Medium) | Завершён | 2026-11-19 | `fix/audit-p2-pr2` → PR #89 → влит в `fix/audit-p2`  |
-| PR 3 (Medium-Defense/Low) | Не начат | — | — |
+| PR 3 (Medium-Defense/Low) | Завершён | 2026-11-19 | `fix/audit-p2-pr3` → PR в `fix/audit-p2` (issue #91, этапы 3a и 3b) |
