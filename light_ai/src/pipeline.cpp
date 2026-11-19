@@ -453,7 +453,8 @@ bool Pipeline::submit_orient_probe( int src, int fd_src, int rot, int job_idx, i
     const int yuv_fmt = ( ch.out_fmt() == MPP_FMT_YUV420SP ) ? 0 : 1;
     const Status rga_st = rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd,
                                        rga_limits::aux_side( raw_w ), rga_limits::aux_side( raw_h ),
-                                       &lg, yuv_fmt, rot, ch.hor_stride(), ch.ver_stride() );
+                                       &lg, yuv_fmt, rot, ch.hor_stride(), ch.ver_stride(),
+                                       rga_limits::rgb888_stride_px( tn.stride_bytes, model_w_ ) );
     if ( rga_st.ok() )
         tensor_band_[static_cast<size_t>( slot )] = elb;
     InferJob job { src, ew, eh, job_idx, -1, rga_st.ok(), elb, {} };
@@ -561,7 +562,8 @@ void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int
     const Status rga_st =
             rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd,
                          rga_limits::aux_side( raw_w ), rga_limits::aux_side( raw_h ), &lg,
-                         ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1, rot, ch.hor_stride(), ch.ver_stride() );
+                         ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1, rot, ch.hor_stride(), ch.ver_stride(),
+                         rga_limits::rgb888_stride_px( tn.stride_bytes, model_w_ ) );
     if ( rga_st.ok() )
     {
         cal_dumper_.maybe( frame_idx, tn.fd, static_cast<const uint8_t*>( tn.data ), tn.size );

@@ -16,11 +16,6 @@ namespace
         return wrapbuffer_fd( fd, w, h, fmt, w_stride, h_stride );
     }
 
-    rga_buffer_t wrap( int fd, int w, int h, int fmt )
-    {
-        return wrap( fd, w, h, w, h, fmt );
-    }
-
     using rga_limits::align16;
 
     // An unknown (0) stride: the 16-aligned size, how every frame buffer here is laid out.
@@ -74,7 +69,8 @@ RgaResizer::RgaResizer( const Log& log ) : log_( log )
 }
 
 Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux,
-                           LbGeom* geom, int src_fmt, int rot_deg, int src_w_stride, int src_h_stride ) const
+                           LbGeom* geom, int src_fmt, int rot_deg, int src_w_stride, int src_h_stride,
+                           int dst_w_stride ) const
 {
     int pass_fmt = ( src_fmt == 0 ) ? RK_FORMAT_YCbCr_420_SP : RK_FORMAT_YCbCr_422_SP;
     int ws = resolve_stride( src_w_stride, w_src );
@@ -107,7 +103,9 @@ Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_d
     // The band is the real pass-2 dst rect: RGA3 rejects a side < 68 px (an
     // extreme aspect) and a single pass beyond 8x (a source > 16x the model
     // even after the halving aux pass). Checked here so the cause is named
-    // instead of an opaque im2d error.
+    // instead of an opaque im2d error. Known edge: band_geom floors the band,
+    // so a source within one pixel of exactly 8x (e.g. 5119 px into 640 ->
+    // band 639) passes needs_two_pass yet fails here -- no real source is near it.
     if ( !rga_limits::rga3_size_ok( g.w, g.h ) || !rga_limits::ratio_ok( eff_w, g.w ) || !rga_limits::ratio_ok( eff_h, g.h ) )
     {
         log_.error() << "RGA: " << eff_w << 'x' << eff_h << " -> band " << g.w << 'x' << g.h
@@ -118,7 +116,9 @@ Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_d
     // YUV420SP/422SP source rects must have even sides; a decoder that hands
     // out an odd size loses its last row/column instead of failing the job.
     rga_buffer_t src = wrap( src_fd, w_src, h_src, ws, hs, pass_fmt );
-    rga_buffer_t dst = wrap( dst_fd, w_dst, h_dst, RK_FORMAT_RGB_888 );
+    // The tensor rows as RknnEngine bound them: every reader (NPU, drawer,
+    // composer, dumper, preview) uses this stride, so the writer must too.
+    rga_buffer_t dst = wrap( dst_fd, w_dst, h_dst, dst_w_stride > 0 ? dst_w_stride : w_dst, h_dst, RK_FORMAT_RGB_888 );
     const im_rect src_rect { 0, 0, rga_limits::even_down( w_src ), rga_limits::even_down( h_src ) };
     if ( Status st = rga_check( improcess( src, dst, {}, src_rect, { g.left, g.top, g.w, g.h }, {},
                                            rga_rot_usage( rot_deg ) ),

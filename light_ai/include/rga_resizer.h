@@ -24,7 +24,6 @@ public:
         int w_stride = 0;
     };
 
-
     // Pins the jobs to RGA3 core0; failures go to log (`err` stream).
     explicit RgaResizer( const Log& log );
     // src: YUVSP (w_src x h_src; 420SP by default, see src_fmt below),
@@ -37,6 +36,7 @@ public:
     // the actual decoder output layout (MppDecoder::out_fmt).
     // src_w_stride / src_h_stride: the source strides; 0 = the 16-aligned
     // w_src / h_src (how MppDecoder allocates its frames).
+    // dst_w_stride: the tensor row in pixels (TensorRef::stride_bytes / 3); 0 = w_dst.
     // aux (two-pass) is NV12 with 16-aligned strides: the caller allocates at
     // least align16(w_aux) * align16(h_aux) * 3 / 2 bytes (SourceChannel: x2).
     // The MJPEG decoder follows the stream subsampling and ignores
@@ -47,7 +47,8 @@ public:
     // with the raw IM_STATUS in sys()); geom stays untouched then.
     // An odd source side is cropped down to even (YUV rects need even sides).
     Status resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux,
-                   LbGeom* geom, int src_fmt = 0, int rot_deg = 0, int src_w_stride = 0, int src_h_stride = 0 ) const;
+                   LbGeom* geom, int src_fmt = 0, int rot_deg = 0, int src_w_stride = 0, int src_h_stride = 0,
+                   int dst_w_stride = 0 ) const;
     // Crops RGB888 sub-rect from model tensor -> dst RGB888 Re-ID tensor: routes >= 68x68
     // crops to RGA3 (IOMMU) and < 68 px crops to RGA2 (< 4G DMA32). Enforces 1/8x .. 8x scale bounds.
     // src / dst carry their row strides (TensorRef::stride_bytes / 3; 0 = tight).

@@ -11,8 +11,8 @@
 #include "core/frame_view.hpp"
 #include "core/glyph_font.hpp"
 #include "core/log.hpp"
-#include "core/status.hpp"
 #include "core/rga_limits.hpp"  // rgb888_stride_px
+#include "core/status.hpp"
 #include "dma_sync.hpp"
 #include "timings.hpp"
 
