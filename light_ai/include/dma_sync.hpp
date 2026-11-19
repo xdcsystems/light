@@ -85,10 +85,7 @@ inline void cache_clean( const void* p, size_t len )
         __asm__ volatile( "dc cvac, %0" :: "r"( addr ) : "memory" );
     __asm__ volatile( "dsb sy" ::: "memory" );  // NOLINT(hicpp-no-assembler): barrier required after DC ops
 #else
-    // No cache-maintenance instruction on this arch; the builtin is
-    // a no-op there - the cross-check build compiles and stays honest.
-    auto* b = static_cast<char*>( const_cast<void*>( p ) );
-    __builtin___clear_cache( b, b + len );
+    // x86 is DMA-coherent; nothing to clean (p and len are used by the early return).
 #endif
 }
 
