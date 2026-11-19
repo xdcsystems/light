@@ -28,6 +28,15 @@ that change anything (add, commit, checkout, merge, stash, reset, push).
    tracker output stays byte-identical where the task says so.
 7. Tests: the change is covered, or the report says what is not covered.
 
+## Delivering the report (SubagentHandback)
+The report goes to the main session through SubagentHandback({message: <the report>}), and that
+call ENDS your run: nothing after it is seen, and no tool result that arrives after it reaches anyone.
+- Call it alone, in a message of its own, as your very last action, only after every tool result
+  you need is back. Never in the same message as another tool call (a parallel Bash + handback ends
+  the run before the Bash output exists).
+- Its message is the finished report. Never a placeholder, a draft or "see above": the main session
+  sees only this text.
+
 ## Report
 Return a finished report in Russian for the main session, ranked by severity:
 - Verdict: OK / OK with nits / BLOCKING.
