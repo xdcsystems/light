@@ -10,4 +10,7 @@ src/x.cpp:6: nolint-reason: custom-no-virtual -- NOLINT(custom-...) needs ': <re
 src/x.cpp:7: nolint: custom-no-static-local -- a project rule switched off: only at the sites of scripts/rules_allow.txt
 src/x.cpp:9: nolint-blanket -- NOLINT without a check list (clang-tidy reads one anywhere in a line, prose too) switches the custom checks off
 src/x.cpp:11: nolint: * -- a project rule switched off: only at the sites of scripts/rules_allow.txt
+src/x.cpp:14: nolint: custom-no-catch-all -- a project rule switched off: only at the sites of scripts/rules_allow.txt
+src/x.cpp:15: nolint: *-catch-all -- a project rule switched off: only at the sites of scripts/rules_allow.txt
+src/x.cpp:15: nolint: cust* -- a project rule switched off: only at the sites of scripts/rules_allow.txt
 scripts/rules_allow.txt:4: stale: src/gone.cpp nolint custom-no-catch-all -- matches no finding

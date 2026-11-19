@@ -192,6 +192,11 @@ else
   tail -n +3 "$SELF/lint.diff"
   SELF_FAIL=1
 fi
+if [ "$SELF_FAIL" -ne 0 ]; then
+  # a rule that does not fire on its fixture cannot vouch for the tree: no point in the passes
+  echo "tidy: FAIL -- the rules self-test failed (logs: $SELF); fix the rule or its fixture first"
+  exit 1
+fi
 bash "$HERE/rules_lint.sh" > "$SELF/project-lint.log"
 LINT_RC=$?
 cat "$SELF/project-lint.log"

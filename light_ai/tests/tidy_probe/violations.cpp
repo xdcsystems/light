@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <new>
+#include <vector>
 
 int g_counter = 0;                         // custom-no-global-var
 static int file_static_fn()                // custom-no-file-static
@@ -31,8 +33,9 @@ struct WithStatic
 };
 struct Holder
 {
-    std::unique_ptr<int> p;                // custom-no-smart-ptr (by type: default-constructed)
+    std::unique_ptr<int> p;                // custom-no-smart-ptr x2 (the field's type, the written type)
 };
+std::vector<std::shared_ptr<int>>* g_list = nullptr;  // custom-no-global-var, custom-no-smart-ptr (a template argument)
 
 // readability-function-cognitive-complexity: 1 + 2 + 3 + 4 + 5 + (6 + 1) = 22 > 20
 int tangled( int a, int b, int c )
@@ -56,10 +59,15 @@ int use()
     delete p;                              // custom-no-new-delete
     void* m = std::malloc( 4 );            // custom-no-new-delete (the malloc family)
     std::free( m );                        // custom-no-new-delete
+    void* raw = ::operator new( 8 );       // custom-no-new-delete (operator new)
+    ::operator delete( raw );              // custom-no-new-delete (operator delete)
+    std::make_shared<int>( 6 );            // custom-no-smart-ptr (a discarded make_shared)
     const int k = 5;
     const int* q = const_cast<int*>( &k ); // custom-no-const-cast
     std::printf( "%d\n", v );              // custom-no-printf
+    std::fwrite( "x", 1, 1, stdout );      // custom-no-printf (C stdio output)
     std::cout << local;                    // custom-no-std-stream
+    std::wcout << L"w";                    // custom-no-std-stream (the w- form)
     try
     {
         std::cout.flush();                 // custom-no-std-stream
@@ -67,6 +75,6 @@ int use()
     catch ( ... )                          // custom-no-catch-all
     {
     }
-    return *q + g_counter + file_static_fn() + t_local + Iface {}.f() + WithStatic::sfn() + Derived {}.b
+    return *q + g_counter + static_cast<int>( g_list != nullptr ) + file_static_fn() + t_local + Iface {}.f() + WithStatic::sfn() + Derived {}.b
            + static_cast<int>( Holder {}.p != nullptr ) + tangled( 1, 1, 1 );
 }

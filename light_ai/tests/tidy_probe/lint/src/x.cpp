@@ -11,3 +11,6 @@ int d();  // NOLINT(google-readability-casting): not a custom check, not counted
 // NOLINTBEGIN(*): switches every check off
 int e();
 // NOLINTEND(*)
+int g();  // NOLINT(readability-x): a reason NOLINT(custom-no-catch-all): a second one in the same line
+int h();  // NOLINT(*-catch-all,cust*): globs that clang-tidy expands
+int i();  // NOLINT(custom-no-such-check): not a real check, switches nothing off

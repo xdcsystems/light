@@ -79,17 +79,21 @@ CustomChecks:
   # No manual heap allocation.
   - Name: no-new-delete
     Query: |
-      match stmt(anyOf(cxxNewExpr(), cxxDeleteExpr(), callExpr(callee(functionDecl(hasAnyName("::malloc", "::calloc", "::realloc", "::free", "::aligned_alloc", "::posix_memalign", "::valloc", "::strdup", "::strndup", "::std::malloc", "::std::calloc", "::std::realloc", "::std::free", "::std::aligned_alloc")))))).bind("d")
+      match stmt(anyOf(cxxNewExpr(), cxxDeleteExpr(), callExpr(callee(functionDecl(hasAnyName("::malloc", "::calloc", "::realloc", "::free", "::aligned_alloc", "::posix_memalign", "::valloc", "::strdup", "::strndup", "::operator new", "::operator new[]", "::operator delete", "::operator delete[]")))))).bind("d")
     Diagnostic:
       - BindName: d
-        Message: "manual heap allocation (new / delete / malloc family): use fixed-size members (CONTRIBUTING, No manual heap allocation)"
+        Message: "new / delete (placement new too), operator new / delete or the malloc family: use fixed-size members (CONTRIBUTING, No manual heap allocation)"
         Level: Warning
   - Name: no-smart-ptr
-    # by type: any variable, field, parameter or return type, also through a typedef, a reference or a pointer
+    # by type: a declaration of that type (variable, field, parameter, return; through a typedef, reference or
+    # pointer), any written type (also a template argument: std::vector<std::unique_ptr<T>>, sizeof), and the
+    # make_unique / make_shared / allocate_shared calls (a discarded temporary, a deduced type)
     Query: |
       let SP cxxRecordDecl(hasAnyName("::std::unique_ptr", "::std::shared_ptr", "::std::weak_ptr"))
       let T qualType(hasCanonicalType(anyOf(hasDeclaration(SP), references(hasDeclaration(SP)), pointsTo(hasDeclaration(SP)))))
       match decl(anyOf(declaratorDecl(hasType(T)), functionDecl(returns(T)))).bind("d")
+      match typeLoc(loc(qualType(hasCanonicalType(hasDeclaration(SP))))).bind("d")
+      match callExpr(callee(functionDecl(hasAnyName("::std::make_unique", "::std::make_shared", "::std::allocate_shared")))).bind("d")
     Diagnostic:
       - BindName: d
         Message: "std::unique_ptr / shared_ptr / weak_ptr: use fixed-size members (CONTRIBUTING, No manual heap allocation)"
@@ -105,17 +109,17 @@ CustomChecks:
   # I/O and logging: iostream only, diagnostics through Log, only src/main.cpp owns std::cout / std::cerr.
   - Name: no-printf
     Query: |
-      match callExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), callee(functionDecl(hasAnyName("::printf", "::fprintf", "::sprintf", "::snprintf", "::vprintf", "::vfprintf", "::vsprintf", "::vsnprintf", "::puts", "::fputs", "::putchar", "::std::printf", "::std::fprintf", "::std::sprintf", "::std::snprintf", "::std::vsnprintf", "::std::puts", "::std::fputs")))).bind("d")
+      match callExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), callee(functionDecl(hasAnyName("::printf", "::fprintf", "::sprintf", "::snprintf", "::vprintf", "::vfprintf", "::vsprintf", "::vsnprintf", "::dprintf", "::puts", "::fputs", "::putchar", "::fputc", "::putc", "::fwrite", "::perror", "::wprintf", "::fwprintf", "::swprintf", "::fputws")))).bind("d")
     Diagnostic:
       - BindName: d
-        Message: "printf family: use iostream through Log (CONTRIBUTING, I/O & logging)"
+        Message: "C stdio output (printf family, puts, fwrite, perror, ...): use iostream through Log (CONTRIBUTING, I/O & logging)"
         Level: Warning
   - Name: no-std-stream
     Query: |
-      match declRefExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), unless(isExpansionInFileMatching("/src/main[.]cpp$")), to(varDecl(hasAnyName("::std::cout", "::std::cerr", "::std::clog")))).bind("d")
+      match declRefExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), unless(isExpansionInFileMatching("/src/main[.]cpp$")), to(varDecl(hasAnyName("::std::cout", "::std::cerr", "::std::clog", "::std::wcout", "::std::wcerr", "::std::wclog")))).bind("d")
     Diagnostic:
       - BindName: d
-        Message: "std::cout / cerr / clog outside src/main.cpp: use the injected const Log& (CONTRIBUTING, I/O & logging)"
+        Message: "std::cout / cerr / clog (and the w- forms) outside src/main.cpp: use the injected const Log& (CONTRIBUTING, I/O & logging)"
         Level: Warning
   # Error model: no catch (...) except the documented startup sites (CONTRIBUTING, scripts/rules_allow.txt).
   - Name: no-catch-all

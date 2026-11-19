@@ -8,10 +8,12 @@
 #   header-ext       a .h header: new headers use .hpp (the nine legacy names are in the allowlist)
 #   include-order    a <...> include after the first "..." include (system and SDK headers first)
 #   banned-include   GStreamer or OpenCV (<gst/...>, <gstreamer...>, <opencv...>)
-#   core-include     include/core/ and src/core/ include only the C++17 standard library, core/*, pod_list.hpp
-#                    and pod_ring.hpp (SDK-free core: the host tests build it)
-#   nolint           a NOLINT / NOLINTNEXTLINE / NOLINTBEGIN naming a custom-* check (or '*'): it switches a project
-#                    rule off, so each one must be in the allowlist (CONTRIBUTING lists the sites)
+#   core-include     include/core/ and src/core/ include only the C++17 standard library headers (the C++ names:
+#                    <cstdint>, not <stdint.h>), core/*, pod_list.hpp and pod_ring.hpp (SDK-free core: host tests)
+#   nolint           a NOLINT / NOLINTNEXTLINE / NOLINTBEGIN whose check list switches a custom-* check off: an
+#                    entry matching one of the names in scripts/tidy_rules.yaml as clang-tidy globs it ('*',
+#                    'cust*', '*-catch-all'); every NOLINT of a line counts. Each one must be in the allowlist
+#                    (CONTRIBUTING lists the sites)
 #   nolint-reason    such a NOLINT(...) without ": <reason>" after it
 #   nolint-blanket   a NOLINT without a check list, prose included (clang-tidy honours one anywhere in a line):
 #                    it would switch the custom checks off too
@@ -27,10 +29,15 @@ if [ ! -d "$ROOT" ]; then
   exit 2
 fi
 ROOT="$(cd "$ROOT" && pwd -P)"
-exec python3 -I - "$ROOT" <<'PYEOF'
-import os, re, sys
+exec python3 -I - "$ROOT" "$HERE/tidy_rules.yaml" <<'PYEOF'
+import fnmatch, os, re, sys
 
 root = sys.argv[1]
+with open(sys.argv[2], encoding="utf-8") as f:  # the custom check names, as clang-tidy names them
+    CUSTOM = ["custom-" + m for m in re.findall(r'^\s*-\s*Name:\s*(\S+)', f.read(), re.M)]
+if not CUSTOM:
+    print("rules-lint: FAIL -- no custom check names in " + sys.argv[2])
+    sys.exit(1)
 MAX_COLS = 140
 STD = set("""algorithm any array atomic bitset cassert cctype cerrno cfenv cfloat charconv chrono cinttypes climits
 clocale cmath codecvt complex condition_variable csetjmp csignal cstdarg cstddef cstdint cstdio cstdlib cstring
@@ -41,7 +48,8 @@ streambuf string string_view system_error thread tuple type_traits typeindex typ
 utility valarray variant vector""".split())
 CORE_LOCAL = ("pod_list.hpp", "pod_ring.hpp")
 INC = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]')
-NOLINT = re.compile(r'NOLINT(NEXTLINE|BEGIN|END)?(\(([^)]*)\))?(.*)')
+NOLINT = re.compile(r'NOLINT(NEXTLINE|BEGIN|END)?')
+PAREN = re.compile(r'\(([^)]*)\)')
 BANNED = ("gst/", "gstreamer", "opencv")
 
 findings = []  # (path, line, rule, detail, message)
@@ -52,20 +60,24 @@ def add(path, line, rule, detail, message):
 
 
 def check_nolint(rel, n, text):
-    for m in NOLINT.finditer(text):
-        kind, paren, checks, rest = m.group(1) or "", m.group(2), m.group(3), m.group(4)
+    # every NOLINT of the line: its own (...) right after it, its reason up to the next NOLINT
+    marks = list(NOLINT.finditer(text))
+    for i, m in enumerate(marks):
+        kind = m.group(1) or ""
+        after = text[m.end():marks[i + 1].start() if i + 1 < len(marks) else len(text)]
+        paren = PAREN.match(after)
+        if kind == "END":  # an END only closes a BEGIN, reported there
+            continue
         if paren is None:
-            if kind != "END":  # a bare NOLINTEND closes a blanket NOLINTBEGIN, reported there
-                add(rel, n, "nolint-blanket", "",
-                    "NOLINT without a check list (clang-tidy reads one anywhere in a line, prose too) "
-                    "switches the custom checks off")
+            add(rel, n, "nolint-blanket", "",
+                "NOLINT without a check list (clang-tidy reads one anywhere in a line, prose too) "
+                "switches the custom checks off")
             continue
-        custom = [c.strip() for c in checks.split(",") if c.strip() == "*" or c.strip().startswith("custom")]
-        if kind == "END":
-            continue
+        entries = [c.strip() for c in paren.group(1).split(",") if c.strip()]
+        custom = [c for c in entries if any(fnmatch.fnmatchcase(name, c) for name in CUSTOM)]
         for c in custom:
             add(rel, n, "nolint", c, "a project rule switched off: only at the sites of scripts/rules_allow.txt")
-        if custom and not re.match(r'\s*:\s*\S', rest):
+        if custom and not re.match(r'\s*:\s*\S', after[paren.end():]):
             add(rel, n, "nolint-reason", ",".join(custom), "NOLINT(custom-...) needs ': <reason>' after it")
 
 
