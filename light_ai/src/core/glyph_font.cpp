@@ -1,54 +1,17 @@
-// Proportional DejaVu Sans font implementation on top of the generated atlas
-// in glyph_font_table.hpp (147 glyphs, 18x18 cells, single-column strip).
-// Replaces the former hand-drawn table: glyphs come from the generated table.
+// The label font functions on top of the generated atlas (glyph_font_table.hpp,
+// tools/gen_glyph_font.py). No state: everything reads the constexpr tables.
 
-#include <cstring>
+#include <algorithm>
+#include <cmath>
 
-#include "core/glyph_font_table.hpp"
 #include "core/glyph_font.hpp"
+#include "core/glyph_font_table.hpp"
 
 namespace glyph_font
 {
     namespace
     {
-        // Codepoints in exact atlas order; mirrors kGlyphChars from the table.
-        // Виртуальный глиф пробела и solid-тексель для рамок
-        // constexpr int kGlyphSpace = kGlyphCount;
-        // constexpr int kSpaceAdv = 5;
-        // constexpr int kSolidX = 2;
-        // constexpr int kSolidY = 744;
-
-constexpr uint32_t kCodepoints[ kGlyphCount ] = {
-            0x0030u, 0x0031u, 0x0032u, 0x0033u, 0x0034u, 0x0035u,
-            0x0036u, 0x0037u, 0x0038u, 0x0039u, 0x0041u, 0x0042u,
-            0x0043u, 0x0044u, 0x0045u, 0x0046u, 0x0047u, 0x0048u,
-            0x0049u, 0x004Au, 0x004Bu, 0x004Cu, 0x004Du, 0x004Eu,
-            0x004Fu, 0x0050u, 0x0051u, 0x0052u, 0x0053u, 0x0054u,
-            0x0055u, 0x0056u, 0x0057u, 0x0058u, 0x0059u, 0x005Au,
-            0x0061u, 0x0062u, 0x0063u, 0x0064u, 0x0065u, 0x0066u,
-            0x0067u, 0x0068u, 0x0069u, 0x006Au, 0x006Bu, 0x006Cu,
-            0x006Du, 0x006Eu, 0x006Fu, 0x0070u, 0x0071u, 0x0072u,
-            0x0073u, 0x0074u, 0x0075u, 0x0076u, 0x0077u, 0x0078u,
-            0x0079u, 0x007Au, 0x0410u, 0x0411u, 0x0412u, 0x0413u,
-            0x0414u, 0x0415u, 0x0401u, 0x0416u, 0x0417u, 0x0418u,
-            0x0419u, 0x041Au, 0x041Bu, 0x041Cu, 0x041Du, 0x041Eu,
-            0x041Fu, 0x0420u, 0x0421u, 0x0422u, 0x0423u, 0x0424u,
-            0x0425u, 0x0426u, 0x0427u, 0x0428u, 0x0429u, 0x042Au,
-            0x042Bu, 0x042Cu, 0x042Du, 0x042Eu, 0x042Fu, 0x0430u,
-            0x0431u, 0x0432u, 0x0433u, 0x0434u, 0x0435u, 0x0451u,
-            0x0436u, 0x0437u, 0x0438u, 0x0439u, 0x043Au, 0x043Bu,
-            0x043Cu, 0x043Du, 0x043Eu, 0x043Fu, 0x0440u, 0x0441u,
-            0x0442u, 0x0443u, 0x0444u, 0x0445u, 0x0446u, 0x0447u,
-            0x0448u, 0x0449u, 0x044Au, 0x044Bu, 0x044Cu, 0x044Du,
-            0x044Eu, 0x044Fu, 0x0023u, 0x2116u, 0x002Eu, 0x002Cu,
-            0x003Bu, 0x003Au, 0x0021u, 0x003Fu, 0x0028u, 0x0029u,
-            0x007Bu, 0x007Du, 0x00ABu, 0x00BBu, 0x2013u, 0x2014u,
-            0x00D7u, 0x00B7u, 0x00B0u
-        };
-
-        constexpr int kGlyphIndexQuestion = 135;  // '?'
-        constexpr GlyphMetric kSpaceMetric = { 0, 0, 0, 0, kSpaceAdv };
-        constexpr uint8_t kBlankCell[ kGlyphBytes ] = {};
+        constexpr GlyphMetric kSpaceMetric = { 0, 0, 0, 0, 0, 0, kSpaceAdv };
 
         constexpr int question_index() noexcept
         {
@@ -58,7 +21,8 @@ constexpr uint32_t kCodepoints[ kGlyphCount ] = {
             }
             return -1;
         }
-        static_assert( question_index() == 135, "charset order mismatch" );
+        constexpr int kGlyphIndexQuestion = question_index();
+        static_assert( kGlyphIndexQuestion >= 0, "the charset has no '?' fallback" );
 
         const GlyphMetric& metric_at( int idx ) noexcept
         {
@@ -66,13 +30,6 @@ constexpr uint32_t kCodepoints[ kGlyphCount ] = {
             if ( idx < 0 || idx >= kGlyphCount ) return kGlyphMetrics[ kGlyphIndexQuestion ];
             return kGlyphMetrics[ idx ];
         }
-    }
-
-    const uint8_t* glyph_alpha( int idx ) noexcept
-    {
-        if ( idx == kGlyphSpace ) return kBlankCell;
-        if ( idx < 0 || idx >= kGlyphCount ) idx = kGlyphIndexQuestion;
-        return kAtlas + idx * kGlyphBytes;
     }
 
     int glyph_index( uint32_t cp ) noexcept
@@ -129,9 +86,9 @@ constexpr uint32_t kCodepoints[ kGlyphCount ] = {
         return count;
     }
 
-    void build_atlas( std::array<uint8_t, kAtlasBytes>& atlas ) noexcept
+    const GlyphMetric& glyph_metrics( int idx ) noexcept
     {
-        std::memcpy( atlas.data(), kAtlas, kAtlasBytes );
+        return metric_at( idx );
     }
 
     void glyph_uv( int idx, float& u0, float& v0, float& u1, float& v1 ) noexcept
@@ -142,17 +99,40 @@ constexpr uint32_t kCodepoints[ kGlyphCount ] = {
             u0 = 0.0f; v0 = 0.0f; u1 = 0.0f; v1 = 0.0f;
             return;
         }
-        const int row = ( idx == kGlyphSpace ? 0 : idx ) * kGlyphH;
-        u0 = static_cast<float>( m.dx ) / static_cast<float>( kAtlasW );
-        v0 = static_cast<float>( row + m.dy ) / static_cast<float>( kAtlasH );
-        u1 = static_cast<float>( m.dx + m.w ) / static_cast<float>( kAtlasW );
-        v1 = static_cast<float>( row + m.dy + m.h ) / static_cast<float>( kAtlasH );
+        u0 = static_cast<float>( m.ax ) / static_cast<float>( kAtlasW );
+        v0 = static_cast<float>( m.ay ) / static_cast<float>( kAtlasH );
+        u1 = static_cast<float>( m.ax + m.w ) / static_cast<float>( kAtlasW );
+        v1 = static_cast<float>( m.ay + m.h ) / static_cast<float>( kAtlasH );
     }
 
     void solid_uv( float& u, float& v ) noexcept
     {
-        u = ( static_cast<float>( kSolidX ) + 0.5f ) / static_cast<float>( kAtlasW );
-        v = ( static_cast<float>( kSolidY ) + 0.5f ) / static_cast<float>( kAtlasH );
+        u = static_cast<float>( kSolidX ) / static_cast<float>( kAtlasW );
+        v = static_cast<float>( kSolidY ) / static_cast<float>( kAtlasH );
+    }
+
+    const uint8_t* atlas() noexcept
+    {
+        return kAtlas;
+    }
+
+    float sample( int idx, float x, float y ) noexcept
+    {
+        const GlyphMetric& m = metric_at( idx );
+        if ( m.w == 0 || m.h == 0 || !std::isfinite( x ) || !std::isfinite( y ) ) return 0.0f;
+        // Texel centers sit at +0.5: shift to center coordinates, clamp into the rect.
+        const float fx = std::clamp( x - 0.5f, static_cast<float>( m.ax ), static_cast<float>( m.ax + m.w - 1 ) );
+        const float fy = std::clamp( y - 0.5f, static_cast<float>( m.ay ), static_cast<float>( m.ay + m.h - 1 ) );
+        const int x0 = static_cast<int>( fx );
+        const int y0 = static_cast<int>( fy );
+        const int x1 = std::min( x0 + 1, m.ax + m.w - 1 );
+        const int y1 = std::min( y0 + 1, m.ay + m.h - 1 );
+        const float tx = fx - static_cast<float>( x0 );
+        const float ty = fy - static_cast<float>( y0 );
+        const auto at = []( int px, int py ) { return static_cast<float>( kAtlas[ py * kAtlasW + px ] ); };
+        const float top = at( x0, y0 ) + ( at( x1, y0 ) - at( x0, y0 ) ) * tx;
+        const float bot = at( x0, y1 ) + ( at( x1, y1 ) - at( x0, y1 ) ) * tx;
+        return top + ( bot - top ) * ty;
     }
 
     int format_person( char* dst, int dst_cap, int id, bool lang_ru ) noexcept
@@ -200,11 +180,6 @@ constexpr uint32_t kCodepoints[ kGlyphCount ] = {
         }
         
         return w;
-    }
-
-    const GlyphMetric& glyph_metrics( int idx ) noexcept
-    {
-        return metric_at( idx );
     }
 
 }  // namespace glyph_font

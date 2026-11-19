@@ -104,30 +104,64 @@ namespace
         }
     }
 
-    void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, int gx, int gy, int glyph_idx, int sk,
-                         uint8_t r, uint8_t g, uint8_t b ) noexcept
+    // One glyph at float pen position (x0, y0) = its padded rect's top-left in
+    // tensor px, scaled by sc: every covered pixel center maps back into the atlas
+    // and takes the bilinear alpha (the GL_LINEAR equivalent of the GPU path).
+    void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, float x0, float y0, int glyph_idx, float sc,
+                         uint8_t r, uint8_t g, uint8_t b, unsigned a_mul ) noexcept
     {
         const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( glyph_idx );
-        const uint8_t* alpha = glyph_font::glyph_alpha( glyph_idx );
-        for ( int pr = 0; pr < m.h * sk; ++pr )
+        if ( m.w == 0 || m.h == 0 || !( sc > 0.0f ) )
+            return;
+        const float x1 = x0 + static_cast<float>( m.w ) * sc;
+        const float y1 = y0 + static_cast<float>( m.h ) * sc;
+        const int px0 = std::max( 0, static_cast<int>( std::floor( x0 ) ) );
+        const int py0 = std::max( 0, static_cast<int>( std::floor( y0 ) ) );
+        const int px1 = std::min( w, static_cast<int>( std::ceil( x1 ) ) );
+        const int py1 = std::min( h, static_cast<int>( std::ceil( y1 ) ) );
+        const float inv = 1.0f / sc;
+        for ( int py = py0; py < py1; ++py )
         {
-            const int py = gy + m.dy * sk + pr;
-            if ( py < 0 || py >= h )
+            const float cy = static_cast<float>( py ) + 0.5f;
+            if ( cy < y0 || cy >= y1 )
                 continue;
-            const uint8_t* row = alpha + ( m.dy + pr / sk ) * glyph_font::kGlyphWMax + m.dx;
+            const float ay = static_cast<float>( m.ay ) + ( cy - y0 ) * inv;
             uint8_t* line = rgb + static_cast<size_t>( py ) * stride;
-            for ( int pc = 0; pc < m.w * sk; ++pc )
+            for ( int px = px0; px < px1; ++px )
             {
-                const unsigned a = row[pc / sk];
-                if ( a == 0u )
+                const float cx = static_cast<float>( px ) + 0.5f;
+                if ( cx < x0 || cx >= x1 )
                     continue;
-                const int px = gx + m.dx * sk + pc;
-                if ( px >= 0 && px < w )
+                const float ax = static_cast<float>( m.ax ) + ( cx - x0 ) * inv;
+                const float cov = glyph_font::sample( glyph_idx, ax, ay ) * static_cast<float>( a_mul ) / 255.0f;
+                const unsigned a = static_cast<unsigned>( cov + 0.5f );
+                if ( a != 0u )
                     blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, a );
             }
         }
     }
 
+    // One text pass of a callout (the CPU twin of append_text_pass in gpu_box_drawer.cpp).
+    void draw_text_pass_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutItem& c, float ox, float oy,
+                             uint8_t r, uint8_t g, uint8_t b, unsigned a ) noexcept
+    {
+        float pen = static_cast<float>( c.text_x ) + ox;
+        const float top = static_cast<float>( c.text_y ) + oy;
+        int pos = 0;
+        while ( pos < c.text_bytes )
+        {
+            const uint32_t cp = glyph_font::next_utf8( c.text, c.text_bytes, pos );
+            if ( cp == 0 )
+                break;
+            const int gi = glyph_font::glyph_index( cp );
+            const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( gi );
+            draw_glyph_cpu( rgb, w, h, stride, pen + static_cast<float>( m.dx ) * c.scale, top + static_cast<float>( m.dy ) * c.scale,
+                            gi, c.scale, r, g, b, a );
+            pen += static_cast<float>( m.adv ) * c.scale;
+        }
+    }
+
+    // Connector, the 8-way dark outline, the white text: the GPU path's order and colors.
     void draw_callouts_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutList& list ) noexcept
     {
         for ( int i = 0; i < list.n; ++i )
@@ -135,20 +169,13 @@ namespace
             const CalloutItem& c = list.d[i];
             for ( int s = 0; s < c.n_segs; ++s )
                 fill_rect_cpu( rgb, w, h, stride, c.segs[s], c.r, c.g, c.b, 255u );
-
-            // pill fill/border removed (PR3): only connector + text are drawn
-
-            int gx = c.text_x;
-            int pos = 0;
-            while ( pos < c.text_bytes )
-            {
-                const uint32_t cp = glyph_font::next_utf8( c.text, c.text_bytes, pos );
-                if ( cp == 0 )
-                    break;
-                const int gi = glyph_font::glyph_index( cp );
-                draw_glyph_cpu( rgb, w, h, stride, gx, c.text_y, gi, c.scale, 255, 255, 255 );
-                gx += glyph_font::glyph_metrics( gi ).adv * c.scale;
-            }
+            const float o = c.outline;
+            const float dirs[GpuBoxDrawer::kOutlineDirs][2] = {
+                { -o, -o }, { 0.0f, -o }, { o, -o }, { -o, 0.0f }, { o, 0.0f }, { -o, o }, { 0.0f, o }, { o, o } };
+            constexpr uint8_t gray = GpuBoxDrawer::kOutlineGray;
+            for ( const auto& d : dirs )
+                draw_text_pass_cpu( rgb, w, h, stride, c, d[0], d[1], gray, gray, gray, GpuBoxDrawer::kOutlineAlpha );
+            draw_text_pass_cpu( rgb, w, h, stride, c, 0.0f, 0.0f, 255, 255, 255, 255u );
         }
     }
 
@@ -204,6 +231,8 @@ void OverlaySink::init( const StreamConfig& stream,
     {
         EncoderConfig ec = encoder_config( stream, model_w_, model_h_, primary_band, nsrc, log_ );
         ec.model_stride_px = rga_limits::rgb888_stride_px( stride_bytes_, model_w_ );
+        layout_ = ec.layout;
+        tiled_ = true;
         enc_.emplace( ec, log_ );
         // kbps(): the rate the encoder runs at (the <= 0 fallback applied).
         if ( stream.host.empty() )
@@ -307,6 +336,16 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
     }
 }
 
+// Output tile px per tensor px for this frame's band: the h264 stream scales the
+// band into its tile (place_tile); the raw NUT preview ships the tensor 1:1.
+float OverlaySink::tile_scale( const FrameView& frame ) const noexcept
+{
+    if ( !tiled_ )
+        return 1.0f;
+    const TilePlacement tp = place_tile( layout_, frame.lb, frame.src_idx );
+    return tp.src.h > 0 && tp.dst.h > 0 ? static_cast<float>( tp.dst.h ) / static_cast<float>( tp.src.h ) : 1.0f;
+}
+
 bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
                                             const DetList& dets,
                                             const TrajList& trajs,
@@ -324,10 +363,11 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
     boxes_.clear();
     mapper_.fill( dets, disp, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
     callouts_.clear();
+    const CalloutConfig ccfg { label_lang_ == LabelLang::Ru, callout_text_scale( label_scale_, tile_scale( frame ) ) };
     if ( valid_src )
-        compute_callouts( disp, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru, label_scale_ }, callout_hist_[frame.src_idx], callouts_ );
+        compute_callouts( disp, frame.lb, sx, sy, ccfg, callout_hist_[frame.src_idx], callouts_ );
     else
-        compute_callouts( disp, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru, label_scale_ }, callouts_ );
+        compute_callouts( disp, frame.lb, sx, sy, ccfg, callouts_ );
     if ( boxes_.n <= 0 && callouts_.n <= 0 )
         return false;
 

@@ -16,6 +16,7 @@
 #include "core/box_filter.hpp"   // TrackBoxFilters, BoxFilterParams
 #include "core/callout.hpp"      // CalloutHistory, CalloutList
 #include "core/detection.hpp"    // DetList
+#include "core/encoder_config.hpp" // StreamLayout
 #include "core/frame_view.hpp"   // FrameView, TensorSet
 #include "core/global_track.hpp" // reid_cfg::kMaxSources
 #include "core/net_perf.hpp"     // OverlayPerfWindow, EncPerfWindow
@@ -68,6 +69,7 @@ private:
     void init_gpu_drawer( bool cpu_draw, const TensorSet& tensors );
     void reset_all_sources() noexcept;
     void sync_viewer_session() noexcept;
+    float tile_scale( const FrameView& frame ) const noexcept;
     bool draw_overlay_into_tensor( const FrameView& frame,
                                    const DetList& dets,
                                    const TrajList& trajs,
@@ -87,6 +89,8 @@ private:
     // a higher still cutoff and speed gain than the raw boxes of BoxSmoother keep
     // the box on a walking person (the dead zone still holds a standing one still).
     const BoxFilterParams kTrackFilter { 1.0f, 0.05f, 1.0f, 0.01f, 2.0f, 0.5f };
+    StreamLayout layout_ {};  // the h264 stream geometry (tiled_): the callout tile scale
+    bool tiled_ = false;
     LabelLang label_lang_ = LabelLang::En;
     int label_scale_ = 1;
     int model_w_ = 0;

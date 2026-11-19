@@ -65,10 +65,18 @@ public:
     enum
     {
         kVertsPerBox = 4 * 6,
-        // Connector segments + the longest label: kLabelCap - 1 glyphs, 6
-        // vertices each (M-10: was 192 < 6 * (2 + 31) = 198, a 31-glyph
-        // label lost its tail). Checked against CalloutItem below.
-        kVertsPerCallout = 6 * ( 2 + ( glyph_font::kLabelCap - 1 ) ),
+        // The label text: kOutlineDirs dark passes + one white pass (#91 item 5).
+        kOutlineDirs = 8,
+        kTextPasses = kOutlineDirs + 1,
+        kOutlineGray = 16,
+        kOutlineAlpha = 200,
+        // Connector segments + the longest label (kLabelCap - 1 glyphs) in every
+        // text pass, 6 vertices a quad: 6 * (2 + 31 * 9) = 1686. Checked against
+        // CalloutItem below.
+        kVertsPerCallout = 6 * ( 2 + ( glyph_font::kLabelCap - 1 ) * kTextPasses ),
+        // One draw is one source's frame: every box of it and one callout per
+        // track (CalloutList::cap == TrajList::cap), whichever source it is --
+        // the sources draw into their own tensors, they never share a batch.
         kMaxVerts = GpuBoxList::cap * kVertsPerBox + CalloutList::cap * kVertsPerCallout
     };
 
@@ -186,7 +194,15 @@ private:
 };
 
 // The per-callout budget covers every connector segment and the longest
-// label CalloutItem can hold (kLabelCap - 1 single-byte glyphs).
+// label CalloutItem can hold (kLabelCap - 1 single-byte glyphs) in every text pass.
 static_assert( GpuBoxDrawer::kVertsPerCallout >=
-                   6 * ( static_cast<int>( sizeof( CalloutItem::segs ) / sizeof( CalloutRect ) ) + glyph_font::kLabelCap - 1 ),
-               "kVertsPerCallout below the longest callout" );
+                   6 * ( static_cast<int>( sizeof( CalloutItem::segs ) / sizeof( CalloutRect ) ) +
+                         ( glyph_font::kLabelCap - 1 ) * GpuBoxDrawer::kTextPasses ),
+               "kVertsPerCallout below the longest outlined callout" );
+// The whole batch: the box cap plus a full callout for every track a frame can
+// carry (8 per source; the up to 4 sources of the 2x2 grid draw separately).
+static_assert( static_cast<int>( CalloutList::cap ) >= static_cast<int>( TrajList::cap ), "a frame's track without a callout slot" );
+static_assert( static_cast<int>( GpuBoxDrawer::kMaxVerts ) >=
+                   static_cast<int>( GpuBoxList::cap ) * static_cast<int>( GpuBoxDrawer::kVertsPerBox ) +
+                       static_cast<int>( TrajList::cap ) * static_cast<int>( GpuBoxDrawer::kVertsPerCallout ),
+               "vertex budget below the fullest frame" );

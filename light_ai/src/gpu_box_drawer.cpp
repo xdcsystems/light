@@ -138,14 +138,15 @@ namespace
         }
     }
 
-    void append_callout_quads( QuadTarget& qt, const CalloutItem& c ) noexcept
+    // One pass of the label text: every glyph of c offset by (ox, oy) tensor px,
+    // in one color. Glyph quads are the padded atlas rects scaled by c.scale at
+    // float positions; GL_LINEAR does the resampling.
+    void append_text_pass( QuadTarget& qt, const CalloutItem& c, float ox, float oy,
+                           uint8_t r, uint8_t g, uint8_t b, uint8_t a ) noexcept
     {
-        for ( int s = 0; s < c.n_segs; ++s )
-            emit_solid_rect( qt, c.segs[s], c.r, c.g, c.b, 255 );
-
-        // pill fill/border removed (PR3): only connector + text are drawn
-
-        int gx = c.text_x;
+        const float sc = c.scale;
+        float pen = static_cast<float>( c.text_x ) + ox;
+        const float top = static_cast<float>( c.text_y ) + oy;
         int pos = 0;
         while ( pos < c.text_bytes )
         {
@@ -153,19 +154,36 @@ namespace
             if ( cp == 0 )
                 break;
             const int gi = glyph_font::glyph_index( cp );
-            float u0 = 0.0f;
-            float v0 = 0.0f;
-            float u1 = 0.0f;
-            float v1 = 0.0f;
-            glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
             const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( gi );
-            const int sk = c.scale;
-            const float fx = static_cast<float>( gx + m.dx * sk );
-            const float fy = static_cast<float>( c.text_y + m.dy * sk );
-            emit_quad( qt, fx, fy, fx + static_cast<float>( m.w * sk ),
-                       fy + static_cast<float>( m.h * sk ), u0, v0, u1, v1, 255, 255, 255, 255 );
-            gx += m.adv * sk;
+            if ( m.w > 0 && m.h > 0 )
+            {
+                float u0 = 0.0f;
+                float v0 = 0.0f;
+                float u1 = 0.0f;
+                float v1 = 0.0f;
+                glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
+                const float fx = pen + static_cast<float>( m.dx ) * sc;
+                const float fy = top + static_cast<float>( m.dy ) * sc;
+                emit_quad( qt, fx, fy, fx + static_cast<float>( m.w ) * sc, fy + static_cast<float>( m.h ) * sc,
+                           u0, v0, u1, v1, r, g, b, a );
+            }
+            pen += static_cast<float>( m.adv ) * sc;
         }
+    }
+
+    // Connector, then the text: kOutlineDirs dark passes around it (the outline
+    // that keeps white text readable on any background, #91 item 5), then white.
+    void append_callout_quads( QuadTarget& qt, const CalloutItem& c ) noexcept
+    {
+        for ( int s = 0; s < c.n_segs; ++s )
+            emit_solid_rect( qt, c.segs[s], c.r, c.g, c.b, 255 );
+        const float o = c.outline;
+        const float dirs[GpuBoxDrawer::kOutlineDirs][2] = {
+            { -o, -o }, { 0.0f, -o }, { o, -o }, { -o, 0.0f }, { o, 0.0f }, { -o, o }, { 0.0f, o }, { o, o } };
+        for ( const auto& d : dirs )
+            append_text_pass( qt, c, d[0], d[1], GpuBoxDrawer::kOutlineGray, GpuBoxDrawer::kOutlineGray,
+                              GpuBoxDrawer::kOutlineGray, GpuBoxDrawer::kOutlineAlpha );
+        append_text_pass( qt, c, 0.0f, 0.0f, 255, 255, 255, 255 );
     }
 
     // Compile/link diagnostics: libmali returns non-zero handles even for
@@ -460,18 +478,19 @@ bool GpuBoxDrawer::create_context()
 
 void GpuBoxDrawer::create_atlas()
 {
-    std::array<uint8_t, glyph_font::kAtlasBytes> atlas {};
-    glyph_font::build_atlas( atlas );
     glGenTextures( 1, &st_.atlas_tex );
     glActiveTexture( GL_TEXTURE0 );
     glBindTexture( GL_TEXTURE_2D, st_.atlas_tex );
     glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
-    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
-    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+    // GL_LINEAR: the 32 px atlas is resampled to the label size (#91 item 5); every
+    // glyph rect has a transparent border and 2 px gaps, the solid block is 4x4,
+    // so no sample ever reaches a neighbour.
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
     glTexImage2D( GL_TEXTURE_2D, 0, GL_ALPHA, glyph_font::kAtlasW, glyph_font::kAtlasH, 0,
-                  GL_ALPHA, GL_UNSIGNED_BYTE, atlas.data() );
+                  GL_ALPHA, GL_UNSIGNED_BYTE, glyph_font::atlas() );
     glBindTexture( GL_TEXTURE_2D, 0 );
 }
 
