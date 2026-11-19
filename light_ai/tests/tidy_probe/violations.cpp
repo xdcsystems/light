@@ -36,6 +36,9 @@ struct Holder
     std::unique_ptr<int> p;                // custom-no-smart-ptr x2 (the field's type, the written type)
 };
 std::vector<std::shared_ptr<int>>* g_list = nullptr;  // custom-no-global-var, custom-no-smart-ptr (a template argument)
+// a project redeclaration of a C library function: the call's callee is this declaration, outside a system header
+extern "C" int fputs( const char* s, FILE* f );
+extern "C" char* strdup( const char* s ) noexcept;
 
 // readability-function-cognitive-complexity: 1 + 2 + 3 + 4 + 5 + (6 + 1) = 22 > 20
 int tangled( int a, int b, int c )
@@ -66,6 +69,8 @@ int use()
     const int* q = const_cast<int*>( &k ); // custom-no-const-cast
     std::printf( "%d\n", v );              // custom-no-printf
     std::fwrite( "x", 1, 1, stdout );      // custom-no-printf (C stdio output)
+    fputs( "y", stdout );                  // custom-no-printf (through the redeclaration above)
+    std::free( strdup( "z" ) );            // custom-no-new-delete x2 (strdup through the redeclaration, free)
     char* text = nullptr;
     asprintf( &text, "%d", v );            // custom-no-printf and custom-no-new-delete (prints and allocates)
     std::cout << local;                    // custom-no-std-stream

@@ -6,8 +6,8 @@ tests/tidy_probe/violations.cpp custom-no-const-cast 1
 tests/tidy_probe/violations.cpp custom-no-file-static 1
 tests/tidy_probe/violations.cpp custom-no-global-var 2
 tests/tidy_probe/violations.cpp custom-no-inheritance 1
-tests/tidy_probe/violations.cpp custom-no-new-delete 7
-tests/tidy_probe/violations.cpp custom-no-printf 3
+tests/tidy_probe/violations.cpp custom-no-new-delete 9
+tests/tidy_probe/violations.cpp custom-no-printf 4
 tests/tidy_probe/violations.cpp custom-no-smart-ptr 4
 tests/tidy_probe/violations.cpp custom-no-static-local 1
 tests/tidy_probe/violations.cpp custom-no-static-member 1

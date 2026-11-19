@@ -76,12 +76,13 @@ CustomChecks:
       - BindName: d
         Message: "class with a base: use composition of concrete members (CONTRIBUTING, No virtuals or inheritance)"
         Level: Warning
-  # No manual heap allocation. The C library names count only as declared in a system header (hasAnyName("::x")
-  # also matches an x of an anonymous namespace: http_head.cpp has its own error()); operator new / delete are
-  # implicitly declared, so they have no such filter.
+  # No manual heap allocation. C library names (here and in no-printf) count only for an extern "C" function or one
+  # declared in a system header: hasAnyName("::x") also matches an x of an anonymous namespace (http_head.cpp has its
+  # own error()), and a project redeclaration (extern "C" int fputs(...);) is the callee of a call after it, outside
+  # a system header but still extern "C". operator new / delete are implicitly declared, so they have no such filter.
   - Name: no-new-delete
     Query: |
-      match stmt(anyOf(cxxNewExpr(), cxxDeleteExpr(), callExpr(callee(functionDecl(isExpansionInSystemHeader(), hasAnyName("::malloc", "::calloc", "::realloc", "::free", "::aligned_alloc", "::posix_memalign", "::valloc", "::strdup", "::strndup", "::reallocarray", "::memalign", "::pvalloc", "::asprintf", "::vasprintf", "::getline", "::getdelim")))), callExpr(callee(functionDecl(hasAnyName("::operator new", "::operator new[]", "::operator delete", "::operator delete[]")))))).bind("d")
+      match stmt(anyOf(cxxNewExpr(), cxxDeleteExpr(), callExpr(callee(functionDecl(anyOf(isExternC(), isExpansionInSystemHeader()), hasAnyName("::malloc", "::calloc", "::realloc", "::free", "::aligned_alloc", "::posix_memalign", "::valloc", "::strdup", "::strndup", "::reallocarray", "::memalign", "::pvalloc", "::asprintf", "::vasprintf", "::getline", "::getdelim")))), callExpr(callee(functionDecl(hasAnyName("::operator new", "::operator new[]", "::operator delete", "::operator delete[]")))))).bind("d")
     Diagnostic:
       - BindName: d
         Message: "new / delete (placement new too), operator new / delete or the malloc family: use fixed-size members (CONTRIBUTING, No manual heap allocation)"
@@ -111,8 +112,9 @@ CustomChecks:
         Level: Warning
   # I/O and logging: iostream only, diagnostics through Log, only src/main.cpp owns std::cout / std::cerr.
   - Name: no-printf
+    # the C library filter: see no-new-delete
     Query: |
-      match callExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), callee(functionDecl(isExpansionInSystemHeader(), hasAnyName("::printf", "::fprintf", "::sprintf", "::snprintf", "::vprintf", "::vfprintf", "::vsprintf", "::vsnprintf", "::dprintf", "::vdprintf", "::asprintf", "::vasprintf", "::puts", "::fputs", "::putchar", "::fputc", "::putc", "::fwrite", "::perror", "::fputs_unlocked", "::fputc_unlocked", "::putc_unlocked", "::putchar_unlocked", "::fwrite_unlocked", "::wprintf", "::fwprintf", "::swprintf", "::vwprintf", "::vfwprintf", "::vswprintf", "::fputws", "::fputwc", "::putwc", "::putwchar", "::err", "::errx", "::warn", "::warnx", "::verr", "::vwarn", "::error")))).bind("d")
+      match callExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), callee(functionDecl(anyOf(isExternC(), isExpansionInSystemHeader()), hasAnyName("::printf", "::fprintf", "::sprintf", "::snprintf", "::vprintf", "::vfprintf", "::vsprintf", "::vsnprintf", "::dprintf", "::vdprintf", "::asprintf", "::vasprintf", "::puts", "::fputs", "::putchar", "::fputc", "::putc", "::fwrite", "::perror", "::fputs_unlocked", "::fputc_unlocked", "::putc_unlocked", "::putchar_unlocked", "::fwrite_unlocked", "::wprintf", "::fwprintf", "::swprintf", "::vwprintf", "::vfwprintf", "::vswprintf", "::fputws", "::fputwc", "::putwc", "::putwchar", "::err", "::errx", "::warn", "::warnx", "::verr", "::vwarn", "::error")))).bind("d")
     Diagnostic:
       - BindName: d
         Message: "C stdio output (printf family, puts, fwrite, perror, ...): use iostream through Log (CONTRIBUTING, I/O & logging)"
