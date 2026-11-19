@@ -52,7 +52,7 @@ int BoxSmoother::collect_pairs( const DetList& in )
     for ( int i = 0; i < in.n && i < kMaxDet; ++i )
     {
         const Detection& d = in.d[i];
-        if ( d.cls == 0 )
+        if ( d.cls == 0 || !det_usable( d ) )
             continue;
         for ( int t = 0; t < kTrackCount; ++t )
         {
@@ -109,6 +109,8 @@ void BoxSmoother::emit( const DetList& in, const DetTrack& det_trk, DetList& out
     for ( int i = 0; i < in.n; ++i )
     {
         const Detection& d = in.d[i];
+        if ( !det_usable( d ) )
+            continue;  // M-14: never smoothed, spawned or drawn
         Detection sd = d;
         if ( d.cls != 0 )
         {

@@ -16,8 +16,17 @@ struct BoxEnvelope
         kWindowFrames = 8,
     };
 
+    // A non-finite or empty box (M-14) leaves the envelope as it was: reset
+    // keeps the old state, step holds the last output.
+    bool usable( float x0, float y0, float x1, float y1 ) const noexcept
+    {
+        return std::isfinite( x0 ) && std::isfinite( y0 ) && std::isfinite( x1 ) && std::isfinite( y1 ) && x1 > x0 && y1 > y0;
+    }
+
     void reset( float x0, float y0, float x1, float y1 ) noexcept
     {
+        if ( !usable( x0, y0, x1, y1 ) )
+            return;
         const float v[4] = { x0, y0, x1, y1 };
         std::copy_n( v, 4, lo );
         std::copy_n( v, 4, hi );
@@ -32,6 +41,8 @@ struct BoxEnvelope
 
     void step( float x0, float y0, float x1, float y1, float move_alpha ) noexcept
     {
+        if ( !usable( x0, y0, x1, y1 ) )
+            return;
         if ( count <= 0 )
         {
             reset( x0, y0, x1, y1 );

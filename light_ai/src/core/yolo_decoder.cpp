@@ -124,14 +124,16 @@ bool yolo_head_shape( const YoloHead& hd, int gi, int mw, int mh, const Log& log
         log.warn() << "yolo: head " << gi << " unsupported stride " << stride << '\n';
         return false;
     }
-    if ( hd.h != mh / stride )
+    if ( hd.h <= 0 || hd.h != mh / stride )
     {
         log.warn() << "yolo: head " << gi << " height " << hd.h << " does not match model " << mh << " at stride "
                    << stride << '\n';
         return false;
     }
+    // At least one class channel per anchor (4 box + 1 obj + 1 class = 6,
+    // ch >= 18): below that best_class() would read past the head (M-14).
     const int per = hd.ch / 3;  // 85 = 4+1+80
-    if ( per * 3 != hd.ch )
+    if ( hd.ch < 18 || per * 3 != hd.ch )
     {
         log.warn() << "yolo: unexpected head layout (per=" << per << ", ch=" << hd.ch << ")\n";
         return false;  // not a 3-anchor yolov5 head - skip
@@ -205,6 +207,8 @@ bool YoloDecoder::decode_anchor( const HeadScan& s, size_t off, int k, int gx, i
     // Reject NaN and +/-Inf so non-finite boxes cannot poison NMS IoU or emit().
     if ( !std::isfinite( cx ) || !std::isfinite( cy ) || !std::isfinite( bw_px ) || !std::isfinite( bh_px ) )
         return false;
+    if ( !( bw_px > 0.0f ) || !( bh_px > 0.0f ) )
+        return false;  // an empty box carries no geometry (emit would drop it anyway)
 
     if ( !box_overlaps_band( cx, cy, bw_px, bh_px, stride, b.left, b.top, b.w, b.h ) )
         return false;  // bar
@@ -220,7 +224,9 @@ float YoloDecoder::best_class( const HeadScan& s, size_t off, int& best ) const 
     float best_cls = 0.0f;
     for ( int c = 5; c < s.per; ++c )
     {
-        if ( const float v = fp16_to_float( s.data[off + c * s.cell_hw] ); v > best_cls )
+        // A non-finite channel never wins: +Inf used to take the anchor and
+        // then drop it whole, losing the finite best class.
+        if ( const float v = fp16_to_float( s.data[off + c * s.cell_hw] ); std::isfinite( v ) && v > best_cls )
         {
             best_cls = v;
             best = c;

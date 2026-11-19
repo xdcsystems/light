@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 #include "box_mapper.h"
@@ -36,6 +37,9 @@ void BoxMapper::fill( const DetList& dets, const TrajList& trajs, const Tracker&
 // for det and track boxes, no second notion of "inside".
 bool BoxMapper::band_box( float x, float y, float w, float h, const Band& b, GpuBox& out ) const noexcept
 {
+    // M-14: explicit, not relying on NaN failing the comparisons below.
+    if ( !std::isfinite( x ) || !std::isfinite( y ) || !std::isfinite( w ) || !std::isfinite( h ) || !( w > 0.0f ) || !( h > 0.0f ) )
+        return false;
     out.x0 = x * b.sx + b.left;
     out.y0 = y * b.sy + b.top;
     out.x1 = ( x + w ) * b.sx + b.left;
@@ -139,6 +143,9 @@ bool BoxMapper::trail_dot( const TrajPoint& pt, const Band& b, PrevDot& prev, fl
 {
     px = pt.x * b.sx + b.left;
     py = pt.y * b.sy + b.top;
+    // A NaN point fails every '<' / '>' below and would pass as "inside" (M-14).
+    if ( !std::isfinite( px ) || !std::isfinite( py ) )
+        return false;
     if ( px - 1.5f < b.left || py - 1.5f < b.top || px + 1.5f > b.right || py + 1.5f > b.bottom )
         return false;
     if ( prev.set )

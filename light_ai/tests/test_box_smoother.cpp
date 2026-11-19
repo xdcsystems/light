@@ -1,3 +1,4 @@
+#include <cmath>
 #include <sstream>
 
 #include "box_smoother.h"
@@ -166,6 +167,24 @@ namespace
 
 void test_box_smoother( TestRun& t )
 {
+    // M-14: a NaN or empty non-person det is dropped -- not spawned, not
+    // emitted -- and does not disturb a live smoothed box.
+    {
+        BoxSmoother sm;
+        DetList out;
+        sm.update( one( det( std::nanf( "" ), 10.0f, 80.0f, 120.0f, 56 ) ), out );
+        CHECK( t, out.n == 0 );
+        sm.update( one( det( 10.0f, 10.0f, 0.0f, 120.0f, 56 ) ), out );
+        CHECK( t, out.n == 0 );
+        for ( int i = 0; i < 3; ++i )
+            sm.update( one( det( 200.0f, 150.0f, 80.0f, 120.0f, 56 ) ), out );
+        DetList mixed;
+        mixed.push( det( 200.0f, 150.0f, 80.0f, 120.0f, 56 ) );
+        mixed.push( det( 200.0f, std::nanf( "" ), 80.0f, 120.0f, 56 ) );
+        sm.update( mixed, out );
+        CHECK( t, out.n == 1 && std::isfinite( out.d[0].y ) );
+        CHECK_NEAR( t, out.d[0].x, 200.0f, 1e-3f );
+    }
     // First sighting of non-person passes through unsmoothed; next match is EMA (alpha 0.5).
     {
         BoxSmoother sm;

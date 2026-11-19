@@ -243,14 +243,14 @@ void Tracker::spawn_unmatched( const DetList& dets, const DetTrack& det_trk, int
     const float contain_thr = static_cast<float>( kSpawnContainGate );
     for ( int k = 0; k < nd; ++k )
     {
-        if ( det_trk[k] >= 0 || dets.d[k].cls != 0 )
+        if ( det_trk[k] >= 0 || dets.d[k].cls != 0 || !det_usable( dets.d[k] ) )
             continue;
         const Detection& d = dets.d[k];
         if ( d.conf < min_conf )
             continue;
         const float area_d = d.w * d.h;
         const bool nested_in_det = std::any_of( dets.d.begin(), dets.d.begin() + nd, [&]( const Detection& m ) {
-            if ( m.cls != 0 || m.conf < min_conf || m.w * m.h <= area_d * 1.15f )
+            if ( m.cls != 0 || !det_usable( m ) || m.conf < min_conf || m.w * m.h <= area_d * 1.15f )
                 return false;
             return box_ioa_min( d.x, d.y, d.w, d.h, m.x, m.y, m.w, m.h ) * 100.0f >= contain_thr;
         } );

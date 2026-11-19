@@ -247,10 +247,35 @@ namespace
             CHECK( t, out.n == 1 && out.d[0].id == 1 );
         }
     }
+
+    // M-14: a non-finite or empty person det neither spawns nor updates a
+    // track; the live track keeps a finite state.
+    void check_unusable_dets( TestRun& t )
+    {
+        Tracker trk;
+        TrajList out;
+        const float nan = std::nanf( "" );
+        Detection bad_nan = person( 500, 400, 100, 200 );
+        bad_nan.x = nan;
+        Detection bad_w = person( 500, 400, 100, 200 );
+        bad_w.w = 0.0f;
+        Detection bad_inf = person( 500, 400, 100, 200 );
+        bad_inf.h = INFINITY;
+        trk.update( one( bad_nan ), 0, out );
+        trk.update( one( bad_w ), kFrameUs, out );
+        trk.update( one( bad_inf ), 2 * kFrameUs, out );
+        CHECK( t, out.n == 0 );
+        int64_t ts = stand( trk, out, 3, 3 * kFrameUs );
+        CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF );
+        trk.update( one( bad_nan ), ts, out );
+        CHECK( t, out.n == 1 && std::isfinite( out.d[0].cx ) && std::isfinite( out.d[0].cy ) && std::isfinite( out.d[0].bw ) );
+        CHECK_NEAR( t, out.d[0].cx, 500.0f, 1.0f );
+    }
 }  // namespace
 
 void test_tracker( TestRun& t )
 {
+    check_unusable_dets( t );
     // Lifecycle: tentative on the first sighting, confirmed on the 3rd match.
     {
         Tracker trk;

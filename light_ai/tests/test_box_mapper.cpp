@@ -81,6 +81,14 @@ void test_box_mapper( TestRun& t )
     BoxMapper mapper;
 
     // A non-person detection maps scene -> tensor: scale, then the band offset.
+    // M-14: NaN / Inf / empty geometry never becomes a box.
+    mapper.fill( one( std::nanf( "" ), 200, 300, 400, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
+    CHECK( t, boxes.n == 0 );
+    mapper.fill( one( 100, 200, INFINITY, 400, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
+    CHECK( t, boxes.n == 0 );
+    mapper.fill( one( 100, 200, 300, 0, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
+    CHECK( t, boxes.n == 0 );
+
     mapper.fill( one( 100, 200, 300, 400, 56 ), no_tracks, idle, boxes, kBand, kScale, kScale, 0 );
     CHECK( t, boxes.n == 1 );
     CHECK_NEAR( t, boxes.d[0].x0, 50.0f, 1e-4f );
