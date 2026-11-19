@@ -108,7 +108,7 @@ flowchart TB
 
 ## Modules & Headers
 
-The codebase contains **88 headers** under [`include/`](include/) and **55 translation units** under [`src/`](src/) + [`externals/inih/ini.c`](externals/inih/ini.c).
+The codebase contains **93 headers** under [`include/`](include/) and **56 translation units** under [`src/`](src/) + [`externals/inih/ini.c`](externals/inih/ini.c).
 
 ### Top-Level Pipeline & Hardware Modules (`include/`, `src/`)
 
@@ -230,14 +230,14 @@ python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4
   ```
   Exits `0` on pass, `1` on check failure, `2` on invalid runner argument.
 
-### Covered Test Suites (54 Total in `tests/test_main.cpp`)
+### Covered Test Suites (61 Total in `tests/test_main.cpp`)
 
-- **Core & Containers:** `check_harness`, `pod_containers`, `geometry`, `fp16`, `box_math`, `status`, `stop_flag`, `log`, `timings`
+- **Core & Containers:** `check_harness`, `pod_containers`, `geometry`, `fp16`, `box_math`, `rga_limits`, `fixed_fmt`, `status`, `stop_flag`, `log`, `timings`
 - **Detection, Tracking, Labels, Re-ID & Reference:** `yolo_decoder`, `yolo_head_shape`, `box_filter`, `box_smoother`, `kalman_axis`, `associator`, `auto_orient`, `trail_window`, `tracker`, `glyph_font`, `callout_layout`, `box_mapper`, `global_track`, `reid_worker_tsan` *(TSan)*, `reference_chain` (Layer B golden check; see [`tests/data/README`](tests/data/README))
 - **Config, CLI & Signals:** `config`, `signals`, `console_reporter`, `cal_dumper`
 - **Inference Pool:** `inference_pool`, `infer_slot_threads`
-- **Sources & HTTP MJPEG:** `jpeg_probe`, `byte_window`, `http_url`, `http_head`, `multipart_reader`, `buffered_socket`, `mjpeg_slot_pool`, `net_mjpeg_source`, `usb_node_locator`, `source_channel`, `source_threads` *(TSan)*, `source_set`, `source_prober`, `source_prober_threads` *(TSan)*
-- **Encoder, Session & Transport:** `tcp_retry`, `encoder_config`, `param_set_cache`, `pts_clock`, `encode_pacer`, `session_warmup`, `idle_plate`, `packet_queue`, `packet_queue_threads` *(TSan)*, `session_gate`, `session_gate_threads` *(TSan)*
+- **Sources & HTTP MJPEG:** `jpeg_probe`, `byte_window`, `http_url`, `http_head`, `multipart_reader`, `line_scan`, `buffered_socket`, `mjpeg_slot_pool`, `net_mjpeg_source`, `usb_node_locator`, `source_channel`, `source_threads` *(TSan)*, `source_set`, `source_prober`, `source_prober_threads` *(TSan)*
+- **Encoder, Session & Transport:** `tcp_retry`, `tcp_send`, `encoder_config`, `param_set_cache`, `pts_clock`, `encode_pacer`, `session_warmup`, `idle_plate`, `preview_ring`, `preview_ring_threads` *(TSan)*, `packet_queue`, `packet_queue_threads` *(TSan)*, `session_gate`, `session_gate_threads` *(TSan)*
 
 **Not unit-tested (verified by live hardware runs & Layer A replay):** V4L2 capture, MPP MJPEG decode, RGA3 resize/compose, RKNN NPU execution, Mali EGL/GLES2 drawing, and `h264_rkmpp` encoding.
 
@@ -285,7 +285,7 @@ All **27 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 | `--reid-model` | `<path>` | `./misc/osnet_x1_0_imagenet.rknn` | Re-ID RKNN model path for cross-camera global IDs (`none` or `off` disables) |
 | `--reid-thr` | `0.0..1.0` | `0.62` | Re-ID cosine similarity threshold |
 | `--label-lang` | `en\|ru` | `en` | Callout label language (`Person #N` vs. `Человек #N`) |
-| `--label-scale` | `1..4` | `1` | Callout text size: `11 px` font (about `8 px` capitals) per step on the output tile, the same on every source (the tile scale of `place_tile` is compensated) |
+| `--label-scale` | `1..4` | `1` | Callout text size: `11 px` font (about `8 px` capitals) per step on the output tile, the same on every source (the tile scale of `place_tile` is compensated); `3..4` magnify the 22 px atlas, so the text is soft |
 | `--log-level` | `debug\|info\|warn\|error\|off` | `info` | Diagnostic log threshold (`debug`/`info` on `stdout`, `warn`/`error` on `stderr`) |
 | `--conf` | `0.0..1.0` | `0.25` | Detection confidence threshold |
 | `--iou` | `0.0..1.0` | `0.45` | NMS IoU threshold |

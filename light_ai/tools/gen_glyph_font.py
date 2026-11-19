@@ -5,13 +5,14 @@ DejaVu Sans (fonts-dejavu-core; Bitstream Vera / DejaVu license: externals/fonts
 rendered at ATLAS_PX px with 8-bit antialiasing, one shelf-packed GL_ALPHA atlas:
   - the charset below (digits, Latin, Cyrillic with Yo/yo, the label punctuation);
   - every glyph stored as its ink rect plus a 1 px transparent border, glyphs 2 px
-    apart: GL_LINEAR sampling at any downscale never reads a neighbour's ink, and
+    apart: GL_LINEAR sampling at any scale never reads a neighbour's ink, and
     the edge falloff is kept inside the quad;
   - a 4x4 opaque block at (0, 0): the texel the solid quads (box outlines, connector
     lines) sample, safe under GL_LINEAR at its center (2, 2).
 The atlas is baked at 2x the default on-screen size (11 px at --label-scale 1, #91
-item 5): the renderers only ever scale it DOWN for the usual tile scales (0.5 for a
-4:3 USB tile, 0.67 for a portrait phone tile), so the glyphs stay crisp.
+item 5): at --label-scale 1 the renderers scale it DOWN (0.5 on a 4:3 USB tile, 0.67
+on a portrait phone tile), so the glyphs stay crisp; at 2 it is drawn 1:1 to 1.33x,
+and at 3..4 it is magnified 1.5..2.67x (GL_LINEAR: the text gets soft).
 
 Metrics per glyph (atlas px): ax, ay = the padded rect in the atlas; w, h = its size;
 dx, dy = its offset from the pen (dx) and from the line top (dy); adv = the advance.
