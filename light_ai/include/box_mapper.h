@@ -19,6 +19,15 @@
 // Scene->tensor mapping is (s, lb origin) -- identical for both loops.
 // Detection boxes win the VBO budget (GpuBoxList::cap).
 //
+// trajs: the display tracks (boxes through BoxFilter); post: the same list as the
+// tracker produced it (Kalman posteriors, the coordinates the trail was recorded
+// in), entry k of both the same track. The trail head of a CONF track (the only
+// state that draws both a box and a trail) is bent onto its displayed box: the
+// newest point moves by the full box offset (display center - posterior center),
+// the shift fades out linearly over the kTrailBlend newest points, older points
+// stay where they were recorded. With post == trajs (no display filter) the
+// trail is the recorded one.
+//
 // now_us: current frame timestamp, drives the per-point alpha fade:
 // newest point opaque, fades to 0 over the tracker's trail_max_age_us() --
 // matching the tracker-side eviction, so a point disappears from the batch
@@ -29,10 +38,14 @@
 class BoxMapper
 {
 public:
-    enum { kTrailSamples = 20 };  // trail points read per track (the recent_points dst_cap)
+    enum
+    {
+        kTrailSamples = 20,  // trail points read per track (the recent_points dst_cap)
+        kTrailBlend = 6,     // newest trail points bent onto the displayed box
+    };
 
     // Fills boxes (cleared at entry) from the detections and the tracks.
-    void fill( const DetList& dets, const TrajList& trajs, const Tracker& tracker,
+    void fill( const DetList& dets, const TrajList& trajs, const TrajList& post, const Tracker& tracker,
                GpuBoxList& boxes, const LbGeom& lb, float sx, float sy, int64_t now_us ) noexcept;
 
 private:
@@ -41,6 +54,12 @@ private:
     {
         float left, top, right, bottom;
         float sx, sy;
+    };
+    // The scene-pixel shift of the newest trail point: display box - posterior (0 when not drawn as a box).
+    struct Shift
+    {
+        float x = 0.0f;
+        float y = 0.0f;
     };
     // The spatial dedup state of one track's trail.
     struct PrevDot
@@ -53,7 +72,9 @@ private:
     bool band_box( float x, float y, float w, float h, const Band& b, GpuBox& out ) const noexcept;
     void det_boxes( const DetList& dets, const Band& b, GpuBoxList& boxes ) const noexcept;
     void track_box( const TrackState& t, const Band& b, GpuBoxList& boxes ) const noexcept;
-    void trail_points( const Tracker& tracker, const TrackState& t, int64_t now_us, const Band& b, GpuBoxList& boxes ) noexcept;
+    Shift head_shift( const TrackState& t, const TrajList& post, int k ) const noexcept;
+    void trail_points( const Tracker& tracker, const TrackState& t, const Shift& sh, int64_t now_us, const Band& b,
+                       GpuBoxList& boxes ) noexcept;
     bool trail_dot( const TrajPoint& pt, const Band& b, PrevDot& prev, float& px, float& py ) const noexcept;
     int trail_alpha( int64_t age_us, int64_t max_age_us, int j, int ns ) const noexcept;
     void det_color( int cls, GpuBox& b ) const noexcept;

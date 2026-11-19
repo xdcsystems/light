@@ -39,13 +39,15 @@ public:
     // Nothing is trusted blindly: a substituted camera mode is caught here exactly like at startup.
     // Non-throwing: a failure tears down and returns its Status (Absent: the node
     // is not there; Busy; Unsupported: the mode; NoMemory: mmap); details are logged here.
+    // Does not adopt the negotiated size: that is reconnect()'s, after STREAMON
+    // (a trial() setup must not lock the session mode).
     Status setup_device( const std::string& dev );
 
     // Release the fd and all mappings; safe on a partially-open or already-dead device
     // (STREAMOFF errors are ignored on purpose).
-    void teardown();
+    void teardown() noexcept;
 
-    // Full teardown + setup_device() + STREAMON: the only way the camera starts
+    // Full teardown + setup_steps() + STREAMON (+ adopting the mode): the only way the camera starts
     // streaming (startup, hot attach, re-attach -- SourceChannel::attach).
     // Not ok: the setup Status, or "STREAMON: <errno>" (the cause is logged here).
     Status reconnect( const std::string& dev );
@@ -57,16 +59,18 @@ public:
     // Corrupt buffers (BUF_FLAG_ERROR) are counted ACROSS calls --
     // the err_streak_ member, reset only by a clean frame or by reconnect();
     // kBufCount in a row = recoverable stall.
-    Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 );
-    void requeue( int index );
-    void* buffer( int index ) const { return bufs_[index].start; }
+    Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 ) noexcept;
+    void requeue( int index ) noexcept;
+    void* buffer( int index ) const noexcept { return bufs_[index].start; }
     size_t buffer_size( int index ) const { return bufs_[index].length; }
     int width() const { return width_; }
     int height() const { return height_; }
     uint64_t skip_parts_cnt() const noexcept { return 0; }
 
 private:
-    // The steps of setup_device(), in this order. The Status steps return ok, or the
+    // setup_device() with the negotiated mode in got_w/got_h (adopted by reconnect()).
+    Status setup_steps( const std::string& dev, int& got_w, int& got_h );
+    // The steps of setup_steps(), in this order. The Status steps return ok, or the
     // fail() result; they log the cause first, except the zero-buffer REQBUFS exit
     // of map_buffers(), which reports through its Status only. request_rate() cannot fail.
     Status open_node( const std::string& dev );

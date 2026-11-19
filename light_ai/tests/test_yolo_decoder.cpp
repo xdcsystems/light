@@ -167,10 +167,25 @@ namespace
         inf_obj.at( 3, 4, 0, 4 ) = kPosInf;
         CHECK( t, run( inf_obj ) == 0 );
 
+        // M-14: a +Inf class channel never wins -- the finite best class
+        // (class 1, 0.5) survives: conf = 0.75 * 0.5. Was: +Inf took the
+        // anchor and the isfinite gate then dropped it whole.
         Head inf_cls( 8, 8 );
         put_reference( inf_cls );
         inf_cls.at( 3, 4, 0, 5 ) = kPosInf;
-        CHECK( t, run( inf_cls ) == 0 );
+        CHECK( t, run( inf_cls ) == 1 );
+        CHECK( t, dets.n == 1 && dets.d[0].cls == 1 && dets.d[0].conf == 0.375f );
+
+        Head nonfinite_cls( 8, 8 );  // no finite class channel at all: no candidate
+        put_reference( nonfinite_cls );
+        nonfinite_cls.at( 3, 4, 0, 5 ) = kPosInf;
+        nonfinite_cls.at( 3, 4, 0, 6 ) = kNaN;
+        CHECK( t, run( nonfinite_cls ) == 0 );
+
+        Head zero_size( 8, 8 );  // bw = 0: an empty box carries no geometry
+        put_reference( zero_size );
+        zero_size.at( 3, 4, 0, 2 ) = 0;
+        CHECK( t, run( zero_size ) == 0 );
 
         Head inf_xy( 8, 8 );
         put_reference( inf_xy );

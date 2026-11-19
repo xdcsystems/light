@@ -75,6 +75,7 @@ private:
     const StreamLayout lay_;
     const int model_w_;  // NPU tensor geometry (RGB888)
     const int model_h_;
+    const int model_stride_px_;  // tensor row stride (EncoderConfig::model_stride_px, resolved)
     RkmppDrmPool<1> canvas_;  // persistent composite canvas (multi-view)
     RkmppDrmPool<1> idle_;    // NO SIGNAL canvas: gray + plate, stamped once at init
     std::array<LbGeom, kBands> bands_ {};

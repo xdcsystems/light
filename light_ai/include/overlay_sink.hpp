@@ -11,15 +11,16 @@
 #include <cstdint>
 #include <optional>
 
-#include "box_mapper.h"          // BoxMapper
-#include "config/config.hpp"     // LabelLang
-#include "core/box_envelope.hpp" // BoxEnvelope
-#include "core/callout.hpp"      // CalloutHistory, CalloutList
-#include "core/detection.hpp"    // DetList
-#include "core/frame_view.hpp"   // FrameView, TensorSet
-#include "core/global_track.hpp" // reid_cfg::kMaxSources
-#include "core/net_perf.hpp"     // OverlayPerfWindow, EncPerfWindow
-#include "core/track.hpp"        // TrajList
+#include "box_mapper.h"             // BoxMapper
+#include "config/config.hpp"        // LabelLang
+#include "core/box_filter.hpp"      // TrackBoxFilters, BoxFilterParams
+#include "core/callout.hpp"         // CalloutHistory, CalloutList
+#include "core/detection.hpp"       // DetList
+#include "core/encoder_config.hpp"  // StreamLayout, place_tile
+#include "core/frame_view.hpp"      // FrameView, TensorSet
+#include "core/global_track.hpp"    // reid_cfg::kMaxSources
+#include "core/net_perf.hpp"        // OverlayPerfWindow, EncPerfWindow
+#include "core/track.hpp"           // TrajList
 #include "gpu_box_drawer.hpp"
 #include "net_encoder.h"
 #include "net_preview.hpp"
@@ -65,19 +66,10 @@ public:
     EncPerfWindow take_enc_perf() noexcept;
 
 private:
-    struct TrackDispStab
-    {
-        int id = 0;
-        uint32_t gen = 0;
-        BoxEnvelope env {};
-    };
-    using TrackStabList = PodList<TrackDispStab, TrajList::cap>;
-
     void init_gpu_drawer( bool cpu_draw, const TensorSet& tensors );
     void reset_all_sources() noexcept;
     void sync_viewer_session() noexcept;
-    int find_stab_idx( const TrackStabList& list, int id, uint32_t gen ) const noexcept;
-    void stabilize_display_tracks( int src_idx, TrajList& disp ) noexcept;
+    float tile_scale( const FrameView& frame ) const noexcept;
     bool draw_overlay_into_tensor( const FrameView& frame,
                                    const DetList& dets,
                                    const TrajList& trajs,
@@ -92,8 +84,15 @@ private:
     GpuBoxList boxes_ {};
     CalloutList callouts_ {};
     std::array<CalloutHistory, reid_cfg::kMaxSources> callout_hist_ {};
-    std::array<TrackStabList, reid_cfg::kMaxSources> track_stab_ {};
+    std::array<TrackBoxFilters, reid_cfg::kMaxSources> track_filt_ {};
+    // Person boxes come from the Kalman posterior, already smooth in position:
+    // a higher still cutoff and speed gain than the raw boxes of BoxSmoother keep
+    // the box on a walking person (the dead zone still holds a standing one still).
+    const BoxFilterParams kTrackFilter { 1.0f, 0.05f, 1.0f, 0.01f, 2.0f, 0.5f };
+    StreamLayout layout_ {};  // the h264 stream geometry (tiled_): the callout tile scale
+    bool tiled_ = false;
     LabelLang label_lang_ = LabelLang::En;
+    int label_scale_ = 1;
     int model_w_ = 0;
     int model_h_ = 0;
     uint32_t stride_bytes_ = 0;

@@ -35,8 +35,8 @@ struct YoloHead
 
 // The shape check of one head, shared by YoloDecoder::anchor_set and the
 // startup check (the Pipeline ctor): the width divides the model input, the
-// stride is 8/16/32, the height matches the model at that stride and ch is a
-// 3-anchor layout (ch % 3 == 0). The strict ch == 255 of the standard 80-class
+// stride is 8/16/32, the height (> 0) matches the model at that stride and ch
+// is a 3-anchor layout (ch % 3 == 0) with at least one class (ch >= 18). The strict ch == 255 of the standard 80-class
 // model is the startup check's job (a 2-class synthetic head must still
 // decode). One warn per failure; on success stride and head (P3/P4/P5) are set
 // and true is returned. The data pointer is not touched (nullptr is fine):

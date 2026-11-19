@@ -104,8 +104,8 @@ bool YoloDecoder::band_fits( const YoloFrame& f ) const noexcept
 // the width divides the model input, the stride is 8/16/32 (the head index is
 // not trusted: RKNN does not promise the P3/P4/P5 order, and 8 << gi silently
 // shifts every box when the heads come out in another order), the height
-// matches the model at that stride and ch is a 3-anchor layout (ch % 3 == 0;
-// the strict ch == 255 of the standard 80-class model is the startup check's
+// (> 0) matches the model at that stride and ch is a 3-anchor layout
+// (ch % 3 == 0, ch >= 18: at least one class channel; the strict ch == 255 of the standard 80-class model is the startup check's
 // job). One warn per failure; the caller decides fatal (the startup check)
 // vs skip (decode).
 bool yolo_head_shape( const YoloHead& hd, int gi, int mw, int mh, const Log& log, int& stride, int& head )
@@ -124,14 +124,17 @@ bool yolo_head_shape( const YoloHead& hd, int gi, int mw, int mh, const Log& log
         log.warn() << "yolo: head " << gi << " unsupported stride " << stride << '\n';
         return false;
     }
-    if ( hd.h != mh / stride )
+    if ( hd.h <= 0 || hd.h != mh / stride )
     {
         log.warn() << "yolo: head " << gi << " height " << hd.h << " does not match model " << mh << " at stride "
                    << stride << '\n';
         return false;
     }
+    // At least one class channel per anchor (4 box + 1 obj + 1 class = 6,
+    // ch >= 18; M-14): with ch < 15 (per < 5) decode_anchor() would read obj
+    // and the box past the head; ch 15 holds no class channel at all.
     const int per = hd.ch / 3;  // 85 = 4+1+80
-    if ( per * 3 != hd.ch )
+    if ( hd.ch < 18 || per * 3 != hd.ch )
     {
         log.warn() << "yolo: unexpected head layout (per=" << per << ", ch=" << hd.ch << ")\n";
         return false;  // not a 3-anchor yolov5 head - skip
@@ -183,11 +186,11 @@ bool YoloDecoder::decode_anchor( const HeadScan& s, size_t off, int k, int gx, i
 
     int best = 0;
     const float best_cls = best_class( s, off, best );
-    // Class scan gate: best_cls <= 0 means no class channel
-    // beat zero (NaN never passes '>'), the pre-scan best
-    // would map to an invalid class id. No evidence -> no
+    // Class scan gate: best_cls <= 0 means no finite class
+    // channel beat zero (best_class skips NaN / Inf), the pre-scan
+    // best would map to an invalid class id. No evidence -> no
     // candidate (also kills conf==0 phantoms at thr <= 0).
-    if ( !std::isfinite( best_cls ) || best_cls <= 0.0f )
+    if ( best_cls <= 0.0f )
         return false;
     const float conf = obj * best_cls;
     if ( !std::isfinite( conf ) || !( conf >= conf_thr_ ) )
@@ -205,6 +208,8 @@ bool YoloDecoder::decode_anchor( const HeadScan& s, size_t off, int k, int gx, i
     // Reject NaN and +/-Inf so non-finite boxes cannot poison NMS IoU or emit().
     if ( !std::isfinite( cx ) || !std::isfinite( cy ) || !std::isfinite( bw_px ) || !std::isfinite( bh_px ) )
         return false;
+    if ( !( bw_px > 0.0f ) || !( bh_px > 0.0f ) )
+        return false;  // an empty box carries no geometry (emit would drop it anyway)
 
     if ( !box_overlaps_band( cx, cy, bw_px, bh_px, stride, b.left, b.top, b.w, b.h ) )
         return false;  // bar
@@ -220,7 +225,9 @@ float YoloDecoder::best_class( const HeadScan& s, size_t off, int& best ) const 
     float best_cls = 0.0f;
     for ( int c = 5; c < s.per; ++c )
     {
-        if ( const float v = fp16_to_float( s.data[off + c * s.cell_hw] ); v > best_cls )
+        // A non-finite channel never wins: +Inf used to take the anchor and
+        // then drop it whole, losing the finite best class.
+        if ( const float v = fp16_to_float( s.data[off + c * s.cell_hw] ); std::isfinite( v ) && v > best_cls )
         {
             best_cls = v;
             best = c;

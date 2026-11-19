@@ -97,6 +97,7 @@ FrameComposer::FrameComposer( const EncoderConfig& cfg, const Log& log )
   , lay_( cfg.layout )
   , model_w_( cfg.model_w )
   , model_h_( cfg.model_h )
+  , model_stride_px_( cfg.model_stride_px > 0 ? cfg.model_stride_px : cfg.model_w )
 {
     static_assert( static_cast<int>( EncoderFramePool::kSlots ) <= static_cast<int>( kBands ), "one band per ring slot" );
     static_assert( static_cast<int>( StreamLayout::kMaxTiles ) <= static_cast<int>( kBands ), "one band per grid cell" );
@@ -140,7 +141,7 @@ Status FrameComposer::compose( int tensor_fd, const TilePlacement& tp, int slot,
     }
     prev = tp.dst;
 
-    rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888 );
+    rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888, model_stride_px_, model_h_ );
     rga_buffer_t dst = nv12( target, lay_ );
     if ( Status rst = rga_ok( improcess( src, dst, {}, rect( tp.src ), rect( tp.dst ), {}, 0 ), log_, "RGA convert" ); !rst.ok() )
         return rst;

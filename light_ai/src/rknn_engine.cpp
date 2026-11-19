@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "rknn_engine.hpp"
+#include "core/rga_limits.hpp"  // rgb888_stride_ok: the input rows every consumer reads
 
 RknnEngine::RknnEngine( const char* model_path, const Log& log ) : log_( log )
 {
@@ -65,15 +66,20 @@ void RknnEngine::parse_input_dims()
     in_w_ = 0;
     in_h_ = 0;
     in_c_ = 0;
+
     if ( in_attr_.n_dims != 4 )
         return;
+
     if ( in_attr_.fmt == RKNN_TENSOR_NHWC )
     {
         in_h_ = static_cast<int>( in_attr_.dims[1] );
         in_w_ = static_cast<int>( in_attr_.dims[2] );
         in_c_ = static_cast<int>( in_attr_.dims[3] );
+
+        return;
     }
-    else if ( in_attr_.fmt == RKNN_TENSOR_NCHW )
+
+    if ( in_attr_.fmt == RKNN_TENSOR_NCHW )
     {
         in_c_ = static_cast<int>( in_attr_.dims[1] );
         in_h_ = static_cast<int>( in_attr_.dims[2] );
@@ -179,6 +185,31 @@ Status RknnEngine::setup_outputs( bool keep_native_outputs )
     return {};
 }
 
+// Every consumer of the input tensor (RGA, GpuBoxDrawer, CalDumper,
+// NetPreview) reads it as RGB888 rows of stride_bytes: whole pixels,
+// 16-aligned for RGA. The row width comes from the queried w_stride
+// (0 = tight) and is decided BEFORE allocation: setup_io sizes the buffers
+// for it and binds an attr that carries it (was: w_stride zeroed first, so
+// a model that pads its rows got undersized buffers and a tight
+// stride_bytes). A layout no consumer can read fails here, at startup.
+Status RknnEngine::input_row( int& row_px ) const
+{
+    if ( in_c_ != 3 )
+    {
+        log_.error() << "rknn: input has " << in_c_ << " channels, RGB888 (3) required\n";
+        return make_status( Errc::Unsupported, "input tensor is not 3-channel RGB" );
+    }
+    row_px = static_cast<int>( in_attr_.w_stride ) > in_w_ ? static_cast<int>( in_attr_.w_stride ) : in_w_;
+    const uint32_t row_bytes = static_cast<uint32_t>( row_px ) * 3U;
+    if ( !rga_limits::rgb888_stride_ok( row_bytes, in_w_ ) )
+    {
+        log_.error() << "rknn: input row " << row_px << " px (w=" << in_w_ << ", w_stride=" << in_attr_.w_stride
+                     << ") is not 16-aligned for RGA\n";
+        return make_status( Errc::Unsupported, "input row stride not usable by RGA" );
+    }
+    return {};
+}
+
 Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
 {
     if ( !ctx_ )
@@ -193,14 +224,19 @@ Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
         return make_status( Errc::Unsupported, "input tensor is not 4-D NHWC/NCHW" );
     }
 
+    int row_px = 0;
+    if ( Status st = input_row( row_px ); !st.ok() )
+        return st;
+    const uint32_t row_bytes = static_cast<uint32_t>( row_px ) * static_cast<uint32_t>( in_c_ );
+
     const rknn_tensor_type native_type = in_attr_.type;
     in_attr_.fmt = RKNN_TENSOR_NHWC;
     in_attr_.type = RKNN_TENSOR_UINT8;
     in_attr_.pass_through = 0;
-    in_attr_.w_stride = 0;
+    in_attr_.w_stride = row_px == in_w_ ? 0 : static_cast<uint32_t>( row_px );
     in_attr_.h_stride = 0;
 
-    const uint32_t packed_u8 = static_cast<uint32_t>( in_w_ ) * static_cast<uint32_t>( in_h_ ) * static_cast<uint32_t>( in_c_ );
+    const uint32_t packed_u8 = row_bytes * static_cast<uint32_t>( in_h_ );
     const uint32_t raw_sz = in_attr_.size_with_stride ? in_attr_.size_with_stride : in_attr_.size;
     const uint32_t in_size = ( native_type == RKNN_TENSOR_UINT8 || native_type == RKNN_TENSOR_INT8 )
                                  ? ( raw_sz >= packed_u8 ? raw_sz : packed_u8 )
@@ -232,9 +268,7 @@ Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
         return st;
     }
 
-    in_stride_bytes_ = in_attr_.w_stride > 0
-                               ? in_attr_.w_stride * static_cast<uint32_t>( in_c_ )
-                               : static_cast<uint32_t>( in_w_ ) * static_cast<uint32_t>( in_c_ );
+    in_stride_bytes_ = row_bytes;
 
     log_.info() << "model input: " << in_w_ << 'x' << in_h_ << ' '
                 << get_type_string( in_attr_.type ) << " zp=" << in_attr_.zp << " scale=" << in_attr_.scale

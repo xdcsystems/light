@@ -18,10 +18,12 @@ class TcpPullServer
 public:
     struct WriteCtx
     {
+        explicit WriteCtx( int to ) noexcept : sndtimeo_sec( to ) {}
+
+    public:
         std::atomic<int> cfd { -1 };
         const int sndtimeo_sec;
         mutable std::atomic<uint64_t> wait_writable_cnt { 0 };
-        explicit WriteCtx( int to ) noexcept : sndtimeo_sec( to ) {}
     };
 
     TcpPullServer( int port, int sndbuf_bytes, int sndtimeo_sec );
@@ -74,6 +76,14 @@ private:
     uint8_t* iobuf_ = nullptr;
     AVIOContext* pb_ = nullptr;
 };
+
+// One AVIO chunk onto the client socket of ctx, all of it or an error
+// (src/tcp_send.cpp: POSIX only, no FFmpeg -- host-tested). Returns
+// buf_size, or a negative code: -EPIPE (no client, peer gone, shut down by
+// abort_client), -ETIMEDOUT (the chunk missed its sndtimeo_sec deadline),
+// -EIO (any other errno), kTcpSendEof (send returned 0).
+constexpr int kTcpSendEof = -0x10000;
+int tcp_send_chunk( const TcpPullServer::WriteCtx& ctx, const uint8_t* buf, int buf_size ) noexcept;
 
 // The serve-thread bind with a retry: every listen() failure is retried,
 // not only EADDRINUSE -- the run keeps going without a viewer whatever the

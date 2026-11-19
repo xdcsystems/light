@@ -1,8 +1,13 @@
 #include "core/fixed_fmt.hpp"
 #include "timings.hpp"
 
-void Timings::add( const FrameTrace& tr )
+void Timings::add( const FrameTrace& tr, bool npu_ok )
 {
+    if ( !npu_ok )
+    {
+        ++npu_fail_;
+        return;
+    }
     if ( run_.n == 0 )
         t0_ = clk::now();
     run_.add( tr );
@@ -17,6 +22,8 @@ void Timings::add( const FrameTrace& tr )
 void Timings::report_total() const
 {
     print( "TOTAL ", run_ );
+    if ( npu_fail_ > 0 )
+        log_.info() << "timings: " << npu_fail_ << " frame(s) with a failed NPU job left out of the averages\n";
 }
 
 void Timings::print( const char* tag, const Sums& s ) const
@@ -32,7 +39,9 @@ void Timings::print( const char* tag, const Sums& s ) const
          << " enc=" << Fixed { s.enc / n, 1 } << " | sum=" << Fixed { sum, 1 };
     if ( pool_ > 1 )
     {
-        const double wall = static_cast<double>( run_.n ) / std::chrono::duration<double>( clk::now() - t0_ ).count();
+        // dur > 0 guard: one frame reported right at t0_ (run_.n == 1) divided by zero -> "inf FPS".
+        const double dur = std::chrono::duration<double>( clk::now() - t0_ ).count();
+        const double wall = dur > 0.0 ? static_cast<double>( run_.n ) / dur : 0.0;
         line << " ms (pool window latency, " << pool_ << " in flight) | wall ~" << Fixed { wall, 1 } << " FPS\n";
     }
     else

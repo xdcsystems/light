@@ -22,11 +22,13 @@ std::string cal_dump_path( const CalConfig& cal, CalKind kind, int frame_idx )
     return name.str();
 }
 
-void CalDumper::init( const CalConfig& cal, int model_w, int model_h )
+void CalDumper::init( const CalConfig& cal, int model_w, int model_h, uint32_t stride_bytes )
 {
     cal_ = cal;
     model_w_ = model_w;
     model_h_ = model_h;
+    const size_t tight = static_cast<size_t>( model_w ) * 3;
+    stride_ = stride_bytes > tight ? stride_bytes : tight;
     inited_ = true;
 }
 
@@ -42,15 +44,17 @@ Status CalDumper::write_ppm( const std::string& path, const uint8_t* data, size_
 {
     if ( !data )
         return make_status( Errc::Invalid, "null tensor data" );
-    const size_t bytes = static_cast<size_t>( model_w_ ) * model_h_ * 3;
-    if ( size < bytes )
+    const size_t row = static_cast<size_t>( model_w_ ) * 3;
+    const size_t bytes = model_h_ > 0 ? stride_ * static_cast<size_t>( model_h_ - 1 ) + row : 0;
+    if ( model_h_ <= 0 || size < bytes )
         return make_status( Errc::Invalid, "tensor shorter than the model frame" );
     errno = 0;  // ofstream does not clear errno on success: keep the sys() honest
     std::ofstream out( path, std::ios::binary );
     if ( !out )
         return errno_status( Errc::Failed, "open failed", errno ? errno : EIO );
     out << "P6\n" << model_w_ << ' ' << model_h_ << "\n255\n";
-    out.write( reinterpret_cast<const char*>( data ), static_cast<std::streamsize>( bytes ) );
+    for ( int y = 0; y < model_h_ && out; ++y )
+        out.write( reinterpret_cast<const char*>( data + stride_ * static_cast<size_t>( y ) ), static_cast<std::streamsize>( row ) );
     out.close();  // flushes: a failed final write (ENOSPC, EIO) sets failbit here, not in the destructor
     if ( out.fail() )
         return errno_status( Errc::Failed, "write failed", errno ? errno : EIO );

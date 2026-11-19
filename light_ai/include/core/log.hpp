@@ -101,6 +101,7 @@ public:
 private:
     Line line( Level level, std::ostream& os ) const { return { enabled( level ) ? &os : nullptr, mx_ }; }
 
+private:
     std::ostream& out_;
     std::ostream& err_;
     const Level min_;

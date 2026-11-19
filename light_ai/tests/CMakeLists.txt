@@ -22,6 +22,9 @@ add_executable(light_ai_tests
     test_pod_containers.cpp
     test_box_math.cpp
     test_fp16.cpp
+    test_rga_limits.cpp
+    test_fixed_fmt.cpp
+    test_line_scan.cpp
     test_yolo_decoder.cpp
     test_geometry.cpp
     test_jpeg_probe.cpp
@@ -29,6 +32,7 @@ add_executable(light_ai_tests
     test_status.cpp
     test_stop_flag.cpp
     test_tcp_retry.cpp
+    test_tcp_send.cpp
     test_yolo_head_shape.cpp
     test_http_url.cpp
     test_http_head.cpp
@@ -37,6 +41,7 @@ add_executable(light_ai_tests
     test_mjpeg_slot_pool.cpp
     test_net_mjpeg_source.cpp
     test_box_smoother.cpp
+    test_box_filter.cpp
     test_kalman_axis.cpp
     test_associator.cpp
     test_auto_orient.cpp
@@ -105,6 +110,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/timings.cpp
     ${LIGHT_AI_ROOT}/src/console_reporter.cpp
     ${LIGHT_AI_ROOT}/src/cal_dumper.cpp
+    ${LIGHT_AI_ROOT}/src/tcp_send.cpp
     ${LIGHT_AI_ROOT}/externals/inih/ini.c
 )
 # Same inih switch as the main target: the config-file handler relies on it.

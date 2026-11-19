@@ -30,13 +30,13 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 - Never push to `master` directly, never force-push, never rewrite pushed history.
 - Before a PR, the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
-  (CMake build + 54 unit suites + 5 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
+  (CMake build + 61 unit suites + 6 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
   `SKIP_TSAN=1` / `SKIP_TIDY=1` to narrow intermediate iterations).
   Two-pass tidy gate: `main` = system `clang-tidy-11` (`.clang-tidy`, `tests/.clang-tidy`),
   `cognitive` = pinned `clang-tidy==23.1.4` in `venv/` (`scripts/tidy_cognitive.yaml`, Threshold 20).
   Per-file logs: `build/tidy/{src,tests}/<path>.log` and `build/tidy/cognitive/{src,tests}/<path>.log`.
   Result cache: `build/tidy-cache` (`TIDY_NO_CACHE=1` disables it). See [README.md](README.md#build--static-analysis).
-- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 54 suites / 7,503 checks + 5 TSan suites / 22 checks).
+- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 61 suites / 9,012 checks + 6 TSan suites / 23 checks).
   Single suite / flake hunt: `./build/tests/light_ai_tests [substr...] [--repeat N]` (also `light_ai_tests_tsan`;
   exit 2 on bad args).
 - Live run:
@@ -82,7 +82,7 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 - Header layout: in each visibility section, functions first, then a fresh label for data.
 - Header extensions: new headers use `.hpp`; nine legacy `.h` headers stay as-is unless refactored.
 - `core/` includes only the C++17 standard library and `pod_list.hpp`/`pod_ring.hpp` (keeps tests SDK-free).
-- Exception: header-only libraries in `externals/` (`stb_easy_font.h`, `font8x8_basic.h`) may keep file
+- Exception: header-only libraries in `externals/` (`stb_easy_font.h`) may keep file
   statics; include them only from `.cpp` files, never from a project header.
 - Errors (`Status` / `noexcept`): recoverable failures return `Status` (`include/core/status.hpp`);
   exceptions (`std::runtime_error` via `throw_on`) are startup-only; frame path and thread bodies are

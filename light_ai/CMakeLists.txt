@@ -82,6 +82,7 @@ add_executable(light_ai
     src/sources.cpp
     src/overlay_sink.cpp
     src/tcp_pull_server.cpp
+    src/tcp_send.cpp
     src/net_preview.cpp
     src/net_encoder.cpp
     src/tracker.cpp

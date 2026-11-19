@@ -70,7 +70,16 @@ public:
     // the oldest unread slot if full. Returns false when closed/stopped/empty.
     bool push( const uint8_t* data ) noexcept
     {
-        if ( data == nullptr || frame_bytes_ == 0 )
+        return push_rows( data, frame_bytes_, frame_bytes_ );
+    }
+
+    // push() for a padded source: frame_bytes_ / row_bytes rows of row_bytes,
+    // read every src_stride bytes, packed into the slot. src_stride ==
+    // row_bytes is the plain copy; row_bytes must divide frame_bytes_ and
+    // src_stride must be >= row_bytes, else false.
+    bool push_rows( const uint8_t* data, size_t row_bytes, size_t src_stride ) noexcept
+    {
+        if ( data == nullptr || frame_bytes_ == 0 || row_bytes == 0 || frame_bytes_ % row_bytes != 0 || src_stride < row_bytes )
             return false;
         {
             const std::lock_guard<std::mutex> lk( mx_ );
@@ -88,7 +97,11 @@ public:
                 idx = ( head_ + count_ ) & 1;
                 ++count_;
             }
-            std::memcpy( slots_[idx].data(), data, frame_bytes_ );
+            if ( src_stride == row_bytes )
+                std::memcpy( slots_[idx].data(), data, frame_bytes_ );
+            else
+                for ( size_t off = 0, src = 0; off < frame_bytes_; off += row_bytes, src += src_stride )
+                    std::memcpy( slots_[idx].data() + off, data + src, row_bytes );
         }
         cv_.notify_one();
         return true;

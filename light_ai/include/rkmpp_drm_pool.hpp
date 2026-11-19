@@ -12,7 +12,6 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include "core/status.hpp"
 
 // Same include form as mpp_decoder.hpp: <rockchip/rk_mpi.h> resolves to
 // the self-built /usr/local/include/rockchip headers. The quoted form
@@ -20,6 +19,7 @@
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
 
+#include "core/status.hpp"
 #include "dma_sync.hpp"
 
 template <int N>
@@ -66,6 +66,10 @@ struct RkmppDrmPool
         return Status{};
     }
 
+public:
+    MppBufferGroup group = nullptr;
+    std::array<MppBuffer, N> buf {};
+
 private:
     void release_all()
     {
@@ -83,9 +87,5 @@ private:
             group = nullptr;
         }
     }
-
-public:
-    MppBufferGroup group = nullptr;
-    std::array<MppBuffer, N> buf {};
 };
 

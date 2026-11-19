@@ -239,7 +239,7 @@ void MppDecoder::teardown() noexcept
     ok_ = false;
 }
 
-Status MppDecoder::decode( const uint8_t* data, size_t size, int& fd )
+Status MppDecoder::decode( const uint8_t* data, size_t size, int& fd ) noexcept
 {
     fd = -1;
     ++frames_;

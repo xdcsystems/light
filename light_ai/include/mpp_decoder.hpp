@@ -40,7 +40,7 @@ public:
     // SOI, an errinfo / discard frame) -- normal on the recovery paths.
     // A failure Status: broken decoder state (Timeout: a poll wait,
     // NoMemory: a buffer, Failed: an SDK step); fd is -1 then.
-    Status decode( const uint8_t* data, size_t size, int& fd );
+    Status decode( const uint8_t* data, size_t size, int& fd ) noexcept;
 
     // Extra dma-buf from the same DRM pool: intermediate buffer for
     // multi-pass RGA when the scale ratio exceeds the RGA3 limit (1/8).

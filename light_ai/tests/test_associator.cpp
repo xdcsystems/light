@@ -1,6 +1,8 @@
 // Associator: candidates per round, the size gate of each round, the IoU
 // gates, the skip rules and the best-first order. Track boxes 50 x 100.
 
+#include <cmath>
+
 #include "core/associator.hpp"
 #include "check.hpp"
 #include "suites.hpp"
@@ -134,10 +136,30 @@ namespace
         CHECK( t, a.match( 0, dets, tracks, r.det_trk, r.taken ) == 1 );
         CHECK( t, r.det_trk[0] == 0 );
     }
+
+    // M-14: a NaN or zero-size person det is never paired, not even with a
+    // track on the same spot.
+    void test_unusable( TestRun& t )
+    {
+        Associator a;
+        Associator::TrackBoxes tracks {};
+        tracks[0] = box( 100, 100, TRACK_CONF );
+        tracks[1] = box( 300, 100, TRACK_CONF );
+        const Detection nan_det { std::nanf( "" ), 100, 50, 100, 0, 0.9f };
+        const Detection zero_det { 300, 100, 0, 100, 0, 0.9f };
+        const DetList dets = dets_of( { nan_det, zero_det } );
+        for ( int round = 0; round < 2; ++round )
+        {
+            Round r;
+            CHECK( t, a.match( round, dets, tracks, r.det_trk, r.taken ) == 0 );
+            CHECK( t, r.det_trk[0] == -1 && r.det_trk[1] == -1 );
+        }
+    }
 }  // namespace
 
 void test_associator( TestRun& t )
 {
+    test_unusable( t );
     test_basic( t );
     test_size_gate( t );
     test_iou_gate( t );

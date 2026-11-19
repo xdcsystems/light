@@ -101,6 +101,9 @@ private:
     void parse_input_dims();
     void release_io();
     Status alloc_input_slot( int slot, uint32_t in_size, bool& warned_fallback );
+    // The input row width in pixels (queried w_stride or the tight width), or
+    // Unsupported when it is not RGB888 rows RGA can read.
+    Status input_row( int& row_px ) const;
     Status setup_outputs( bool keep_native_outputs );
 
 private:

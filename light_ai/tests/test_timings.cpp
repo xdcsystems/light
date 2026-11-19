@@ -50,7 +50,8 @@ void test_timings( TestRun& t )
         CHECK( t, out.str().find( "[timing] avg/60 cam=90.5 " ) != std::string::npos );
         tm.report_total();
         CHECK( t, tm.frames() == 120 );
-        CHECK( t, total_line( out.str() ) == "[timing] TOTAL  cam=60.5 dec=0.0 rga=0.0 infer=0.0 post=0.0 enc=0.0 | sum=60.5 ms -> ~16.5 FPS" );
+        CHECK( t, total_line( out.str() )
+                      == "[timing] TOTAL  cam=60.5 dec=0.0 rga=0.0 infer=0.0 post=0.0 enc=0.0 | sum=60.5 ms -> ~16.5 FPS" );
         CHECK( t, err.str().empty() );
     }
     // 125 frames: TOTAL covers all 125 (63.0), not the 5-frame tail (123.0).
@@ -86,5 +87,36 @@ void test_timings( TestRun& t )
         CHECK( t, line.find( "(pool window latency, 3 in flight) | wall ~" ) != std::string::npos );
         out << 1.25;
         CHECK( t, out.str().substr( out.str().size() - 4 ) == "1.25" );
+    }
+    // Low §2: a failed NPU frame stays out of the averages and is reported
+    // on its own non-"[timing]" line; no frame at all -> no line either.
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        Timings tm( log );
+        FrameTrace bad {};
+        bad.cam = 1000.0;
+        tm.add( bad, false );
+        tm.add( bad, false );
+        FrameTrace good {};
+        good.cam = 10.0;
+        tm.add( good );
+        tm.report_total();
+        CHECK( t, tm.frames() == 1 && tm.npu_fail() == 2 );
+        CHECK( t, total_line( out.str() ).find( "[timing] TOTAL  cam=10.0 " ) == 0 );
+        CHECK( t, out.str().find( "timings: 2 frame(s) with a failed NPU job left out of the averages\n" ) != std::string::npos );
+    }
+    // Smoke test of the pool wall-FPS line right after the first frame: the
+    // dur > 0 guard itself is not forced here (steady_clock moved on already).
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        Timings tm( log );
+        tm.set_pool( 3 );
+        tm.add( FrameTrace {} );
+        tm.report_total();
+        CHECK( t, out.str().find( "~inf" ) == std::string::npos && out.str().find( "~nan" ) == std::string::npos );
     }
 }

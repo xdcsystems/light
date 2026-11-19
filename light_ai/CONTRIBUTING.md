@@ -12,7 +12,7 @@ This guide documents the project's coding rules, error model, comment style, and
 - **Header extensions:** New C++ headers use `.hpp`. Nine legacy headers still use `.h` (`box_mapper.h`, `box_smoother.h`, `coco_names.h`, `console_reporter.h`, `frame_trace.h`, `net_encoder.h`, `rga_resizer.h`, `config/config_file.h`, `config/option_registry.h`); keep existing names unchanged unless refactoring the module.
 - **No manual heap allocation:** No `new`/`delete`, no `std::unique_ptr`/`std::shared_ptr`, no heap allocations in recovery or frame paths. Data lives in fixed-size members (`std::vector`/`std::string` are permitted only as startup RAII containers). Reference: [`include/pod_list.hpp`](include/pod_list.hpp).
 - **No statics:** No static data members, no static member functions, no function-local statics. Shared state belongs to the owning layer as a regular member; file-local helpers belong in an anonymous namespace inside the `.cpp`. Compile-time class constants use an unscoped `enum`; block- and namespace-scope constants use plain `constexpr` without `static`.
-  - *Exceptions:* disposable probes in `tools/` and vendored header-only libraries in `externals/` (`stb_easy_font.h`, `font8x8_basic.h`), which must only be included from `.cpp` files (e.g. [`src/core/bitmap_font.cpp`](src/core/bitmap_font.cpp)), never from a project header.
+  - *Exceptions:* disposable probes in `tools/` and vendored header-only libraries in `externals/` (`stb_easy_font.h`), which must only be included from `.cpp` files (e.g. [`src/core/bitmap_font.cpp`](src/core/bitmap_font.cpp)), never from a project header.
 - **No virtuals or inheritance:** Zero vtables and zero dynamic polymorphism. Layer boundaries use composition of concrete members; static polymorphism uses templates (e.g. [`PodList<T, N>`](include/pod_list.hpp), [`PodRing<T, N>`](include/pod_ring.hpp), [`InferencePool`](include/inference_pool.hpp)).
 - **`const` by default:** Non-mutating methods are `const`; read-only parameters are passed by `const&`; hot-path outputs go through out-parameters (e.g. `YoloDecoder::decode` fills `DetList& out`).
 - **Branch tables over `if`-chains:** Dispatch over fixed sets via `switch` or `constexpr` tables (reference: `BoxMapper::det_color` in [`src/box_mapper.cpp`](src/box_mapper.cpp)).
@@ -47,7 +47,7 @@ Every PR targeting `master` must pass the full board gate:
 
 This runs:
 1. Release CMake build (`light_ai`).
-2. Host unit tests (`light_ai_tests` — 54 suites, 7,503 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 5 suites, 22 checks).
+2. Host unit tests (`light_ai_tests` — 61 suites, 9,012 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 6 suites, 23 checks).
 3. Two-pass `clang-tidy` gate ([`scripts/tidy_run.sh`](scripts/tidy_run.sh)):
    - **main:** system `clang-tidy-11` against [`.clang-tidy`](.clang-tidy) (`tests/` uses [`tests/.clang-tidy`](tests/.clang-tidy)).
    - **cognitive:** `venv/bin/clang-tidy` (`23.1.4`) against [`scripts/tidy_cognitive.yaml`](scripts/tidy_cognitive.yaml) (`Threshold: 20`).

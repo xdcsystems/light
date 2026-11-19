@@ -1,4 +1,5 @@
 #include <cerrno>
+#include <chrono>
 #include <string>
 
 #include "net_mjpeg_source.hpp"
@@ -72,7 +73,7 @@ Status NetMjpegSource::prime_first_frame()
     return {};
 }
 
-void NetMjpegSource::teardown()
+void NetMjpegSource::teardown() noexcept
 {
     sock_.close();
     primed_len_ = 0;
@@ -88,10 +89,20 @@ Status NetMjpegSource::send_get( const std::string& host, int port, const std::s
     return sock_.send_all( req );
 }
 
+BufferedSocket::Fill NetMjpegSource::fill_before( std::chrono::steady_clock::time_point deadline )
+{
+    const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>( deadline - std::chrono::steady_clock::now() ).count();
+    if ( rem <= 0 )
+        return BufferedSocket::Fill::Timeout;
+    return sock_.fill_until( static_cast<int>( rem < kPollMs ? rem : static_cast<long long>( kPollMs ) ) );
+}
+
 Status NetMjpegSource::read_headers()
 {
-    // parse_http_head owns the grammar and the kHeadMax cap (a server that
-    // drips headers forever is a data-volume cap, not a wall-clock one).
+    // parse_http_head owns the grammar and the kHeadMax byte cap; the
+    // deadline caps the wall clock: a head dripped a byte per watchdog
+    // window used to keep the prober (or the frame thread) here forever.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds( kPollMs );
     while ( true )
     {
         const HttpHead h = parse_http_head( sock_.data(), sock_.size() );
@@ -106,7 +117,7 @@ Status NetMjpegSource::read_headers()
         }
         if ( h.parse == HttpHead::Parse::Error )
             return h.err;
-        if ( sock_.fill_until( kPollMs ) == BufferedSocket::Fill::Data )
+        if ( fill_before( deadline ) == BufferedSocket::Fill::Data )
             continue;
         return make_status( Errc::Timeout, "no HTTP response within the watchdog window" );
     }
@@ -206,10 +217,21 @@ void NetMjpegSource::start()
 NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
 {
     uint8_t* const dst = pool_.data( slot );
+    // The part deadline runs from the part's first header byte, not from
+    // entry: the idle gap before a frame (the previous part's delimiter line
+    // may already sit in the window) stays a plain kPollMs watchdog
+    // (fill_until). Once the delimiter is consumed, any byte left in the
+    // window is part header or body, and the part is bounded to kPartMs in
+    // total. Accepted limit: junk dripped before a delimiter line is bounded
+    // only by the window filling up (BufferedSocket Full -> Desync).
+    using clk = std::chrono::steady_clock;
+    clk::time_point deadline = clk::time_point::max();
     while ( true )
     {
         const MultipartReader::Step st = parts_.feed( sock_.data(), sock_.size(), dst );
         sock_.consume( st.consumed );
+        if ( deadline == clk::time_point::max() && ( parts_.in_body() || ( parts_.in_header() && sock_.size() > 0 ) ) )
+            deadline = clk::now() + std::chrono::milliseconds( kPartMs );
         if ( st.ev == MultipartReader::Event::Part )
         {
             *size = st.size;
@@ -222,10 +244,10 @@ NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
             rx_slot_ = -1;
             return Read::Oversized;
         }
-        const BufferedSocket::Fill r = sock_.fill_until( kPollMs );
+        const BufferedSocket::Fill r = deadline == clk::time_point::max() ? sock_.fill_until( kPollMs ) : fill_before( deadline );
         if ( r == BufferedSocket::Fill::Data )
             continue;
-        parts_.resync();  // cancelled, watchdog, EOF / error, or a wedged-full window
+        parts_.resync();  // cancelled, watchdog / deadline, EOF / error, or a wedged-full window
         rx_slot_ = -1;
         return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
     }
@@ -297,7 +319,7 @@ NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size,
     return Read::Part;
 }
 
-Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms )
+Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms ) noexcept
 {
     if ( !sock_.is_open() )
         return dequeue_status( ENODEV );
@@ -337,7 +359,7 @@ Status NetMjpegSource::take_primed( int& index, uint32_t& size )
     return {};
 }
 
-void NetMjpegSource::requeue( int index )
+void NetMjpegSource::requeue( int index ) noexcept
 {
     pool_.release( index );
 }

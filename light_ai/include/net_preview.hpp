@@ -43,7 +43,7 @@ public:
 
     // Called once per frame from the pipeline loop (same thread every time).
     // Copies the tensor frame into the 2-slot drop-oldest ring without waiting on socket I/O.
-    void publish( const uint8_t* rgb );
+    void publish( const uint8_t* rgb ) noexcept;
 
 private:
     // The preview thread: listen, then one viewer session after another.
@@ -59,6 +59,7 @@ private:
 private:
     const Log& log_;
     const int w_, h_, fps_, pace_fps_, port_;
+    const size_t src_stride_;  // tensor row stride in bytes (>= w_ * 3); the ring holds packed rows
     PreviewRing ring_;
     std::vector<uint8_t> send_buf_;
     std::thread thread_;

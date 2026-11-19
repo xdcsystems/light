@@ -1,9 +1,10 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 #include "box_mapper.h"
 
-void BoxMapper::fill( const DetList& dets, const TrajList& trajs, const Tracker& tracker,
+void BoxMapper::fill( const DetList& dets, const TrajList& trajs, const TrajList& post, const Tracker& tracker,
                       GpuBoxList& boxes, const LbGeom& lb, float sx, float sy, int64_t now_us ) noexcept
 {
     boxes.clear();
@@ -24,8 +25,22 @@ void BoxMapper::fill( const DetList& dets, const TrajList& trajs, const Tracker&
         // per-frame eviction, so a ghost trail self-terminates when its
         // youngest point ages out
         if ( t.state == TRACK_CONF || t.state == TRACK_DEAD )
-            trail_points( tracker, t, now_us, b, boxes );
+            trail_points( tracker, t, head_shift( t, post, k ), now_us, b, boxes );
     }
+}
+
+// Only a track drawn as a box (TENT / CONF) bends its trail: a DEAD ghost has no
+// box to meet. Entry k of post must be the same track (id and gen), else no shift.
+BoxMapper::Shift BoxMapper::head_shift( const TrackState& t, const TrajList& post, int k ) const noexcept
+{
+    if ( t.state != TRACK_TENT && t.state != TRACK_CONF )
+        return Shift {};
+    if ( k >= post.n || post.d[k].id != t.id || post.d[k].gen != t.gen )
+        return Shift {};
+    const Shift s { t.cx - post.d[k].cx, t.cy - post.d[k].cy };
+    if ( !std::isfinite( s.x ) || !std::isfinite( s.y ) )
+        return Shift {};
+    return s;
 }
 
 // Shared box geometry for both draw paths: map one scene-space box into the
@@ -36,6 +51,9 @@ void BoxMapper::fill( const DetList& dets, const TrajList& trajs, const Tracker&
 // for det and track boxes, no second notion of "inside".
 bool BoxMapper::band_box( float x, float y, float w, float h, const Band& b, GpuBox& out ) const noexcept
 {
+    // M-14: explicit, not relying on NaN failing the comparisons below.
+    if ( !std::isfinite( x ) || !std::isfinite( y ) || !std::isfinite( w ) || !std::isfinite( h ) || !( w > 0.0f ) || !( h > 0.0f ) )
+        return false;
     out.x0 = x * b.sx + b.left;
     out.y0 = y * b.sy + b.top;
     out.x1 = ( x + w ) * b.sx + b.left;
@@ -72,7 +90,8 @@ void BoxMapper::det_boxes( const DetList& dets, const Band& b, GpuBoxList& boxes
     }
 }
 
-// Track box from the Kalman posterior: the single drawing source for persons
+// Track box: the display box of the track (in OverlaySink the BoxFilter output of
+// the Kalman posterior; the posterior itself when no filter runs) -- the single drawing source for persons
 // after the EMA person boxes were removed (anti-jitter stage 1). TENT draws
 // too -- a new person appears at once; the confirmation gate stays a
 // stability concept, not a visibility gate. Same transform as the det boxes.
@@ -91,7 +110,8 @@ void BoxMapper::track_box( const TrackState& t, const Band& b, GpuBoxList& boxes
 }
 
 // Trail dots for CONF tracks and DEAD ghosts (see the state gate in fill).
-void BoxMapper::trail_points( const Tracker& tracker, const TrackState& t, int64_t now_us, const Band& b, GpuBoxList& boxes ) noexcept
+void BoxMapper::trail_points( const Tracker& tracker, const TrackState& t, const Shift& sh, int64_t now_us, const Band& b,
+                              GpuBoxList& boxes ) noexcept
 {
     // stride 1: the ring is already thinned by the tracker-side
     // step gate (TrailWindow), so every stored point is an honest
@@ -106,9 +126,14 @@ void BoxMapper::trail_points( const Tracker& tracker, const TrackState& t, int64
     {
         if ( boxes.n >= GpuBoxList::cap )  // PodList<GpuBox,128> cap
             break;
+        // The head blend: weight 1 on the newest point, 0 from kTrailBlend points back.
+        const float wgt = std::max( 0.0f, 1.0f - static_cast<float>( ns - 1 - j ) / static_cast<float>( kTrailBlend ) );
+        TrajPoint pt = samp_[j];
+        pt.x += wgt * sh.x;
+        pt.y += wgt * sh.y;
         float px = 0.0f;
         float py = 0.0f;
-        if ( !trail_dot( samp_[j], b, prev, px, py ) )
+        if ( !trail_dot( pt, b, prev, px, py ) )
             continue;
         const int a = trail_alpha( now_us - samp_[j].ts_us, max_age_us, j, ns );
         // j == 0 lands here with a == 0 by design (the index ramp
@@ -139,6 +164,9 @@ bool BoxMapper::trail_dot( const TrajPoint& pt, const Band& b, PrevDot& prev, fl
 {
     px = pt.x * b.sx + b.left;
     py = pt.y * b.sy + b.top;
+    // A NaN point fails every '<' / '>' below and would pass as "inside" (M-14).
+    if ( !std::isfinite( px ) || !std::isfinite( py ) )
+        return false;
     if ( px - 1.5f < b.left || py - 1.5f < b.top || px + 1.5f > b.right || py + 1.5f > b.bottom )
         return false;
     if ( prev.set )

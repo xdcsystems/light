@@ -61,6 +61,31 @@ void test_preview_ring( TestRun& t )
         consumer.join();
         CHECK( t, !popped.load() );
     }
+
+    // push_rows (M-11): a padded producer (stride > row) is packed into the
+    // slot -- the padding never reaches the consumer; bad geometry is refused.
+    {
+        constexpr size_t row = 12;
+        constexpr size_t rows = 3;
+        constexpr size_t stride = 16;
+        PreviewRing ring( row * rows );
+        std::vector<uint8_t> src( stride * rows, 0xEE );
+        for ( size_t r = 0; r < rows; ++r )
+            for ( size_t i = 0; i < row; ++i )
+                src[r * stride + i] = static_cast<uint8_t>( r * row + i );
+        std::vector<uint8_t> out( row * rows, 0 );
+        ring.open();
+        CHECK( t, !ring.push_rows( src.data(), row, row - 1 ) );  // stride shorter than a row
+        CHECK( t, !ring.push_rows( src.data(), 5, stride ) );      // row does not divide the frame
+        CHECK( t, !ring.push_rows( src.data(), 0, stride ) );
+        CHECK( t, ring.push_rows( src.data(), row, stride ) );
+        CHECK( t, ring.pop( out ) );
+        bool packed = true;
+        for ( size_t i = 0; i < out.size(); ++i )
+            packed = packed && out[i] == static_cast<uint8_t>( i );
+        CHECK( t, packed );
+        ring.stop();
+    }
 }
 
 void test_preview_ring_threads( TestRun& t )

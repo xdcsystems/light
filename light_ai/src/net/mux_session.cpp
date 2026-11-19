@@ -25,7 +25,7 @@ MuxSession::MuxSession( const EncoderConfig& cfg, PacketQueue& queue, SessionGat
   , cfg_( cfg )
   , queue_( queue )
   , gate_( gate )
-  , params_( log )
+  , params_( log, max_h264_packet( cfg.layout.w, cfg.layout.h ) )
 {
 }
 

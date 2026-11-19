@@ -11,10 +11,29 @@
 namespace
 {
     constexpr int kMarginPx = 2;
-    constexpr int kPadX = 4;
+    constexpr int kPadX = 4;  // label rect padding around the text, per layout unit
     constexpr int kPadY = 2;
-    constexpr int kPillH = CalloutItem::kGlyphH + 2 * kPadY;  // 16 px (12 px AA glyph + 2 px padding)
     constexpr int kMaxTracks = TrajList::cap;
+
+    // A usable glyph scale: finite and positive, else the 11 px default; clamped
+    // to [0.05, 8] (1.1..176 px text) so the integer label rects never overflow.
+    float clean_scale( float scale ) noexcept
+    {
+        return std::isfinite( scale ) && scale > 0.0f ? std::clamp( scale, 0.05f, 8.0f ) : 0.5f;
+    }
+
+    // The layout unit: 1 px at the 11 px default (scale 0.5), growing with the
+    // text -- the gaps, paddings and the outline scale with it.
+    int layout_unit( float scale ) noexcept
+    {
+        return std::max( 1, static_cast<int>( std::lround( 2.0f * clean_scale( scale ) ) ) );
+    }
+
+    int label_h( float scale ) noexcept
+    {
+        const float sc = clean_scale( scale );
+        return static_cast<int>( std::ceil( static_cast<float>( glyph_font::kLineH ) * sc ) ) + 2 * kPadY * layout_unit( sc );
+    }
 
     struct TrackCand
     {
@@ -106,9 +125,9 @@ namespace
         const int y0 = std::clamp( prop[1], work.y0, work.y1 - ph );
         const CalloutRect cand { x0, y0, x0 + pw, y0 + ph };
 
-        const int64_t pill_ov = std::accumulate(
+        const int64_t label_ov = std::accumulate(
             placed.d.begin(), placed.d.begin() + placed.n, int64_t { 0 },
-            [&cand]( int64_t acc, const CalloutItem& p ) { return acc + rect_overlap( cand, p.pill ); } );
+            [&cand]( int64_t acc, const CalloutItem& p ) { return acc + rect_overlap( cand, p.label ); } );
 
         int64_t other_ov = 0;
         for ( int i = 0; i < n_boxes; ++i )
@@ -118,7 +137,7 @@ namespace
         }
 
         const int64_t own_ov = rect_overlap( cand, own );
-        const int64_t ov_cost = pill_ov * 10000 + other_ov * 1000 + own_ov * 100;
+        const int64_t ov_cost = label_ov * 10000 + other_ov * 1000 + own_ov * 100;
         const int clamp_shift = std::abs( x0 - prop[0] ) + std::abs( y0 - prop[1] );
         // Use doubled integer coordinates so integer /2 rounding never breaks symmetry between left and right.
         const int64_t dx2 = std::abs( ( cand.x0 + cand.x1 ) - ( own.x0 + own.x1 ) );
@@ -127,34 +146,37 @@ namespace
         return CandEval { cand, ov_cost, clamp_shift, total, idx };
     }
 
-    CandEval pick_best_pill( int self_idx,
-                             int prev_slot,
-                             int pw,
-                             int ph,
-                             const CalloutRect& work,
-                             const CalloutList& placed,
-                             const TrackCand* all_boxes,
-                             int n_boxes ) noexcept
+    CandEval pick_best_label( int self_idx,
+                              int prev_slot,
+                              int pw,
+                              int ph,
+                              int sk,
+                              const CalloutRect& work,
+                              const CalloutList& placed,
+                              const TrackCand* all_boxes,
+                              int n_boxes ) noexcept
     {
         const CalloutRect& b = all_boxes[self_idx].box;
         const int cx = ( b.x0 + b.x1 - pw ) / 2;
-        const int row2_off = 10 + ph;
-        const int side2_off = ph + 2;
+        const int gap = 8 * sk;
+        const int top = 10 * sk;
+        const int row2_off = top + ph;
+        const int side2_off = ph + 2 * sk;
         const int proposals[14][2] = {
-            { b.x0, b.y0 - 10 - ph },
-            { cx, b.y0 - 10 - ph },
-            { b.x1 - pw, b.y0 - 10 - ph },
+            { b.x0, b.y0 - top - ph },
+            { cx, b.y0 - top - ph },
+            { b.x1 - pw, b.y0 - top - ph },
             { b.x0, b.y0 - row2_off - ph },
             { cx, b.y0 - row2_off - ph },
             { b.x1 - pw, b.y0 - row2_off - ph },
-            { b.x1 + 8, b.y0 },
-            { b.x0 - 8 - pw, b.y0 },
-            { b.x1 + 8, b.y0 + side2_off },
-            { b.x0 - 8 - pw, b.y0 + side2_off },
-            { b.x0, b.y1 + 8 },
-            { cx, b.y1 + 8 },
-            { b.x1 - pw, b.y1 + 8 },
-            { b.x0 + 2, b.y0 + 2 },
+            { b.x1 + gap, b.y0 },
+            { b.x0 - gap - pw, b.y0 },
+            { b.x1 + gap, b.y0 + side2_off },
+            { b.x0 - gap - pw, b.y0 + side2_off },
+            { b.x0, b.y1 + gap },
+            { cx, b.y1 + gap },
+            { b.x1 - pw, b.y1 + gap },
+            { b.x0 + 2 * sk, b.y0 + 2 * sk },
         };
 
         CandEval best {};
@@ -173,7 +195,7 @@ namespace
         {
             const bool prev_clean = ( prev_eval.ov_cost == 0 && prev_eval.clamp_shift <= 4 );
             const bool promote_top = ( prev_slot >= 6 && best.idx <= 2 && best.ov_cost == 0 &&
-                                       best.clamp_shift == 0 && b.y0 - 14 - ph >= work.y0 );
+                                       best.clamp_shift == 0 && b.y0 - top - 4 * sk - ph >= work.y0 );
             if ( prev_clean && !promote_top )
                 return prev_eval;
         }
@@ -189,10 +211,10 @@ namespace
     void build_connector( CalloutItem& item ) noexcept
     {
         item.n_segs = 0;
-        if ( rect_overlap( item.pill, item.box ) > 0 )
+        if ( rect_overlap( item.label, item.box ) > 0 )
             return;
 
-        const CalloutRect& p = item.pill;
+        const CalloutRect& p = item.label;
         const CalloutRect& b = item.box;
         const int ox0 = std::max( p.x0, b.x0 );
         const int ox1 = std::min( p.x1, b.x1 );
@@ -279,16 +301,22 @@ namespace
         CalloutItem item {};
         item.box = cands[i].box;
         item.text_bytes = glyph_font::format_person( item.text, glyph_font::kLabelCap, disp_id, cfg.lang_ru );
-        const int ng = glyph_font::text_len( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
-        const int pw = ng * CalloutItem::kGlyphW + 2 * kPadX;
+        const float sc = clean_scale( cfg.scale );
+        const int sk = layout_unit( sc );
+        const int tw_atlas = glyph_font::text_width( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
+        const int tw = static_cast<int>( std::ceil( static_cast<float>( tw_atlas ) * sc ) );
+        const int pw = tw + 2 * kPadX * sk;
+        const int ph = label_h( sc );
         // Guard before std::clamp: degenerate narrow crops must never trigger lo > hi UB.
-        if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < kPillH )
+        if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < ph )
             return;
         const CandEval best =
-            pick_best_pill( i, find_prev_slot( hist, tr.id, tr.gen ), pw, kPillH, work, out, cands, nc );
-        item.pill = best.rect;
-        item.text_x = item.pill.x0 + kPadX;
-        item.text_y = item.pill.y0 + kPadY;
+            pick_best_label( i, find_prev_slot( hist, tr.id, tr.gen ), pw, ph, sk, work, out, cands, nc );
+        item.label = best.rect;
+        item.scale = sc;
+        item.outline = static_cast<float>( sk );
+        item.text_x = item.label.x0 + kPadX * sk;
+        item.text_y = item.label.y0 + kPadY * sk;
         assign_accent( disp_id, item );
         build_connector( item );
         out.push( item );
@@ -296,6 +324,13 @@ namespace
     }
 
 }  // namespace
+
+float callout_text_scale( int label_scale, float tile_scale ) noexcept
+{
+    const float ts = std::isfinite( tile_scale ) && tile_scale > 0.0f ? tile_scale : 1.0f;
+    const float k = static_cast<float>( std::clamp( label_scale, 1, 4 ) );
+    return k * static_cast<float>( CalloutConfig::kLabelPx ) / static_cast<float>( glyph_font::kAtlasPx ) / ts;
+}
 
 void compute_callouts( const TrajList& trajs,
                        const LbGeom& lb,
@@ -308,7 +343,7 @@ void compute_callouts( const TrajList& trajs,
     out.clear();
     const CalloutRect crop = make_even_bounds( lb );
     const CalloutRect work { crop.x0 + kMarginPx, crop.y0 + kMarginPx, crop.x1 - kMarginPx, crop.y1 - kMarginPx };
-    if ( work.x1 - work.x0 <= 0 || work.y1 - work.y0 < kPillH )
+    if ( work.x1 - work.x0 <= 0 || work.y1 - work.y0 < label_h( cfg.scale ) )
     {
         hist.entries.clear();
         return;

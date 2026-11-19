@@ -6,6 +6,7 @@
 
 #include "rga_resizer.h"
 #include "core/log.hpp"
+#include "core/rga_limits.hpp"
 
 namespace
 {
@@ -15,16 +16,7 @@ namespace
         return wrapbuffer_fd( fd, w, h, fmt, w_stride, h_stride );
     }
 
-    rga_buffer_t wrap( int fd, int w, int h, int fmt )
-    {
-        return wrap( fd, w, h, w, h, fmt );
-    }
-
-    // RGA wants 16-aligned strides (RGB888: "width stride should be 16 aligned").
-    int align16( int v ) noexcept
-    {
-        return ( v + 15 ) & ~15;
-    }
+    using rga_limits::align16;
 
     // An unknown (0) stride: the 16-aligned size, how every frame buffer here is laid out.
     int resolve_stride( int stride, int size ) noexcept
@@ -34,8 +26,8 @@ namespace
 
     bool can_use_rga3( int cw, int ch, int w_dst, int h_dst, bool two_pass, int w_aux, int h_aux ) noexcept
     {
-        const bool pass1_ok = cw >= 68 && ch >= 68 && w_dst >= 68 && h_dst >= 68;
-        return pass1_ok && ( !two_pass || ( w_aux >= 68 && h_aux >= 68 ) );
+        const bool pass1_ok = rga_limits::rga3_size_ok( cw, ch ) && rga_limits::rga3_size_ok( w_dst, h_dst );
+        return pass1_ok && ( !two_pass || rga_limits::rga3_size_ok( w_aux, h_aux ) );
     }
 
     // The only expansion of imStrError: an im2d status <= 0 is a failure,
@@ -73,18 +65,22 @@ RgaResizer::RgaResizer( const Log& log ) : log_( log )
     // back to RGA2 (core[4]). All jobs are pinned to RGA3 core0 for the
     // process lifetime; RGA2 is never needed here.
     // Best effort: an unpinned RGA still works, rga_check logs the cause.
-    static_cast<void>( rga_check( imconfig( IM_CONFIG_SCHEDULER_CORE, IM_SCHEDULER_RGA3_CORE0 ), log_, "RGA: imconfig RGA3_CORE0 pin failed" ) );
+    static_cast<void>(
+            rga_check( imconfig( IM_CONFIG_SCHEDULER_CORE, IM_SCHEDULER_RGA3_CORE0 ), log_, "RGA: imconfig RGA3_CORE0 pin failed" ) );
 }
 
 Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux,
-                           LbGeom* geom, int src_fmt, int rot_deg, int src_w_stride, int src_h_stride )
+                           LbGeom* geom, int src_fmt, int rot_deg, int src_w_stride, int src_h_stride,
+                           int dst_w_stride ) const
 {
     int pass_fmt = ( src_fmt == 0 ) ? RK_FORMAT_YCbCr_420_SP : RK_FORMAT_YCbCr_422_SP;
     int ws = resolve_stride( src_w_stride, w_src );
     int hs = resolve_stride( src_h_stride, h_src );
     const bool swap_wh = ( rot_deg == 90 || rot_deg == 270 );
-    const bool over_limit = w_src > 8 * w_dst || h_src > 8 * h_dst ||
-                            ( swap_wh && ( h_src > 8 * w_dst || w_src > 8 * h_dst ) );
+    // Same predicate as SourceChannel::needs_aux (both read rga_limits), so a
+    // two-pass frame always finds its aux buffer allocated.
+    const bool over_limit = rga_limits::needs_two_pass( w_src, h_src, w_dst, h_dst, false ) ||
+                            ( swap_wh && rga_limits::needs_two_pass( w_src, h_src, w_dst, h_dst, true ) );
     if ( over_limit )
     {
         if ( Status st = downscale_to_aux( src_fd, w_src, h_src, ws, hs, pass_fmt, aux_fd, w_aux, h_aux ); !st.ok() )
@@ -105,10 +101,27 @@ Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_d
         log_.error() << "RGA: aspect " << eff_w << 'x' << eff_h << " does not fit into " << w_dst << 'x' << h_dst << '\n';
         return make_status( Errc::Failed, "RGA: aspect does not fit" );
     }
+    // The band is the real pass-2 dst rect: RGA3 rejects a side < 68 px (an
+    // extreme aspect) and a single pass beyond 8x (a source > 16x the model
+    // even after the halving aux pass). Checked here so the cause is named
+    // instead of an opaque im2d error. Known edge: band_geom floors the band,
+    // so a source within one pixel of exactly 8x (e.g. 5119 px into 640 ->
+    // band 639) passes needs_two_pass yet fails here -- no real source is near it.
+    if ( !rga_limits::rga3_size_ok( g.w, g.h ) || !rga_limits::ratio_ok( eff_w, g.w ) || !rga_limits::ratio_ok( eff_h, g.h ) )
+    {
+        log_.error() << "RGA: " << eff_w << 'x' << eff_h << " -> band " << g.w << 'x' << g.h
+                     << " is outside the RGA3 limits (side >= 68 px, <= 8x per pass)\n";
+        return make_status( Errc::Invalid, "RGA: band outside RGA3 limits" );
+    }
 
+    // YUV420SP/422SP source rects must have even sides; a decoder that hands
+    // out an odd size loses its last row/column instead of failing the job.
     rga_buffer_t src = wrap( src_fd, w_src, h_src, ws, hs, pass_fmt );
-    rga_buffer_t dst = wrap( dst_fd, w_dst, h_dst, RK_FORMAT_RGB_888 );
-    if ( Status st = rga_check( improcess( src, dst, {}, { 0, 0, w_src, h_src }, { g.left, g.top, g.w, g.h }, {},
+    // The tensor rows as RknnEngine bound them: every reader (NPU, drawer,
+    // composer, dumper, preview) uses this stride, so the writer must too.
+    rga_buffer_t dst = wrap( dst_fd, w_dst, h_dst, dst_w_stride > 0 ? dst_w_stride : w_dst, h_dst, RK_FORMAT_RGB_888 );
+    const im_rect src_rect { 0, 0, rga_limits::even_down( w_src ), rga_limits::even_down( h_src ) };
+    if ( Status st = rga_check( improcess( src, dst, {}, src_rect, { g.left, g.top, g.w, g.h }, {},
                                            rga_rot_usage( rot_deg ) ),
                                 log_, "RGA resize failed" );
          !st.ok() )
@@ -118,51 +131,54 @@ Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_d
     return {};
 }
 
-Status RgaResizer::crop_resize( int src_fd, int w_src, int h_src, LbGeom crop_roi, int dst_fd, int w_dst, int h_dst,
+Status RgaResizer::crop_resize( const CropImage& src_img, LbGeom crop_roi, const CropImage& dst_img,
                                 int aux_fd, int w_aux, int h_aux ) const noexcept
 {
-    if ( src_fd < 0 || dst_fd < 0 || w_src <= 0 || h_src <= 0 || w_dst <= 0 || h_dst <= 0 )
+    const int w_dst = dst_img.w;
+    const int h_dst = dst_img.h;
+    if ( src_img.fd < 0 || dst_img.fd < 0 || src_img.w <= 0 || src_img.h <= 0 || w_dst <= 0 || h_dst <= 0 )
         return make_status( Errc::Invalid, "RGA crop: invalid buffer or size" );
+    // Row strides in pixels (0 = tight); RknnEngine::setup_io guarantees the
+    // tensors are whole RGB888 pixels and 16-aligned.
+    CropImage cur = src_img;  // the pass-2 source: the tensor, or aux after pass 1
+    if ( cur.w_stride <= 0 )
+        cur.w_stride = cur.w;
+    int cur_h_stride = cur.h;
 
     const int cx = crop_roi.left & ~1;
     const int cy = crop_roi.top & ~1;
     const int cw = crop_roi.w & ~1;
     const int ch = crop_roi.h & ~1;
-    if ( cx < 0 || cy < 0 || cw <= 0 || ch <= 0 || cx + cw > w_src || cy + ch > h_src )
+    if ( cx < 0 || cy < 0 || cw <= 0 || ch <= 0 || cx + cw > cur.w || cy + ch > cur.h )
         return make_status( Errc::Invalid, "RGA crop: ROI out of bounds" );
 
-    if ( cw * 8 < w_dst || ch * 8 < h_dst )
+    if ( cw * rga_limits::kMaxRatio < w_dst || ch * rga_limits::kMaxRatio < h_dst )
         return make_status( Errc::Invalid, "RGA crop: exceeds 8x upscale limit" );
 
+    const bool two_pass = cw > rga_limits::kMaxRatio * w_dst || ch > rga_limits::kMaxRatio * h_dst;
     im_opt_t opt {};
-    opt.core = can_use_rga3( cw, ch, w_dst, h_dst, cw > 8 * w_dst || ch > 8 * h_dst, w_aux, h_aux )
-                   ? IM_SCHEDULER_RGA3_CORE0
-                   : IM_SCHEDULER_RGA2_CORE0;
+    opt.core = can_use_rga3( cw, ch, w_dst, h_dst, two_pass, w_aux, h_aux ) ? IM_SCHEDULER_RGA3_CORE0 : IM_SCHEDULER_RGA2_CORE0;
 
     im_rect sr { cx, cy, cw, ch };
-    int ws = w_src;
-    int hs = h_src;
-    if ( cw > 8 * w_dst || ch > 8 * h_dst )
+    if ( two_pass )
     {
         if ( aux_fd < 0 || w_aux <= 0 || h_aux <= 0 )
             return make_status( Errc::Failed, "RGA crop: >8x downscale without aux_fd" );
         // aux is RGB888 with 16-aligned strides (see crop_resize in rga_resizer.h).
-        if ( Status st = rga_check( improcess( wrap( src_fd, w_src, h_src, RK_FORMAT_RGB_888 ),
+        if ( Status st = rga_check( improcess( wrap( cur.fd, cur.w, cur.h, cur.w_stride, cur.h, RK_FORMAT_RGB_888 ),
                                                wrap( aux_fd, w_aux, h_aux, align16( w_aux ), align16( h_aux ), RK_FORMAT_RGB_888 ),
                                                {}, sr, { 0, 0, w_aux, h_aux }, {}, -1, nullptr, &opt, IM_SYNC ),
                                     log_, "RGA crop (pass 1) failed" );
              !st.ok() )
             return st;
-        src_fd = aux_fd;
-        w_src = w_aux;
-        h_src = h_aux;
-        ws = align16( w_aux );
-        hs = align16( h_aux );
-        sr = { 0, 0, w_src, h_src };
+        cur = CropImage { aux_fd, w_aux, h_aux, align16( w_aux ) };
+        cur_h_stride = align16( h_aux );
+        sr = { 0, 0, w_aux, h_aux };
     }
 
-    return rga_check( improcess( wrap( src_fd, w_src, h_src, ws, hs, RK_FORMAT_RGB_888 ),
-                                 wrap( dst_fd, w_dst, h_dst, RK_FORMAT_RGB_888 ),
+    const int wd = dst_img.w_stride > 0 ? dst_img.w_stride : w_dst;
+    return rga_check( improcess( wrap( cur.fd, cur.w, cur.h, cur.w_stride, cur_h_stride, RK_FORMAT_RGB_888 ),
+                                 wrap( dst_img.fd, w_dst, h_dst, wd, h_dst, RK_FORMAT_RGB_888 ),
                                  {}, sr, { 0, 0, w_dst, h_dst }, {}, -1, nullptr, &opt, IM_SYNC ),
                       log_, "RGA crop failed" );
 }

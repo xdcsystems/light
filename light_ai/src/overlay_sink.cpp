@@ -11,6 +11,7 @@
 #include "core/frame_view.hpp"
 #include "core/glyph_font.hpp"
 #include "core/log.hpp"
+#include "core/rga_limits.hpp"  // rgb888_stride_px
 #include "core/status.hpp"
 #include "dma_sync.hpp"
 #include "timings.hpp"
@@ -103,29 +104,83 @@ namespace
         }
     }
 
-    void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, int gx, int gy, int glyph_idx,
-                         uint8_t r, uint8_t g, uint8_t b ) noexcept
+    // A glyph's padded atlas rect placed in tensor px: tensor (x, y) maps to
+    // atlas (ax0 + (x - x0) * inv, ay0 + (y - y0) * inv).
+    struct GlyphQuad
     {
-        const uint8_t* alpha = glyph_font::glyph_alpha( glyph_idx );
-        for ( int pr = 0; pr < glyph_font::kGlyphH; ++pr )
+        int idx = 0;
+        float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;  // the quad in tensor px
+        float ax0 = 0.0f, ay0 = 0.0f;                      // its top-left in the atlas
+        float inv = 1.0f;                                  // atlas px per tensor px
+    };
+
+    // One tensor row of quad q at atlas row ay: every pixel center inside the
+    // quad takes the bilinear alpha (the GL_LINEAR equivalent of the GPU path).
+    void draw_glyph_row_cpu( uint8_t* line, int w, const GlyphQuad& q, float ay, uint8_t r, uint8_t g, uint8_t b,
+                             unsigned a_mul ) noexcept
+    {
+        const int px0 = std::max( 0, static_cast<int>( std::floor( q.x0 ) ) );
+        const int px1 = std::min( w, static_cast<int>( std::ceil( q.x1 ) ) );
+        for ( int px = px0; px < px1; ++px )
         {
-            const int py = gy + pr;
-            if ( py < 0 || py >= h )
+            const float cx = static_cast<float>( px ) + 0.5f;
+            if ( cx < q.x0 || cx >= q.x1 )
                 continue;
-            const uint8_t* row = alpha + pr * glyph_font::kGlyphW;
-            uint8_t* line = rgb + static_cast<size_t>( py ) * stride;
-            for ( int pc = 0; pc < glyph_font::kGlyphW; ++pc )
-            {
-                const unsigned a = row[pc];
-                if ( a == 0u )
-                    continue;
-                const int px = gx + pc;
-                if ( px >= 0 && px < w )
-                    blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, a );
-            }
+            const float cov = glyph_font::sample( q.idx, q.ax0 + ( cx - q.x0 ) * q.inv, ay ) * static_cast<float>( a_mul ) / 255.0f;
+            const auto a = static_cast<unsigned>( std::lround( cov ) );
+            if ( a != 0u )
+                blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, a );
         }
     }
 
+    // One glyph at float pen position (x0, y0) = its padded rect's top-left in
+    // tensor px, scaled by sc: every covered pixel center maps back into the atlas.
+    void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, float x0, float y0, int glyph_idx, float sc,
+                         uint8_t r, uint8_t g, uint8_t b, unsigned a_mul ) noexcept
+    {
+        const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( glyph_idx );
+        if ( m.w == 0 || m.h == 0 || !( sc > 0.0f ) )
+            return;
+        const GlyphQuad q { glyph_idx,
+                            x0,
+                            y0,
+                            x0 + static_cast<float>( m.w ) * sc,
+                            y0 + static_cast<float>( m.h ) * sc,
+                            static_cast<float>( m.ax ),
+                            static_cast<float>( m.ay ),
+                            1.0f / sc };
+        const int py0 = std::max( 0, static_cast<int>( std::floor( q.y0 ) ) );
+        const int py1 = std::min( h, static_cast<int>( std::ceil( q.y1 ) ) );
+        for ( int py = py0; py < py1; ++py )
+        {
+            const float cy = static_cast<float>( py ) + 0.5f;
+            if ( cy < q.y0 || cy >= q.y1 )
+                continue;
+            draw_glyph_row_cpu( rgb + static_cast<size_t>( py ) * stride, w, q, q.ay0 + ( cy - q.y0 ) * q.inv, r, g, b, a_mul );
+        }
+    }
+
+    // One text pass of a callout (the CPU twin of append_text_pass in gpu_box_drawer.cpp).
+    void draw_text_pass_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutItem& c, float ox, float oy,
+                             uint8_t r, uint8_t g, uint8_t b, unsigned a ) noexcept
+    {
+        float pen = static_cast<float>( c.text_x ) + ox;
+        const float top = static_cast<float>( c.text_y ) + oy;
+        int pos = 0;
+        while ( pos < c.text_bytes )
+        {
+            const uint32_t cp = glyph_font::next_utf8( c.text, c.text_bytes, pos );
+            if ( cp == 0 )
+                break;
+            const int gi = glyph_font::glyph_index( cp );
+            const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( gi );
+            draw_glyph_cpu( rgb, w, h, stride, pen + static_cast<float>( m.dx ) * c.scale, top + static_cast<float>( m.dy ) * c.scale,
+                            gi, c.scale, r, g, b, a );
+            pen += static_cast<float>( m.adv ) * c.scale;
+        }
+    }
+
+    // Connector, the 8-way dark outline, the white text: the GPU path's order and colors.
     void draw_callouts_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutList& list ) noexcept
     {
         for ( int i = 0; i < list.n; ++i )
@@ -133,24 +188,13 @@ namespace
             const CalloutItem& c = list.d[i];
             for ( int s = 0; s < c.n_segs; ++s )
                 fill_rect_cpu( rgb, w, h, stride, c.segs[s], c.r, c.g, c.b, 255u );
-
-            const CalloutRect fill { c.pill.x0 + 1, c.pill.y0 + 1, c.pill.x1 - 1, c.pill.y1 - 1 };
-            fill_rect_cpu( rgb, w, h, stride, fill, 12, 12, 16, 245u );
-            fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y0, c.pill.x1, c.pill.y0 + 1 }, c.r, c.g, c.b, 255u );
-            fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y1 - 1, c.pill.x1, c.pill.y1 }, c.r, c.g, c.b, 255u );
-            fill_rect_cpu( rgb, w, h, stride, { c.pill.x0, c.pill.y0 + 1, c.pill.x0 + 1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255u );
-            fill_rect_cpu( rgb, w, h, stride, { c.pill.x1 - 1, c.pill.y0 + 1, c.pill.x1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255u );
-
-            int gx = c.text_x;
-            int pos = 0;
-            while ( pos < c.text_bytes )
-            {
-                const uint32_t cp = glyph_font::next_utf8( c.text, c.text_bytes, pos );
-                if ( cp == 0 )
-                    break;
-                draw_glyph_cpu( rgb, w, h, stride, gx, c.text_y, glyph_font::glyph_index( cp ), 255, 255, 255 );
-                gx += CalloutItem::kGlyphW;
-            }
+            const float o = c.outline;
+            const float dirs[GpuBoxDrawer::kOutlineDirs][2] = {
+                { -o, -o }, { 0.0f, -o }, { o, -o }, { -o, 0.0f }, { o, 0.0f }, { -o, o }, { 0.0f, o }, { o, o } };
+            constexpr uint8_t gray = GpuBoxDrawer::kOutlineGray;
+            for ( const auto& d : dirs )
+                draw_text_pass_cpu( rgb, w, h, stride, c, d[0], d[1], gray, gray, gray, GpuBoxDrawer::kOutlineAlpha );
+            draw_text_pass_cpu( rgb, w, h, stride, c, 0.0f, 0.0f, 255, 255, 255, 255u );
         }
     }
 
@@ -184,6 +228,7 @@ void OverlaySink::init( const StreamConfig& stream,
                         int nsrc )
 {
     label_lang_ = stream.label_lang;
+    label_scale_ = stream.label_scale;
     model_w_ = model_w;
     model_h_ = model_h;
     const uint32_t fallback_stride = static_cast<uint32_t>( model_w_ ) * 3;
@@ -198,12 +243,15 @@ void OverlaySink::init( const StreamConfig& stream,
     log_.info() << "net: tensor stride check: input mem=" << t0_size
                 << " stride=" << stride_bytes_ << " expected=" << expected_bytes << "\n";
     if ( stride_bytes_ != fallback_stride )
-        log_.warn() << "net: non-packed input tensor stride (" << stride_bytes_ << " != " << fallback_stride
-                    << "); RGA producers assume packed RGB888\n";
+        log_.info() << "net: padded input tensor rows (" << stride_bytes_ << " bytes, packed " << fallback_stride
+                    << "): every consumer reads the stride\n";
 
     if ( stream.h264 )
     {
-        const EncoderConfig ec = encoder_config( stream, model_w_, model_h_, primary_band, nsrc, log_ );
+        EncoderConfig ec = encoder_config( stream, model_w_, model_h_, primary_band, nsrc, log_ );
+        ec.model_stride_px = rga_limits::rgb888_stride_px( stride_bytes_, model_w_ );
+        layout_ = ec.layout;
+        tiled_ = true;
         enc_.emplace( ec, log_ );
         // kbps(): the rate the encoder runs at (the <= 0 fallback applied).
         if ( stream.host.empty() )
@@ -229,7 +277,7 @@ void OverlaySink::reset_source( int src_idx ) noexcept
     if ( src_idx < 0 || src_idx >= reid_cfg::kMaxSources )
         return;
     callout_hist_[src_idx].entries.clear();
-    track_stab_[src_idx].clear();
+    track_filt_[src_idx].clear();
 }
 
 void OverlaySink::reset_all_sources() noexcept
@@ -307,48 +355,14 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
     }
 }
 
-int OverlaySink::find_stab_idx( const TrackStabList& list, int id, uint32_t gen ) const noexcept
+// Output tile px per tensor px for this frame's band: the h264 stream scales the
+// band into its tile (place_tile); the raw NUT preview ships the tensor 1:1.
+float OverlaySink::tile_scale( const FrameView& frame ) const noexcept
 {
-    const auto* const end = list.d.begin() + list.n;
-    const auto* const it = std::find_if( list.d.begin(), end, [id, gen]( const TrackDispStab& e ) {
-        return e.id == id && e.gen == gen;
-    } );
-    return it != end ? static_cast<int>( it - list.d.begin() ) : -1;
-}
-
-void OverlaySink::stabilize_display_tracks( int src_idx, TrajList& disp ) noexcept
-{
-    TrackStabList& prev = track_stab_[src_idx];
-    TrackStabList next {};
-    for ( int k = 0; k < disp.n; ++k )
-    {
-        TrackState& tr = disp.d[k];
-        if ( tr.state != TRACK_TENT && tr.state != TRACK_CONF )
-            continue;
-        const float x0 = tr.cx - tr.bw * 0.5f;
-        const float y0 = tr.cy - tr.bh * 0.5f;
-        const float x1 = tr.cx + tr.bw * 0.5f;
-        const float y1 = tr.cy + tr.bh * 0.5f;
-        const int idx = find_stab_idx( prev, tr.id, tr.gen );
-        TrackDispStab entry {};
-        entry.id = tr.id;
-        entry.gen = tr.gen;
-        if ( idx >= 0 )
-        {
-            entry.env = prev.d[idx].env;
-            entry.env.step( x0, y0, x1, y1, 0.0f );
-        }
-        else
-        {
-            entry.env.reset( x0, y0, x1, y1 );
-        }
-        tr.cx = entry.env.cx();
-        tr.cy = entry.env.cy();
-        tr.bw = entry.env.bw();
-        tr.bh = entry.env.bh();
-        next.push( entry );
-    }
-    prev = next;
+    if ( !tiled_ )
+        return 1.0f;
+    const TilePlacement tp = place_tile( layout_, frame.lb, frame.src_idx );
+    return tp.src.h > 0 && tp.dst.h > 0 ? static_cast<float>( tp.dst.h ) / static_cast<float>( tp.src.h ) : 1.0f;
 }
 
 bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
@@ -358,17 +372,21 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
 {
     const float sx = frame.lb.w / static_cast<float>( frame.src_w );
     const float sy = frame.lb.h / static_cast<float>( frame.src_h );
+    // disp: the display copy of the tracks, boxes through BoxFilter; trajs keeps
+    // the posteriors the trail was recorded from (BoxMapper bends the trail's head
+    // onto the filtered box).
     TrajList disp = trajs;
     const bool valid_src = frame.src_idx >= 0 && frame.src_idx < reid_cfg::kMaxSources;
     if ( valid_src )
-        stabilize_display_tracks( frame.src_idx, disp );
+        track_filt_[frame.src_idx].apply( disp, frame.ts_us, kTrackFilter );
     boxes_.clear();
-    mapper_.fill( dets, disp, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
+    mapper_.fill( dets, disp, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
     callouts_.clear();
+    const CalloutConfig ccfg { label_lang_ == LabelLang::Ru, callout_text_scale( label_scale_, tile_scale( frame ) ) };
     if ( valid_src )
-        compute_callouts( disp, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callout_hist_[frame.src_idx], callouts_ );
+        compute_callouts( disp, frame.lb, sx, sy, ccfg, callout_hist_[frame.src_idx], callouts_ );
     else
-        compute_callouts( disp, frame.lb, sx, sy, { label_lang_ == LabelLang::Ru }, callouts_ );
+        compute_callouts( disp, frame.lb, sx, sy, ccfg, callouts_ );
     if ( boxes_.n <= 0 && callouts_.n <= 0 )
         return false;
 

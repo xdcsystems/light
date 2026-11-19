@@ -24,11 +24,16 @@ public:
             pool_ = p;
     }
 
-    void add( const FrameTrace& tr );
-    // Whole-run average; prints nothing when no frame was added.
+    // npu_ok == false (a failed NPU job): counted in npu_fail() only -- its
+    // partial stage times would skew the averages (Low §2).
+    void add( const FrameTrace& tr, bool npu_ok = true );
+    // Whole-run average; prints nothing when no frame was added. With failed
+    // NPU frames, one more line (no "[timing]" prefix: scripts/compare_night.py
+    // parses every "[timing]" line and flags any other shape as format drift).
     void report_total() const;
 
     long frames() const { return run_.n; }
+    long npu_fail() const { return npu_fail_; }
 
 private:
     // Per-stage sums (ms) over n frames.
@@ -64,6 +69,7 @@ private:
     // CFR (pool 1) keeps the legacy honest accounting.
     clk::time_point t0_ {};  // first frame stamp
     int pool_ = 1;           // in-flight frames; 1 = legacy path
+    long npu_fail_ = 0;      // frames add() left out (npu_ok == false)
 };
 
 // Milliseconds between two steady-clock stamps; was duplicated

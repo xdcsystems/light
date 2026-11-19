@@ -43,7 +43,7 @@ class GpuBoxDrawer
     using P_DestroyImage = EGLBoolean( EGLAPIENTRYP )( EGLDisplay, EGLImageKHR );
     using P_CreateSync = EGLSyncKHR( EGLAPIENTRYP )( EGLDisplay, EGLenum, const EGLint * );
     using P_DestroySync = EGLBoolean( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR );
-    using P_ClientWaitSync = EGLBoolean( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR, EGLint, EGLTimeKHR );
+    using P_ClientWaitSync = EGLint( EGLAPIENTRYP )( EGLDisplay, EGLSyncKHR, EGLint, EGLTimeKHR );  // EGL_KHR_fence_sync
     using P_GetPlatformDisplayEXT = EGLDisplay( EGLAPIENTRYP )( EGLenum, void *, const EGLint * );
     using P_ImageTargetTexture2DOES = void( GL_APIENTRYP )( GLenum, GLeglImageOES );
     using P_GenVertexArrays = void( GL_APIENTRYP )( GLsizei, GLuint * );
@@ -65,7 +65,18 @@ public:
     enum
     {
         kVertsPerBox = 4 * 6,
-        kVertsPerCallout = 192,
+        // The label text: kOutlineDirs dark passes + one white pass (#91 item 5).
+        kOutlineDirs = 8,
+        kTextPasses = kOutlineDirs + 1,
+        kOutlineGray = 16,
+        kOutlineAlpha = 200,
+        // Connector segments + the longest label (kLabelCap - 1 glyphs) in every
+        // text pass, 6 vertices a quad: 6 * (2 + 31 * 9) = 1686. Checked against
+        // CalloutItem below.
+        kVertsPerCallout = 6 * ( 2 + ( glyph_font::kLabelCap - 1 ) * kTextPasses ),
+        // One draw is one source's frame: every box of it and one callout per
+        // track (CalloutList::cap == TrajList::cap), whichever source it is --
+        // the sources draw into their own tensors, they never share a batch.
         kMaxVerts = GpuBoxList::cap * kVertsPerBox + CalloutList::cap * kVertsPerCallout
     };
 
@@ -134,8 +145,8 @@ public:
     // (batched VBO, per-vertex color), alpha-blended
     // (Porter-Duff over; the trail fade of BoxMapper is the alpha source).
     // Switching FBOs between slots is the only added cost vs the single-tensor path.
-    void draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts = nullptr );
-    void draw( const GpuBox *boxes, int n, const CalloutList *callouts = nullptr )
+    void draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept;
+    void draw( const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept
     {
         draw_slot( 0, boxes, n, callouts );
     }
@@ -143,7 +154,7 @@ public:
     // Native fence (EGL_ANDROID_native_fence_sync) when available, glFinish() otherwise.
     // The fence wait is bounded (100 ms cap) with a glFinish() fallback --
     // a wedged GPU must not hang the pipeline.
-    void sync_cpu();
+    void sync_cpu() noexcept;
     // Draw -> RGA/CPU ordering is sync_cpu() only: this RGA driver
     // ignores acquire fences, so a fence fd handoff is not a valid
     // mechanism on this board (retired, see docs/state.md).
@@ -181,3 +192,17 @@ private:
     bool ready_ = false;
     uint64_t fence_tmo_cnt_ = 0;
 };
+
+// The per-callout budget covers every connector segment and the longest
+// label CalloutItem can hold (kLabelCap - 1 single-byte glyphs) in every text pass.
+static_assert( GpuBoxDrawer::kVertsPerCallout >=
+                   6 * ( static_cast<int>( sizeof( CalloutItem::segs ) / sizeof( CalloutRect ) ) +
+                         ( glyph_font::kLabelCap - 1 ) * GpuBoxDrawer::kTextPasses ),
+               "kVertsPerCallout below the longest outlined callout" );
+// The whole batch: the box cap plus a full callout for every track a frame can
+// carry (8 per source; the up to 4 sources of the 2x2 grid draw separately).
+static_assert( static_cast<int>( CalloutList::cap ) >= static_cast<int>( TrajList::cap ), "a frame's track without a callout slot" );
+static_assert( static_cast<int>( GpuBoxDrawer::kMaxVerts ) >=
+                   static_cast<int>( GpuBoxList::cap ) * static_cast<int>( GpuBoxDrawer::kVertsPerBox ) +
+                       static_cast<int>( TrajList::cap ) * static_cast<int>( GpuBoxDrawer::kVertsPerCallout ),
+               "vertex budget below the fullest frame" );

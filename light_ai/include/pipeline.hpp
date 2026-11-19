@@ -151,6 +151,7 @@ private:
     std::array<std::chrono::steady_clock::time_point, kMaxSources> last_frame_tp_ {};
     std::array<bool, kMaxSources> has_last_frame_ {};
     std::array<uint64_t, kMaxSources> prev_skip_parts_ {};
+    uint64_t reid_crop_fail_ = 0;  // failed Re-ID crops (rate-limited warn in run_reid_stage)
     double step_ms_max_ = 0.0;
     std::chrono::steady_clock::time_point perf_win_start_ {};
 };

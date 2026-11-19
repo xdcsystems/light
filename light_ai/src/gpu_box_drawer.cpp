@@ -54,7 +54,8 @@ namespace
             "varying vec2 v_uv; varying vec4 v_col; "
             "void main(){ gl_FragColor=vec4(v_col.rgb, v_col.a * texture2D(u_tex, v_uv).a); }";
 
-    // One VBO for boxes (128 * 24) + callouts (8 * 192), allocated once in init().
+    // One VBO for boxes (GpuBoxList::cap * kVertsPerBox) + callouts
+    // (CalloutList::cap * kVertsPerCallout), allocated once in init().
     constexpr GLsizeiptr kVboBytes =
             static_cast<GLsizeiptr>( GpuBoxDrawer::kMaxVerts ) *
             static_cast<GLsizeiptr>( sizeof( GpuBoxDrawer::BatchVert ) );
@@ -80,6 +81,10 @@ namespace
         const float ny0 = y0 * qt.ys - 1.0f;
         const float nx1 = x1 * qt.xs - 1.0f;
         const float ny1 = y1 * qt.ys - 1.0f;
+        // Offscreen cull (M-10): a quad wholly outside the target costs
+        // 6 vertices of the shared budget and rasterizes nothing.
+        if ( nx1 <= -1.0f || nx0 >= 1.0f || ny1 <= -1.0f || ny0 >= 1.0f )
+            return;
         const float pos[6][4] = {
             { nx0, ny0, u0, v0 },
             { nx1, ny0, u1, v0 },
@@ -122,24 +127,26 @@ namespace
                 continue;
             emit_quad( qt, b.x0, b.y0, b.x1, b.y0 + t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
             emit_quad( qt, b.x0, b.y1 - t, b.x1, b.y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
-            emit_quad( qt, b.x0, b.y0, b.x0 + t, b.y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
-            emit_quad( qt, b.x1 - t, b.y0, b.x1, b.y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            // Vertical bars stop short of the horizontal ones: each corner
+            // pixel is blended once (M-10). Porter-Duff over is not
+            // idempotent for a < 255 -- the semi-transparent trail dots had
+            // bright double corners unlike draw_boxes_cpu.
+            if ( b.y1 - t <= b.y0 + t )
+                continue;  // 2 px tall: the two horizontal bars cover it
+            emit_quad( qt, b.x0, b.y0 + t, b.x0 + t, b.y1 - t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            emit_quad( qt, b.x1 - t, b.y0 + t, b.x1, b.y1 - t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
         }
     }
 
-    void append_callout_quads( QuadTarget& qt, const CalloutItem& c ) noexcept
+    // One pass of the label text: every glyph of c offset by (ox, oy) tensor px,
+    // in one color. Glyph quads are the padded atlas rects scaled by c.scale at
+    // float positions; GL_LINEAR does the resampling.
+    void append_text_pass( QuadTarget& qt, const CalloutItem& c, float ox, float oy,
+                           uint8_t r, uint8_t g, uint8_t b, uint8_t a ) noexcept
     {
-        for ( int s = 0; s < c.n_segs; ++s )
-            emit_solid_rect( qt, c.segs[s], c.r, c.g, c.b, 255 );
-
-        const CalloutRect fill { c.pill.x0 + 1, c.pill.y0 + 1, c.pill.x1 - 1, c.pill.y1 - 1 };
-        emit_solid_rect( qt, fill, 12, 12, 16, 245 );
-        emit_solid_rect( qt, { c.pill.x0, c.pill.y0, c.pill.x1, c.pill.y0 + 1 }, c.r, c.g, c.b, 255 );
-        emit_solid_rect( qt, { c.pill.x0, c.pill.y1 - 1, c.pill.x1, c.pill.y1 }, c.r, c.g, c.b, 255 );
-        emit_solid_rect( qt, { c.pill.x0, c.pill.y0 + 1, c.pill.x0 + 1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255 );
-        emit_solid_rect( qt, { c.pill.x1 - 1, c.pill.y0 + 1, c.pill.x1, c.pill.y1 - 1 }, c.r, c.g, c.b, 255 );
-
-        int gx = c.text_x;
+        const float sc = c.scale;
+        float pen = static_cast<float>( c.text_x ) + ox;
+        const float top = static_cast<float>( c.text_y ) + oy;
         int pos = 0;
         while ( pos < c.text_bytes )
         {
@@ -147,17 +154,36 @@ namespace
             if ( cp == 0 )
                 break;
             const int gi = glyph_font::glyph_index( cp );
-            float u0 = 0.0f;
-            float v0 = 0.0f;
-            float u1 = 0.0f;
-            float v1 = 0.0f;
-            glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
-            const float fx = static_cast<float>( gx );
-            const float fy = static_cast<float>( c.text_y );
-            emit_quad( qt, fx, fy, fx + static_cast<float>( CalloutItem::kGlyphW ),
-                       fy + static_cast<float>( CalloutItem::kGlyphH ), u0, v0, u1, v1, 255, 255, 255, 255 );
-            gx += CalloutItem::kGlyphW;
+            const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( gi );
+            if ( m.w > 0 && m.h > 0 )
+            {
+                float u0 = 0.0f;
+                float v0 = 0.0f;
+                float u1 = 0.0f;
+                float v1 = 0.0f;
+                glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
+                const float fx = pen + static_cast<float>( m.dx ) * sc;
+                const float fy = top + static_cast<float>( m.dy ) * sc;
+                emit_quad( qt, fx, fy, fx + static_cast<float>( m.w ) * sc, fy + static_cast<float>( m.h ) * sc,
+                           u0, v0, u1, v1, r, g, b, a );
+            }
+            pen += static_cast<float>( m.adv ) * sc;
         }
+    }
+
+    // Connector, then the text: kOutlineDirs dark passes around it (the outline
+    // that keeps white text readable on any background, #91 item 5), then white.
+    void append_callout_quads( QuadTarget& qt, const CalloutItem& c ) noexcept
+    {
+        for ( int s = 0; s < c.n_segs; ++s )
+            emit_solid_rect( qt, c.segs[s], c.r, c.g, c.b, 255 );
+        const float o = c.outline;
+        const float dirs[GpuBoxDrawer::kOutlineDirs][2] = {
+            { -o, -o }, { 0.0f, -o }, { o, -o }, { -o, 0.0f }, { o, 0.0f }, { -o, o }, { 0.0f, o }, { o, o } };
+        for ( const auto& d : dirs )
+            append_text_pass( qt, c, d[0], d[1], GpuBoxDrawer::kOutlineGray, GpuBoxDrawer::kOutlineGray,
+                              GpuBoxDrawer::kOutlineGray, GpuBoxDrawer::kOutlineAlpha );
+        append_text_pass( qt, c, 0.0f, 0.0f, 255, 255, 255, 255 );
     }
 
     // Compile/link diagnostics: libmali returns non-zero handles even for
@@ -404,7 +430,8 @@ bool GpuBoxDrawer::load_entry_points()
         log_.warn() << "drawer: image entry points missing\n";
         return false;
     }
-    st_.native_fence = has( exts, "EGL_ANDROID_native_fence_sync" ) && st_.create_sync && st_.client_wait;
+    // destroy_sync too: a fence created without it would leak one EGLSync per frame (M-10).
+    st_.native_fence = has( exts, "EGL_ANDROID_native_fence_sync" ) && st_.create_sync && st_.client_wait && st_.destroy_sync;
     return true;
 }
 
@@ -451,18 +478,19 @@ bool GpuBoxDrawer::create_context()
 
 void GpuBoxDrawer::create_atlas()
 {
-    std::array<uint8_t, glyph_font::kAtlasBytes> atlas {};
-    glyph_font::build_atlas( atlas );
     glGenTextures( 1, &st_.atlas_tex );
     glActiveTexture( GL_TEXTURE0 );
     glBindTexture( GL_TEXTURE_2D, st_.atlas_tex );
     glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
-    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
-    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+    // GL_LINEAR: the 22 px atlas is resampled to the label size (#91 item 5); every
+    // glyph rect has a transparent border and 2 px gaps, the solid block is 4x4,
+    // so no sample ever reaches a neighbour.
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
     glTexImage2D( GL_TEXTURE_2D, 0, GL_ALPHA, glyph_font::kAtlasW, glyph_font::kAtlasH, 0,
-                  GL_ALPHA, GL_UNSIGNED_BYTE, atlas.data() );
+                  GL_ALPHA, GL_UNSIGNED_BYTE, glyph_font::atlas() );
     glBindTexture( GL_TEXTURE_2D, 0 );
 }
 
@@ -571,7 +599,7 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     return {};
 }
 
-void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts )
+void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts ) noexcept
 {
     const bool have_boxes = boxes != nullptr && n > 0;
     const bool have_callouts = callouts != nullptr && callouts->n > 0;
@@ -633,7 +661,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const Callou
     glFlush();
 }
 
-void GpuBoxDrawer::sync_cpu()
+void GpuBoxDrawer::sync_cpu() noexcept
 {
     if ( st_.dpy == EGL_NO_DISPLAY )
         return;
@@ -653,8 +681,7 @@ void GpuBoxDrawer::sync_cpu()
             // driver has not flushed the command stream. Bounded wait:
             // a wedged GPU must not hang the pipeline.
             const EGLint r = st_.client_wait( st_.dpy, sync, EGL_SYNC_FLUSH_COMMANDS_BIT_KHR, kFenceWaitNs );
-            if ( st_.destroy_sync )
-                st_.destroy_sync( st_.dpy, sync );
+            st_.destroy_sync( st_.dpy, sync );  // non-null: part of the native_fence gate
             if ( r == EGL_CONDITION_SATISFIED_KHR )
                 return;
             ++fence_tmo_cnt_;

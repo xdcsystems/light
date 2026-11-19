@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -47,7 +48,8 @@ class NetMjpegSource
 {
     enum
     {
-        kPollMs = 2000,     // per-fill watchdog, same window as the camera
+        kPollMs = 2000,     // per-fill watchdog, same window as the camera; also the whole-head deadline
+        kPartMs = 5000,     // one blocking part, from its first header byte: a 300 KB JPEG needs >= 0.48 Mbit/s
         kErrStreakMax = 4,  // corrupt/short-frame streak tolerance
         kSkipMax = 4,       // read_latest_part: parts skipped per dequeue at most
         kDrainMax = 64,     // start(): parts drained at most
@@ -80,7 +82,7 @@ public:
         sock_.set_cancel( stop, prober_quit );
     }
     Status setup_device( const std::string& url );
-    void teardown();
+    void teardown() noexcept;
     // Drains frames accumulated in the TCP socket during Pipeline init
     // so run() starts at the live edge alongside CameraV4L2::start().
     void start();
@@ -93,9 +95,9 @@ public:
     // streak reaches kErrStreakMax); the streak survives across calls and
     // resets only on a clean frame or a successful setup_device().
     // timeout_ms < 0: the blocking single-source mode (the 2 s watchdog).
-    Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 );
-    void requeue( int index );
-    void* buffer( int index ) const { return pool_.data( index ); }
+    Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 ) noexcept;
+    void requeue( int index ) noexcept;
+    void* buffer( int index ) const noexcept { return pool_.data( index ); }
     size_t buffer_size( int ) const { return pool_.capacity(); }
     int width() const { return width_; }
     int height() const { return height_; }
@@ -127,9 +129,16 @@ private:
     // retry, and every bad part (the retry too) counts toward kErrStreakMax.
     Read read_latest_part( int slot, uint32_t* size, int timeout_ms );
     // One part into slot (core/multipart_reader.hpp), refilling with the
-    // kPollMs watchdog. Any result but Part resyncs the reader (the next read
-    // starts at a delimiter line); only the callers drop the window on Desync.
+    // kPollMs watchdog; once the part's headers have started, under the kPartMs
+    // wall-clock deadline (blocking single-source mode and setup only: the
+    // non-blocking multi-source path is bounded by the SourceSet stall timer).
+    // Any result but
+    // Part resyncs the reader (the next read starts at a delimiter line); only
+    // the callers drop the window on Desync.
     Read read_part( int slot, uint32_t* size );
+    // fill_until( kPollMs ) cut to what is left before deadline: a server that
+    // drips a byte per window no longer resets the watchdog forever (M-15).
+    BufferedSocket::Fill fill_before( std::chrono::steady_clock::time_point deadline );
 
 private:
     const Log& log_;
