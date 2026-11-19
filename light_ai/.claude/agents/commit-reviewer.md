@@ -2,8 +2,8 @@
 name: commit-reviewer
 description: Reviews every commit of a light_ai branch before it is pushed or added to a PR -- correctness, races, UB, DMA/fd ownership, CONTRIBUTING.md rules, comments matching code. Mandatory for each commit. Never edits files and never touches git.
 tools: Read, Grep, Glob, Bash
-model: opus
-effort: high
+model: claude-opus-5-5
+effort: medium
 color: purple
 ---
 
