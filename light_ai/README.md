@@ -193,8 +193,11 @@ The codebase contains **93 headers** under [`include/`](include/) and **56 trans
 
 Checks all translation units under `src/` and `tests/` (with [`tests/.clang-tidy`](tests/.clang-tidy) relaxing only function-size limits for table-driven test suites):
 
+0. **Rules self-test and lint (#93):** the `rules` pass runs on the fixtures in [`tests/tidy_probe/`](tests/tidy_probe) and must give exactly [`expected_rules.txt`](tests/tidy_probe/expected_rules.txt), and [`scripts/rules_lint.sh`](scripts/rules_lint.sh) runs on `tests/tidy_probe/lint/` and must print exactly [`expected_lint.txt`](tests/tidy_probe/expected_lint.txt). Any mismatch fails the gate, so a misspelt matcher or a dead rule cannot pass green. Then `rules_lint.sh` runs over the whole tree.
 1. **`main` pass:** system `clang-tidy-11` using [`.clang-tidy`](.clang-tidy) (all enabled checks).
-2. **`cognitive` pass:** pinned PyPI `clang-tidy==23.1.4` inside `light_ai/venv` using [`scripts/tidy_cognitive.yaml`](scripts/tidy_cognitive.yaml) (`readability-function-cognitive-complexity`, `Threshold: 20`).
+2. **`rules` pass** (named `cognitive` before #93): pinned PyPI `clang-tidy==23.1.4` inside `light_ai/venv` using [`scripts/tidy_rules.yaml`](scripts/tidy_rules.yaml) with `--experimental-custom-checks`. It runs `readability-function-cognitive-complexity` (`Threshold: 20`) and 13 clang-query `custom-*` checks for the project rules: no statics, globals or `thread_local`; no virtuals or inheritance; no `new`/`delete`, `malloc` family or smart pointers; no `const_cast`; no printf family; no `std::cout`/`cerr` outside `src/main.cpp`; no `catch (...)`.
+
+`rules_lint.sh` checks what AST matchers cannot see: lines of 140 columns at most, `.h` only for the nine legacy headers, include order, no GStreamer/OpenCV, SDK-free `core/` includes, and NOLINT accounting. Every `NOLINT(custom-...)` needs `: <reason>` and a line in [`scripts/rules_allow.txt`](scripts/rules_allow.txt); a blanket `NOLINT` (clang-tidy honours one anywhere in a line) fails; an allowlist line that matches nothing fails.
 
 One-time venv setup from `light_ai/` on the target board (`clangd` is for the editor only, see below):
 
@@ -202,14 +205,14 @@ One-time venv setup from `light_ai/` on the target board (`clangd` is for the ed
 python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4 clangd==22.1.1
 ```
 
-- **Logs & hangs:** `build/tidy/{src,tests}/<path>.log`, `build/tidy/cognitive/{src,tests}/<path>.log`, `build/tidy/HANGS.txt`.
+- **Logs & hangs:** `build/tidy/{src,tests}/<path>.log`, `build/tidy/rules/{src,tests}/<path>.log`, `build/tidy/selftest/` (self-test and lint), `build/tidy/HANGS.txt`.
 - **Cache & parallelism:** Result cache in `build/tidy-cache` (`scripts/tidy_cache.py`; disable with `TIDY_NO_CACHE=1`), parallel jobs via `TIDY_JOBS=N` (defaults to `min(nproc, MemAvailable / 400 MB)`).
-- **Subset run (`TIDY_FILES`):** `TIDY_FILES="src/a.cpp tests/b.cpp" bash scripts/tidy_run.sh` runs both passes on only those translation units (`src/**/*.cpp`, `tests/*.cpp`; a header or a missing file exits with `2`), with the same cache, compile DBs and log paths; only their logs are replaced. It is a quick check while editing, not the gate: `scripts/build.sh` always runs every TU.
+- **Subset run (`TIDY_FILES`):** `TIDY_FILES="src/a.cpp tests/b.cpp" bash scripts/tidy_run.sh` runs the self-test, the lint and both passes on only those translation units (`src/**/*.cpp`, `tests/*.cpp`; a header or a missing file exits with `2`), with the same cache, compile DBs and log paths; only their logs are replaced. It is a quick check while editing, not the gate: `scripts/build.sh` always runs every TU.
 - **Function-size limits (`src/`):** lines 90, statements 60, nesting 4, parameters 20, **variables 20** and **branches 15**. The last two were raised in #93 (from 14 and 11): every `const` local counts as a variable, which forced artificial structs such as `GlyphQuad`; cognitive complexity 20 is the real limit and is not relaxed. `tests/.clang-tidy` relaxes lines / statements / variables / nesting for table-driven suites and pins branches at 11.
 
 ### Editor Diagnostics (`clangd`)
 
-[`.clangd`](.clangd) configures `clangd` 22.1.1 from `light_ai/venv`: it uses both compile DBs (`build/`, `build/tests/`), strips `-mtune`/`-mcpu`, skips the background index (RAM), adds `readability-function-cognitive-complexity` (`Threshold: 20`), and removes the LLVM 12+ checks that the `clang-tidy-11` gate does not have. A quick command-line check of one file: `venv/bin/clangd --check=src/a.cpp`. Editor diagnostics are hints only; the gate stays the authority (one known difference: LLVM 22 counts constructor initializers as statements, so `Pipeline::Pipeline` shows up at 67 > 60 in the editor only).
+[`.clangd`](.clangd) configures `clangd` 22.1.1 from `light_ai/venv`: it uses both compile DBs (`build/`, `build/tests/`), strips `-mtune`/`-mcpu`, skips the background index (RAM), adds `readability-function-cognitive-complexity` (`Threshold: 20`; the experimental `custom-*` rules do not run in clangd, `TIDY_FILES` covers them), and removes the LLVM 12+ checks that the `clang-tidy-11` gate does not have. A quick command-line check of one file: `venv/bin/clangd --check=src/a.cpp`. Editor diagnostics are hints only; the gate stays the authority (one known difference: LLVM 22 counts constructor initializers as statements, so `Pipeline::Pipeline` shows up at 67 > 60 in the editor only).
 
 ### Storage Layout & Models
 
@@ -365,7 +368,7 @@ All **27 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 - **Build, test & system (`scripts/`):**
   - [`scripts/build.sh`](scripts/build.sh) — full release build + unit/TSan tests + 2-pass clang-tidy gate.
   - [`scripts/test.sh`](scripts/test.sh) — host-side `light_ai_tests` + `light_ai_tests_tsan`.
-  - [`scripts/tidy_run.sh`](scripts/tidy_run.sh), [`scripts/tidy_cache.py`](scripts/tidy_cache.py), [`scripts/tidy_cognitive.yaml`](scripts/tidy_cognitive.yaml) — 2-pass `clang-tidy` runner & cache.
+  - [`scripts/tidy_run.sh`](scripts/tidy_run.sh), [`scripts/tidy_cache.py`](scripts/tidy_cache.py), [`scripts/tidy_rules.yaml`](scripts/tidy_rules.yaml), [`scripts/rules_lint.sh`](scripts/rules_lint.sh), [`scripts/rules_allow.txt`](scripts/rules_allow.txt) — 2-pass `clang-tidy` runner & cache, the project-rule checks, their lint and allowlist (self-test fixtures: `tests/tidy_probe/`).
   - [`scripts/storage_guard.sh`](scripts/storage_guard.sh) — warns (non-fatally) if build output targets `/` or internal eMMC (`/dev/mmcblk*`) to help protect flash endurance on eMMC boards.
   - [`scripts/install_rknn.sh`](scripts/install_rknn.sh) — downloads & verifies `rknn_toolkit_lite2==2.5.0` wheel.
   - [`scripts/run.sh`](scripts/run.sh), [`scripts/light_ai.ini.example`](scripts/light_ai.ini.example) — wrapper launcher (applies `performance` governors if needed and loads `build/light_ai.ini` by default) and INI profile template.

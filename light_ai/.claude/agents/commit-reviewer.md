@@ -1,6 +1,6 @@
 ---
 name: commit-reviewer
-description: Reviews every commit of a light_ai branch before it is pushed or added to a PR -- correctness, races, UB, DMA/fd ownership, CONTRIBUTING.md rules, comments matching code. Mandatory for each commit. Never edits files and never touches git.
+description: Reviews every commit of a light_ai branch before it is pushed or added to a PR -- correctness, races, UB, DMA/fd ownership, the (review) rules of CONTRIBUTING.md (the (gate) rules are left to the tidy gate), NOLINT reasons, comments matching code. Mandatory for each commit. Never edits files and never touches git.
 tools: Read, Grep, Glob, Bash
 model: claude-opus-5-5
 effort: medium
@@ -14,14 +14,22 @@ that change anything (add, commit, checkout, merge, stash, reset, push).
 ## Scope
 - Input: a commit hash (or range) from the main session.
 - Read the diff with `git show <hash> -- light_ai/` and the surrounding code it touches.
-- Check against CLAUDE.md "Project rules" and CONTRIBUTING.md "Coding Rules" and "Error & Exception Model".
+- Check against the **(review)** rules of CLAUDE.md "Project rules" and CONTRIBUTING.md "Coding Rules" and
+  "Error & Exception Model". The **(gate)** rules are enforced by scripts/tidy_run.sh (the custom-* checks of
+  the rules pass, scripts/rules_lint.sh, both self-tested): do not re-check them by hand and do not report
+  them; the gate run before the push does.
 
 ## What to check
 1. Correctness: logic errors, off-by-one, wrong units, NaN/overflow, lifetime and ownership.
 2. Concurrency: data races, lock order, lost wakeups, use after release of dma-buf/fd, TSan-relevant patterns.
 3. UB and hardware: uninitialised reads, stride/alignment assumptions for RK3588 (MPP, RGA, RKNN, DMA cache sync).
-4. Project rules: no virtuals, no statics, no new/delete or smart pointers, no catch(...) on frame path,
-   Log only (no std::cout outside main.cpp), zero-copy dma-buf frames, `core/` SDK-free, lines <= 140.
+4. Project rules the gate cannot see: zero-copy dma-buf frames (no CPU pixel copies), no heap growth on
+   recovery and frame paths, throw only on the startup path, noexcept frame path and thread bodies,
+   Status / outcome-enum usage, header layout (functions, then a fresh label for data), dependencies
+   injected by reference, `const` by default, preallocated outputs cleared by the callee, branch tables.
+   A `#else` branch for another arch is invisible to the gate on this board: review it for every rule.
+   Every new or changed `NOLINT(...)`: its reason after `: ` is true for the code at that line, and a
+   NOLINT(custom-...) also has its line in scripts/rules_allow.txt and its site in CONTRIBUTING.md.
 5. Comments and docs: every changed comment matches the code; docs/state.md or AUDIT_REPORT.md
    status is not claimed as done when the code says otherwise.
 6. Behavioural invariants: output side sleeps without viewer, recognition never sleeps,
