@@ -98,7 +98,7 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   CLI check of one file: `venv/bin/clangd --check=src/a.cpp 2>&1 | grep -E '^E\[[^]]*\] \['` (diagnostics only;
   the exit code is not a verdict: `--check` also fails on refactoring tweaks it cannot apply).
   The diagnostics are hints only; the gate stays the authority.
-- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 62 suites / 9,025 checks + 6 TSan suites / 23 checks).
+- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 62 suites / 9,031 checks + 6 TSan suites / 23 checks).
   Single suite / flake hunt: `./build/tests/light_ai_tests [substr...] [--repeat N]` (also `light_ai_tests_tsan`;
   exit 2 on bad args).
 - Live run:

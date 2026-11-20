@@ -11,8 +11,8 @@
 
 namespace
 {
-    // The Pipeline lives on the stack of main() (no heap): 2,270,104 B at 6f738d8
-    // (#97 item 2, docs/state.md), 27 % of the default 8 MiB main-thread stack
+    // The Pipeline lives on the stack of main() (no heap): 2,269,984 B since 7fec65c
+    // (#97 items 2-3, docs/state.md), 27 % of the default 8 MiB main-thread stack
     // (ulimit -s 8192). The bound is half of that limit: a member that grows the
     // Pipeline past it has to be weighed against the stack, not slip in. A lower
     // ulimit -s at run time is not checked.
