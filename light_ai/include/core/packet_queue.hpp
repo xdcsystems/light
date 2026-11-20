@@ -89,7 +89,7 @@ public:
     // caller forces an IDR on the next frame. A closed queue drops the packet.
     Pushed push( Pkt& src )
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         if ( !open_ )
         {
             ops_.unref( src );
@@ -112,13 +112,13 @@ public:
 
     int depth() const
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         return ring_.n;
     }
 
     int take_max_depth() noexcept
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         const int m = max_depth_;
         max_depth_ = ring_.n;
         return m;
@@ -127,7 +127,7 @@ public:
     // Producer: an encode-side error in session `epoch`.
     void fail( uint32_t epoch )
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         if ( !open_ || epoch != epoch_ )
             return;
         failed_ = true;
@@ -137,7 +137,7 @@ public:
     // Consumer: session `epoch` starts.
     void open( uint32_t epoch )
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         clear_locked();
         wait_key_ = true;
         failed_ = false;
@@ -148,7 +148,7 @@ public:
     // Consumer: the session ended; leftover packets are dead weight.
     void close()
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         open_ = false;
         clear_locked();
     }
@@ -182,7 +182,7 @@ public:
     // Owner: wakes the consumer for good.
     void stop()
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         stopped_ = true;
         cv_.notify_all();
     }
