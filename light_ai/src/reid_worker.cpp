@@ -9,15 +9,20 @@
 
 namespace
 {
+    // The NPU core of Re-ID, away from YOLO where it can be:
+    //   pool > 1: YOLO pins one engine per core (0/1/2) -> AUTO (the runtime default);
+    //   pool 1, --core 4 (YOLO on core 2) -> core 0;
+    //   pool 1, --core 7 (YOLO on all three cores) -> AUTO;
+    //   pool 1, any other --core (0 = AUTO, 1/2 = core 0/1, 3 = cores 0+1) -> core 2.
     unsigned choose_reid_core_mask( int pool_size, int infer_core ) noexcept
     {
         if ( pool_size > 1 )
-            return 0u;
-        if ( infer_core == 4 )
-            return 1u;
-        if ( infer_core == 7 )
-            return 0u;
-        return 4u;
+            return static_cast<unsigned>( RKNN_NPU_CORE_AUTO );
+        if ( infer_core == static_cast<int>( RKNN_NPU_CORE_2 ) )
+            return static_cast<unsigned>( RKNN_NPU_CORE_0 );
+        if ( infer_core == static_cast<int>( RKNN_NPU_CORE_0_1_2 ) )
+            return static_cast<unsigned>( RKNN_NPU_CORE_AUTO );
+        return static_cast<unsigned>( RKNN_NPU_CORE_2 );
     }
 
     RknnEngine make_reid_engine( const char* model_path, int pool_size, int infer_core, const Log& log, int& out_dim )
