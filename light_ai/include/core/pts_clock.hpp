@@ -2,9 +2,10 @@
 //   CFR (--net-fps N): a per-session frame counter in the codec time base
 //     (1/N); every encoded or dropped frame advances it.
 //   VFR (--net-fps 0): the publish time (steady clock, us, read once per
-//     NetEncoder::publish*) rescaled to 1/90000 against the session base
-//     (the first timestamped frame), clamped to stay strictly increasing;
-//     without a timestamp, a 25 fps grid over the frames encoded so far.
+//     NetEncoder::publish* / flush_dirty) rescaled to 1/90000 against the
+//     session base (the first timestamped frame), clamped to stay strictly
+//     increasing; without a timestamp, a 25 fps grid over the frames
+//     encoded so far.
 // packet_ts() converts a codec pts to the muxer time base (frame_step
 // ticks per frame, set per session from the stream time base).
 //

@@ -10,7 +10,7 @@
 namespace
 {
     // The NPU core of Re-ID, away from YOLO where it can be:
-    //   pool > 1: YOLO pins one engine per core (0/1/2) -> AUTO (the runtime default);
+    //   pool 3: YOLO pins one engine per core (0/1/2) -> AUTO (the runtime default);
     //   pool 1, --core 4 (YOLO on core 2) -> core 0;
     //   pool 1, --core 7 (YOLO on all three cores) -> AUTO;
     //   pool 1, any other --core (0 = AUTO, 1/2 = core 0/1, 3 = cores 0+1) -> core 2.

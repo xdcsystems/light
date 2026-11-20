@@ -44,7 +44,8 @@ public:
     // dma-buf of the NPU input tensor (RGB888, w x h); boxes are drawn.
     // ts_us (the frame's dequeue time) is only a flag in follow-source
     // mode (--net-fps 0, VFR): >= 0 = the frame has a timestamp, and its
-    // pts is the publish time read here; < 0 = none, the 25 fps grid.
+    // pts is the publish time read here (a deferred multi-view frame: the
+    // flush_dirty() time); < 0 = none, the 25 fps grid.
     // Ignored in the fixed-fps mode.
     // No session: returns at once (no viewer, no output work). The first
     // publish of a session resets the multi-view canvas gray; the session's
@@ -98,8 +99,8 @@ private:
     H264Encoder codec_;
     // Pipeline-thread state of publish(): which publishes are encoded
     // (core/encode_pacer.hpp), when a new session may encode its first
-    // frame (core/session_warmup.hpp) and the publish time handed to the codec
-    // (-1 = no timestamp).
+    // frame (core/session_warmup.hpp) and the publish / flush_dirty time handed
+    // to the codec (-1 = no timestamp).
     // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
     // runs before publish() on the same pipeline thread -- no fence fd
     // crosses this boundary (retired, see docs/state.md).
