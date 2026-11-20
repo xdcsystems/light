@@ -109,9 +109,9 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/config/cli.cpp
     ${LIGHT_AI_ROOT}/src/config/option_registry.cpp
     ${LIGHT_AI_ROOT}/src/config/config_file.cpp
-    ${LIGHT_AI_ROOT}/src/process_env.cpp
-    ${LIGHT_AI_ROOT}/src/signal_waiter.cpp
-    ${LIGHT_AI_ROOT}/src/cpu_affinity.cpp
+    ${LIGHT_AI_ROOT}/src/sys/process_env.cpp
+    ${LIGHT_AI_ROOT}/src/sys/signal_waiter.cpp
+    ${LIGHT_AI_ROOT}/src/sys/cpu_affinity.cpp
     ${LIGHT_AI_ROOT}/src/core/timings.cpp
     ${LIGHT_AI_ROOT}/src/console_reporter.cpp
     ${LIGHT_AI_ROOT}/src/npu/cal_dumper.cpp

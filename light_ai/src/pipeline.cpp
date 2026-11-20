@@ -12,7 +12,7 @@
 #include "core/log.hpp"
 #include "core/rga_limits.hpp"
 #include "core/status.hpp"
-#include "cpu_affinity.hpp"
+#include "sys/cpu_affinity.hpp"
 #include "media/dma_sync.hpp"
 #include "npu/inference_pool.hpp"
 #include "pipeline.hpp"

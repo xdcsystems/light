@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <ctime>
 
-#include "signal_waiter.hpp"
+#include "sys/signal_waiter.hpp"
 
 namespace
 {

@@ -8,7 +8,7 @@
 
 #include "check.hpp"
 #include "core/log.hpp"
-#include "cpu_affinity.hpp"
+#include "sys/cpu_affinity.hpp"
 #include "suites.hpp"
 
 void test_cpu_affinity( TestRun& t )

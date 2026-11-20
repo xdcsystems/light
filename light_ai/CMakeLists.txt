@@ -125,9 +125,9 @@ add_executable(light_ai
     src/net/mux_session.cpp
     src/net/h264_encoder.cpp
     src/net/network_init.cpp
-    src/process_env.cpp
-    src/signal_waiter.cpp
-    src/cpu_affinity.cpp
+    src/sys/process_env.cpp
+    src/sys/signal_waiter.cpp
+    src/sys/cpu_affinity.cpp
     externals/inih/ini.c
 )
 target_compile_definitions(light_ai PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)
