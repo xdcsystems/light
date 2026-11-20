@@ -1,8 +1,10 @@
+#include <array>
 #include <cerrno>
 #include <sstream>
 #include <string>
 
 #include "check.hpp"
+#include "core/auto_orient.hpp"
 #include "core/geometry.hpp"
 #include "core/log.hpp"
 #include "source/source_channel.hpp"
@@ -87,6 +89,40 @@ namespace
             CHECK( t, r.attach( false ) == Attach::Live );
             // 1920 / 2 = 960; 1080 / 2 = 540 -> 16-aligned stride 544 -> 960 * 544 * 2 = 1044480.
             CHECK( t, r.dec.last_aux_bytes == static_cast<size_t>( 960 ) * 544 * 2 );
+        }
+    }
+
+    // A Live source's band is band_geom of its oriented size at its own
+    // rotation: Pipeline::resize_into_slot computes the band as
+    // band_geom( oriented_dims( raw, rot ) ) for every rot and relies on it
+    // being SourceGeom::lb at rot == rot_deg (#110). Landscape, portrait, a
+    // two-pass size (aux) and an odd one, at every rotation.
+    void band_is_oriented_band_geom( TestRun& t )
+    {
+        constexpr std::array<std::array<int, 2>, 5> sizes { { { 640, 480 }, { 1920, 1080 }, { 1080, 1920 }, { 5120, 2880 },
+                                                              { 1279, 719 } } };
+        constexpr std::array<int, 4> rots { 0, 90, 180, 270 };
+        for ( const std::array<int, 2>& sz : sizes )
+        {
+            for ( const int rot : rots )
+            {
+                Rig r;
+                r.ch.configure( 1, { SourceKind::V4L2, "/dev/video20", rot, false }, 640, 640 );
+                r.dev.w = sz[0];
+                r.dev.h = sz[1];
+                CHECK( t, r.attach( false ) == Attach::Live );
+                const SourceGeom& g = r.ch.geom();
+                CHECK( t, g.raw_w == sz[0] && g.raw_h == sz[1] && g.rot_deg == rot );
+                int ow = 0;
+                int oh = 0;
+                auto_orient::oriented_dims( g.raw_w, g.raw_h, rot, ow, oh );
+                CHECK( t, g.w == ow && g.h == oh );
+                const LbGeom want = band_geom( ow, oh, 640, 640 );
+                CHECK_EQ( t, g.lb.left, want.left );
+                CHECK_EQ( t, g.lb.top, want.top );
+                CHECK_EQ( t, g.lb.w, want.w );
+                CHECK_EQ( t, g.lb.h, want.h );
+            }
         }
     }
 }  // namespace
@@ -242,4 +278,5 @@ void test_source_channel( TestRun& t )
         CHECK( t, r.attach( true ) == Attach::Live && r.dec.inits == 2 );
     }
     aux_stride_sizing( t );
+    band_is_oriented_band_geom( t );
 }

@@ -45,6 +45,8 @@ void test_log( TestRun& t );
 void test_cpu_affinity( TestRun& t );
 void test_inference_pool( TestRun& t );
 void test_timings( TestRun& t );
+void test_perf_clock( TestRun& t );
+void test_perf_reporter( TestRun& t );
 void test_console_reporter( TestRun& t );
 void test_cal_dumper( TestRun& t );
 void test_usb_node_locator( TestRun& t );

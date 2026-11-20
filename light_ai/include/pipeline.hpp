@@ -12,7 +12,7 @@
 #include "console_reporter.h"
 #include "core/auto_orient.hpp"
 #include "core/log.hpp"
-#include "core/net_perf.hpp"
+#include "core/perf_reporter.hpp"
 #include "core/stop_flag.hpp"
 #include "frame_trace.h"
 #include "core/global_track.hpp"
@@ -57,6 +57,16 @@ class Pipeline
         int frames = 0;  // frames dispatched from this source (the cal/box-log frame index)
     };
 
+    // One RGA write into a pool tensor (resize_into_slot): the oriented
+    // source size, the band it fills in the tensor, the band RGA reported.
+    struct SlotResize
+    {
+        int w = 0;
+        int h = 0;
+        LbGeom band {};
+        LbGeom rga {};
+    };
+
 public:
     // stop: set by SignalWaiter on SIGINT/SIGTERM; log: the process diagnostics.
     // Both are owned by main() and outlive the Pipeline.
@@ -94,17 +104,16 @@ private:
     int acquire_slot( int& ok ) noexcept;      // claim-or-drain; idx or -1 on stop
 
     void prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept;
+    // The frame fd_src of source src, rotated by rot, into slot's tensor: the
+    // bars re-grayed on a band change, the RGA resize, and on success the
+    // slot's band. out: the oriented size and the expected band on every
+    // path; out.rga is set only on success.
+    Status resize_into_slot( int slot, int src, int fd_src, int rot, SlotResize& out ) noexcept;
     bool submit_orient_probe( int src, int fd_src, int rot, int job_idx, int& ok ) noexcept;
     bool probe_rot_batch( int src, int fd_src, const int* rots, int n_rots, float* scores, int& ok ) noexcept;
     void update_auto_orient( int src, int fd_src, int& ok ) noexcept;
     // RGA into the slot's tensor, then submit to the pool.
     void frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms ) noexcept;
-    void record_frame_perf( int src, std::chrono::steady_clock::time_point tp ) noexcept;
-    void record_orient_perf( int src, double elapsed_ms ) noexcept;
-    void finish_step_perf( std::chrono::steady_clock::time_point t0 ) noexcept;
-    void maybe_log_perf( std::chrono::steady_clock::time_point now ) noexcept;
-    void log_src_perf() noexcept;
-    void log_enc_perf() noexcept;
 
 private:
     Config cfg_;
@@ -125,8 +134,9 @@ private:
     int model_h_ = 0;  // taken from the model, not from flags
     
     // M5: per-source letterbox geometry lives in SourceChannel::geom().lb; the
-    // RGA per-frame LbGeom is cross-checked against the owning source's
-    // in frame_dispatch (one-time warn).
+    // RGA per-frame LbGeom is cross-checked against the band_geom of the
+    // oriented size (the same band at the source's own rotation) in
+    // frame_dispatch (one-time warn).
     bool lb_warned_ = false;
     CalDumper cal_dumper_;
     int reconnects_ = 0;   // source disconnects recovered this run
@@ -147,11 +157,9 @@ private:
     const Log& log_;        // diagnostics sink (main.cpp); safe from the worker and prober threads
     std::chrono::steady_clock::time_point t0_ {};  // run() start: the pts base of live frames and NO SIGNAL
     int64_t last_idle_us_ = -1;  // last NO SIGNAL publish stamp (us since t0_)
-    std::array<SourcePerfWindow, kMaxSources> src_perf_ {};
-    std::array<std::chrono::steady_clock::time_point, kMaxSources> last_frame_tp_ {};
-    std::array<bool, kMaxSources> has_last_frame_ {};
-    std::array<uint64_t, kMaxSources> prev_skip_parts_ {};
     uint64_t reid_crop_fail_ = 0;  // failed Re-ID crops (rate-limited warn in run_reid_stage)
-    double step_ms_max_ = 0.0;
-    std::chrono::steady_clock::time_point perf_win_start_ {};
+    // The source-side [perf] window and both 5 s [perf] lines (--net only;
+    // core/perf_reporter.hpp): fed by step(), probe_rot_batch() and
+    // reset_source_analytics(), logged from step() and idle_tick().
+    PerfReporter perf_;
 };

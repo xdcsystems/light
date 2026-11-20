@@ -55,6 +55,8 @@ add_executable(light_ai_tests
     test_cpu_affinity.cpp
     test_inference_pool.cpp
     test_timings.cpp
+    test_perf_clock.cpp
+    test_perf_reporter.cpp
     test_console_reporter.cpp
     test_cal_dumper.cpp
     test_usb_node_locator.cpp
@@ -88,6 +90,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/callout.cpp
     ${LIGHT_AI_ROOT}/src/core/overlay_raster.cpp
     ${LIGHT_AI_ROOT}/src/core/idle_plate.cpp
+    ${LIGHT_AI_ROOT}/src/core/perf_reporter.cpp
     ${LIGHT_AI_ROOT}/src/core/status.cpp
     ${LIGHT_AI_ROOT}/src/core/http_url.cpp
     ${LIGHT_AI_ROOT}/src/core/http_head.cpp

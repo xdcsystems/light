@@ -157,15 +157,70 @@ int NetMjpegSource::acquire_rx_slot()
     return slot;
 }
 
-NetMjpegSource::Read NetMjpegSource::step_nonblocking_part( int slot, int timeout_ms, uint32_t* size )
+// step_nonblocking_part: the first fill waits up to wait_ms, then the bytes
+// already queued are drained without blocking. A Timeout or an Interrupted
+// is no failure: the part stays pending for the next poll.
+struct NetMjpegSource::PollWait
+{
+    void arm( const NetMjpegSource& /*src*/ ) const noexcept {}
+
+    BufferedSocket::Fill next( NetMjpegSource& src )
+    {
+        const BufferedSocket::Fill r = src.sock_.fill( wait_ms );
+        wait_ms = 0;  // after data: drain remaining queued bytes without blocking again
+        return r;
+    }
+
+    bool pending( BufferedSocket::Fill r ) const noexcept
+    {
+        return r == BufferedSocket::Fill::Timeout || r == BufferedSocket::Fill::Interrupted;
+    }
+
+public:
+    int wait_ms = 0;
+};
+
+// read_part. The part deadline runs from the part's first header byte, not from
+// entry: the idle gap before a frame (the previous part's delimiter line
+// may already sit in the window) stays a plain kPollMs watchdog
+// (fill_until). Once the delimiter is consumed, any byte left in the
+// window is part header or body, and the part is bounded to kPartMs in
+// total. Accepted limit: junk dripped before a delimiter line is bounded
+// only by the window filling up (BufferedSocket Full -> Desync).
+// No wait result is pending: every one but Data resyncs.
+struct NetMjpegSource::PartDeadline
+{
+    using clk = std::chrono::steady_clock;
+
+    void arm( const NetMjpegSource& src )
+    {
+        if ( deadline == clk::time_point::max() && ( src.parts_.in_body() || ( src.parts_.in_header() && src.sock_.size() > 0 ) ) )
+            deadline = clk::now() + std::chrono::milliseconds( kPartMs );
+    }
+
+    BufferedSocket::Fill next( NetMjpegSource& src ) const
+    {
+        return deadline == clk::time_point::max() ? src.sock_.fill_until( kPollMs ) : src.fill_before( deadline );
+    }
+
+    bool pending( BufferedSocket::Fill /*r*/ ) const noexcept { return false; }
+
+public:
+    clk::time_point deadline = clk::time_point::max();
+};
+
+// wait.arm() runs right after each consume, before the events are read
+// (PartDeadline arms its deadline there).
+template <typename Wait>
+NetMjpegSource::Read NetMjpegSource::feed_part( int slot, uint32_t* size, Wait& wait )
 {
     uint8_t* const dst = pool_.data( slot );
-    int wait_ms = timeout_ms;
     BufferedSocket::Fill r = BufferedSocket::Fill::Data;
     while ( r == BufferedSocket::Fill::Data )
     {
         const MultipartReader::Step st = parts_.feed( sock_.data(), sock_.size(), dst );
         sock_.consume( st.consumed );
+        wait.arm( *this );
         if ( st.ev == MultipartReader::Event::Part )
         {
             *size = st.size;
@@ -178,14 +233,19 @@ NetMjpegSource::Read NetMjpegSource::step_nonblocking_part( int slot, int timeou
             rx_slot_ = -1;
             return Read::Oversized;
         }
-        r = sock_.fill( wait_ms );
-        wait_ms = 0;  // after data: drain remaining queued bytes without blocking again
+        r = wait.next( *this );
     }
-    if ( r == BufferedSocket::Fill::Timeout || r == BufferedSocket::Fill::Interrupted )
+    if ( wait.pending( r ) )
         return Read::Pending;  // keep rx_slot_ and parts_ state for next poll
-    parts_.resync();
+    parts_.resync();  // cancelled, watchdog / deadline, EOF / error, or a wedged-full window
     rx_slot_ = -1;
     return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
+}
+
+NetMjpegSource::Read NetMjpegSource::step_nonblocking_part( int slot, int timeout_ms, uint32_t* size )
+{
+    PollWait wait { timeout_ms };
+    return feed_part( slot, size, wait );
 }
 
 void NetMjpegSource::start()
@@ -219,40 +279,8 @@ void NetMjpegSource::start()
 
 NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
 {
-    uint8_t* const dst = pool_.data( slot );
-    // The part deadline runs from the part's first header byte, not from
-    // entry: the idle gap before a frame (the previous part's delimiter line
-    // may already sit in the window) stays a plain kPollMs watchdog
-    // (fill_until). Once the delimiter is consumed, any byte left in the
-    // window is part header or body, and the part is bounded to kPartMs in
-    // total. Accepted limit: junk dripped before a delimiter line is bounded
-    // only by the window filling up (BufferedSocket Full -> Desync).
-    using clk = std::chrono::steady_clock;
-    clk::time_point deadline = clk::time_point::max();
-    BufferedSocket::Fill r = BufferedSocket::Fill::Data;
-    while ( r == BufferedSocket::Fill::Data )
-    {
-        const MultipartReader::Step st = parts_.feed( sock_.data(), sock_.size(), dst );
-        sock_.consume( st.consumed );
-        if ( deadline == clk::time_point::max() && ( parts_.in_body() || ( parts_.in_header() && sock_.size() > 0 ) ) )
-            deadline = clk::now() + std::chrono::milliseconds( kPartMs );
-        if ( st.ev == MultipartReader::Event::Part )
-        {
-            *size = st.size;
-            rx_slot_ = -1;
-            return Read::Part;
-        }
-        if ( st.ev == MultipartReader::Event::Desync )
-        {
-            parts_.resync();
-            rx_slot_ = -1;
-            return Read::Oversized;
-        }
-        r = deadline == clk::time_point::max() ? sock_.fill_until( kPollMs ) : fill_before( deadline );
-    }
-    parts_.resync();  // cancelled, watchdog / deadline, EOF / error, or a wedged-full window
-    rx_slot_ = -1;
-    return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
+    PartDeadline wait {};
+    return feed_part( slot, size, wait );
 }
 
 void NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )

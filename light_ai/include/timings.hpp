@@ -4,6 +4,7 @@
 #include <chrono>
 
 #include "core/log.hpp"
+#include "core/perf_clock.hpp"
 #include "frame_trace.h"
 
 // Two independent accumulators over the same FrameTrace stream:
@@ -72,9 +73,9 @@ private:
     long npu_fail_ = 0;      // frames add() left out (npu_ok == false)
 };
 
-// Milliseconds between two steady-clock stamps; was duplicated
-// verbatim in pipeline.cpp and overlay_sink.cpp anonymous namespaces.
+// Milliseconds between two steady-clock stamps (core/perf_clock.hpp): the
+// short name of the pipeline.cpp / overlay_sink.cpp / inference_pool.hpp sites.
 inline double ms( Timings::clk::time_point a, Timings::clk::time_point b )
 {
-    return std::chrono::duration<double, std::milli>( b - a ).count();
+    return ms_between( a, b );
 }

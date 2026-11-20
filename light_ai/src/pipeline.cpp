@@ -8,7 +8,6 @@
 #include <stdexcept>
 #include <thread>
 
-#include "core/fixed_fmt.hpp"
 #include "core/frame_view.hpp"
 #include "core/log.hpp"
 #include "core/rga_limits.hpp"
@@ -50,6 +49,7 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
   , rep_( log )
   , stop_( stop )
   , log_( log )
+  , perf_( cfg.stream.enabled, log )
 {
     // pool_ is up by now: the engines are loaded, their I/O is set up,
     // they are pinned to NPU cores and the workers wait for frames. If
@@ -183,7 +183,7 @@ void Pipeline::idle_tick() noexcept
     if ( !sink_.enabled() )
         return;
     sink_.flush_dirty();
-    maybe_log_perf( clk::now() );
+    perf_.tick( clk::now(), srcs_, sink_ );
     const int64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t0_ ).count();
     const int64_t step_us = cfg_.stream.fps > 0 ? 1000000LL / cfg_.stream.fps : 40000;
@@ -261,16 +261,15 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
             st = hst;
             return Step::Fatal;
         }
-        finish_step_perf( t0 );
+        perf_.step_done( t0, clk::now(), srcs_, sink_ );
         return Step::Skipped;
     }
     const auto t1 = clk::now();
-    record_frame_perf( f.src, t1 );
+    perf_.frame( f.src, t1 );
     Status dec_st;
     const int fd_src = srcs_[f.src].decode( f, &dec_st );
     const auto t2 = clk::now();
-    if ( cfg_.stream.enabled && f.src >= 0 && f.src < kMaxSources )
-        src_perf_[f.src].dec_ms_max = std::max( src_perf_[f.src].dec_ms_max, ms( t1, t2 ) );
+    perf_.decode( f.src, ms( t1, t2 ) );
     if ( fd_src < 0 )
     {
         if ( !dec_st.ok() )
@@ -283,7 +282,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
                 return Step::Fatal;
             }
         }
-        finish_step_perf( t0 );
+        perf_.step_done( t0, clk::now(), srcs_, sink_ );
         return Step::Skipped;
     }
 
@@ -305,7 +304,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
     frame_dispatch( slot, f.src, an_[f.src].frames++, fd_src, ts_us, ms( t0, t1 ), ms( t1, t2 ) );
     if ( pool_.size() == 1 )
         ok += publish_oldest();
-    finish_step_perf( t0 );
+    perf_.step_done( t0, clk::now(), srcs_, sink_ );
     return Step::Dispatched;
 }
 
@@ -313,7 +312,7 @@ Status Pipeline::run()
 {
     int ok = 0;
     t0_ = clk::now();
-    perf_win_start_ = t0_;
+    perf_.start( t0_ );
     // Hot-attach prober (README): a local, so its destructor stops and joins
     // it on ANY exit of run() -- drain, fatal error, exception unwind. Spawned
     // BEFORE the pin below: it keeps the scheduler default (cpu_affinity.hpp).
@@ -364,7 +363,7 @@ void Pipeline::reset_source_analytics( int src ) noexcept
     const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( clk::now() - t0_ ).count();
     global_tracks_.sync_cam( src, trajs_, ts_us );
     sink_.reset_source( src );
-    has_last_frame_[src] = false;
+    perf_.source_reset( src );
 }
 
 Status Pipeline::handle_source_failure( const EncodedFrame& f ) noexcept
@@ -415,10 +414,6 @@ int Pipeline::acquire_slot( int& ok ) noexcept
     return k;  // try_acquire(): a slot index or -1
 }
 
-// RGA resize into the slot's tensor, optional cal dump, one-time
-// cross-check of the RGA letterbox geometry against the single-owner
-// one, then the job goes to the pool.
-
 void Pipeline::prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept
 {
     const TensorRef tn = pool_.tensor( slot );
@@ -431,31 +426,40 @@ void Pipeline::prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept
     }
 }
 
+// The band is band_geom of the oriented size for every rot: at the source's
+// own rotation that is SourceGeom::lb, which SourceChannel::attach computes
+// from the same oriented size (test_source_channel pins the equality).
+// A failed resize leaves tensor_band_[slot] as it was; the caller still
+// submits the job, with rga_ok = false.
+Status Pipeline::resize_into_slot( int slot, int src, int fd_src, int rot, SlotResize& out ) noexcept
+{
+    const SourceChannel& ch = srcs_[src];
+    const SourceGeom& ss = ch.geom();  // Live: the frame thread owns it
+    const int raw_w = ss.raw_w > 0 ? ss.raw_w : ss.w;
+    const int raw_h = ss.raw_h > 0 ? ss.raw_h : ss.h;
+    auto_orient::oriented_dims( raw_w, raw_h, rot, out.w, out.h );
+    out.band = band_geom( out.w, out.h, model_w_, model_h_ );
+    prepare_tensor_band( slot, out.band );
+
+    const TensorRef tn = pool_.tensor( slot );
+    const RgaResizer::ResizeSrc src_img { fd_src, raw_w, raw_h, ch.hor_stride(), ch.ver_stride(),
+                                          ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 };
+    const RgaResizer::CropImage dst_img { tn.fd, model_w_, model_h_, rga_limits::rgb888_stride_px( tn.stride_bytes, model_w_ ) };
+    const RgaResizer::AuxImage aux { ss.aux_fd, rga_limits::aux_side( raw_w ), rga_limits::aux_side( raw_h ) };
+    const Status st = rga_.resize( src_img, dst_img, aux, rot, &out.rga );
+    if ( st.ok() )
+        tensor_band_[static_cast<size_t>( slot )] = out.band;
+    return st;
+}
+
 bool Pipeline::submit_orient_probe( int src, int fd_src, int rot, int job_idx, int& ok ) noexcept
 {
     const int slot = acquire_slot( ok );
     if ( slot < 0 )
         return false;
-    const SourceChannel& ch = srcs_[src];
-    const SourceGeom& ss = ch.geom();
-    const int raw_w = ss.raw_w > 0 ? ss.raw_w : ss.w;
-    const int raw_h = ss.raw_h > 0 ? ss.raw_h : ss.h;
-    int ew = 0;
-    int eh = 0;
-    auto_orient::oriented_dims( raw_w, raw_h, rot, ew, eh );
-    const LbGeom elb = band_geom( ew, eh, model_w_, model_h_ );
-    prepare_tensor_band( slot, elb );
-
-    const TensorRef tn = pool_.tensor( slot );
-    LbGeom lg {};
-    const int yuv_fmt = ( ch.out_fmt() == MPP_FMT_YUV420SP ) ? 0 : 1;
-    const Status rga_st = rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd,
-                                       rga_limits::aux_side( raw_w ), rga_limits::aux_side( raw_h ),
-                                       &lg, yuv_fmt, rot, ch.hor_stride(), ch.ver_stride(),
-                                       rga_limits::rgb888_stride_px( tn.stride_bytes, model_w_ ) );
-    if ( rga_st.ok() )
-        tensor_band_[static_cast<size_t>( slot )] = elb;
-    const InferJob job { src, ew, eh, job_idx, -1, rga_st.ok(), elb, {} };
+    SlotResize rs {};
+    const Status rga_st = resize_into_slot( slot, src, fd_src, rot, rs );
+    const InferJob job { src, rs.w, rs.h, job_idx, -1, rga_st.ok(), rs.band, {} };
     return pool_.submit( slot, job );
 }
 
@@ -466,7 +470,7 @@ bool Pipeline::probe_rot_batch( int src, int fd_src, const int* rots, int n_rots
         ok += publish_oldest();
     if ( stop_.requested() )
     {
-        record_orient_perf( src, ms( pt0, clk::now() ) );
+        perf_.orient( src, ms( pt0, clk::now() ) );
         return false;
     }
 
@@ -487,7 +491,7 @@ bool Pipeline::probe_rot_batch( int src, int fd_src, const int* rots, int n_rots
         }
         off += batch;
     }
-    record_orient_perf( src, ms( pt0, clk::now() ) );
+    perf_.orient( src, ms( pt0, clk::now() ) );
     return !stop_.requested();
 }
 
@@ -541,50 +545,39 @@ void Pipeline::update_auto_orient( int src, int fd_src, int& ok ) noexcept
     }
 }
 
+// RGA resize into the slot's tensor (resize_into_slot), optional cal dump,
+// one-time cross-check of the RGA letterbox geometry against the expected
+// band, then the job goes to the pool.
 void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms ) noexcept
 {
     const auto t3 = clk::now();
-    const SourceChannel& ch = srcs_[src];
-    const SourceGeom& ss = ch.geom();  // Live: the frame thread owns it
-    const int rot = an_[src].cur_rot;
-    const int raw_w = ss.raw_w > 0 ? ss.raw_w : ss.w;
-    const int raw_h = ss.raw_h > 0 ? ss.raw_h : ss.h;
-    int eff_w = 0;
-    int eff_h = 0;
-    auto_orient::oriented_dims( raw_w, raw_h, rot, eff_w, eff_h );
-    const LbGeom eff_lb = ( rot == ss.rot_deg ) ? ss.lb : band_geom( eff_w, eff_h, model_w_, model_h_ );
-    prepare_tensor_band( slot, eff_lb );
-
-    const TensorRef tn = pool_.tensor( slot );
-    LbGeom lg {};
-    const Status rga_st =
-            rga_.resize( fd_src, raw_w, raw_h, tn.fd, model_w_, model_h_, ss.aux_fd,
-                         rga_limits::aux_side( raw_w ), rga_limits::aux_side( raw_h ), &lg,
-                         ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1, rot, ch.hor_stride(), ch.ver_stride(),
-                         rga_limits::rgb888_stride_px( tn.stride_bytes, model_w_ ) );
+    SlotResize rs {};
+    const Status rga_st = resize_into_slot( slot, src, fd_src, an_[src].cur_rot, rs );
     if ( rga_st.ok() )
     {
+        const TensorRef tn = pool_.tensor( slot );
         cal_dumper_.maybe( frame_idx, tn.fd, static_cast<const uint8_t*>( tn.data ), tn.size );
-        // Cross-check RGA geometry against the owning source's (warn once).
-        if ( !lb_warned_ && ( lg.left != eff_lb.left || lg.top != eff_lb.top || lg.w != eff_lb.w || lg.h != eff_lb.h ) )
+        // Cross-check the RGA geometry against the expected band (warn once).
+        const LbGeom& lg = rs.rga;
+        const LbGeom& eb = rs.band;
+        if ( !lb_warned_ && ( lg.left != eb.left || lg.top != eb.top || lg.w != eb.w || lg.h != eb.h ) )
         {
             lb_warned_ = true;
             log_.warn() << "pipeline: RGA letterbox drift (src " << src << "): x=" << lg.left << " top=" << lg.top
                         << " w=" << lg.w << " h=" << lg.h
-                        << " vs x=" << eff_lb.left << " top=" << eff_lb.top << " w=" << eff_lb.w << " h=" << eff_lb.h << '\n';
+                        << " vs x=" << eb.left << " top=" << eb.top << " w=" << eb.w << " h=" << eb.h << '\n';
         }
-        tensor_band_[static_cast<size_t>( slot )] = eff_lb;
     }
     const auto t3b = clk::now();
 
     InferJob job {};
     job.src_idx = src;
-    job.src_w = eff_w;
-    job.src_h = eff_h;
+    job.src_w = rs.w;
+    job.src_h = rs.h;
     job.frame = frame_idx;
     job.ts_us = ts_us;
     job.rga_ok = rga_st.ok();
-    job.lb = eff_lb;
+    job.lb = rs.band;
     job.tr.cam = cam_ms;
     job.tr.dec = dec_ms;
     job.tr.rga = ms( t3, t3b );
@@ -667,7 +660,7 @@ void Pipeline::run_reid_stage( const FrameView& view ) noexcept
         const RgaResizer::CropImage src_img { view.tensor.fd, model_w_, model_h_,
                                               rga_limits::rgb888_stride_px( view.tensor.stride_bytes, model_w_ ) };
         const RgaResizer::CropImage dst_img { dst.fd, rw, rh, rga_limits::rgb888_stride_px( dst.stride_bytes, rw ) };
-        if ( const Status cst = rga_.crop_resize( src_img, reqs[i].srect, dst_img ); !cst.ok() )
+        if ( const Status cst = rga_.crop_resize( src_img, reqs[i].srect, dst_img, {} ); !cst.ok() )
         {
             // A failed crop only skips this Re-ID sample (the slot stays free),
             // but a persistent cause must be visible: first failure, then every 256th.
@@ -680,91 +673,4 @@ void Pipeline::run_reid_stage( const FrameView& view ) noexcept
         if ( reid_worker_->submit( job ) )
             global_tracks_.mark_dispatched( view.src_idx, reqs[i].local_id, reqs[i].gen );
     }
-}
-
-void Pipeline::record_frame_perf( int src, std::chrono::steady_clock::time_point tp ) noexcept
-{
-    if ( !cfg_.stream.enabled || src < 0 || src >= kMaxSources )
-        return;
-    SourcePerfWindow& sp = src_perf_[src];
-    if ( has_last_frame_[src] )
-        sp.max_dq_gap_ms = std::max( sp.max_dq_gap_ms, ms( last_frame_tp_[src], tp ) );
-    last_frame_tp_[src] = tp;
-    has_last_frame_[src] = true;
-    ++sp.frames;
-}
-
-void Pipeline::record_orient_perf( int src, double elapsed_ms ) noexcept
-{
-    if ( !cfg_.stream.enabled || src < 0 || src >= kMaxSources )
-        return;
-    SourcePerfWindow& sp = src_perf_[src];
-    ++sp.orient_probe_cnt;
-    sp.orient_probe_ms_max = std::max( sp.orient_probe_ms_max, elapsed_ms );
-}
-
-void Pipeline::finish_step_perf( std::chrono::steady_clock::time_point t0 ) noexcept
-{
-    if ( !cfg_.stream.enabled )
-        return;
-    const auto now = clk::now();
-    step_ms_max_ = std::max( step_ms_max_, ms( t0, now ) );
-    maybe_log_perf( now );
-}
-
-void Pipeline::maybe_log_perf( std::chrono::steady_clock::time_point now ) noexcept
-{
-    if ( !cfg_.stream.enabled || ms( perf_win_start_, now ) < 5000.0 )
-        return;
-    log_src_perf();
-    log_enc_perf();
-    perf_win_start_ = now;
-}
-
-void Pipeline::log_src_perf() noexcept
-{
-    Log::Line line = log_.info();
-    line << "[perf] src step_max=" << Fixed { step_ms_max_, 1 };
-    step_ms_max_ = 0.0;
-    for ( int s = 0; s < srcs_.size(); ++s )
-    {
-        SourcePerfWindow& sp = src_perf_[s];
-        sp.eagain_cnt = srcs_.take_eagain_cnt( s );
-        const uint64_t skip_now = srcs_[s].skip_parts_cnt();
-        sp.skip_parts_cnt = static_cast<uint32_t>( skip_now - prev_skip_parts_[s] );
-        prev_skip_parts_[s] = skip_now;
-        line << " | s" << s << " f=" << sp.frames << " dq_max=" << Fixed { sp.max_dq_gap_ms, 1 }
-             << " eagain=" << sp.eagain_cnt << " dec_max=" << Fixed { sp.dec_ms_max, 1 }
-             << " or_cnt=" << sp.orient_probe_cnt << " or_max=" << Fixed { sp.orient_probe_ms_max, 1 }
-             << " skip=" << sp.skip_parts_cnt;
-        sp.reset();
-    }
-    line << '\n';
-}
-
-void Pipeline::log_enc_perf() noexcept
-{
-    const OverlayPerfWindow op = sink_.take_perf();
-    const EncPerfWindow ep = sink_.take_enc_perf();
-    Log::Line line = log_.info();
-    if ( sink_.has_enc_perf() )
-    {
-        line << "[perf] enc admit=" << ep.enc_admit << " skip=" << ep.enc_skip
-             << " idle_a=" << ep.idle_admit << " idle_s=" << ep.idle_skip
-             << " dt_max=" << Fixed { ep.max_dt_enc_ms, 1 }
-             << " dt_hist=[" << ep.dt_enc_hist[0] << ',' << ep.dt_enc_hist[1] << ','
-             << ep.dt_enc_hist[2] << ',' << ep.dt_enc_hist[3] << ','
-             << ep.dt_enc_hist[4] << ',' << ep.dt_enc_hist[5] << ']'
-             << " h264_max=" << Fixed { ep.h264_ms_max, 1 }
-             << " cmp_max=" << Fixed { ep.compose_ms_max, 1 }
-             << " eagain=" << ep.eagain_cnt << " clamp=" << ep.pts_clamp_cnt
-             << " qflush=" << ep.q_flush_cnt << " | ";
-    }
-    else
-    {
-        line << "[perf] ";
-    }
-    line << "ovl gpu_max=" << Fixed { op.gpu_draw_ms_max, 1 }
-         << " sync_max=" << Fixed { op.sync_cpu_ms_max, 1 }
-         << " ftmo=" << op.fence_tmo_cnt << '\n';
 }

@@ -15,7 +15,8 @@ class Log;
 class RgaResizer
 {
 public:
-    // One RGB888 image of crop_resize: dma-buf fd, size, row stride in pixels (0 = tight).
+    // One RGB888 image: dma-buf fd, size, row stride in pixels (0 = tight).
+    // The crop_resize source and destination, the resize destination.
     struct CropImage
     {
         int fd = -1;
@@ -24,45 +25,60 @@ public:
         int w_stride = 0;
     };
 
+    // The resize source: a YUV semi-planar decoder frame. w_stride / h_stride:
+    // 0 = the 16-aligned w / h (how MppDecoder allocates its frames).
+    // fmt: 0 = YUV420SP, nonzero = YUV422SP -- the actual decoder output
+    // layout (MppDecoder::out_fmt).
+    struct ResizeSrc
+    {
+        int fd = -1;
+        int w = 0;
+        int h = 0;
+        int w_stride = 0;
+        int h_stride = 0;
+        int fmt = 0;
+    };
+
+    // The intermediate buffer of a two-pass job: dma-buf fd and size, with
+    // 16-aligned strides; fd < 0 = none.
+    struct AuxImage
+    {
+        int fd = -1;
+        int w = 0;
+        int h = 0;
+    };
+
     // Pins the jobs to RGA3 core0; failures go to log (`err` stream).
     explicit RgaResizer( const Log& log );
-    // src: YUVSP (w_src x h_src; 420SP by default, see src_fmt below),
-    // dst: RGB888 (w_dst x h_dst).
-    // aux: optional intermediate dma-buf for the two-pass path when the
-    // scale ratio exceeds the RGA3 per-axis limit (1/8); pass -1 if unused.
-    // On success *geom receives the band geometry; on failure geom stays
-    // untouched (h = 0 marks "no valid band").
-    // src_fmt: 0 = YUV420SP (default), nonzero = YUV422SP --
-    // the actual decoder output layout (MppDecoder::out_fmt).
-    // src_w_stride / src_h_stride: the source strides; 0 = the 16-aligned
-    // w_src / h_src (how MppDecoder allocates its frames).
-    // dst_w_stride: the tensor row in pixels (TensorRef::stride_bytes / 3); 0 = w_dst.
-    // aux (two-pass) is NV12 with 16-aligned strides: the caller allocates at
-    // least align16(w_aux) * align16(h_aux) * 3 / 2 bytes (SourceChannel: x2).
+    // src: YUVSP (see ResizeSrc), dst: RGB888, its w_stride the tensor row
+    // in pixels (TensorRef::stride_bytes / 3; 0 = dst.w).
+    // aux: the intermediate for the two-pass path when the scale ratio
+    // exceeds the RGA3 per-axis limit (1/8); {} if unused. It is NV12 with
+    // 16-aligned strides: the caller allocates at least
+    // align16(aux.w) * align16(aux.h) * 3 / 2 bytes (SourceChannel: x2).
     // The MJPEG decoder follows the stream subsampling and ignores
     // the fmt pre-set on its frame; the RGA read side must match.
-    // Ok: *geom receives the band geometry. A failure Status carries the
-    // cause (aspect mismatch, a band outside the RGA3 limits of
+    // rot_deg: 0 / 90 / 180 / 270, the rotation applied on the way.
+    // Ok: *geom (if not null) receives the band geometry. A failure Status
+    // carries the cause (aspect mismatch, a band outside the RGA3 limits of
     // core/rga_limits.hpp, no aux for the two-pass path, an im2d error
-    // with the raw IM_STATUS in sys()); geom stays untouched then.
+    // with the raw IM_STATUS in sys()); geom stays untouched then (h = 0
+    // marks "no valid band").
     // An odd source side is cropped down to even (YUV rects need even sides).
-    Status resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux,
-                   LbGeom* geom, int src_fmt = 0, int rot_deg = 0, int src_w_stride = 0, int src_h_stride = 0,
-                   int dst_w_stride = 0 ) const;
+    Status resize( const ResizeSrc& src, const CropImage& dst, const AuxImage& aux, int rot_deg, LbGeom* geom ) const;
     // Crops RGB888 sub-rect from model tensor -> dst RGB888 Re-ID tensor: routes >= 68x68
     // crops to RGA3 (IOMMU) and < 68 px crops to RGA2 (< 4G DMA32). Enforces 1/8x .. 8x scale bounds.
     // src / dst carry their row strides (TensorRef::stride_bytes / 3; 0 = tight).
     // A > 8x downscale needs aux: an RGB888
-    // w_aux x h_aux intermediate with 16-aligned strides (RGA rejects an unaligned
+    // aux.w x aux.h intermediate with 16-aligned strides (RGA rejects an unaligned
     // RGB888 width stride), so the caller allocates at least
-    // align16(w_aux) * align16(h_aux) * 3 bytes; without aux that case fails.
-    Status crop_resize( const CropImage& src, LbGeom crop_roi, const CropImage& dst,
-                        int aux_fd = -1, int w_aux = 0, int h_aux = 0 ) const noexcept;
+    // align16(aux.w) * align16(aux.h) * 3 bytes; without aux that case fails.
+    Status crop_resize( const CropImage& src, LbGeom crop_roi, const CropImage& dst, const AuxImage& aux ) const noexcept;
 
 private:
-    // Pass 1 of the two-pass path: src (src_fmt_rk) into aux (NV12, w_aux x h_aux).
-    Status downscale_to_aux( int src_fd, int w_src, int h_src, int src_w_stride, int src_h_stride,
-                             int src_fmt_rk, int aux_fd, int w_aux, int h_aux ) const;
+    // Pass 1 of the two-pass path: src (its strides resolved, read as
+    // src_fmt_rk) into aux (NV12).
+    Status downscale_to_aux( const ResizeSrc& src, int src_fmt_rk, const AuxImage& aux ) const;
 
 private:
     const Log& log_;

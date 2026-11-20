@@ -51,7 +51,8 @@ namespace
     {
         std::vector<uint8_t> m( static_cast<size_t>( l.tile_w ) * l.tile_h, 0 );
         const std::string text = plate.text();
-        glyph_font::raster_text( text.data(), static_cast<int>( text.size() ), plate.pen_x( l ), plate.pen_y( l ), plate.scale(),
+        const IdlePlate::Pen pen = plate.pen( l );
+        glyph_font::raster_text( text.data(), static_cast<int>( text.size() ), pen.x, pen.y, plate.scale(),
                                  l.tile_w, l.tile_h, [&m, &l]( int x, int y, const glyph_font::Texel2& s ) {
                                      if ( s.fill > 0.0f )
                                          m[static_cast<size_t>( y ) * l.tile_w + x] = 1;

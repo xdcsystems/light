@@ -15,8 +15,10 @@
 #include "core/encoder_config.hpp"     // EncoderConfig, StreamLayout
 #include "core/geometry.hpp"           // LbGeom: band geometry arrives as one object
 #include "core/net_perf.hpp"           // EncPerfWindow: zero-heap telemetry
+#include "core/perf_clock.hpp"         // Lap, CounterDelta: the encode interval, the codec counter deltas
 #include "core/session_gate.hpp"       // SessionGate: the session hand-over
 #include "core/session_warmup.hpp"     // SessionWarmup: when a session's first frame is encoded
+#include "core/status.hpp"             // Status: a compose result
 #include "net/av_packet_queue.hpp"     // PacketQueue: encoder -> serve thread
 #include "net/encoder_frame_pool.hpp"  // EncoderFramePool: the encoder input ring
 #include "net/frame_composer.hpp"      // FrameComposer: the picture the encoder reads
@@ -73,7 +75,17 @@ public:
     EncPerfWindow take_perf() noexcept;
 
 private:
+    // The shared steps of publish(), flush_dirty() and publish_idle()
+    // (net_encoder.cpp): a new session's canvas reset, the timed compose,
+    // and the encoded tail. The templates are defined and used only there.
+    bool enter_session( uint32_t epoch, int64_t now_us ) noexcept;
+    template <typename Compose>
+    Status timed_compose( Compose&& compose ) noexcept;
+    template <typename Compose>
+    void compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose ) noexcept;
     void run_encoded( uint32_t epoch, std::chrono::steady_clock::time_point now ) noexcept;
+
+private:
     // Declaration order IS the shutdown order, read bottom-up (destruction
     // runs in reverse):
     //   1. session_  -- the serve thread: quit, queue stop, join. Nothing
@@ -97,10 +109,10 @@ private:
     // The h264_rkmpp codec with the per-session encoder state: pts clock,
     // forced IDR, frames sent (net/h264_encoder.hpp).
     H264Encoder codec_;
-    // Pipeline-thread state of publish(): which publishes are encoded
-    // (core/encode_pacer.hpp), when a new session may encode its first
-    // frame (core/session_warmup.hpp) and the publish / flush_dirty time handed
-    // to the codec (-1 = no timestamp).
+    // Pipeline-thread state of publish(), flush_dirty() and publish_idle():
+    // which publishes are encoded (core/encode_pacer.hpp), when a new session
+    // may encode its first frame (core/session_warmup.hpp) and the publish /
+    // flush_dirty time handed to the codec (-1 = no timestamp).
     // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
     // runs before publish() on the same pipeline thread -- no fence fd
     // crosses this boundary (retired, see docs/state.md).
@@ -109,13 +121,14 @@ private:
     int64_t ts_us_ = -1;
     bool canvas_dirty_ = false;
     int64_t dirty_ts_us_ = -1;  // the ts_us flag of the deferred canvas (flush_dirty)
+    // The [perf] enc window (take_perf): the interval between encodes of one
+    // session (enc_lap_ restarts on a new epoch) and the codec counter deltas.
     EncPerfWindow perf_ {};
     uint32_t perf_epoch_ = 0;
-    bool has_last_enc_ = false;
-    std::chrono::steady_clock::time_point last_enc_tp_ {};
-    uint64_t prev_eagain_cnt_ = 0;
-    uint64_t prev_pts_clamp_cnt_ = 0;
-    uint64_t prev_q_flush_cnt_ = 0;
+    Lap enc_lap_;
+    CounterDelta eagain_;
+    CounterDelta pts_clamp_;
+    CounterDelta q_flush_;
     // Encoder -> serve thread packet queue (net/av_packet_queue.hpp): its
     // own mutex, separate from the gate's: network-side wakeups never touch
     // the encode critical section. Overflow flush, key gate, fail( epoch ).

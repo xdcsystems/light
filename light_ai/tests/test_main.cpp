@@ -51,6 +51,8 @@ int main( int argc, char** argv )
         { "cpu_affinity", &test_cpu_affinity },
         { "inference_pool", &test_inference_pool },
         { "timings", &test_timings },
+        { "perf_clock", &test_perf_clock },
+        { "perf_reporter", &test_perf_reporter },
         { "console_reporter", &test_console_reporter },
         { "cal_dumper", &test_cal_dumper },
         { "usb_node_locator", &test_usb_node_locator },

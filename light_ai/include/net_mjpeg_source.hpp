@@ -141,6 +141,17 @@ private:
     // fill_until( kPollMs ) cut to what is left before deadline: a server that
     // drips a byte per window no longer resets the watchdog forever (M-15).
     BufferedSocket::Fill fill_before( std::chrono::steady_clock::time_point deadline );
+    // The wait policies of feed_part, defined in net_mjpeg_source.cpp (plain
+    // structs, no virtuals): how the next bytes are waited for, when a part
+    // deadline is armed, and which wait result leaves the part pending.
+    struct PollWait;      // step_nonblocking_part
+    struct PartDeadline;  // read_part
+    // The one feed / consume loop of a part into slot: Part, Oversized (a
+    // Desync of the reader: resynced), Pending (wait.pending() of the last
+    // fill: the part and rx_slot_ are kept), else resynced: Desync on a full
+    // window, Lost otherwise.
+    template <typename Wait>
+    Read feed_part( int slot, uint32_t* size, Wait& wait );
 
 private:
     const Log& log_;

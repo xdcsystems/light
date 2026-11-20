@@ -69,13 +69,18 @@ RgaResizer::RgaResizer( const Log& log ) : log_( log )
             rga_check( imconfig( IM_CONFIG_SCHEDULER_CORE, IM_SCHEDULER_RGA3_CORE0 ), log_, "RGA: imconfig RGA3_CORE0 pin failed" ) );
 }
 
-Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_dst, int h_dst, int aux_fd, int w_aux, int h_aux,
-                           LbGeom* geom, int src_fmt, int rot_deg, int src_w_stride, int src_h_stride,
-                           int dst_w_stride ) const
+Status RgaResizer::resize( const ResizeSrc& src_img, const CropImage& dst_img, const AuxImage& aux, int rot_deg,
+                           LbGeom* geom ) const
 {
-    int pass_fmt = ( src_fmt == 0 ) ? RK_FORMAT_YCbCr_420_SP : RK_FORMAT_YCbCr_422_SP;
-    int ws = resolve_stride( src_w_stride, w_src );
-    int hs = resolve_stride( src_h_stride, h_src );
+    const int w_dst = dst_img.w;
+    const int h_dst = dst_img.h;
+    // The pass-2 source: src_img, or aux after pass 1.
+    int src_fd = src_img.fd;
+    int w_src = src_img.w;
+    int h_src = src_img.h;
+    int pass_fmt = ( src_img.fmt == 0 ) ? RK_FORMAT_YCbCr_420_SP : RK_FORMAT_YCbCr_422_SP;
+    int ws = resolve_stride( src_img.w_stride, w_src );
+    int hs = resolve_stride( src_img.h_stride, h_src );
     const bool swap_wh = ( rot_deg == 90 || rot_deg == 270 );
     // Same predicate as SourceChannel::needs_aux (both read rga_limits), so a
     // two-pass frame always finds its aux buffer allocated.
@@ -83,13 +88,13 @@ Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_d
                             ( swap_wh && rga_limits::needs_two_pass( w_src, h_src, w_dst, h_dst, true ) );
     if ( over_limit )
     {
-        if ( Status st = downscale_to_aux( src_fd, w_src, h_src, ws, hs, pass_fmt, aux_fd, w_aux, h_aux ); !st.ok() )
+        if ( Status st = downscale_to_aux( src_img, pass_fmt, aux ); !st.ok() )
             return st;
-        src_fd = aux_fd;
-        w_src = w_aux;
-        h_src = h_aux;
-        ws = align16( w_aux );
-        hs = align16( h_aux );
+        src_fd = aux.fd;
+        w_src = aux.w;
+        h_src = aux.h;
+        ws = align16( aux.w );
+        hs = align16( aux.h );
         pass_fmt = RK_FORMAT_YCbCr_420_SP;
     }
 
@@ -119,7 +124,7 @@ Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_d
     const rga_buffer_t src = wrap( src_fd, w_src, h_src, ws, hs, pass_fmt );
     // The tensor rows as RknnEngine bound them: every reader (NPU, drawer,
     // composer, dumper, preview) uses this stride, so the writer must too.
-    const rga_buffer_t dst = wrap( dst_fd, w_dst, h_dst, dst_w_stride > 0 ? dst_w_stride : w_dst, h_dst, RK_FORMAT_RGB_888 );
+    const rga_buffer_t dst = wrap( dst_img.fd, w_dst, h_dst, dst_img.w_stride > 0 ? dst_img.w_stride : w_dst, h_dst, RK_FORMAT_RGB_888 );
     const im_rect src_rect { 0, 0, rga_limits::even_down( w_src ), rga_limits::even_down( h_src ) };
     if ( Status st = rga_check( improcess( src, dst, {}, src_rect, { g.left, g.top, g.w, g.h }, {},
                                            rga_rot_usage( rot_deg ) ),
@@ -132,8 +137,11 @@ Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_d
 }
 
 Status RgaResizer::crop_resize( const CropImage& src_img, LbGeom crop_roi, const CropImage& dst_img,
-                                int aux_fd, int w_aux, int h_aux ) const noexcept
+                                const AuxImage& aux ) const noexcept
 {
+    const int aux_fd = aux.fd;
+    const int w_aux = aux.w;
+    const int h_aux = aux.h;
     const int w_dst = dst_img.w;
     const int h_dst = dst_img.h;
     if ( src_img.fd < 0 || dst_img.fd < 0 || src_img.w <= 0 || src_img.h <= 0 || w_dst <= 0 || h_dst <= 0 )
@@ -184,17 +192,15 @@ Status RgaResizer::crop_resize( const CropImage& src_img, LbGeom crop_roi, const
 }
 
 // Pass 1 of the two-pass path: the source into the NV12 aux buffer.
-Status RgaResizer::downscale_to_aux( int src_fd, int w_src, int h_src, int src_w_stride, int src_h_stride,
-                                     int src_fmt_rk, int aux_fd, int w_aux, int h_aux ) const
+Status RgaResizer::downscale_to_aux( const ResizeSrc& src_img, int src_fmt_rk, const AuxImage& aux ) const
 {
-    if ( aux_fd < 0 || w_aux <= 0 || h_aux <= 0 )
+    if ( aux.fd < 0 || aux.w <= 0 || aux.h <= 0 )
     {
         log_.error() << "RGA: two-pass needed but aux_fd < 0\n";
         return make_status( Errc::Failed, "RGA: two-pass needed but aux_fd < 0" );
     }
-    const int w_aux_stride = align16( w_aux );
-    const int h_aux_stride = align16( h_aux );
-    const rga_buffer_t src = wrap( src_fd, w_src, h_src, src_w_stride, src_h_stride, src_fmt_rk );
-    const rga_buffer_t mid = wrap( aux_fd, w_aux, h_aux, w_aux_stride, h_aux_stride, RK_FORMAT_YCbCr_420_SP );
+    const rga_buffer_t src = wrap( src_img.fd, src_img.w, src_img.h, resolve_stride( src_img.w_stride, src_img.w ),
+                                   resolve_stride( src_img.h_stride, src_img.h ), src_fmt_rk );
+    const rga_buffer_t mid = wrap( aux.fd, aux.w, aux.h, align16( aux.w ), align16( aux.h ), RK_FORMAT_YCbCr_420_SP );
     return rga_check( imresize( src, mid ), log_, "RGA resize (pass 1) failed" );
 }
