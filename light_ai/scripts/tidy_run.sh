@@ -196,7 +196,9 @@ timeout "$TMO" "$RULES_TIDY" --experimental-custom-checks --config-file="$PROJ_R
   --verify-config > "$SELF/verify-typo.log" 2>&1
 timeout "$TMO" "$RULES_TIDY" --experimental-custom-checks --config-file="$RULES_CFG" --verify-config \
   > "$SELF/verify.log" 2>&1
+VERIFY_RC=$?   # 124: killed by the timeout -- an empty log then proves nothing
 grep -v "$VERIFY_NOISE" "$SELF/verify.log" > "$SELF/verify.txt"
+[ "$VERIFY_RC" -eq 124 ] && echo "tidy: --verify-config timed out after ${TMO}s" >> "$SELF/verify.txt"
 if ! grep -q "unknown check option 'misc-const-correctness.WarnPointersAsValue'" "$SELF/verify-typo.log"; then
   echo "tidy self-test: verify-config FAIL -- no report of the mistyped key of $PROBE/verify_typo.yaml:"
   cat "$SELF/verify-typo.log"
