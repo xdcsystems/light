@@ -13,7 +13,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "sources.hpp"
+#include "source/sources.hpp"
 
 template class BasicUsbNodeLocator<UsbHost>;
 template class BasicSourceChannel<MediaSource, MppDecoder>;

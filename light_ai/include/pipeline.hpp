@@ -24,7 +24,7 @@
 #include "source/source_prober.hpp"
 #include "source/source_set.hpp"
 #include "source/source_types.hpp"
-#include "sources.hpp"
+#include "source/sources.hpp"
 #include "core/timings.hpp"
 #include "core/tracker.hpp"
 #include "yolo_postprocess.hpp"

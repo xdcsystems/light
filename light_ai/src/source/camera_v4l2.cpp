@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <linux/videodev2.h>
 
-#include "camera_v4l2.hpp"
+#include "source/camera_v4l2.hpp"
 #include "core/log.hpp"
 #include "source/source_types.hpp"  // dequeue_status
 

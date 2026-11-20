@@ -4,9 +4,9 @@
 #include <string>
 #include <variant>
 
-#include "camera_v4l2.hpp"
+#include "source/camera_v4l2.hpp"
 #include "core/log.hpp"
-#include "net_mjpeg_source.hpp"
+#include "source/net_mjpeg_source.hpp"
 
 // Dispatch: the uniform per-kind methods (dequeue, requeue, buffer,
 // width, height, teardown) use std::visit with a generic lambda --

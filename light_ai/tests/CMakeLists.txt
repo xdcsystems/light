@@ -102,7 +102,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/trail_window.cpp
     ${LIGHT_AI_ROOT}/src/source/buffered_socket.cpp
     ${LIGHT_AI_ROOT}/src/source/mjpeg_slot_pool.cpp
-    ${LIGHT_AI_ROOT}/src/net_mjpeg_source.cpp
+    ${LIGHT_AI_ROOT}/src/source/net_mjpeg_source.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp
     ${LIGHT_AI_ROOT}/src/core/tracker.cpp
     ${LIGHT_AI_ROOT}/src/box_mapper.cpp

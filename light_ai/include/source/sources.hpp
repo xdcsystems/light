@@ -1,12 +1,12 @@
 // The concrete source layer: the templates of source/ instantiated with the
-// real device types (explicit instantiations in src/sources.cpp).
+// real device types (explicit instantiations in src/source/sources.cpp).
 
 #pragma once
 
 #include <array>
 #include <string>
 
-#include "media_source.hpp"
+#include "source/media_source.hpp"
 #include "mpp_decoder.hpp"
 #include "source/source_channel.hpp"
 #include "source/usb_node_locator.hpp"

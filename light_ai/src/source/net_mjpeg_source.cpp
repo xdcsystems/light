@@ -2,7 +2,7 @@
 #include <chrono>
 #include <string>
 
-#include "net_mjpeg_source.hpp"
+#include "source/net_mjpeg_source.hpp"
 
 #include "core/http_head.hpp"
 #include "core/http_url.hpp"

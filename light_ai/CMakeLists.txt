@@ -72,14 +72,14 @@ set(CMAKE_INSTALL_RPATH "/usr/local/lib")
 
 add_executable(light_ai
     src/main.cpp
-    src/camera_v4l2.cpp
+    src/source/camera_v4l2.cpp
     src/mpp_decoder.cpp
     src/rga_resizer.cpp
     src/reid_worker.cpp
     src/rknn_engine.cpp
     src/yolo_postprocess.cpp
     src/pipeline.cpp
-    src/sources.cpp
+    src/source/sources.cpp
     src/overlay_sink.cpp
     src/tcp_pull_server.cpp
     src/tcp_send.cpp
@@ -87,7 +87,7 @@ add_executable(light_ai
     src/net_encoder.cpp
     src/core/tracker.cpp
     src/gpu_box_drawer.cpp
-    src/net_mjpeg_source.cpp
+    src/source/net_mjpeg_source.cpp
     src/box_mapper.cpp
     src/box_smoother.cpp
     src/core/timings.cpp
