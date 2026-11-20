@@ -49,7 +49,7 @@ H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log
     ctx->pix_fmt = AV_PIX_FMT_DRM_PRIME;
     ctx->sw_pix_fmt = AV_PIX_FMT_NV12;
     // net-fps 0 = follow the source. The codec gets the native
-    // MPEG-TS time base (1/90000) and stamps pts from the real dequeue
+    // MPEG-TS time base (1/90000) and stamps pts from the real publish
     // times (VFR): night ~25, day up to 30 — no fixed ceiling. The GOP
     // stays 25 so a late joiner still waits at most about one second.
     // CFR keeps the legacy 1/fps setup verbatim.
@@ -57,7 +57,7 @@ H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log
     // VFR: rc still needs a numeric fps — 0/1 reaches MPP as the auto
     // marker (65535) and the CBR per-frame budget collapses (stream
     // dries to ~83 kbps). EncoderConfig::nominal_fps(): 25, 25 per source
-    // in multi-view, for rate control only; pts stay VFR from dequeue times.
+    // in multi-view, for rate control only; pts stay VFR from publish times.
     ctx->framerate = AVRational { cfg.nominal_fps(), 1 };
     ctx->bit_rate = cfg.bit_rate();
     // gop_size reaches MPP as rc:gop (rkmpp_set_enc_cfg):
@@ -83,7 +83,7 @@ H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log
     log_.info() << "enc: h264_rkmpp open: " << cfg.layout.w << 'x' << cfg.layout.h << ", " << cfg.kbps() << " kbps, gop "
                 << ctx->gop_size << '\n';
     if ( cfg.vfr() )
-        log_.info() << "enc: VFR follow-source mode: time_base 1/90000, pts from dequeue times\n";
+        log_.info() << "enc: VFR follow-source mode: time_base 1/90000, pts from publish times\n";
 }
 
 H264Encoder::~H264Encoder()

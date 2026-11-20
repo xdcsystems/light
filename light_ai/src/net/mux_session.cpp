@@ -304,7 +304,7 @@ Status MuxSession::setup_stream( AVFormatContext* fc, AVStream** st_out, int64_t
     if ( step < 1 )
         step = 1;
     if ( cfg_.vfr() )
-        log_.info() << "enc: stream time_base " << tb.num << '/' << tb.den << " (VFR: pts from dequeue times)\n";
+        log_.info() << "enc: stream time_base " << tb.num << '/' << tb.den << " (VFR: pts from publish times)\n";
     else
         log_.info() << "enc: stream time_base " << tb.num << '/' << tb.den << ", pts step " << step << "\n";
     if ( tcp_pull )

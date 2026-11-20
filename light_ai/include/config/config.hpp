@@ -76,7 +76,7 @@ struct StreamConfig
     bool enabled = false;  // --net: preview server (raw rgb24 NUT, or h264 with --net-h264)
     int port = 1234;       // --net-port
     // Pacing of the preview stream, FPS (--net-fps). 0 = follow the source:
-    // the encoder stamps pts from the dequeue times (VFR), night ~25, day
+    // the encoder stamps pts from the publish times (VFR), night ~25, day
     // up to 30 -- no ctx rebuild, no fixed 25 ceiling.
     int fps = 25;
     bool h264 = false;         // --net-h264: h264_rkmpp + MPEG-TS instead of raw NUT

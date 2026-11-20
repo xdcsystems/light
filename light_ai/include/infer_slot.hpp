@@ -39,7 +39,7 @@ struct InferJob
     int src_w = 0;       // source geometry snapshot: the worker scales boxes with it
     int src_h = 0;
     int frame = -1;      // per-source frame index (logs, box CSV)
-    int64_t ts_us = -1;  // dequeue time, us from run() start (VFR pts)
+    int64_t ts_us = -1;  // dequeue time, us from run() start
     bool rga_ok = false; // false: the tensor holds no valid frame, the NPU is skipped
     LbGeom lb {};        // letterbox band of this frame in the tensor
     FrameTrace tr {};    // cam/dec/rga filled at dispatch

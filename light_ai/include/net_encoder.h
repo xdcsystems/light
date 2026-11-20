@@ -42,9 +42,10 @@ public:
 
     // Called once per frame from the pipeline loop. tensor_fd is the
     // dma-buf of the NPU input tensor (RGB888, w x h); boxes are drawn.
-    // ts_us is the dequeue timestamp in microseconds from pipeline
-    // start -- the pts source in follow-source mode (--net-fps 0, VFR);
-    // ignored in the fixed-fps mode.
+    // ts_us (the frame's dequeue time) is only a flag in follow-source
+    // mode (--net-fps 0, VFR): >= 0 = the frame has a timestamp, and its
+    // pts is the publish time read here; < 0 = none, the 25 fps grid.
+    // Ignored in the fixed-fps mode.
     // No session: returns at once (no viewer, no output work). The first
     // publish of a session resets the multi-view canvas gray; the session's
     // first frame is encoded once every source cell has a picture of this
@@ -57,7 +58,8 @@ public:
     // held: canvas only, no encode). Called by Pipeline::idle_tick while
     // at least one configured tile has no live source; returns at once
     // without a session. Idle encodes share the pacer budget with live
-    // ones and are NOT counted in --frames or the timing stats.
+    // ones and are NOT counted in --frames or the timing stats. ts_us:
+    // the same has-a-timestamp flag as in publish().
     void publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept;
     void flush_dirty() noexcept;
 
@@ -96,7 +98,8 @@ private:
     H264Encoder codec_;
     // Pipeline-thread state of publish(): which publishes are encoded
     // (core/encode_pacer.hpp), when a new session may encode its first
-    // frame (core/session_warmup.hpp) and the dequeue time handed to the codec.
+    // frame (core/session_warmup.hpp) and the publish time handed to the codec
+    // (-1 = no timestamp).
     // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
     // runs before publish() on the same pipeline thread -- no fence fd
     // crosses this boundary (retired, see docs/state.md).
@@ -104,7 +107,7 @@ private:
     SessionWarmup warmup_;
     int64_t ts_us_ = -1;
     bool canvas_dirty_ = false;
-    int64_t dirty_ts_us_ = -1;
+    int64_t dirty_ts_us_ = -1;  // the ts_us flag of the deferred canvas (flush_dirty)
     EncPerfWindow perf_ {};
     uint32_t perf_epoch_ = 0;
     bool has_last_enc_ = false;
