@@ -27,11 +27,9 @@ Each rule is marked **(gate)**, **(review)** or both. **(gate)** means `scripts/
 
 - **`Status` ([`include/core/status.hpp`](include/core/status.hpp))** (review)**:** Operations that can fail for a runtime reason return `Status` (`Errc`, string-literal `what`, optional `Sys::Errno` / `Sys::Sdk` code); results go to out-parameters. Outcome enums (e.g. `FrameStatus`, `SourceChannel::Attach`, `HttpHead::Parse`) carry `Status` in their failure arm.
 - **Startup-only exceptions** (review)**:** `std::runtime_error` (via [`throw_on`](include/throw_on.hpp) when wrapping a `Status`) is permitted only on the startup path (constructors and `Pipeline` initialization).
-- **`noexcept` frame path & threads** (`catch (...)`: gate, `custom-no-catch-all`; the rest: review)**:** Frame processing and thread bodies are `noexcept`: no exceptions are thrown and there is no `catch (...)` in the frame path. Exactly three `catch (...)` exist, each allowlisted with `NOLINT(custom-no-catch-all): <reason>`:
-  - two startup thread-launch rethrows (`InferencePool::start_workers`, `NetPreview` ctor);
-  - `ReidWorker::BigCorePin`, which runs once at the reid worker thread start, before its job loop (not the frame path). It swallows a throw from the best-effort pin's `Log` stream so that the `noexcept` thread body does not terminate.
+- **`noexcept` frame path & threads** (`catch (...)`: gate, `custom-no-catch-all`; the rest: review)**:** Frame processing and thread bodies are `noexcept`: no exceptions are thrown and there is no `catch (...)` in the frame path. Exactly two `catch (...)` exist, both startup thread-launch rethrows (`InferencePool::start_workers`, `NetPreview` ctor), each allowlisted with `NOLINT(custom-no-catch-all): <reason>`.
 
-  `MediaSource` catches `std::bad_variant_access` only on the startup `emplace`.
+  `MediaSource` catches `std::bad_variant_access` only on the startup `emplace`. `pin_current_thread_to_big_cores` ([`src/cpu_affinity.cpp`](src/cpu_affinity.cpp)) is `noexcept` and catches `const std::exception&` from its `Log` stream (the line is dropped, the best-effort pin stands); it runs once at the start of the NPU and reid worker threads and on the main thread at `Pipeline` startup, never on the frame path.
 
 ## Output Side vs. Recognition Invariant (review)
 
@@ -55,7 +53,7 @@ Every PR targeting `master` must pass the full board gate:
 
 This runs:
 1. Release CMake build (`light_ai`).
-2. Host unit tests (`light_ai_tests` — 61 suites, 9,022 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 6 suites, 23 checks).
+2. Host unit tests (`light_ai_tests` — 62 suites, 9,025 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 6 suites, 23 checks).
 3. Two-pass `clang-tidy` gate ([`scripts/tidy_run.sh`](scripts/tidy_run.sh)):
    - **self-test + lint:** the rules pass on [`tests/tidy_probe/`](tests/tidy_probe) and [`scripts/rules_lint.sh`](scripts/rules_lint.sh) on its fixture tree must give exactly the expected hits, and `--verify-config` must know every check option key of `scripts/tidy_rules.yaml`; then `rules_lint.sh` over the tree.
    - **main:** system `clang-tidy-11` against [`.clang-tidy`](.clang-tidy) (`tests/` uses [`tests/.clang-tidy`](tests/.clang-tidy)).

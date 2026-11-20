@@ -52,6 +52,7 @@ add_executable(light_ai_tests
     test_config.cpp
     test_signals.cpp
     test_log.cpp
+    test_cpu_affinity.cpp
     test_inference_pool.cpp
     test_timings.cpp
     test_console_reporter.cpp

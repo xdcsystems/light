@@ -108,14 +108,7 @@ void ReidWorker::BigCorePin::operator()() const noexcept
     if ( log == nullptr )
         return;
     // Once at the reid worker thread start (BasicReidQueue::worker_loop, before its job loop), not the frame path.
-    // The pin itself is not noexcept: it can throw only from the Log stream (bad_alloc, an ios failure).
-    try
-    {
-        pin_current_thread_to_big_cores( "reid worker", *log );
-    }
-    catch ( ... )  // NOLINT(custom-no-catch-all): thread start, best-effort pin; the noexcept thread body must not terminate
-    {
-    }
+    pin_current_thread_to_big_cores( "reid worker", *log );
 }
 
 ReidWorker::ReidWorker( const char* model_path, int pool_size, int infer_core, const Log& log )
