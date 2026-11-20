@@ -15,13 +15,7 @@
 
 #include <cstdint>
 
-// An 8-bit plane: row stride (also the clip width) and height in rows.
-struct Plane8
-{
-    uint8_t* p = nullptr;
-    int stride = 0;
-    int h = 0;
-};
+#include "core/idle_plate.hpp"  // Plane8
 
 class BitmapFont
 {

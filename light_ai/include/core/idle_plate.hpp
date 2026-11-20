@@ -1,7 +1,9 @@
-// IdlePlate: the NO SIGNAL picture of the idle canvas -- "NO SIGNAL" at 3x
-// scale, luma 16, centered in every tile of the stream layout (single
-// view: once). Drawn once at init into the Y plane of the gray-filled idle
-// canvas; publish_idle() RGA-copies tiles of it into the stream.
+// IdlePlate: the NO SIGNAL picture of the idle canvas -- "NO SIGNAL" in the
+// callout label font (glyph_font, DejaVu Sans; #108) with 21 px capitals, luma 16,
+// no outline (dark text on the gray canvas), its ink box centered in every tile
+// of the stream layout (single view: once). Drawn once at init into the Y plane
+// of the gray-filled idle canvas; publish_idle() RGA-copies tiles of it into the
+// stream.
 //
 // A one-time CPU raster at init: the README zero-copy rule governs the
 // FRAME path, and this follows the gray-letterbox memset precedent
@@ -12,29 +14,40 @@
 
 #include <cstdint>
 
-#include "core/bitmap_font.hpp"
 #include "core/encoder_config.hpp"
+
+// An 8-bit plane: row stride (also the clip width) and height in rows.
+struct Plane8
+{
+    uint8_t* p = nullptr;
+    int stride = 0;
+    int h = 0;
+};
 
 class IdlePlate
 {
     enum
     {
-        kScale = 3,
+        kCapPx = 21,  // capital height on the canvas, px: the size of the former 3x stb_easy_font label
         kLuma = 16
     };
 
 public:
-    // y_plane: the canvas Y plane, stride = layout.w, h = layout.vstride.
-    void draw( const Plane8& y_plane, const StreamLayout& layout );
+    // y_plane: the canvas Y plane, stride = layout.w, h = layout.vstride. Every
+    // pixel under the text moves toward kLuma by the glyph fill coverage
+    // (y += (kLuma - y) * fill / 255); nothing else is written, nothing outside
+    // the plane or a tile.
+    void draw( const Plane8& y_plane, const StreamLayout& layout ) const noexcept;
 
-    // Top left of the label inside one tile (the same offset in every tile).
-    int text_x( const StreamLayout& layout ) const;
-    int text_y( const StreamLayout& layout ) const;
-    int text_w() const;  // label size in pixels
-    int text_h() const;
+    // The label text and its glyph scale (atlas px -> canvas px): kCapPx over the
+    // capital height of the atlas, from the glyph metrics.
+    const char* text() const noexcept;
+    float scale() const noexcept;
 
-    uint8_t luma() const { return kLuma; }
+    // The pen (the line top-left) inside one tile, float px: the same in every
+    // tile, so that the label's ink box is centered in the tile.
+    float pen_x( const StreamLayout& layout ) const noexcept;
+    float pen_y( const StreamLayout& layout ) const noexcept;
 
-private:
-    BitmapFont font_;
+    uint8_t luma() const noexcept { return kLuma; }
 };

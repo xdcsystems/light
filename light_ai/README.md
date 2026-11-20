@@ -96,7 +96,7 @@ flowchart TB
 - **Output side vs. recognition gating:**
   1. **No viewer attached:** The output path sleeps completely — no GPU/CPU box drawing, no RGA compose, no `NO SIGNAL` tile generation, and no H.264 encoding (`enc` reports `0.0 ms`).
   2. **Recognition never sleeps:** Capture, MPP decode, RKNN inference, and Kalman tracking always run regardless of viewer state.
-  3. **Viewer attached:** Online sources run the full render/compose/encode path; absent or disconnected sources display the pre-rendered gray `NO SIGNAL` tile (`IdlePlate` + `BitmapFont`).
+  3. **Viewer attached:** Online sources run the full render/compose/encode path; absent or disconnected sources display the pre-rendered gray `NO SIGNAL` tile (`IdlePlate`: the DejaVu label font of the callouts, 21 px capitals, no outline).
 - **Canonical stream canvases (`NetEncoder`):**
   - `1` source: `640×480` (letterbox band cropped 1:1 from NPU tensor).
   - `2` sources: `1280×480` side-by-side (`2×1` of `640×480` tiles).
