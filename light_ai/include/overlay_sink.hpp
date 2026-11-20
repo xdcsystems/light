@@ -24,7 +24,7 @@
 #include "gpu_box_drawer.hpp"
 #include "net_encoder.h"
 #include "net_preview.hpp"
-#include "tracker.hpp"
+#include "core/tracker.hpp"
 
 struct StreamConfig;
 struct LbGeom;

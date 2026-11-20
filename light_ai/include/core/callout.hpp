@@ -8,7 +8,7 @@
 #include "core/geometry.hpp"    // LbGeom
 #include "core/glyph_font.hpp"  // glyph_font::kLabelCap
 #include "core/track.hpp"       // TrajList
-#include "pod_list.hpp"         // PodList
+#include "core/pod_list.hpp"    // PodList
 
 // Half-open integer tensor-pixel rectangle [x0, x1) x [y0, y1).
 struct CalloutRect

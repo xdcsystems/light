@@ -12,7 +12,7 @@
 #include "core/rga_limits.hpp"  // rgb888_stride_px
 #include "core/status.hpp"
 #include "dma_sync.hpp"
-#include "timings.hpp"
+#include "core/timings.hpp"
 
 namespace
 {

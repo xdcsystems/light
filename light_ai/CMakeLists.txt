@@ -85,12 +85,12 @@ add_executable(light_ai
     src/tcp_send.cpp
     src/net_preview.cpp
     src/net_encoder.cpp
-    src/tracker.cpp
+    src/core/tracker.cpp
     src/gpu_box_drawer.cpp
     src/net_mjpeg_source.cpp
     src/box_mapper.cpp
     src/box_smoother.cpp
-    src/timings.cpp
+    src/core/timings.cpp
     src/console_reporter.cpp
     src/cal_dumper.cpp
     src/config/cli.cpp

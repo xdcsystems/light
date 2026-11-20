@@ -28,7 +28,7 @@
 
 #include "core/detection.hpp"  // DetList
 #include "core/geometry.hpp"   // LbGeom
-#include "frame_trace.h"
+#include "core/frame_trace.hpp"
 
 // What the pipeline thread hands to a worker with one frame. The tensor
 // itself is not here: slot k always runs on engine k, and RGA has written

@@ -59,7 +59,7 @@
 #include "check.hpp"
 #include "core/geometry.hpp"
 #include "suites.hpp"
-#include "tracker.hpp"
+#include "core/tracker.hpp"
 
 #ifndef LIGHT_AI_TEST_DATA_DIR
 #error "LIGHT_AI_TEST_DATA_DIR is set by tests/CMakeLists.txt"

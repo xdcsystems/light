@@ -5,7 +5,7 @@
 
 #include "core/log.hpp"
 #include "core/perf_clock.hpp"
-#include "frame_trace.h"
+#include "core/frame_trace.hpp"
 
 // Two independent accumulators over the same FrameTrace stream:
 //  - window_: the last 60 frames; add() prints "avg/60" and clears it every 60 frames;

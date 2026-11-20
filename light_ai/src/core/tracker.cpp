@@ -1,7 +1,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "tracker.hpp"
+#include "core/tracker.hpp"
 #include "core/box_math.hpp"
 
 void Tracker::reset() noexcept

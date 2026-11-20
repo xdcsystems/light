@@ -36,14 +36,14 @@
 #include <thread>
 #include <vector>
 
-#include "throw_on.hpp"
+#include "core/throw_on.hpp"
 #include "config/config.hpp"  // InferConfig
 #include "core/frame_view.hpp"  // TensorRef, TensorSet
 #include "core/log.hpp"
 #include "cpu_affinity.hpp"
 #include "infer_slot.hpp"
-#include "pod_ring.hpp"
-#include "timings.hpp"  // Timings::clk, ms()
+#include "core/pod_ring.hpp"
+#include "core/timings.hpp"  // Timings::clk, ms()
 
 struct PoolOptions
 {

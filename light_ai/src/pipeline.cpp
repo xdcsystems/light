@@ -16,7 +16,7 @@
 #include "dma_sync.hpp"
 #include "inference_pool.hpp"
 #include "pipeline.hpp"
-#include "timings.hpp"
+#include "core/timings.hpp"
 #include "yolo_postprocess.hpp"
 
 namespace

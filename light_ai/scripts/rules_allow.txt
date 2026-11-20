@@ -19,7 +19,6 @@ include/box_mapper.h header-ext
 include/box_smoother.h header-ext
 include/coco_names.h header-ext
 include/console_reporter.h header-ext
-include/frame_trace.h header-ext
 include/net_encoder.h header-ext
 include/rga_resizer.h header-ext
 include/config/config_file.h header-ext

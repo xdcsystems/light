@@ -30,7 +30,7 @@
 #include <cstdint>
 
 #include "core/track.hpp"  // TrajList, TrackState
-#include "pod_list.hpp"
+#include "core/pod_list.hpp"
 
 struct BoxFilterParams
 {

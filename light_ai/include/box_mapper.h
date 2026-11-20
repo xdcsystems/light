@@ -11,7 +11,7 @@
 #include "core/detection.hpp"  // DetList, Detection
 #include "core/geometry.hpp"   // LbGeom
 #include "core/gpu_box.hpp"    // GpuBox, GpuBoxList
-#include "tracker.hpp"         // TrajList, TrackState, Tracker
+#include "core/tracker.hpp"    // TrajList, TrackState, Tracker
 
 // Detection boxes and trajectory trails -> boxes (tensor coords).
 // Trail points are sampled ring points as 3x3 px GpuBoxes,

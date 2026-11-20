@@ -8,7 +8,7 @@
 #include "mpp_decoder.hpp"
 #include "core/log.hpp"
 #include "dma_sync.hpp"
-#include "jpeg_probe.hpp"
+#include "core/jpeg_probe.hpp"
 
 namespace
 {

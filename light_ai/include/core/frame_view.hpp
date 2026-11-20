@@ -9,7 +9,7 @@
 #include <cstdint>
 
 #include "core/geometry.hpp"
-#include "pod_list.hpp"
+#include "core/pod_list.hpp"
 
 // One model-input tensor (a dma-buf, RGB888, model_w x model_h).
 struct TensorRef

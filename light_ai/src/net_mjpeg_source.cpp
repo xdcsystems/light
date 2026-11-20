@@ -7,7 +7,7 @@
 #include "core/http_head.hpp"
 #include "core/http_url.hpp"
 #include "core/log.hpp"
-#include "jpeg_probe.hpp"
+#include "core/jpeg_probe.hpp"
 #include "source/source_types.hpp"  // dequeue_status
 
 namespace

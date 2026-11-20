@@ -14,7 +14,7 @@
 #include "core/log.hpp"
 #include "core/perf_reporter.hpp"
 #include "core/stop_flag.hpp"
-#include "frame_trace.h"
+#include "core/frame_trace.hpp"
 #include "core/global_track.hpp"
 #include "inference_pool.hpp"
 #include "overlay_sink.hpp"
@@ -25,8 +25,8 @@
 #include "source/source_set.hpp"
 #include "source/source_types.hpp"
 #include "sources.hpp"
-#include "timings.hpp"
-#include "tracker.hpp"
+#include "core/timings.hpp"
+#include "core/tracker.hpp"
 #include "yolo_postprocess.hpp"
 
 class Pipeline

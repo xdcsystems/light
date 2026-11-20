@@ -104,7 +104,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/source/mjpeg_slot_pool.cpp
     ${LIGHT_AI_ROOT}/src/net_mjpeg_source.cpp
     ${LIGHT_AI_ROOT}/src/box_smoother.cpp
-    ${LIGHT_AI_ROOT}/src/tracker.cpp
+    ${LIGHT_AI_ROOT}/src/core/tracker.cpp
     ${LIGHT_AI_ROOT}/src/box_mapper.cpp
     ${LIGHT_AI_ROOT}/src/config/cli.cpp
     ${LIGHT_AI_ROOT}/src/config/option_registry.cpp
@@ -112,7 +112,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/process_env.cpp
     ${LIGHT_AI_ROOT}/src/signal_waiter.cpp
     ${LIGHT_AI_ROOT}/src/cpu_affinity.cpp
-    ${LIGHT_AI_ROOT}/src/timings.cpp
+    ${LIGHT_AI_ROOT}/src/core/timings.cpp
     ${LIGHT_AI_ROOT}/src/console_reporter.cpp
     ${LIGHT_AI_ROOT}/src/cal_dumper.cpp
     ${LIGHT_AI_ROOT}/src/tcp_send.cpp

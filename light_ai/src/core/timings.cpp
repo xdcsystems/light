@@ -1,5 +1,5 @@
 #include "core/fixed_fmt.hpp"
-#include "timings.hpp"
+#include "core/timings.hpp"
 
 void Timings::add( const FrameTrace& tr, bool npu_ok )
 {
