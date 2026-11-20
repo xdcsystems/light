@@ -10,7 +10,7 @@ void test_stop_flag( TestRun& t )
 {
     // Full elapsed: false, and the wait really waited.
     {
-        std::atomic<bool> quit { false };
+        const std::atomic<bool> quit { false };
         const auto t0 = std::chrono::steady_clock::now();
         const bool interrupted = sleep_interruptible( quit, 300 );
         const auto el = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -20,7 +20,7 @@ void test_stop_flag( TestRun& t )
     }
     // Pre-set quit: no sleep at all, returns at once (true).
     {
-        std::atomic<bool> quit { true };
+        const std::atomic<bool> quit { true };
         const auto t0 = std::chrono::steady_clock::now();
         CHECK( t, sleep_interruptible( quit, 60 * 1000 ) );
         const auto el = std::chrono::duration_cast<std::chrono::milliseconds>(

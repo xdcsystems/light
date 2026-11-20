@@ -178,7 +178,7 @@ namespace
         {
             Tracker trk;
             TrajList out;
-            int64_t ts = stand( trk, out, 5, 0 );  // cx=500, cy=400, w=100, h=200 (feet at y=500)
+            const int64_t ts = stand( trk, out, 5, 0 );  // cx=500, cy=400, w=100, h=200 (feet at y=500)
             // Squeezed upper-clipped box: h=80 -> rh=0.40 (< kSizeMin 0.50 -> round 2 only),
             // feet stay at y=500 -> cy_det = 460. Expect cy near 400 and bh/bw frozen.
             trk.update( one( person( 500, 460, 100, 80 ) ), ts, out );
@@ -192,7 +192,7 @@ namespace
         {
             Tracker trk;
             TrajList out;
-            int64_t ts = stand( trk, out, 5, 0 );  // cx=500, cy=400, w=100, h=200 (top at y=300)
+            const int64_t ts = stand( trk, out, 5, 0 );  // cx=500, cy=400, w=100, h=200 (top at y=300)
             trk.update( one( person( 500, 340, 100, 80 ) ), ts, out );
             CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
             CHECK_NEAR( t, out.d[0].bh, 200.0f, 1e-2f );
@@ -265,7 +265,7 @@ namespace
         trk.update( one( bad_w ), kFrameUs, out );
         trk.update( one( bad_inf ), 2 * kFrameUs, out );
         CHECK( t, out.n == 0 );
-        int64_t ts = stand( trk, out, 3, 3 * kFrameUs );
+        const int64_t ts = stand( trk, out, 3, 3 * kFrameUs );
         CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF );
         trk.update( one( bad_nan ), ts, out );
         CHECK( t, out.n == 1 && std::isfinite( out.d[0].cx ) && std::isfinite( out.d[0].cy ) && std::isfinite( out.d[0].bw ) );
@@ -331,7 +331,7 @@ void test_tracker( TestRun& t )
     {
         Tracker trk;
         TrajList out;
-        int64_t ts = stand( trk, out, 5, 0 );
+        const int64_t ts = stand( trk, out, 5, 0 );
         trk.update( DetList {}, ts, out );
         trk.update( DetList {}, ts + kFrameUs, out );
         stand( trk, out, 1, ts + 2 * kFrameUs );

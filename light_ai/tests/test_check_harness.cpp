@@ -134,7 +134,7 @@ namespace
 
         // Each argument once.
         int calls = 0;
-        auto text = [&calls] {
+        const auto text = [&calls] {
             ++calls;
             return std::string( "z" );
         };

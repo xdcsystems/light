@@ -101,7 +101,7 @@ void test_jpeg_probe( TestRun& t )
     // Rejections: each case breaks exactly one structural rule.
     {
         JpegSofInfo info;
-        Bytes no_soi { 0x00, 0x00, 0xFF, 0xDA };
+        const Bytes no_soi { 0x00, 0x00, 0xFF, 0xDA };
         CHECK( t, !probe( no_soi, info ) );
 
         Bytes no_sos;

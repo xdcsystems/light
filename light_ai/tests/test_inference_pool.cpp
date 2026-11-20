@@ -65,6 +65,11 @@ namespace
         bool held_ = false;
     };
 
+    // The engine argument of the pool: FakeEngine writes the FakeNpu through it. Passed as a plain &npu, the
+    // pointer reaches FakeEngine only through the const EngineArgs&... of the templated InferencePool constructor,
+    // where misc-const-correctness does not look, and the check would call the FakeNpu const.
+    FakeNpu* engine_arg( FakeNpu& npu ) { return &npu; }
+
     class FakeEngine
     {
     public:
@@ -152,24 +157,24 @@ namespace
         const Log log( out, err );
         {
             FakeNpu npu;
-            const Pool p( pool_cfg( 0 ), FakeDecode {}, log, fast_opts(), &npu );
+            const Pool p( pool_cfg( 0 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
             CHECK( t, p.size() == 1 && npu.masks.empty() );  // AUTO: no core-mask call
             CHECK( t, p.tensor( 0 ).stride_bytes == 1984 );
         }
         {
             FakeNpu npu;
-            const Pool p( pool_cfg( 1, 3 ), FakeDecode {}, log, fast_opts(), &npu );
+            const Pool p( pool_cfg( 1, 3 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
             CHECK( t, p.size() == 1 && npu.masks == std::vector<unsigned> { 3U } );
             CHECK( t, out.str().find( "npu: core mask 0x3\n" ) != std::string::npos );
         }
         {
             FakeNpu npu;
-            const Pool p( pool_cfg( 2 ), FakeDecode {}, log, fast_opts(), &npu );
+            const Pool p( pool_cfg( 2 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
             CHECK( t, p.size() == 1 );  // the untested 2-engine mode cannot be built
         }
         {
             FakeNpu npu;
-            const Pool p( pool_cfg( 3, 7 ), FakeDecode {}, log, fast_opts(), &npu );
+            const Pool p( pool_cfg( 3, 7 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
             CHECK( t, p.size() == 3 && npu.masks == ( std::vector<unsigned> { 1U, 2U, 4U } ) );
             const TensorSet ts = p.tensors();
             CHECK( t, ts.n == 3 && ts.d[0].fd == 100 && ts.d[1].fd == 101 && ts.d[2].fd == 102 );
@@ -181,7 +186,7 @@ namespace
             bool threw = false;
             try
             {
-                const Pool p( pool_cfg( 3 ), FakeDecode {}, log, fast_opts(), &npu );
+                const Pool p( pool_cfg( 3 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
             }
             catch ( const std::runtime_error& )
             {
@@ -197,7 +202,7 @@ namespace
         std::ostringstream err;
         const Log log( out, err );
         FakeNpu npu;
-        Pool p( pool_cfg( 3 ), FakeDecode {}, log, fast_opts(), &npu );
+        Pool p( pool_cfg( 3 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
         npu.hold();  // all three in flight at once: the FIFO, not the finish order, decides
         for ( int f = 10; f < 13; ++f )
         {
@@ -226,7 +231,7 @@ namespace
         std::ostringstream err;
         const Log log( out, err );
         FakeNpu npu;
-        Pool p( pool_cfg( 1 ), FakeDecode {}, log, fast_opts(), &npu );
+        Pool p( pool_cfg( 1 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
         InferResult r;
         // RGA failed: the NPU is skipped, the frame still comes back (timings count it).
         CHECK( t, p.submit( 0, job( 1, 0, false ) ) && p.collect( r ) );
@@ -245,7 +250,7 @@ namespace
         std::ostringstream err;
         const Log log( out, err );
         FakeNpu npu;
-        Pool p( pool_cfg( 1 ), FakeDecode {}, log, fast_opts(), &npu );
+        Pool p( pool_cfg( 1 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
         npu.hold();
         CHECK( t, p.submit( 0, job( 7 ) ) );
         InferResult r;
@@ -265,7 +270,7 @@ namespace
         const Log log( out, err );
         {
             FakeNpu npu;
-            Pool p( pool_cfg( 3 ), FakeDecode {}, log, fast_opts(), &npu );
+            Pool p( pool_cfg( 3 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
             for ( int f = 1; f <= 3; ++f )
                 CHECK( t, p.submit( p.try_acquire(), job( f, f == 2 ? 1 : 0 ) ) );
             p.discard( 0 );
@@ -279,7 +284,7 @@ namespace
             FakeNpu npu;
             PoolOptions long_opts = fast_opts();
             long_opts.result_timeout = std::chrono::milliseconds( 5000 );
-            Pool p( pool_cfg( 3 ), FakeDecode {}, log, long_opts, &npu );
+            Pool p( pool_cfg( 3 ), FakeDecode {}, log, long_opts, engine_arg( npu ) );
             npu.hold();
             CHECK( t, p.submit( p.try_acquire(), job( 5, 0 ) ) );
             CHECK( t, p.submit( p.try_acquire(), job( 6, 1 ) ) );
@@ -303,7 +308,7 @@ namespace
         const Log log( out, err );
         FakeNpu npu;
         {
-            Pool p( pool_cfg( 3 ), FakeDecode {}, log, fast_opts(), &npu );
+            Pool p( pool_cfg( 3 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
             for ( int f = 0; f < 3; ++f )
                 CHECK( t, p.submit( p.try_acquire(), job( f ) ) );
         }  // destructor: closes the slots, joins the workers -- must return
