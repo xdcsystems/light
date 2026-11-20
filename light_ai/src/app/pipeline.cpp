@@ -15,7 +15,7 @@
 #include "sys/cpu_affinity.hpp"
 #include "media/dma_sync.hpp"
 #include "npu/inference_pool.hpp"
-#include "pipeline.hpp"
+#include "app/pipeline.hpp"
 #include "core/timings.hpp"
 #include "npu/yolo_postprocess.hpp"
 

@@ -12,8 +12,8 @@
 #include <ini.h>
 
 #include "config/cli.hpp"
-#include "config/config_file.h"
-#include "config/option_registry.h"
+#include "config/config_file.hpp"
+#include "config/option_registry.hpp"
 #include "core/log.hpp"
 
 namespace

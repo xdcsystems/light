@@ -78,7 +78,7 @@ add_executable(light_ai
     src/npu/reid_worker.cpp
     src/npu/rknn_engine.cpp
     src/npu/yolo_postprocess.cpp
-    src/pipeline.cpp
+    src/app/pipeline.cpp
     src/source/sources.cpp
     src/render/overlay_sink.cpp
     src/net/tcp_pull_server.cpp
@@ -91,7 +91,7 @@ add_executable(light_ai
     src/render/box_mapper.cpp
     src/render/box_smoother.cpp
     src/core/timings.cpp
-    src/console_reporter.cpp
+    src/app/console_reporter.cpp
     src/npu/cal_dumper.cpp
     src/config/cli.cpp
     src/config/option_registry.cpp

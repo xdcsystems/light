@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "config/cli.hpp"
-#include "config/config_file.h"
+#include "config/config_file.hpp"
 
 namespace
 {

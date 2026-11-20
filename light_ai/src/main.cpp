@@ -5,7 +5,7 @@
 #include "config/cli.hpp"  // CliOptions: argv + config-file reading/validation
 #include "core/log.hpp"
 #include "core/stop_flag.hpp"
-#include "pipeline.hpp"
+#include "app/pipeline.hpp"
 #include "sys/process_env.hpp"
 #include "sys/signal_waiter.hpp"
 

@@ -15,6 +15,3 @@ tests/test_main.cpp nolint misc-const-correctness
 tests/tsan_main.cpp nolint misc-const-correctness
 
 # The nine legacy .h headers (CONTRIBUTING, Header extensions).
-include/console_reporter.h header-ext
-include/config/config_file.h header-ext
-include/config/option_registry.h header-ext

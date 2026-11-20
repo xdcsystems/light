@@ -1,4 +1,4 @@
-#include "console_reporter.h"
+#include "app/console_reporter.hpp"
 #include "npu/coco_names.hpp"
 #include "core/fixed_fmt.hpp"
 

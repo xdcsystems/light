@@ -9,7 +9,7 @@
 #include "npu/cal_dumper.hpp"
 #include "core/status.hpp"
 #include "config/config.hpp"
-#include "console_reporter.h"
+#include "app/console_reporter.hpp"
 #include "core/auto_orient.hpp"
 #include "core/log.hpp"
 #include "core/perf_reporter.hpp"
