@@ -86,8 +86,10 @@ inline void cache_clean( const void* p, size_t len )
         // NOLINTNEXTLINE(hicpp-no-assembler): DMA cache maintenance, no portable substitute
         __asm__ volatile( "dc cvac, %0" :: "r"( addr ) : "memory" );
     __asm__ volatile( "dsb sy" ::: "memory" );  // NOLINT(hicpp-no-assembler): barrier required after DC ops
+#elif defined( __x86_64__ )
+    // x86-64 is DMA-coherent; nothing to clean (p and len are used by the early return).
 #else
-    // x86 is DMA-coherent; nothing to clean (p and len are used by the early return).
+#error "dma::cache_clean: no cache maintenance for this arch; port the DC ops (non-coherent DMA)"
 #endif
 }
 
@@ -112,8 +114,10 @@ inline void cache_drop( const void* p, size_t len )
         // NOLINTNEXTLINE(hicpp-no-assembler): DMA cache maintenance, no portable substitute
         __asm__ volatile( "dc civac, %0" :: "r"( addr ) : "memory" );
     __asm__ volatile( "dsb sy" ::: "memory" );  // NOLINT(hicpp-no-assembler): barrier required after DC ops
+#elif defined( __x86_64__ )
+    // x86-64 is DMA-coherent; nothing to drop (p and len are used by the early return).
 #else
-    // x86 is DMA-coherent; nothing to drop (p and len are used by the early return).
+#error "dma::cache_drop: no cache maintenance for this arch; port the DC ops (non-coherent DMA)"
 #endif
 }
 
