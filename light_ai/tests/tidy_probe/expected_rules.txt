@@ -73,3 +73,4 @@ tests/tidy_probe/violations.cpp:209 custom-no-else-if
 tests/tidy_probe/violations.cpp:213 custom-no-empty-loop
 tests/tidy_probe/violations.cpp:216 custom-no-empty-loop
 tests/tidy_probe/violations.cpp:220 custom-no-infinite-loop
+tests/tidy_probe/violations.cpp:225 custom-no-empty-loop

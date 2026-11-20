@@ -222,6 +222,10 @@ int more_flow( int n, volatile int& sink )
         if ( ++sink > n )
             break;
     }
+    while ( ++sink < n )                   // custom-no-empty-loop (a nested empty block)
+    {
+        {}
+    }
     return sink;
 }
 
@@ -269,6 +273,14 @@ int quiet_flow( int n, volatile int& sink )
     {
         sink = 4;
     } while ( 0 );  // a false literal: runs once
+    while ( ++sink < n )  // a declaration is a statement
+    {
+        const int t = sink;
+    }
+    while ( ++sink < n )  // so is a label
+    {
+    next:;
+    }
     switch ( n )
     {
         case 2: return 2;

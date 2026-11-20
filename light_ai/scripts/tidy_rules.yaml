@@ -141,10 +141,12 @@ CustomChecks:
         Message: "else-if: use a switch, a table, early returns or independent ifs (CONTRIBUTING, Control flow)"
         Level: Warning
   - Name: no-empty-loop
-    # a body of ';', '{}' or '{ ; }' (comments and null statements do not count): the condition does the work, out
-    # of sight
+    # a body of ';', '{}' or '{ ; }' (comments and null statements do not count), also with one empty block nested
+    # ('{ {} }'; deeper nesting is review): the condition does the work, out of sight. A declaration or a label is
+    # a statement: not empty.
     Query: |
-      let EMPTY stmt(anyOf(nullStmt(), compoundStmt(unless(has(stmt(unless(nullStmt())))))))
+      let INNER compoundStmt(unless(has(stmt(unless(nullStmt())))))
+      let EMPTY stmt(anyOf(nullStmt(), compoundStmt(unless(has(stmt(unless(anyOf(nullStmt(), INNER))))))))
       match stmt(anyOf(forStmt(hasBody(EMPTY)), whileStmt(hasBody(EMPTY)), doStmt(hasBody(EMPTY)), cxxForRangeStmt(hasBody(EMPTY)))).bind("d")
     Diagnostic:
       - BindName: d
