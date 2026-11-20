@@ -214,8 +214,8 @@ void GpuBoxDrawer::make_current()  // NOLINT(readability-make-member-function-co
 
 bool GpuBoxDrawer::make_program()
 {
-    GLuint vs = glCreateShader( GL_VERTEX_SHADER );
-    GLuint fs = glCreateShader( GL_FRAGMENT_SHADER );
+    const GLuint vs = glCreateShader( GL_VERTEX_SHADER );
+    const GLuint fs = glCreateShader( GL_FRAGMENT_SHADER );
     if ( vs == 0 || fs == 0 )
     {
         log_.warn() << "gpu_draw: glCreateShader failed\n";
@@ -356,7 +356,7 @@ bool GpuBoxDrawer::open_display()
         log_.warn() << "drawer: libgbm not loadable\n";
         return false;
     }
-    auto create_dev = reinterpret_cast<P_GbmCreateDevice>( dlsym( st_.dl_gbm, "gbm_create_device" ) );
+    const auto create_dev = reinterpret_cast<P_GbmCreateDevice>( dlsym( st_.dl_gbm, "gbm_create_device" ) );
     if ( !create_dev )
     {
         log_.warn() << "drawer: gbm_create_device missing\n";
@@ -516,7 +516,7 @@ void GpuBoxDrawer::create_buffers()
 
 void GpuBoxDrawer::destroy_gbm_device( void *dev ) const
 {
-    auto destroy_dev = reinterpret_cast<P_GbmDestroyDevice>( dlsym( st_.dl_gbm, "gbm_destroy_device" ) );
+    const auto destroy_dev = reinterpret_cast<P_GbmDestroyDevice>( dlsym( st_.dl_gbm, "gbm_destroy_device" ) );
     if ( destroy_dev )
         destroy_dev( dev );
 }
@@ -633,7 +633,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const Callou
             append_callout_quads( qt, callouts->d[k] );
     }
     const int cnt = qt.cnt;
-    BatchVert* v = qt.v;
+    const BatchVert* v = qt.v;
     if ( cnt == 0 )
         return;
 

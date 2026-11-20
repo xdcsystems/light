@@ -80,7 +80,7 @@ void CalDumper::maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t
     {
         single_done_ = true;
         const std::string path = cal_dump_path( cal_, CalKind::Single, frame_idx );
-        if ( Status st = write_ppm( path, data, size ); st.ok() )
+        if ( const Status st = write_ppm( path, data, size ); st.ok() )
             log_.info() << "calibration dump: " << path << " (" << model_w_ << 'x' << model_h_ << ")\n";
         else
             log_.error() << "calibration dump failed: " << path << ": " << st << '\n';
@@ -88,7 +88,7 @@ void CalDumper::maybe( int frame_idx, int tensor_fd, const uint8_t* data, size_t
     if ( series )
     {
         const std::string path = cal_dump_path( cal_, CalKind::Series, frame_idx );
-        if ( Status st = write_ppm( path, data, size ); st.ok() )
+        if ( const Status st = write_ppm( path, data, size ); st.ok() )
         {
             ++series_saved_;
             series_last_ = frame_idx;

@@ -1,6 +1,7 @@
 #define MODULE_TAG "light_ai"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <rockchip/mpp_log.h>
 
@@ -36,10 +37,10 @@ namespace
         return true;
     }
 
-    void strip_port_tasks( MppCtx ctx, MppApi* mpi, MppPortType port ) noexcept
+    void strip_port_tasks( MppCtx ctx, const MppApi* mpi, MppPortType port ) noexcept
     {
         enum { kMaxTasks = 16 };
-        MppTask tasks[kMaxTasks] {};
+        std::array<MppTask, kMaxTasks> tasks {};
         int n = 0;
         while ( n < kMaxTasks )
         {
@@ -52,10 +53,10 @@ namespace
             MppFrame old_f = nullptr;
             mpp_task_meta_get_packet( t, KEY_INPUT_PACKET, &old_p );
             mpp_task_meta_get_frame( t, KEY_OUTPUT_FRAME, &old_f );
-            tasks[n++] = t;
+            tasks[static_cast<size_t>( n++ )] = t;
         }
         for ( int i = 0; i < n; ++i )
-            mpi->enqueue( ctx, port, tasks[i] );
+            mpi->enqueue( ctx, port, tasks[static_cast<size_t>( i )] );
     }
 }  // namespace
 
@@ -367,7 +368,7 @@ Status MppDecoder::submit_input()
         return make_status( Errc::Timeout, "no free input task" );
     }
     MppTask task = nullptr;
-    MPP_RET rc = mpi_->dequeue( ctx_, MPP_PORT_INPUT, &task );
+    const MPP_RET rc = mpi_->dequeue( ctx_, MPP_PORT_INPUT, &task );
     if ( rc != MPP_OK || !task )
     {
         log_.warn() << "dec: input dequeue failed\n";
@@ -378,7 +379,7 @@ Status MppDecoder::submit_input()
     mpp_task_meta_set_packet( task, KEY_INPUT_PACKET, pkt_ );
     mpp_task_meta_set_frame( task, KEY_OUTPUT_FRAME, out_frame_ );
 
-    MPP_RET ret = mpi_->enqueue( ctx_, MPP_PORT_INPUT, task );
+    const MPP_RET ret = mpi_->enqueue( ctx_, MPP_PORT_INPUT, task );
 
     if ( ret != MPP_OK )
     {
@@ -449,7 +450,7 @@ Status MppDecoder::take_output_task( MppTask& task )
         drop_packet();
         return make_status( Errc::Timeout, "output not ready" );
     }
-    MPP_RET rc = mpi_->dequeue( ctx_, MPP_PORT_OUTPUT, &task );
+    const MPP_RET rc = mpi_->dequeue( ctx_, MPP_PORT_OUTPUT, &task );
     if ( rc != MPP_OK || !task )
     {
         // See the Timeout path: flush and strip task meta before drop_packet().
@@ -562,10 +563,10 @@ void MppDecoder::reset_and_strip()
     // Pop any residual KEY_INPUT_PACKET / KEY_OUTPUT_FRAME nodes from all
     // tasks sitting in both ports before AND after mpi_->reset() reconciles
     // the queues.
-    for ( MppPortType port : { MPP_PORT_INPUT, MPP_PORT_OUTPUT } )
+    for ( const MppPortType port : { MPP_PORT_INPUT, MPP_PORT_OUTPUT } )
         strip_port_tasks( ctx_, mpi_, port );
     mpi_->reset( ctx_ );
-    for ( MppPortType port : { MPP_PORT_INPUT, MPP_PORT_OUTPUT } )
+    for ( const MppPortType port : { MPP_PORT_INPUT, MPP_PORT_OUTPUT } )
         strip_port_tasks( ctx_, mpi_, port );
 }
 

@@ -116,10 +116,10 @@ Status RgaResizer::resize( int src_fd, int w_src, int h_src, int dst_fd, int w_d
 
     // YUV420SP/422SP source rects must have even sides; a decoder that hands
     // out an odd size loses its last row/column instead of failing the job.
-    rga_buffer_t src = wrap( src_fd, w_src, h_src, ws, hs, pass_fmt );
+    const rga_buffer_t src = wrap( src_fd, w_src, h_src, ws, hs, pass_fmt );
     // The tensor rows as RknnEngine bound them: every reader (NPU, drawer,
     // composer, dumper, preview) uses this stride, so the writer must too.
-    rga_buffer_t dst = wrap( dst_fd, w_dst, h_dst, dst_w_stride > 0 ? dst_w_stride : w_dst, h_dst, RK_FORMAT_RGB_888 );
+    const rga_buffer_t dst = wrap( dst_fd, w_dst, h_dst, dst_w_stride > 0 ? dst_w_stride : w_dst, h_dst, RK_FORMAT_RGB_888 );
     const im_rect src_rect { 0, 0, rga_limits::even_down( w_src ), rga_limits::even_down( h_src ) };
     if ( Status st = rga_check( improcess( src, dst, {}, src_rect, { g.left, g.top, g.w, g.h }, {},
                                            rga_rot_usage( rot_deg ) ),
@@ -194,7 +194,7 @@ Status RgaResizer::downscale_to_aux( int src_fd, int w_src, int h_src, int src_w
     }
     const int w_aux_stride = align16( w_aux );
     const int h_aux_stride = align16( h_aux );
-    rga_buffer_t src = wrap( src_fd, w_src, h_src, src_w_stride, src_h_stride, src_fmt_rk );
-    rga_buffer_t mid = wrap( aux_fd, w_aux, h_aux, w_aux_stride, h_aux_stride, RK_FORMAT_YCbCr_420_SP );
+    const rga_buffer_t src = wrap( src_fd, w_src, h_src, src_w_stride, src_h_stride, src_fmt_rk );
+    const rga_buffer_t mid = wrap( aux_fd, w_aux, h_aux, w_aux_stride, h_aux_stride, RK_FORMAT_YCbCr_420_SP );
     return rga_check( imresize( src, mid ), log_, "RGA resize (pass 1) failed" );
 }

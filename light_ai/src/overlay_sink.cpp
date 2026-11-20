@@ -43,7 +43,7 @@ namespace
             const int y0 = std::clamp( static_cast<int>( std::floor( b.y0 ) ), 0, h - 1 );
             const int x1 = std::max( x0, std::clamp( static_cast<int>( std::ceil( b.x1 ) ) - 1, 0, w - 1 ) );
             const int y1 = std::max( y0, std::clamp( static_cast<int>( std::ceil( b.y1 ) ) - 1, 0, h - 1 ) );
-            auto put = [&]( int x, int y ) {
+            const auto put = [&]( int x, int y ) {
                 uint8_t* px = rgb + static_cast<size_t>( y ) * stride + static_cast<std::ptrdiff_t>( x ) * 3;
                 const unsigned a = b.a;
                 if ( a >= 255 )
@@ -404,7 +404,7 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
     const TensorRef& tn = frame.tensor;
     if ( tn.data == nullptr )
         return false;
-    dma::DmaSync wr( tn.fd, true );
+    const dma::DmaSync wr( tn.fd, true );
     dma::cache_drop( tn.data, tn.size );
     const int row_stride = static_cast<int>( tn.stride_bytes > 0 ? tn.stride_bytes : stride_bytes_ );
     uint8_t* rgb = static_cast<uint8_t*>( tn.data );
@@ -433,7 +433,7 @@ double OverlaySink::draw_and_publish( const FrameView& frame,
     if ( prev_live )
     {
         const auto t5 = clk::now();
-        dma::DmaSync rd( tn.fd, false );
+        const dma::DmaSync rd( tn.fd, false );
         // Whenever CPU draw did not invalidate cache lines this frame (GPU draw OR
         // --cpu-draw with 0 boxes), drop stale lines before CPU reads RGA DRAM output.
         if ( !cpu_drew )
