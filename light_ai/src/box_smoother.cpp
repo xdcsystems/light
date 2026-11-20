@@ -77,7 +77,7 @@ void BoxSmoother::apply_matches( const DetList& in, int na )
         const Pair& pr = pairs_[p];
         BoxTrack& t = tracks_[pr.trk];
         const Detection& d = in.d[pr.det];
-        t.filt.step( BoxCWH { d.x + 0.5f * d.w, d.y + 0.5f * d.h, d.w, d.h }, kFrameDtS, kFilter );
+        t.filt.step( BoxCWH { d.x + 0.5f * d.w, d.y + 0.5f * d.h, d.w, d.h }, kFrameDtS, box_filter::kRawBoxParams );
         const BoxCWH o = t.filt.out();
         t.x = o.cx - 0.5f * o.w;
         t.y = o.cy - 0.5f * o.h;

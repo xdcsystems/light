@@ -14,8 +14,6 @@
 namespace
 {
     constexpr float kDt = 0.05f;  // 20 FPS
-    const BoxFilterParams kRaw { 0.5f, 0.01f, 1.0f, 0.02f, 2.0f, 0.5f };    // BoxSmoother's set
-    const BoxFilterParams kTrack { 1.0f, 0.05f, 1.0f, 0.01f, 2.0f, 0.5f };  // OverlaySink's set
 
     // Deterministic uniform noise in [-a, a] (an LCG: no <random>, same on every host).
     struct Noise
@@ -130,17 +128,17 @@ namespace
         BoxFilter f;
         f.reset( BoxCWH { 100.0f, 100.0f, 50.0f, 50.0f } );  // dz = 2 px on every axis (the floor)
         for ( int k = 0; k < 200; ++k )
-            f.step( BoxCWH { 101.9f, 100.0f, 50.0f, 50.0f }, kDt, kRaw );
+            f.step( BoxCWH { 101.9f, 100.0f, 50.0f, 50.0f }, kDt, box_filter::kRawBoxParams );
         CHECK( t, f.out().cx == 100.0f );  // 1.9 px < dz: never moved
         for ( int k = 0; k < 200; ++k )
-            f.step( BoxCWH { 103.0f, 100.0f, 50.0f, 50.0f }, kDt, kRaw );
+            f.step( BoxCWH { 103.0f, 100.0f, 50.0f, 50.0f }, kDt, box_filter::kRawBoxParams );
         CHECK_NEAR( t, f.out().cx, 101.0f, 1e-3f );  // dragged to 103 - dz
         // Back within the zone on the other side: the output does not move back.
         float prev = f.out().cx;
         int reversals = 0;
         for ( int k = 0; k < 200; ++k )
         {
-            f.step( BoxCWH { k % 2 == 0 ? 99.5f : 102.5f, 100.0f, 50.0f, 50.0f }, kDt, kRaw );
+            f.step( BoxCWH { k % 2 == 0 ? 99.5f : 102.5f, 100.0f, 50.0f, 50.0f }, kDt, box_filter::kRawBoxParams );
             reversals += f.out().cx < prev ? 1 : 0;
             prev = f.out().cx;
         }
@@ -151,23 +149,23 @@ namespace
     {
         BoxFilter f;
         CHECK( t, !f.primed() );
-        f.step( BoxCWH { std::nanf( "" ), 1.0f, 2.0f, 3.0f }, kDt, kRaw );
+        f.step( BoxCWH { std::nanf( "" ), 1.0f, 2.0f, 3.0f }, kDt, box_filter::kRawBoxParams );
         CHECK( t, !f.primed() );  // a NaN box never primes
-        f.step( BoxCWH { 10.0f, 20.0f, 30.0f, 40.0f }, kDt, kRaw );
+        f.step( BoxCWH { 10.0f, 20.0f, 30.0f, 40.0f }, kDt, box_filter::kRawBoxParams );
         CHECK( t, f.primed() && same( f.out(), BoxCWH { 10.0f, 20.0f, 30.0f, 40.0f } ) );  // first box: as is
         const BoxCWH o = f.out();
-        f.step( BoxCWH { 50.0f, std::nanf( "" ), 30.0f, 40.0f }, kDt, kRaw );
-        f.step( BoxCWH { 50.0f, 20.0f, INFINITY, 40.0f }, kDt, kRaw );
-        f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 0.0f }, kDt, kRaw );
-        f.step( BoxCWH { 50.0f, 20.0f, -1.0f, 40.0f }, kDt, kRaw );
+        f.step( BoxCWH { 50.0f, std::nanf( "" ), 30.0f, 40.0f }, kDt, box_filter::kRawBoxParams );
+        f.step( BoxCWH { 50.0f, 20.0f, INFINITY, 40.0f }, kDt, box_filter::kRawBoxParams );
+        f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 0.0f }, kDt, box_filter::kRawBoxParams );
+        f.step( BoxCWH { 50.0f, 20.0f, -1.0f, 40.0f }, kDt, box_filter::kRawBoxParams );
         CHECK( t, same( f.out(), o ) );  // unusable boxes leave the output as it was
-        f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, 0.0f, kRaw );
-        f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, -0.04f, kRaw );
-        f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, std::nanf( "" ), kRaw );
+        f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, 0.0f, box_filter::kRawBoxParams );
+        f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, -0.04f, box_filter::kRawBoxParams );
+        f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, std::nanf( "" ), box_filter::kRawBoxParams );
         CHECK( t, same( f.out(), o ) );  // dt <= 0 or NaN: held
-        f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, 0.6f, kRaw );
+        f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, 0.6f, box_filter::kRawBoxParams );
         CHECK( t, same( f.out(), BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f } ) );  // a gap above max_dt restarts
-        f.step( BoxCWH { 60.0f, 20.0f, 30.0f, 40.0f }, kDt, kRaw );
+        f.step( BoxCWH { 60.0f, 20.0f, 30.0f, 40.0f }, kDt, box_filter::kRawBoxParams );
         CHECK( t, std::isfinite( f.out().cx ) && f.out().cx > 50.0f && f.out().cx < 60.0f );
     }
 
@@ -190,14 +188,14 @@ namespace
         int64_t ts = 0;
         TrajList l;
         l.push( track( 1, 7, TRACK_CONF, 400.0f ) );
-        tf.apply( l, ts, kTrack );
+        tf.apply( l, ts, box_filter::kTrackBoxParams );
         CHECK_NEAR( t, l.d[0].cx, 400.0f, 1e-6f );  // a new track starts at its box
         for ( int k = 0; k < 3; ++k )
         {
             ts += 50000;
             l.clear();
             l.push( track( 1, 7, TRACK_CONF, 440.0f ) );
-            tf.apply( l, ts, kTrack );
+            tf.apply( l, ts, box_filter::kTrackBoxParams );
         }
         const float filtered = l.d[0].cx;
         CHECK( t, filtered > 400.0f && filtered < 440.0f );  // filtered, not the raw box
@@ -205,48 +203,48 @@ namespace
         ts += 50000;
         l.clear();
         l.push( track( 1, 8, TRACK_CONF, 440.0f ) );
-        tf.apply( l, ts, kTrack );
+        tf.apply( l, ts, box_filter::kTrackBoxParams );
         CHECK_NEAR( t, l.d[0].cx, 440.0f, 1e-6f );
         // A DEAD ghost passes through untouched and drops its filter.
         ts += 50000;
         l.clear();
         l.push( track( 1, 8, TRACK_DEAD, 900.0f ) );
-        tf.apply( l, ts, kTrack );
+        tf.apply( l, ts, box_filter::kTrackBoxParams );
         CHECK_NEAR( t, l.d[0].cx, 900.0f, 1e-6f );
         ts += 50000;
         l.clear();
         l.push( track( 1, 8, TRACK_CONF, 500.0f ) );
-        tf.apply( l, ts, kTrack );
+        tf.apply( l, ts, box_filter::kTrackBoxParams );
         CHECK_NEAR( t, l.d[0].cx, 500.0f, 1e-6f );  // no filter survived the DEAD frame
         // clear(): every track starts fresh.
         tf.clear();
         ts += 50000;
         l.clear();
         l.push( track( 1, 8, TRACK_CONF, 520.0f ) );
-        tf.apply( l, ts, kTrack );
+        tf.apply( l, ts, box_filter::kTrackBoxParams );
         CHECK_NEAR( t, l.d[0].cx, 520.0f, 1e-6f );
         // A frame with a non-increasing timestamp holds the box (dt <= 0).
         l.clear();
         l.push( track( 1, 8, TRACK_CONF, 560.0f ) );
-        tf.apply( l, ts, kTrack );
+        tf.apply( l, ts, box_filter::kTrackBoxParams );
         CHECK_NEAR( t, l.d[0].cx, 520.0f, 1e-6f );
     }
 }  // namespace
 
 void test_box_filter( TestRun& t )
 {
-    still_under_jitter( t, kRaw, 200.0f, 300.0f, 1.0f );  // a chair: dz 4 / 6 px
-    still_under_jitter( t, kRaw, 200.0f, 300.0f, 3.0f );
-    still_under_jitter( t, kRaw, 40.0f, 60.0f, 1.5f );    // a bottle: dz 2 px (the floor)
-    still_under_jitter( t, kTrack, 330.0f, 600.0f, 1.0f );  // a person: dz 3.3 / 6 px
-    still_under_jitter( t, kTrack, 330.0f, 600.0f, 2.0f );
-    step_response( t, kRaw );
-    step_response( t, kTrack );
+    still_under_jitter( t, box_filter::kRawBoxParams, 200.0f, 300.0f, 1.0f );    // a chair: dz 4 / 6 px
+    still_under_jitter( t, box_filter::kRawBoxParams, 200.0f, 300.0f, 3.0f );
+    still_under_jitter( t, box_filter::kRawBoxParams, 40.0f, 60.0f, 1.5f );      // a bottle: dz 2 px (the floor)
+    still_under_jitter( t, box_filter::kTrackBoxParams, 330.0f, 600.0f, 1.0f );  // a person: dz 3.3 / 6 px
+    still_under_jitter( t, box_filter::kTrackBoxParams, 330.0f, 600.0f, 2.0f );
+    step_response( t, box_filter::kRawBoxParams );
+    step_response( t, box_filter::kTrackBoxParams );
     const float speeds[5] = { 0.2f, 0.5f, 1.0f, 2.0f, 5.0f };
     for ( const float spd : speeds )
     {
-        slow_walk( t, kRaw, spd );
-        slow_walk( t, kTrack, spd );
+        slow_walk( t, box_filter::kRawBoxParams, spd );
+        slow_walk( t, box_filter::kTrackBoxParams, spd );
     }
     dead_zone_edge( t );
     bad_input( t );
