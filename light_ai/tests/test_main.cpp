@@ -47,6 +47,7 @@ int main( int argc, char** argv )
         { "config", &test_config },
         { "signals", &test_signals },
         { "log", &test_log },
+        { "cpu_affinity", &test_cpu_affinity },
         { "inference_pool", &test_inference_pool },
         { "timings", &test_timings },
         { "console_reporter", &test_console_reporter },

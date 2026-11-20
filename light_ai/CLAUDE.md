@@ -30,7 +30,7 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 - Never push to `master` directly, never force-push, never rewrite pushed history.
 - Before a PR, the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
-  (CMake build + 61 unit suites + 6 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
+  (CMake build + 62 unit suites + 6 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
   `SKIP_TSAN=1` / `SKIP_TIDY=1` to narrow intermediate iterations).
   Two-pass tidy gate: self-test + `scripts/rules_lint.sh` first, then `main` = system `clang-tidy-11`
   (`.clang-tidy`, `tests/.clang-tidy`) and `rules` = pinned `clang-tidy==23.1.4` in `venv/`
@@ -54,7 +54,7 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   CLI check of one file: `venv/bin/clangd --check=src/a.cpp 2>&1 | grep -E '^E\[[^]]*\] \['` (diagnostics only;
   the exit code is not a verdict: `--check` also fails on refactoring tweaks it cannot apply).
   The diagnostics are hints only; the gate stays the authority.
-- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 61 suites / 9,022 checks + 6 TSan suites / 23 checks).
+- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 62 suites / 9,025 checks + 6 TSan suites / 23 checks).
   Single suite / flake hunt: `./build/tests/light_ai_tests [substr...] [--repeat N]` (also `light_ai_tests_tsan`;
   exit 2 on bad args).
 - Live run:
@@ -117,7 +117,7 @@ only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
   statics; include them only from `.cpp` files, never from a project header.
 - Errors (`Status` / `noexcept`): recoverable failures return `Status` (`include/core/status.hpp`);
   exceptions (`std::runtime_error` via `throw_on`) are startup-only; frame path and thread bodies are
-  `noexcept` (no `throw`: review; no `catch (...)` outside the three allowlisted sites of CONTRIBUTING: gate).
+  `noexcept` (no `throw`: review; no `catch (...)` outside the two allowlisted sites of CONTRIBUTING: gate).
   Exit codes (review): `0` clean, `1` runtime fatal, `2` bad CLI/config, `3` startup failure.
 - Output side vs recognition (review): no viewer -> output side sleeps completely (`enc=0.0`); recognition never
   sleeps; with viewer, online sources run full path and absent sources show `NO SIGNAL`.

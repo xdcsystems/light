@@ -13,4 +13,6 @@
 class Log;
 
 // Pins the calling thread to the A76 cluster. `who` names the thread in the log.
-void pin_current_thread_to_big_cores( const char* who, const Log& log );
+// noexcept: called first thing in the noexcept NPU / reid worker thread bodies. A throw from the Log stream
+// (std::ios_base::failure, std::bad_alloc, std::system_error of its mutex) drops that log line; the thread keeps running.
+void pin_current_thread_to_big_cores( const char* who, const Log& log ) noexcept;

@@ -41,6 +41,7 @@ void test_reference_chain( TestRun& t );
 void test_config( TestRun& t );
 void test_signals( TestRun& t );
 void test_log( TestRun& t );
+void test_cpu_affinity( TestRun& t );
 void test_inference_pool( TestRun& t );
 void test_timings( TestRun& t );
 void test_console_reporter( TestRun& t );
