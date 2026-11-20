@@ -84,7 +84,6 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/pts_clock.cpp
     ${LIGHT_AI_ROOT}/src/core/encode_pacer.cpp
     ${LIGHT_AI_ROOT}/src/core/session_warmup.cpp
-    ${LIGHT_AI_ROOT}/src/core/bitmap_font.cpp
     ${LIGHT_AI_ROOT}/src/core/glyph_font.cpp
     ${LIGHT_AI_ROOT}/src/core/callout.cpp
     ${LIGHT_AI_ROOT}/src/core/overlay_raster.cpp
@@ -125,7 +124,6 @@ target_include_directories(light_ai_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${LIGHT_AI_ROOT}/include
     ${LIGHT_AI_ROOT}/externals/inih
-    ${LIGHT_AI_ROOT}/externals/fonts  # stb_easy_font (header-only), for src/core/bitmap_font.cpp
 )
 
 target_compile_options(light_ai_tests PRIVATE -Wall -Wextra)

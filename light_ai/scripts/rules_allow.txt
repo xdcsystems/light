@@ -14,9 +14,6 @@ src/tcp_pull_server.cpp nolint misc-const-correctness
 tests/test_main.cpp nolint misc-const-correctness
 tests/tsan_main.cpp nolint misc-const-correctness
 
-# The vendored header-only stb_easy_font (externals/), included from one core .cpp (CONTRIBUTING, No statics).
-src/core/bitmap_font.cpp core-include stb_easy_font.h
-
 # The nine legacy .h headers (CONTRIBUTING, Header extensions).
 include/box_mapper.h header-ext
 include/box_smoother.h header-ext

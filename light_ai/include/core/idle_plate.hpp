@@ -28,7 +28,7 @@ class IdlePlate
 {
     enum
     {
-        kCapPx = 21,  // capital height on the canvas, px: the size of the former 3x stb_easy_font label
+        kCapPx = 21,  // capital height on the canvas, px: the ink height of the label before #108 (3x stroke font)
         kLuma = 16
     };
 
