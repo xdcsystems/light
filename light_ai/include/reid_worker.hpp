@@ -36,7 +36,6 @@ public:
 
     int input_width() const noexcept { return engine_.input_width(); }
     int input_height() const noexcept { return engine_.input_height(); }
-    int feat_dim() const noexcept { return feat_dim_; }
 
     TensorRef input_tensor( int slot ) const noexcept { return engine_.input_tensor( slot ); }
     int try_acquire_slot() noexcept { return queue_.try_acquire_slot(); }
@@ -45,6 +44,5 @@ public:
 
 private:
     RknnEngine engine_;
-    int feat_dim_ = 0;
     BasicReidQueue<EngineRunner, BigCorePin> queue_;
 };

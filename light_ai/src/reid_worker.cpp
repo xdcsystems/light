@@ -25,7 +25,7 @@ namespace
         return static_cast<unsigned>( RKNN_NPU_CORE_2 );
     }
 
-    RknnEngine make_reid_engine( const char* model_path, int pool_size, int infer_core, const Log& log, int& out_dim )
+    RknnEngine make_reid_engine( const char* model_path, int pool_size, int infer_core, const Log& log )
     {
         RknnEngine eng( model_path, log );
         const Status io_st = eng.setup_io( true, reid_cfg::kReidSlots );
@@ -43,7 +43,7 @@ namespace
         if ( outs.size() != 1 || outs[0].n_elems == 0 || outs[0].n_elems > reid_cfg::kReidDimMax )
             throw std::runtime_error( "reid: unsupported output tensor count or dimension" );
 
-        out_dim = static_cast<int>( outs[0].n_elems );
+        const int out_dim = static_cast<int>( outs[0].n_elems );
         log.info() << "reid: active (" << eng.input_width() << 'x' << eng.input_height()
                    << " -> " << out_dim << "-D, slots=" << reid_cfg::kReidSlots
                    << ", core_mask=0x" << std::hex << mask << std::dec << ")\n";
@@ -117,7 +117,7 @@ void ReidWorker::BigCorePin::operator()() const noexcept
 }
 
 ReidWorker::ReidWorker( const char* model_path, int pool_size, int infer_core, const Log& log )
-  : engine_( make_reid_engine( model_path, pool_size, infer_core, log, feat_dim_ ) )
+  : engine_( make_reid_engine( model_path, pool_size, infer_core, log ) )
   , queue_( EngineRunner { &engine_ }, BigCorePin { &log } )
 {
 }
