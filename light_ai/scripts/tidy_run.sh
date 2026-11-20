@@ -192,9 +192,10 @@ fi
 # exist only at run time), so that one line is expected and dropped; any other line fails. The step proves itself
 # on $PROBE/verify_typo.yaml (one mistyped key): no "unknown check option" there means it no longer reports one.
 VERIFY_NOISE="check glob 'custom-\*' doesn't match any known check"
-"$RULES_TIDY" --experimental-custom-checks --config-file="$PROJ_ROOT/$PROBE/verify_typo.yaml" --verify-config \
-  > "$SELF/verify-typo.log" 2>&1
-"$RULES_TIDY" --experimental-custom-checks --config-file="$RULES_CFG" --verify-config > "$SELF/verify.log" 2>&1
+timeout "$TMO" "$RULES_TIDY" --experimental-custom-checks --config-file="$PROJ_ROOT/$PROBE/verify_typo.yaml" \
+  --verify-config > "$SELF/verify-typo.log" 2>&1
+timeout "$TMO" "$RULES_TIDY" --experimental-custom-checks --config-file="$RULES_CFG" --verify-config \
+  > "$SELF/verify.log" 2>&1
 grep -v "$VERIFY_NOISE" "$SELF/verify.log" > "$SELF/verify.txt"
 if ! grep -q "unknown check option 'misc-const-correctness.WarnPointersAsValue'" "$SELF/verify-typo.log"; then
   echo "tidy self-test: verify-config FAIL -- no report of the mistyped key of $PROBE/verify_typo.yaml:"

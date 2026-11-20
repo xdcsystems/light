@@ -49,12 +49,14 @@ if not CUSTOM:
     print("rules-lint: FAIL -- no custom check names in " + sys.argv[2])
     sys.exit(1)
 # The built-in checks of the rules pass that enforce a project rule (#94): their NOLINTs are policed like the
-# custom ones. Each must be enabled by name in the Checks of the config, or this list has drifted from it.
+# custom ones. Each must be enabled by name in the Checks of the config (the last entry naming it, with or without
+# a leading '-', is the one that counts, as in clang-tidy), or this list has drifted from it.
 BUILTIN = ("misc-const-correctness",)
 CHECKS = re.search(r"^Checks:\s*'([^']*)'", CFG, re.M)
-ENABLED = [c.strip() for c in CHECKS.group(1).split(",")] if CHECKS else []
+ENTRIES = [c.strip() for c in CHECKS.group(1).split(",")] if CHECKS else []
 for name in BUILTIN:
-    if name not in ENABLED:
+    last = [c for c in ENTRIES if c.lstrip("-") == name][-1:]
+    if last != [name]:
         print("rules-lint: FAIL -- " + name + " is policed here but not enabled in the Checks of " + sys.argv[2])
         sys.exit(1)
 POLICED = CUSTOM + list(BUILTIN)
