@@ -16,5 +16,6 @@ src/x.cpp:15: nolint: *-catch-all -- a project rule switched off: only at the si
 src/x.cpp:15: nolint: cust* -- a project rule switched off: only at the sites of scripts/rules_allow.txt
 src/x.cpp:18: nolint-range: custom-no-catch-all -- NOLINTBEGIN / NOLINTEND cannot switch a project rule off: NOLINT or NOLINTNEXTLINE at the site
 src/x.cpp:20: nolint-range: custom-no-catch-all -- NOLINTBEGIN / NOLINTEND cannot switch a project rule off: NOLINT or NOLINTNEXTLINE at the site
+src/x.cpp:24: nolint-blanket -- NOLINT without a check list (clang-tidy reads one anywhere in a line, prose too) switches the custom checks off
 scripts/rules_allow.txt:5: stale: src/gone.cpp nolint custom-no-catch-all -- matches no finding
 scripts/rules_allow.txt:6: not allowable: src/x.cpp nolint-range custom-no-catch-all -- a NOLINTBEGIN / NOLINTEND range is never allowed

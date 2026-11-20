@@ -111,9 +111,7 @@ inline void cache_drop( const void* p, size_t len )
         __asm__ volatile( "dc civac, %0" :: "r"( addr ) : "memory" );
     __asm__ volatile( "dsb sy" ::: "memory" );  // NOLINT(hicpp-no-assembler): barrier required after DC ops
 #else
-    // x86 is DMA-coherent; nothing to drop.
-    (void) p;
-    (void) len;
+    // x86 is DMA-coherent; nothing to drop (p and len are used by the early return).
 #endif
 }
 

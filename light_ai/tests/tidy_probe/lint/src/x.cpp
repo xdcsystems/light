@@ -1,4 +1,4 @@
-// rules_lint.sh self-test (#93): one violation of each kind except those in include/.
+// rules_lint.sh self-test (#93): the violations of each kind except those in include/.
 #include "x.hpp"
 #include <gst/gst.h>
 // xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -21,3 +21,6 @@ int k();
 // NOLINTBEGIN(readability-x): not a custom check, not counted
 int l();
 // NOLINTEND(readability-x)
+// NOLINTBEGIN -- a bare range switches every check off: nolint-blanket here
+int m();
+// NOLINTEND -- a bare END only closes it: silent

@@ -174,7 +174,7 @@ wait
 # drifts to another construct moves its hit off the expected line. A line without both (a processing error, a hit
 # outside the fixtures) stays whole, so it can never match the expected list.
 for f in $PROBE_TUS; do
-  grep -E ': (error|warning): |^Error' "$SELF/$(echo "$f" | tr / _).log" |
+  grep -E ': (fatal error|error|warning): |^Error' "$SELF/$(echo "$f" | tr / _).log" |
     sed -E 's#^/[^:]*/(tests/tidy_probe/[^: ]+:[0-9]+):[0-9]+: (error|warning): .*\[([^],]+)[],][^[]*$#\1 \3#'
 done | LC_ALL=C sort > "$SELF/rules.txt"
 grep -v '^#' "$PROBE/expected_rules.txt" | LC_ALL=C sort > "$SELF/rules.expected"
