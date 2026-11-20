@@ -61,16 +61,11 @@ float IdlePlate::scale() const noexcept
     return static_cast<float>( kCapPx ) / static_cast<float>( cap_ink() );
 }
 
-float IdlePlate::pen_x( const StreamLayout& layout ) const noexcept
+IdlePlate::Pen IdlePlate::pen( const StreamLayout& layout ) const noexcept
 {
     const InkBox b = ink_box( scale() );
-    return 0.5f * ( static_cast<float>( layout.tile_w ) - ( b.x0 + b.x1 ) );
-}
-
-float IdlePlate::pen_y( const StreamLayout& layout ) const noexcept
-{
-    const InkBox b = ink_box( scale() );
-    return 0.5f * ( static_cast<float>( layout.tile_h ) - ( b.y0 + b.y1 ) );
+    return { 0.5f * ( static_cast<float>( layout.tile_w ) - ( b.x0 + b.x1 ) ),
+             0.5f * ( static_cast<float>( layout.tile_h ) - ( b.y0 + b.y1 ) ) };
 }
 
 void IdlePlate::draw( const Plane8& y_plane, const StreamLayout& layout ) const noexcept
@@ -78,8 +73,7 @@ void IdlePlate::draw( const Plane8& y_plane, const StreamLayout& layout ) const 
     if ( y_plane.p == nullptr )
         return;
     const float sc = scale();
-    const float px0 = pen_x( layout );
-    const float py0 = pen_y( layout );
+    const Pen pen0 = pen( layout );
     for ( int t = 0; t < layout.nsrc; ++t )
     {
         const int ox = ( t % 2 ) * layout.tile_w;
@@ -91,7 +85,7 @@ void IdlePlate::draw( const Plane8& y_plane, const StreamLayout& layout ) const 
             continue;
         uint8_t* origin = y_plane.p + static_cast<size_t>( oy ) * static_cast<size_t>( y_plane.stride ) + ox;
         const int stride = y_plane.stride;
-        glyph_font::raster_text( kText, kTextBytes, px0, py0, sc, w, h,
+        glyph_font::raster_text( kText, kTextBytes, pen0.x, pen0.y, sc, w, h,
                                  [origin, stride]( int x, int y, const glyph_font::Texel2& s ) {
                                      if ( s.fill <= 0.0f )
                                          return;  // the fill plane only: no outline, no halo

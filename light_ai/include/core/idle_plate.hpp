@@ -33,6 +33,14 @@ class IdlePlate
     };
 
 public:
+    // The pen (the line top-left) inside one tile, float px.
+    struct Pen
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+    };
+
+public:
     // y_plane: the canvas Y plane, stride = layout.w, h = layout.vstride. Every
     // pixel under the text moves toward kLuma by the glyph fill coverage
     // (y += (kLuma - y) * fill / 255); nothing else is written, nothing outside
@@ -44,10 +52,9 @@ public:
     const char* text() const noexcept;
     float scale() const noexcept;
 
-    // The pen (the line top-left) inside one tile, float px: the same in every
-    // tile, so that the label's ink box is centered in the tile.
-    float pen_x( const StreamLayout& layout ) const noexcept;
-    float pen_y( const StreamLayout& layout ) const noexcept;
+    // The pen inside one tile: the same in every tile, so that the label's ink
+    // box is centered in the tile. One ink-box walk for both coordinates.
+    Pen pen( const StreamLayout& layout ) const noexcept;
 
     uint8_t luma() const noexcept { return kLuma; }
 };

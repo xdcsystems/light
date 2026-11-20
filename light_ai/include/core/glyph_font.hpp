@@ -95,6 +95,8 @@ namespace glyph_font
     // inside the scaled padded rect at (gx, gy) gets visit( px, py, sample2(...) ) --
     // the CPU equivalent of a GL_LINEAR glyph quad. The pixel span is clamped to the
     // target as float before the int conversion (a far-off or huge quad stays defined).
+    // Precondition: scale is finite and > 0, and gx / gy are finite: raster_text, the
+    // only caller, checks the scale and the pen first (the 1 / scale and the spans assume it).
     template <typename F>
     void raster_glyph( int gi, const GlyphMetric& m, float gx, float gy, float scale, int w, int h, F& visit ) noexcept
     {
