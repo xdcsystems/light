@@ -13,5 +13,3 @@ src/config/config_file.cpp nolint misc-const-correctness
 src/net/tcp_pull_server.cpp nolint misc-const-correctness
 tests/test_main.cpp nolint misc-const-correctness
 tests/tsan_main.cpp nolint misc-const-correctness
-
-# The nine legacy .h headers (CONTRIBUTING, Header extensions).

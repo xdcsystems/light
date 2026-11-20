@@ -5,11 +5,11 @@
 # Scans <root>/{src,include,tests}/**/*.{cpp,hpp,h}, never <root>/tests/tidy_probe/ (the self-test fixtures).
 # Rules (CONTRIBUTING.md, Coding Rules):
 #   line-length      a line longer than 140 columns (.clang-format ColumnLimit; UTF-8 counts characters)
-#   header-ext       a .h header: new headers use .hpp (the nine legacy names are in the allowlist)
+#   header-ext       a .h header: headers use .hpp (#112 renamed the last legacy .h)
 #   include-order    a <...> include after the first "..." include (system and SDK headers first)
 #   banned-include   GStreamer or OpenCV (<gst/...>, <gstreamer...>, <opencv...>)
 #   core-include     include/core/ and src/core/ include only the C++17 standard library headers (the C++ names:
-#                    <cstdint>, not <stdint.h>), core/*, pod_list.hpp and pod_ring.hpp (SDK-free core: host tests)
+#                    <cstdint>, not <stdint.h>) and core/* (SDK-free core: host tests)
 #   nolint           a NOLINT / NOLINTNEXTLINE whose check list switches a project rule off: an entry matching a
 #                    custom-* name of scripts/tidy_rules.yaml or misc-const-correctness (#94; it must be enabled in
 #                    the Checks of that file) as clang-tidy globs it ('*' the only wildcard: '*', 'cust*',
@@ -69,7 +69,6 @@ initializer_list iomanip ios iosfwd iostream istream iterator limits list locale
 new numeric optional ostream queue random ratio regex scoped_allocator set shared_mutex sstream stack stdexcept
 streambuf string string_view system_error thread tuple type_traits typeindex typeinfo unordered_map unordered_set
 utility valarray variant vector""".split())
-CORE_LOCAL = ("pod_list.hpp", "pod_ring.hpp")
 INC = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]')
 NOLINT = re.compile(r'NOLINT(NEXTLINE|BEGIN|END)?')
 PAREN = re.compile(r'\(([^)]*)\)')
@@ -138,8 +137,8 @@ def check_file(rel, path):
                     add(rel, n, "include-order", target, "system and SDK headers first, project headers last")
                 if core and kind == "<" and target not in STD:
                     add(rel, n, "core-include", target, "core/ includes only the C++17 standard library")
-                if core and kind == '"' and not (target.startswith("core/") or target in CORE_LOCAL):
-                    add(rel, n, "core-include", target, "core/ includes only core/*, pod_list.hpp, pod_ring.hpp")
+                if core and kind == '"' and not target.startswith("core/"):
+                    add(rel, n, "core-include", target, "core/ includes only core/*")
             if "NOLINT" in text:
                 check_nolint(rel, n, text)
 

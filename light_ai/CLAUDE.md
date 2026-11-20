@@ -161,8 +161,8 @@ only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
 - Diagnostics through `Log` (`include/core/log.hpp`); only `main.cpp` owns `std::cout`/`std::cerr`/`std::clog`;
   no C stdio output (gate).
 - Header layout: in each visibility section, functions first, then a fresh label for data (review).
-- Header extensions: new headers use `.hpp`; nine legacy `.h` headers stay as-is unless refactored (gate).
-- `core/` includes only the C++17 standard library and `pod_list.hpp`/`pod_ring.hpp` (keeps tests SDK-free)
+- Header extensions: headers use `.hpp`, no `.h` (gate).
+- `core/` includes only the C++17 standard library and `core/*` (keeps tests SDK-free)
   (gate); include order: system and SDK headers first (gate); no GStreamer / OpenCV (gate).
 - Exception (review): header-only libraries in `externals/` may keep file statics; include them
   only from `.cpp` files, never from a project header.
