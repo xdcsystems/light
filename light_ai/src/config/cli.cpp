@@ -29,7 +29,7 @@ namespace
         const std::string probe = dir + "/.light_ai_write_test";
         bool ok = false;
         {
-            std::ofstream f( probe );
+            const std::ofstream f( probe );
             ok = f.good();
         }
         std::filesystem::remove( probe, ec );
