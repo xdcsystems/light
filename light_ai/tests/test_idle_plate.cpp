@@ -191,6 +191,37 @@ namespace
         CHECK( t, total == ink( p, l.w, 0, 0, l.w, l.vstride ).n );  // no ink outside the tiles
     }
 
+    // The label as the viewer sees it, in every tile of `l`: its ink box, its darkest luma,
+    // and twice the offset of the ink box center from the tile center (x, y).
+    void plate_ink_on( TestRun& t, const StreamLayout& l, int ink_w, int ink_h, int off2_x, int off2_y )
+    {
+        IdlePlate plate;
+        std::vector<uint8_t> p( static_cast<size_t>( l.w ) * l.vstride, kGray );
+        plate.draw( Plane8 { p.data(), l.w, l.vstride }, l );
+        int darkest = 255;
+        for ( const uint8_t v : p )
+            darkest = v < darkest ? v : darkest;
+        CHECK_EQ( t, darkest, 16 );
+        for ( int s = 0; s < l.nsrc; ++s )
+        {
+            const LbGeom c = cell_rect( l, s );
+            const Box b = ink( p, l.w, c.left, c.top, c.w, c.h );
+            CHECK_EQ( t, b.x1 - b.x0 + 1, ink_w );
+            CHECK_EQ( t, b.y1 - b.y0 + 1, ink_h );
+            CHECK_EQ( t, ( b.x0 + b.x1 + 1 ) - ( 2 * c.left + c.w ), off2_x );
+            CHECK_EQ( t, ( b.y0 + b.y1 + 1 ) - ( 2 * c.top + c.h ), off2_y );
+        }
+    }
+
+    // The stb_easy_font label before #108, pinned: 156 x 21 px of ink at luma 16, 3 px left
+    // and 7.5 px above the tile center (the stb cell is 162 x 36, its ink sits top left).
+    void plate_ink( TestRun& t )
+    {
+        const LbGeom band { 0, 640, 80, 480 };
+        plate_ink_on( t, make_stream_layout( 640, 640, band, 1 ), 156, 21, -6, -15 );
+        plate_ink_on( t, make_stream_layout( 640, 640, band, 4 ), 156, 21, -6, -15 );
+    }
+
     void plate( TestRun& t )
     {
         const LbGeom band { 0, 640, 80, 480 };
@@ -212,4 +243,5 @@ void test_idle_plate( TestRun& t )
     clipping( t );
     pinned( t );
     plate( t );
+    plate_ink( t );
 }

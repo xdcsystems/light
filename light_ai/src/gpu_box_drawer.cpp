@@ -181,8 +181,8 @@ namespace
         const float dirs[GpuBoxDrawer::kOutlineDirs][2] = {
             { -o, -o }, { 0.0f, -o }, { o, -o }, { -o, 0.0f }, { o, 0.0f }, { -o, o }, { 0.0f, o }, { o, o } };
         for ( const auto& d : dirs )
-            append_text_pass( qt, c, d[0], d[1], GpuBoxDrawer::kOutlineGray, GpuBoxDrawer::kOutlineGray,
-                              GpuBoxDrawer::kOutlineGray, GpuBoxDrawer::kOutlineAlpha );
+            append_text_pass( qt, c, d[0], d[1], CalloutConfig::kOutlineGray, CalloutConfig::kOutlineGray,
+                              CalloutConfig::kOutlineGray, CalloutConfig::kOutlineAlpha );
         append_text_pass( qt, c, 0.0f, 0.0f, 255, 255, 255, 255 );
     }
 

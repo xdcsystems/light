@@ -68,8 +68,6 @@ public:
         // The label text: kOutlineDirs dark passes + one white pass (#91 item 5).
         kOutlineDirs = 8,
         kTextPasses = kOutlineDirs + 1,
-        kOutlineGray = 16,
-        kOutlineAlpha = 200,
         // Connector segments + the longest label (kLabelCap - 1 glyphs) in every
         // text pass, 6 vertices a quad: 6 * (2 + 31 * 9) = 1686. Checked against
         // CalloutItem below.

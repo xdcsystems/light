@@ -42,6 +42,7 @@ int main( int argc, char** argv )
         { "tracker", &test_tracker },
         { "glyph_font", &test_glyph_font },
         { "callout_layout", &test_callout_layout },
+        { "overlay_raster", &test_overlay_raster },
         { "box_mapper", &test_box_mapper },
         { "reference_chain", &test_reference_chain },
         { "config", &test_config },

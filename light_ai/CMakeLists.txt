@@ -105,6 +105,7 @@ add_executable(light_ai
     src/core/bitmap_font.cpp
     src/core/glyph_font.cpp
     src/core/callout.cpp
+    src/core/overlay_raster.cpp
     src/core/idle_plate.cpp
     src/core/status.cpp
     src/core/http_url.cpp

@@ -49,7 +49,11 @@ struct CalloutConfig
     {
         // Text size (font px) per --label-scale step on the output tile: 11 px DejaVu
         // has ~8 px capitals, the size of the former 1-px-stroke bitmap font.
-        kLabelPx = 11
+        kLabelPx = 11,
+        // The dark outline around the white text (#91 item 5): gray level and alpha
+        // of each of its passes, shared by the GPU and the CPU renderers.
+        kOutlineGray = 16,
+        kOutlineAlpha = 200
     };
 
 public:

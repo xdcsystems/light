@@ -70,6 +70,7 @@ add_executable(light_ai_tests
     test_idle_plate.cpp
     test_glyph_font.cpp
     test_callout_layout.cpp
+    test_overlay_raster.cpp
     test_global_track.cpp
     test_reid_worker_tsan.cpp
     test_preview_ring.cpp
@@ -86,6 +87,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/bitmap_font.cpp
     ${LIGHT_AI_ROOT}/src/core/glyph_font.cpp
     ${LIGHT_AI_ROOT}/src/core/callout.cpp
+    ${LIGHT_AI_ROOT}/src/core/overlay_raster.cpp
     ${LIGHT_AI_ROOT}/src/core/idle_plate.cpp
     ${LIGHT_AI_ROOT}/src/core/status.cpp
     ${LIGHT_AI_ROOT}/src/core/http_url.cpp
