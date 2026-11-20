@@ -209,8 +209,8 @@ public:
     clk::time_point deadline = clk::time_point::max();
 };
 
-// wait.arm() runs right after each consume, before the events are read:
-// where the part deadline was armed in the old read_part loop.
+// wait.arm() runs right after each consume, before the events are read
+// (PartDeadline arms its deadline there).
 template <typename Wait>
 NetMjpegSource::Read NetMjpegSource::feed_part( int slot, uint32_t* size, Wait& wait )
 {
