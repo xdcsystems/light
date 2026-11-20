@@ -3,9 +3,9 @@
 # line that matches no finding (stale). Every site here is documented in CONTRIBUTING.md.
 
 # NOLINT(custom-...) sites (CONTRIBUTING, Error & Exception Model; No const_cast). The reason sits in the NOLINT.
-include/inference_pool.hpp nolint custom-no-catch-all
+include/npu/inference_pool.hpp nolint custom-no-catch-all
 src/net_preview.cpp nolint custom-no-catch-all
-src/rknn_engine.cpp nolint custom-no-const-cast
+src/npu/rknn_engine.cpp nolint custom-no-const-cast
 
 # NOLINT(misc-const-correctness) sites (#94; CONTRIBUTING, const by default): a type fixed by the C or C++ API, not
 # by us. The reason sits in the NOLINT.
@@ -17,7 +17,6 @@ tests/tsan_main.cpp nolint misc-const-correctness
 # The nine legacy .h headers (CONTRIBUTING, Header extensions).
 include/box_mapper.h header-ext
 include/box_smoother.h header-ext
-include/coco_names.h header-ext
 include/console_reporter.h header-ext
 include/net_encoder.h header-ext
 include/config/config_file.h header-ext

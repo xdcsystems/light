@@ -114,7 +114,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/cpu_affinity.cpp
     ${LIGHT_AI_ROOT}/src/core/timings.cpp
     ${LIGHT_AI_ROOT}/src/console_reporter.cpp
-    ${LIGHT_AI_ROOT}/src/cal_dumper.cpp
+    ${LIGHT_AI_ROOT}/src/npu/cal_dumper.cpp
     ${LIGHT_AI_ROOT}/src/tcp_send.cpp
     ${LIGHT_AI_ROOT}/externals/inih/ini.c
 )

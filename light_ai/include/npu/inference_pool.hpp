@@ -41,7 +41,7 @@
 #include "core/frame_view.hpp"  // TensorRef, TensorSet
 #include "core/log.hpp"
 #include "cpu_affinity.hpp"
-#include "infer_slot.hpp"
+#include "npu/infer_slot.hpp"
 #include "core/pod_ring.hpp"
 #include "core/timings.hpp"  // Timings::clk, ms()
 

@@ -10,7 +10,7 @@
 #include "core/global_track.hpp"  // ReidJob, ReidResult, reid_cfg
 #include "core/log.hpp"
 #include "core/reid_queue.hpp"
-#include "rknn_engine.hpp"
+#include "npu/rknn_engine.hpp"
 
 class ReidWorker
 {

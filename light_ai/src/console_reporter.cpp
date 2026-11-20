@@ -1,5 +1,5 @@
 #include "console_reporter.h"
-#include "coco_names.h"
+#include "npu/coco_names.hpp"
 #include "core/fixed_fmt.hpp"
 
 namespace

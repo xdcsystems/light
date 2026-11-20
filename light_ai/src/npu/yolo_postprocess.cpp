@@ -2,9 +2,9 @@
 #include <array>
 #include <cstdint>
 
-#include "yolo_postprocess.hpp"
-#include "infer_slot.hpp"  // InferJob
-#include "rknn_engine.hpp"
+#include "npu/yolo_postprocess.hpp"
+#include "npu/infer_slot.hpp"  // InferJob
+#include "npu/rknn_engine.hpp"
 
 void YoloDecode::operator()( const RknnEngine& npu, const InferJob& job, DetList& out )
 {

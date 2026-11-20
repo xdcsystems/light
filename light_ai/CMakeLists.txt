@@ -75,9 +75,9 @@ add_executable(light_ai
     src/source/camera_v4l2.cpp
     src/media/mpp_decoder.cpp
     src/media/rga_resizer.cpp
-    src/reid_worker.cpp
-    src/rknn_engine.cpp
-    src/yolo_postprocess.cpp
+    src/npu/reid_worker.cpp
+    src/npu/rknn_engine.cpp
+    src/npu/yolo_postprocess.cpp
     src/pipeline.cpp
     src/source/sources.cpp
     src/overlay_sink.cpp
@@ -92,7 +92,7 @@ add_executable(light_ai
     src/box_smoother.cpp
     src/core/timings.cpp
     src/console_reporter.cpp
-    src/cal_dumper.cpp
+    src/npu/cal_dumper.cpp
     src/config/cli.cpp
     src/config/option_registry.cpp
     src/config/config_file.cpp

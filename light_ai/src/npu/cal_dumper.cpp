@@ -4,7 +4,7 @@
 #include <ios>
 #include <sstream>
 
-#include "cal_dumper.hpp"
+#include "npu/cal_dumper.hpp"
 #include "media/dma_sync.hpp"
 
 std::string cal_dump_path( const CalConfig& cal, CalKind kind, int frame_idx )

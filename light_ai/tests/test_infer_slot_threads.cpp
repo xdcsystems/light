@@ -5,7 +5,7 @@
 #include <thread>
 
 #include "check.hpp"
-#include "infer_slot.hpp"
+#include "npu/infer_slot.hpp"
 #include "suites.hpp"
 
 namespace

@@ -6,7 +6,7 @@
 #include <string>
 
 #include "box_smoother.h"
-#include "cal_dumper.hpp"
+#include "npu/cal_dumper.hpp"
 #include "core/status.hpp"
 #include "config/config.hpp"
 #include "console_reporter.h"
@@ -16,18 +16,18 @@
 #include "core/stop_flag.hpp"
 #include "core/frame_trace.hpp"
 #include "core/global_track.hpp"
-#include "inference_pool.hpp"
+#include "npu/inference_pool.hpp"
 #include "overlay_sink.hpp"
-#include "reid_worker.hpp"
+#include "npu/reid_worker.hpp"
 #include "media/rga_resizer.hpp"
-#include "rknn_engine.hpp"
+#include "npu/rknn_engine.hpp"
 #include "source/source_prober.hpp"
 #include "source/source_set.hpp"
 #include "source/source_types.hpp"
 #include "source/sources.hpp"
 #include "core/timings.hpp"
 #include "core/tracker.hpp"
-#include "yolo_postprocess.hpp"
+#include "npu/yolo_postprocess.hpp"
 
 class Pipeline
 {

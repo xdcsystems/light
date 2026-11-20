@@ -7,7 +7,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "rknn_engine.hpp"
+#include "npu/rknn_engine.hpp"
 #include "core/rga_limits.hpp"  // rgb888_stride_ok: the input rows every consumer reads
 
 RknnEngine::RknnEngine( const char* model_path, const Log& log ) : log_( log )

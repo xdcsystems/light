@@ -5,7 +5,7 @@
 
 #include "core/fp16.hpp"
 #include "cpu_affinity.hpp"
-#include "reid_worker.hpp"
+#include "npu/reid_worker.hpp"
 
 namespace
 {

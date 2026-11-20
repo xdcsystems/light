@@ -14,10 +14,10 @@
 #include "core/status.hpp"
 #include "cpu_affinity.hpp"
 #include "media/dma_sync.hpp"
-#include "inference_pool.hpp"
+#include "npu/inference_pool.hpp"
 #include "pipeline.hpp"
 #include "core/timings.hpp"
-#include "yolo_postprocess.hpp"
+#include "npu/yolo_postprocess.hpp"
 
 namespace
 {
