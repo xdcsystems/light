@@ -120,19 +120,17 @@ bool MultipartReader::on_header( Cursor& c, const uint8_t* d, size_t n, size_t& 
     long need = -1;
     bool seen = false;  // the first Content-Length field decides
     size_t s = off;     // the current line start
-    while ( true )
+    for ( size_t lf = line_scan::find_lf( d, s, n ); lf != kNpos; lf = line_scan::find_lf( d, s, n ) )
     {
-        const size_t lf = line_scan::find_lf( d, s, n );
-        if ( lf == kNpos )
-        {
-            out = make_step( Event::NeedMore, off );  // the header stays until it is complete
-            return false;
-        }
         const size_t ce = line_scan::content_end( d, s, lf );
         if ( ce == s )
         {
             off = lf + 1;  // the empty line: the header ends
-            break;
+            c.need = need;
+            c.got = 0;
+            c.phase = Phase::Body;
+            c.skip = need > 0 && static_cast<size_t>( need ) > cap_;
+            return true;
         }
         if ( !seen && line_scan::starts_with_ci( d + s, ce - s, "content-length:" ) )
         {
@@ -141,11 +139,8 @@ bool MultipartReader::on_header( Cursor& c, const uint8_t* d, size_t n, size_t& 
         }
         s = lf + 1;
     }
-    c.need = need;
-    c.got = 0;
-    c.phase = Phase::Body;
-    c.skip = need > 0 && static_cast<size_t>( need ) > cap_;
-    return true;
+    out = make_step( Event::NeedMore, off );  // the header stays until it is complete
+    return false;
 }
 
 MultipartReader::Step MultipartReader::finish( Cursor& c, size_t consumed ) const

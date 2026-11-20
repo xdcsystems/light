@@ -552,7 +552,11 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
         log_.warn() << "drawer: import tensor failed (slot " << slot << ", 0x" << std::hex << eglGetError() << std::dec << ")\n";
         return make_status( Errc::Failed, "drawer: import tensor failed" );
     }
-    for ( int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i ) {}  // bounded clear of prior GL errors
+    for ( int i = 0; i < 16; ++i )  // bounded clear of prior GL errors
+    {
+        if ( glGetError() == GL_NO_ERROR )
+            break;
+    }
     glGenTextures( 1, &si.tex );
     glBindTexture( GL_TEXTURE_2D, si.tex );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );

@@ -106,6 +106,8 @@ private:
     Status setup_stream( AVFormatContext* fc, AVStream** st, int64_t* frame_step, bool tcp_pull );
     // The wait/pop loop and one packet write with the IDR prepend.
     DrainEnd drain_queue( AVFormatContext* fc, const TcpPullServer* tcp );
+    // One queue_.pop() into mux_pkt_, its wait time recorded in mperf.pop_wait_ms_max.
+    PacketQueue::Popped timed_pop( MuxPerfWindow& mperf );
     void maybe_log_perf( MuxPerfWindow& mperf,
                          std::chrono::steady_clock::time_point& win_t0,
                          uint64_t& prev_ww,

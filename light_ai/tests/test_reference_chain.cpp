@@ -556,20 +556,19 @@ void test_reference_chain( TestRun& t )
     Deviation dev;
     int line = 0;
     int bad = 0;
-    while ( true )
+    bool ga = static_cast<bool>( std::getline( got, a ) );
+    bool gb = static_cast<bool>( std::getline( golden, b ) );
+    while ( ga || gb )
     {
-        const bool ga = static_cast<bool>( std::getline( got, a ) );
-        const bool gb = static_cast<bool>( std::getline( golden, b ) );
-        if ( !ga && !gb )
-            break;
         ++line;
-        if ( ga && gb && same_line( a, b, dev ) )
-            continue;
-        if ( ++bad <= kMaxReport )
+        const bool same = ga && gb && same_line( a, b, dev );
+        if ( !same && ++bad <= kMaxReport )
             std::cerr << "reference_chain: golden line " << line << ":\n  got:  " << ( ga ? a : "<end>" )
                       << "\n  want: " << ( gb ? b : "<end>" ) << '\n';
-        if ( ga != gb || ( a[0] == 'f' ) != ( b[0] == 'f' ) )
+        if ( !same && ( ga != gb || ( a[0] == 'f' ) != ( b[0] == 'f' ) ) )
             break;  // the structure diverged: the rest would only repeat it
+        ga = static_cast<bool>( std::getline( got, a ) );
+        gb = static_cast<bool>( std::getline( golden, b ) );
     }
     CHECK( t, bad == 0 );
     std::cout << "reference_chain: " << frames << " clip frames, " << line << " lines, max |d| " << dev.px << " px, "

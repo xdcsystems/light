@@ -398,13 +398,9 @@ Status Pipeline::handle_source_failure( const EncodedFrame& f )
 int Pipeline::acquire_slot( int& ok )
 {
     bool starved_warned = false;
-    while ( true )
+    int k = pool_.try_acquire();
+    while ( k < 0 && !stop_.requested() )
     {
-        const int k = pool_.try_acquire();
-        if ( k >= 0 )
-            return k;
-        if ( stop_.requested() )
-            return -1;
         if ( !starved_warned )
         {
             log_.warn() << "pipeline: all " << pool_.size() << " slots in flight, waiting for a worker to release one\n";
@@ -414,7 +410,9 @@ int Pipeline::acquire_slot( int& ok )
             ok += publish_oldest();
         else
             std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
+        k = pool_.try_acquire();
     }
+    return k >= 0 ? k : -1;
 }
 
 // RGA resize into the slot's tensor, optional cal dump, one-time

@@ -48,9 +48,10 @@ private:
             return;
         dma_buf_sync s {};
         s.flags = flags;
-        while ( ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s ) < 0 && errno == EINTR )
-        {
-        }
+        int rc = 0;
+        do
+            rc = ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s );
+        while ( rc < 0 && errno == EINTR );
     }
 
 private:

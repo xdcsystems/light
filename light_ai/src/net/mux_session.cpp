@@ -114,18 +114,9 @@ MuxSession::DrainEnd MuxSession::drain_queue( AVFormatContext* fc, const TcpPull
     // The queue's key gate was armed by open() (late join mid-GOP must
     // not decode P-frames against a missing reference) and is re-armed by
     // an overflow flush; pop() drops packets until the first IDR.
-    for ( ;; )
+    PacketQueue::Popped got = timed_pop( mperf );
+    while ( got.what == PacketQueue::Pop::Packet )
     {
-        const auto pop_t0 = std::chrono::steady_clock::now();
-        const PacketQueue::Popped got = queue_.pop( mux_pkt_.slot() );
-        const double pop_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - pop_t0 ).count();
-        if ( pop_ms > mperf.pop_wait_ms_max )
-            mperf.pop_wait_ms_max = pop_ms;
-        if ( got.what == PacketQueue::Pop::Stopped || got.what == PacketQueue::Pop::Failed )
-        {
-            maybe_log_perf( mperf, win_t0, prev_ww, tcp, true );
-            return got.what == PacketQueue::Pop::Stopped ? DrainEnd::Stopped : DrainEnd::Failed;
-        }
         const int q_rem = got.left;
         // Ownership of the packet buffer moved into mux_pkt_ via
         // av_packet_move_ref; mux_write consumes and unrefs it without
@@ -149,7 +140,20 @@ MuxSession::DrainEnd MuxSession::drain_queue( AVFormatContext* fc, const TcpPull
             }
             return DrainEnd::WriteFailed;
         }
+        got = timed_pop( mperf );
     }
+    maybe_log_perf( mperf, win_t0, prev_ww, tcp, true );
+    return got.what == PacketQueue::Pop::Stopped ? DrainEnd::Stopped : DrainEnd::Failed;
+}
+
+PacketQueue::Popped MuxSession::timed_pop( MuxPerfWindow& mperf )
+{
+    const auto pop_t0 = std::chrono::steady_clock::now();
+    const PacketQueue::Popped got = queue_.pop( mux_pkt_.slot() );
+    const double pop_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - pop_t0 ).count();
+    if ( pop_ms > mperf.pop_wait_ms_max )
+        mperf.pop_wait_ms_max = pop_ms;
+    return got;
 }
 
 void MuxSession::maybe_log_perf( MuxPerfWindow& mperf,

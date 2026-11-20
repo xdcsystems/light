@@ -41,6 +41,9 @@ namespace
         return timeout_ms >= 0 ? EAGAIN : EIO;
     }
 
+    // dequeue_once(): no clean buffer yet, poll again (never an errno: those are positive).
+    constexpr int kDequeueAgain = -1;
+
     // A failed open / setup ioctl: the node gone or never there is Absent (the
     // locator moves on), EBUSY is Busy, anything else Failed.
     Status setup_errno( const char* what, int e )
@@ -327,34 +330,37 @@ Status CameraV4L2::dequeue( int& index, uint32_t& size, int timeout_ms ) noexcep
 // Loop until a clean buffer comes out.
 int CameraV4L2::wait_clean( v4l2_buffer& buf, int timeout_ms )
 {
-    while ( true )
+    int rc = 0;
+    do
+        rc = dequeue_once( buf, timeout_ms );
+    while ( rc == kDequeueAgain );
+    return rc;
+}
+
+int CameraV4L2::dequeue_once( v4l2_buffer& buf, int timeout_ms )
+{
+    // Watchdog: the wait is bounded by poll(). In single-source mode
+    // (timeout_ms < 0) a 2 s timeout is reported as EIO (recoverable
+    // stall); in multi-source non-blocking mode (timeout_ms >= 0) a
+    // 0/short poll timeout returns EAGAIN so the dispatcher can
+    // service other ready cameras immediately.
+    if ( const int perr = poll_frame( fd_, timeout_ms, static_cast<int>( kDequeuePollMs ), log_ ); perr != 0 )
+        return perr;
+    if ( ioctl( fd_, VIDIOC_DQBUF, &buf ) < 0 )
+        return ( errno == EINTR || errno == EAGAIN ) ? kDequeueAgain : errno;
+    if ( !( buf.flags & V4L2_BUF_FLAG_ERROR ) && buf.bytesused > 0 )
+        return 0;
+    requeue( static_cast<int>( buf.index ) );
+    // the streak survives dequeue() calls
+    // (e.g. corrupt frames followed by a poll timeout),
+    // so the watchdog threshold reflects the real buffer history.
+    ++err_streak_;
+    if ( err_streak_ >= static_cast<int>( kBufCount ) )
     {
-        // Watchdog: the wait is bounded by poll(). In single-source mode
-        // (timeout_ms < 0) a 2 s timeout is reported as EIO (recoverable
-        // stall); in multi-source non-blocking mode (timeout_ms >= 0) a
-        // 0/short poll timeout returns EAGAIN so the dispatcher can
-        // service other ready cameras immediately.
-        if ( const int perr = poll_frame( fd_, timeout_ms, static_cast<int>( kDequeuePollMs ), log_ ); perr != 0 )
-            return perr;
-        if ( ioctl( fd_, VIDIOC_DQBUF, &buf ) < 0 )
-        {
-            if ( errno == EINTR || errno == EAGAIN )
-                continue;
-            return errno;
-        }
-        if ( !( buf.flags & V4L2_BUF_FLAG_ERROR ) && buf.bytesused > 0 )
-            return 0;
-        requeue( static_cast<int>( buf.index ) );
-        // the streak survives dequeue() calls
-        // (e.g. corrupt frames followed by a poll timeout),
-        // so the watchdog threshold reflects the real buffer history.
-        ++err_streak_;
-        if ( err_streak_ >= static_cast<int>( kBufCount ) )
-        {
-            log_.warn() << "cam: " << err_streak_ << " consecutive corrupt buffers - stall\n";
-            return EIO;
-        }
+        log_.warn() << "cam: " << err_streak_ << " consecutive corrupt buffers - stall\n";
+        return EIO;
     }
+    return kDequeueAgain;
 }
 
 // Buffers that completed while the frame was waiting: the newest clean one
