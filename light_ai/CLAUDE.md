@@ -75,7 +75,8 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   issue is closed by hand. `master` gets the whole audit through one PR `fix/audit-p2` -> `master`, which the user
   merges; after it, the base is `master` again (`gh pr create --base master`). Earlier audits went the same way:
   `fix/audit-p0` merged into `master` in PR #73, `fix/audit-p1` in PR #81.
-- Never push to `master` or `fix/audit-p2` directly, never force-push, never rewrite pushed history.
+- Never push to `master` or the audit's integration branch (now `fix/audit-p2`) directly, never force-push, never rewrite
+  pushed history.
 - Before a PR, the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
   (CMake build + 62 unit suites + 6 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
