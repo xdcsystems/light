@@ -676,7 +676,7 @@ void Pipeline::run_reid_stage( const FrameView& view ) noexcept
                             << " (" << reid_crop_fail_ << " so far)\n";
             continue;
         }
-        const ReidJob job { rslot, view.src_idx, reqs[i].local_id, reqs[i].gen, view.ts_us, reqs[i].clipped, reqs[i].occluded };
+        const ReidJob job { rslot, view.src_idx, reqs[i].local_id, reqs[i].gen, view.ts_us };
         if ( reid_worker_->submit( job ) )
             global_tracks_.mark_dispatched( view.src_idx, reqs[i].local_id, reqs[i].gen );
     }

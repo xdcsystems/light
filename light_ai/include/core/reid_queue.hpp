@@ -118,8 +118,6 @@ private:
             res.local_id = job.local_id;
             res.gen = job.gen;
             res.ts_us = job.ts_us;
-            res.clipped = job.clipped;
-            res.occluded = job.occluded;
             res.ok = runner_( job, res );
             // Publish Free BEFORE enqueueing result so producer sees the freed slot immediately.
             states_[job.slot].store( ReidSlotState::Free, std::memory_order_release );
