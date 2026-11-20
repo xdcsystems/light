@@ -54,7 +54,7 @@ Every PR targeting `master` must pass the full board gate:
 
 This runs:
 1. Release CMake build (`light_ai`).
-2. Host unit tests (`light_ai_tests` — 61 suites, 9,012 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 6 suites, 23 checks).
+2. Host unit tests (`light_ai_tests` — 61 suites, 9,022 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 6 suites, 23 checks).
 3. Two-pass `clang-tidy` gate ([`scripts/tidy_run.sh`](scripts/tidy_run.sh)):
    - **self-test + lint:** the rules pass on [`tests/tidy_probe/`](tests/tidy_probe) and [`scripts/rules_lint.sh`](scripts/rules_lint.sh) on its fixture tree must give exactly the expected hits; then `rules_lint.sh` over the tree.
    - **main:** system `clang-tidy-11` against [`.clang-tidy`](.clang-tidy) (`tests/` uses [`tests/.clang-tidy`](tests/.clang-tidy)).
