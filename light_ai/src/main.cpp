@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <exception>
 #include <iostream>
 
@@ -7,6 +8,17 @@
 #include "pipeline.hpp"
 #include "process_env.hpp"
 #include "signal_waiter.hpp"
+
+namespace
+{
+    // The Pipeline lives on the stack of main() (no heap): 2,270,104 B at 6f738d8
+    // (#97 item 2, docs/state.md), 27 % of the default 8 MiB main-thread stack
+    // (ulimit -s 8192). The bound is half of that limit: a member that grows the
+    // Pipeline past it has to be weighed against the stack, not slip in. A lower
+    // ulimit -s at run time is not checked.
+    constexpr std::size_t kPipelineStackMaxBytes = std::size_t { 4 } * 1024u * 1024u;
+    static_assert( sizeof( Pipeline ) <= kPipelineStackMaxBytes, "Pipeline outgrew half of the 8 MiB main stack" );
+}  // namespace
 
 // Graceful shutdown without globals: ProcessEnv blocks SIGINT/SIGTERM
 // before any thread exists; SignalWaiter takes them on its own thread.
