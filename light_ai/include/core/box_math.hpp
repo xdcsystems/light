@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <tuple>
 
 // The single IoU implementation for all box consumers (Tracker
 // association/spawn, BoxSmoother matching, YOLOv5 NMS).

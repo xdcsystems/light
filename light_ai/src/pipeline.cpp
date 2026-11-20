@@ -603,8 +603,9 @@ int Pipeline::publish_oldest()
     double enc_ms = 0.0;
     if ( res_.npu_ok )
     {
-        // M3.10: EMA smoothing on scene-coord boxes; the raw list is kept
-        // only for the --box-log jitter A/B CSV.
+        // BoxSmoother: the BoxFilter display filter (One-Euro + dead zone,
+        // core/box_filter.hpp) of the non-person scene-coord boxes; the raw
+        // list is kept only for the --box-log jitter A/B CSV.
 
         SourceAnalytics& ss = an_[res_.job.src_idx];
         ss.smoother.update( res_.dets, dets_ );

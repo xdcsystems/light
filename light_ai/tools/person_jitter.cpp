@@ -3,7 +3,7 @@
 // replay) has no person display boxes: BoxSmoother skips cls 0, and Layer B
 // (tests/test_reference_chain.cpp) stops at the tracker output (post == trajs).
 // This probe feeds every `raw` line of the CSV through the real chain of the
-// person boxes -- Tracker (raw detections, as Pipeline::step does) and the
+// person boxes -- Tracker (raw detections, as Pipeline::publish_oldest() does) and the
 // OverlaySink display filter, TrackBoxFilters with box_filter::kTrackBoxParams --
 // and prints the frame-to-frame jitter of a CONF track's box before the filter
 // (the Kalman posterior) and after it (the drawn box).
@@ -235,7 +235,7 @@ namespace
         }
     }
 
-    // Tracker on the raw lines (as Pipeline::step), then the OverlaySink display filter.
+    // Tracker on the raw lines (as Pipeline::publish_oldest()), then the OverlaySink display filter.
     void person_figure( const std::vector<Frame>& fr )
     {
         Tracker tracker;
