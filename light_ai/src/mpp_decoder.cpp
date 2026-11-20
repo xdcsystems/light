@@ -189,10 +189,26 @@ void MppDecoder::teardown() noexcept
     if ( !ctx_ )
         return;
 
-    // Strip meta references from the tasks left in the ports before and after
-    // reset() before mpp_destroy() tears down the internal buffer pools.
+    // Strip the meta references from the tasks left in the ports. The decoder
+    // recycles consumed input tasks back to the user side of the input port
+    // with the packet pointer still in the meta. Once we deinit that packet,
+    // the pointer dangles, and the decoder's dec_release_task_in_port (run by
+    // reset() and by mpp_destroy()) dereferences it and deinits it a second
+    // time ("negative ref_count" / "invalid mem pool ptr"). reset_and_strip()
+    // strips BEFORE reset() as well as after it, because reset() itself calls
+    // dec_release_task_in_port. The stripped tasks are re-enqueued: the same
+    // helper serves the runtime Timeout / Failed recovery of
+    // take_output_task(), where dropping them would shrink the port queues
+    // for good; here it makes no difference, mpp_destroy() frees the tasks
+    // with their queues.
     reset_and_strip();
 
+    // Critical order: release every MPP object that may hold buffer
+    // references (pkt_, pkt_buf_, out_frame_, aux_) BEFORE mpp_destroy().
+    // Destroy tears down MPP's internal buffer pools, and a later
+    // mpp_packet_deinit / mpp_frame_deinit / mpp_buffer_put would decrement
+    // refcounts in an already freed pool ("non-positive ref_count" +
+    // "invalid mem pool ptr" at exit). The buffer groups go after destroy.
     if ( pkt_ )
     {
         mpp_packet_deinit( &pkt_ );

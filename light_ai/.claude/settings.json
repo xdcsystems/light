@@ -22,7 +22,7 @@
       "Bash(git checkout *)",
       "Bash(git merge *)",
       "Bash(git push -u origin refactor/*)",
-      "Bash(git push -u origin fix/audit-p2*)",
+      "Bash(git push -u origin fix/audit-p2-*)",
       "Bash(gh pr *)",
       "Bash(gh issue close *)",
       "Bash(gh issue comment *)"

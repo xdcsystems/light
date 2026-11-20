@@ -81,24 +81,24 @@ private:
     Step step( int& ok, Status& st ) noexcept;
     // The next encoded frame or a failure; parks (NO SIGNAL, 40 ms quanta)
     // while no source is Live. Stopped once the stop flag is set.
-    FrameStatus next_frame( EncodedFrame& f, int& ok );
-    void drain_done_slots( int& ok );
-    int publish_oldest();                // collect -> analytics -> output; 1 if the frame was valid
+    FrameStatus next_frame( EncodedFrame& f, int& ok ) noexcept;
+    void drain_done_slots( int& ok ) noexcept;
+    int publish_oldest() noexcept;       // collect -> analytics -> output; 1 if the frame was valid
     void run_reid_stage( const FrameView& view ) noexcept;
 
     // NO SIGNAL idle publish: gray plate tiles for absent sources at a
     // fixed pace; not counted in --frames or the timing stats.
-    void idle_tick();
+    void idle_tick() noexcept;
     void reset_source_analytics( int src ) noexcept;
-    Status handle_source_failure( const EncodedFrame& f );  // the fatal reason; Ok = recovered
-    int acquire_slot( int& ok );               // claim-or-drain; idx or -1 on stop
+    Status handle_source_failure( const EncodedFrame& f ) noexcept;  // the fatal reason; Ok = recovered
+    int acquire_slot( int& ok ) noexcept;      // claim-or-drain; idx or -1 on stop
 
     void prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept;
     bool submit_orient_probe( int src, int fd_src, int rot, int job_idx, int& ok ) noexcept;
     bool probe_rot_batch( int src, int fd_src, const int* rots, int n_rots, float* scores, int& ok ) noexcept;
     void update_auto_orient( int src, int fd_src, int& ok ) noexcept;
     // RGA into the slot's tensor, then submit to the pool.
-    void frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms );
+    void frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms ) noexcept;
     void record_frame_perf( int src, std::chrono::steady_clock::time_point tp ) noexcept;
     void record_orient_perf( int src, double elapsed_ms ) noexcept;
     void finish_step_perf( std::chrono::steady_clock::time_point t0 ) noexcept;

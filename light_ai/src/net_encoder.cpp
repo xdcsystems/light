@@ -9,9 +9,9 @@
 
 namespace
 {
-    // The session warmup clock: one read per publish, independent of the
-    // frame's ts_us (a live frame's dequeue time lags "now" by the pipeline
-    // latency, and ts_us may be -1).
+    // The publish clock: one read per publish, used by the session warmup,
+    // the pacer and as the VFR pts of a timestamped frame. The frame's
+    // ts_us (its dequeue time, may be -1) is only checked for >= 0.
     int64_t steady_now_us()
     {
         return std::chrono::duration_cast<std::chrono::microseconds>(

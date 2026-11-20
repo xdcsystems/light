@@ -52,7 +52,7 @@ public:
     H264Encoder& operator=( const H264Encoder& ) = delete;
 
     // One frame of session `s` (call under SessionGate::run()). ts_us: the
-    // dequeue time (VFR pts), < 0 = none. false = a codec error: the caller
+    // publish time (VFR pts), < 0 = none. false = a codec error: the caller
     // fails the session.
     Status encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session& s, PacketQueue& queue );
 

@@ -68,7 +68,6 @@ public:
     void* input_data() const { return ( !in_mems_.empty() && in_mems_[0] ) ? in_mems_[0]->virt_addr : nullptr; }
     int input_fd() const { return ( !in_mems_.empty() && in_mems_[0] ) ? in_mems_[0]->fd : -1; }
     uint32_t input_size() const { return ( !in_mems_.empty() && in_mems_[0] ) ? in_mems_[0]->size : 0; }
-    int input_slot_count() const noexcept { return static_cast<int>( in_mems_.size() ); }
     TensorRef input_tensor( int slot ) const noexcept;
     uint32_t input_stride_bytes() const noexcept { return in_stride_bytes_; }
 
@@ -84,9 +83,6 @@ public:
     {
         return ( i < out_mems_.size() && out_mems_[i] ) ? static_cast<const int8_t*>( out_mems_[i]->virt_addr )
                                                         : nullptr;
-    }
-    uint32_t output_size( size_t i ) const {
-        return ( i < out_mems_.size() && out_mems_[i] ) ? out_mems_[i]->size : 0;
     }
 
 private:

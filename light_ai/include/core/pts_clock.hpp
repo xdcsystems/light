@@ -1,10 +1,11 @@
 // PtsClock: the presentation timestamps of the encoded stream.
 //   CFR (--net-fps N): a per-session frame counter in the codec time base
 //     (1/N); every encoded or dropped frame advances it.
-//   VFR (--net-fps 0): the dequeue timestamp (us) rescaled to 1/90000
-//     against the session base (the first timestamped frame), clamped to
-//     stay strictly increasing; without a timestamp, a 25 fps grid over the
-//     frames encoded so far.
+//   VFR (--net-fps 0): the publish time (steady clock, us, read once per
+//     NetEncoder::publish* / flush_dirty) rescaled to 1/90000 against the
+//     session base (the first timestamped frame), clamped to stay strictly
+//     increasing; without a timestamp, a 25 fps grid over the frames
+//     encoded so far.
 // packet_ts() converts a codec pts to the muxer time base (frame_step
 // ticks per frame, set per session from the stream time base).
 //
@@ -25,7 +26,8 @@ public:
     // frame_step < 1 is taken as 1.
     void restart( int64_t frame_step ) noexcept;
 
-    // Codec pts of the frame about to be encoded. ts_us < 0 = no timestamp.
+    // Codec pts of the frame about to be encoded. ts_us: its publish time
+    // (VFR), < 0 = no timestamp.
     // frames_sent: frames encoded so far (the VFR fallback grid).
     int64_t next( int64_t ts_us, uint64_t frames_sent ) noexcept;
 

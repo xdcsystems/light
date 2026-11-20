@@ -59,7 +59,7 @@ bool tile_absent( const bool* absent, int nabs, int s );
 
 struct EncoderConfig
 {
-    bool vfr() const { return fps <= 0; }  // --net-fps 0: follow the source, pts from dequeue times
+    bool vfr() const { return fps <= 0; }  // --net-fps 0: follow the source, pts from publish times
     // Rate-control fps: VFR still needs a number (0/1 reaches MPP as the auto marker and the
     // CBR per-frame budget collapses): nominal 25, 25 per source in multi-view.
     int nominal_fps() const { return vfr() ? ( layout.nsrc > 1 ? 25 * layout.nsrc : 25 ) : fps; }

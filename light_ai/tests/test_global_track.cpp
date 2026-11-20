@@ -25,23 +25,35 @@ namespace
 
     void check_ch9_reid_gating( TestRun& t )
     {
-        // Clipped / occluded embeddings never bind, create gallery slots, or trigger switch.
+        // Clipped / occluded tracks never reach the Re-ID queue: select_crops() refuses them up
+        // front. Refused tracks come first, the clean one last, so the crop cap cannot hide a
+        // refusal; the clean one is the positive control (same size, unbound, retry interval due).
         GlobalTrackTable tab( 0.62f );
+        {
+            TrajList gate {};
+            // Touches the left band edge.
+            gate.push( TrackState { 11, TRACK_CONF, 30.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 11, 180.0f } );
+            // Squeezed below its height prior (120 < 0.85 * 180).
+            gate.push( TrackState { 12, TRACK_CONF, 500.0f, 360.0f, 0.0f, 0.0f, 80.0f, 120.0f, 3, 0, 12, 180.0f } );
+            // An overlapping pair (IoU 0.6 >= 0.30): both refused.
+            gate.push( TrackState { 13, TRACK_CONF, 800.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 13, 180.0f } );
+            gate.push( TrackState { 14, TRACK_CONF, 820.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 14, 180.0f } );
+            // Clean.
+            gate.push( TrackState { 15, TRACK_CONF, 300.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 15, 180.0f } );
+            tab.sync_cam( 2, gate, 100000 );
+            ReidCropReq reqs[2] {};
+            CHECK( t, tab.select_crops( 2, gate, { 0, 640, 80, 480 }, 1280, 720, 128, 256, reqs, 2 ) == 1 );
+            CHECK( t, reqs[0].local_id == 15 && reqs[0].gen == 15 );
+            TrajList none {};
+            tab.sync_cam( 2, none, 110000 );
+            CHECK( t, tab.active_global_count() == 0 );
+        }
+
+        // Populate gallery with 3 clean tracks: G1=[1,0,0], G2=[0,1,0], G3=[0,0,1].
         TrajList cam0 {};
         cam0.push( TrackState { 1, TRACK_CONF, 200.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 1, 180.0f } );
         cam0.push( TrackState { 2, TRACK_CONF, 600.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 2, 180.0f } );
-        tab.sync_cam( 0, cam0, 100000 );
-
-        ReidResult bad_clip = make_res( 0, 1, 1, 100000, 1.0f, 0.0f );
-        bad_clip.clipped = true;
-        tab.apply_result( bad_clip );
-        ReidResult bad_occ = make_res( 0, 1, 1, 110000, 1.0f, 0.0f );
-        bad_occ.occluded = true;
-        tab.apply_result( bad_occ );
         tab.sync_cam( 0, cam0, 120000 );
-        CHECK( t, cam0.d[0].global_id == 0 && tab.active_global_count() == 0 );
-
-        // Populate gallery with 3 clean tracks: G1=[1,0,0], G2=[0,1,0], G3=[0,0,1].
         tab.apply_result( make_res( 0, 1, 1, 130000, 1.0f, 0.0f, 0.0f ) );
         tab.apply_result( make_res( 0, 2, 2, 130000, 0.0f, 1.0f, 0.0f ) );
         TrajList empty0 {};
@@ -53,21 +65,12 @@ namespace
         TrajList empty1 {};
         tab.sync_cam( 1, empty1, 160000 );
 
-        // Bind cam1 track 4 to G1; clipped/occluded strong G2 matches must not switch it.
+        // Bind cam1 track 4 to G1.
         TrajList cam1b {};
         cam1b.push( TrackState { 4, TRACK_CONF, 400.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 4, 180.0f } );
         tab.sync_cam( 1, cam1b, 200000 );
         tab.apply_result( make_res( 1, 4, 4, 200000, 1.0f, 0.0f, 0.0f ) );
         tab.sync_cam( 1, cam1b, 210000 );
-        CHECK( t, cam1b.d[0].global_id == 1 );
-
-        ReidResult sw_clip = make_res( 1, 4, 4, 220000, 0.0f, 1.0f, 0.0f );
-        sw_clip.clipped = true;
-        tab.apply_result( sw_clip );
-        ReidResult sw_occ = make_res( 1, 4, 4, 230000, 0.0f, 1.0f, 0.0f );
-        sw_occ.occluded = true;
-        tab.apply_result( sw_occ );
-        tab.sync_cam( 1, cam1b, 240000 );
         CHECK( t, cam1b.d[0].global_id == 1 );
 
         // Ambiguous bound switch (G2 vs G3 within kReidMargin=0.06) is blocked even after 2 hits.

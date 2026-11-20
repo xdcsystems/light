@@ -35,8 +35,6 @@ struct ReidJob
     int local_id = 0;
     uint32_t gen = 0;
     int64_t ts_us = 0;
-    bool clipped = false;
-    bool occluded = false;
 };
 
 struct ReidResult
@@ -46,8 +44,6 @@ struct ReidResult
     uint32_t gen = 0;
     int64_t ts_us = 0;
     int dim = 0;
-    bool clipped = false;
-    bool occluded = false;
     bool ok = false;
     std::array<float, reid_cfg::kReidDimMax> feat {};
 };
@@ -57,8 +53,6 @@ struct ReidCropReq
     int local_id = 0;
     uint32_t gen = 0;
     LbGeom srect {};
-    bool clipped = false;
-    bool occluded = false;
 };
 
 struct LocalBinding
@@ -112,11 +106,14 @@ public:
     void sync_cam( int src_idx, TrajList& trajs, int64_t ts_us ) noexcept;
 
     // Applies an asynchronous Re-ID inference result with collision guard,
-    // margin check, switch hysteresis, and clipped/occluded EMA gating.
+    // margin check and switch hysteresis. Clipped or occluded crops never get
+    // here: select_crops() refuses them up front.
     void apply_result( const ReidResult& res ) noexcept;
 
     // Selects up to max_req confirmed track crops mapped to tensor pixels (even-aligned,
     // within lb, and at least 1/8 of dst_w x dst_h to obey RGA3/RGA2 8x upscale limit).
+    // Clipped (touching the band edge, or squeezed below its height prior) and occluded
+    // (IoU with a peer track >= 0.30) tracks are refused here, so results are always clean.
     int select_crops( int src_idx,
                       const TrajList& trajs,
                       const LbGeom& lb,

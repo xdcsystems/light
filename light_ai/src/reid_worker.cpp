@@ -9,18 +9,23 @@
 
 namespace
 {
+    // The NPU core of Re-ID, away from YOLO where it can be:
+    //   pool 3: YOLO pins one engine per core (0/1/2) -> AUTO (the runtime default);
+    //   pool 1, --core 4 (YOLO on core 2) -> core 0;
+    //   pool 1, --core 7 (YOLO on all three cores) -> AUTO;
+    //   pool 1, any other --core (0 = AUTO, 1/2 = core 0/1, 3 = cores 0+1) -> core 2.
     unsigned choose_reid_core_mask( int pool_size, int infer_core ) noexcept
     {
         if ( pool_size > 1 )
-            return 0u;
-        if ( infer_core == 4 )
-            return 1u;
-        if ( infer_core == 7 )
-            return 0u;
-        return 4u;
+            return static_cast<unsigned>( RKNN_NPU_CORE_AUTO );
+        if ( infer_core == static_cast<int>( RKNN_NPU_CORE_2 ) )
+            return static_cast<unsigned>( RKNN_NPU_CORE_0 );
+        if ( infer_core == static_cast<int>( RKNN_NPU_CORE_0_1_2 ) )
+            return static_cast<unsigned>( RKNN_NPU_CORE_AUTO );
+        return static_cast<unsigned>( RKNN_NPU_CORE_2 );
     }
 
-    RknnEngine make_reid_engine( const char* model_path, int pool_size, int infer_core, const Log& log, int& out_dim )
+    RknnEngine make_reid_engine( const char* model_path, int pool_size, int infer_core, const Log& log )
     {
         RknnEngine eng( model_path, log );
         const Status io_st = eng.setup_io( true, reid_cfg::kReidSlots );
@@ -38,7 +43,7 @@ namespace
         if ( outs.size() != 1 || outs[0].n_elems == 0 || outs[0].n_elems > reid_cfg::kReidDimMax )
             throw std::runtime_error( "reid: unsupported output tensor count or dimension" );
 
-        out_dim = static_cast<int>( outs[0].n_elems );
+        const int out_dim = static_cast<int>( outs[0].n_elems );
         log.info() << "reid: active (" << eng.input_width() << 'x' << eng.input_height()
                    << " -> " << out_dim << "-D, slots=" << reid_cfg::kReidSlots
                    << ", core_mask=0x" << std::hex << mask << std::dec << ")\n";
@@ -112,7 +117,7 @@ void ReidWorker::BigCorePin::operator()() const noexcept
 }
 
 ReidWorker::ReidWorker( const char* model_path, int pool_size, int infer_core, const Log& log )
-  : engine_( make_reid_engine( model_path, pool_size, infer_core, log, feat_dim_ ) )
+  : engine_( make_reid_engine( model_path, pool_size, infer_core, log ) )
   , queue_( EngineRunner { &engine_ }, BigCorePin { &log } )
 {
 }

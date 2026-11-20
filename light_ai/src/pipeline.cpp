@@ -178,7 +178,7 @@ void Pipeline::attach_sources()
 // Paced like --net-fps (25 FPS in follow-source mode); idle encodes
 // are NOT counted in --frames or the timing stats and never touch
 // the NPU. A fully live composition skips the work entirely.
-void Pipeline::idle_tick()
+void Pipeline::idle_tick() noexcept
 {
     if ( !sink_.enabled() )
         return;
@@ -198,7 +198,7 @@ void Pipeline::idle_tick()
 }
 
 // Publishes every result that is already finished, in order; never waits.
-void Pipeline::drain_done_slots( int& ok )
+void Pipeline::drain_done_slots( int& ok ) noexcept
 {
     while ( pool_.front_done() && !stop_.requested() )
         ok += publish_oldest();
@@ -211,7 +211,7 @@ void Pipeline::drain_done_slots( int& ok )
 // SourceProber attaches the sources. One source with an empty pool (--pool 1)
 // takes the blocking dequeue; otherwise two rounds per pass, the first without
 // waiting, the second with 1 ms, finished results published in between.
-FrameStatus Pipeline::next_frame( EncodedFrame& f, int& ok )
+FrameStatus Pipeline::next_frame( EncodedFrame& f, int& ok ) noexcept
 {
     const bool blocking = srcs_.size() == 1 && pool_.empty();
     while ( !stop_.requested() )
@@ -367,7 +367,7 @@ void Pipeline::reset_source_analytics( int src ) noexcept
     has_last_frame_[src] = false;
 }
 
-Status Pipeline::handle_source_failure( const EncodedFrame& f )
+Status Pipeline::handle_source_failure( const EncodedFrame& f ) noexcept
 {
     const bool recoverable = f.st.code() == Errc::Lost;  // ENODEV / EIO (dequeue_status)
     log_.warn() << "source: " << f.st << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
@@ -395,7 +395,7 @@ Status Pipeline::handle_source_failure( const EncodedFrame& f )
 // from parking here forever on a wedged NPU. Returns the claimed slot
 // index, or -1 when stop was requested with every slot in flight.
 
-int Pipeline::acquire_slot( int& ok )
+int Pipeline::acquire_slot( int& ok ) noexcept
 {
     bool starved_warned = false;
     int k = pool_.try_acquire();
@@ -541,7 +541,7 @@ void Pipeline::update_auto_orient( int src, int fd_src, int& ok ) noexcept
     }
 }
 
-void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms )
+void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms ) noexcept
 {
     const auto t3 = clk::now();
     const SourceChannel& ch = srcs_[src];
@@ -595,7 +595,7 @@ void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int
 // its slot is Free again before the overlay touches the tensor: that is
 // safe because only this thread refills a tensor (frame_dispatch), and it
 // does so only after this frame is fully drawn and published.
-int Pipeline::publish_oldest()
+int Pipeline::publish_oldest() noexcept
 {
     if ( !pool_.collect( res_ ) )
         return 0;  // gave up on a wedged NPU (logged by the pool): frame dropped
@@ -676,7 +676,7 @@ void Pipeline::run_reid_stage( const FrameView& view ) noexcept
                             << " (" << reid_crop_fail_ << " so far)\n";
             continue;
         }
-        const ReidJob job { rslot, view.src_idx, reqs[i].local_id, reqs[i].gen, view.ts_us, reqs[i].clipped, reqs[i].occluded };
+        const ReidJob job { rslot, view.src_idx, reqs[i].local_id, reqs[i].gen, view.ts_us };
         if ( reid_worker_->submit( job ) )
             global_tracks_.mark_dispatched( view.src_idx, reqs[i].local_id, reqs[i].gen );
     }

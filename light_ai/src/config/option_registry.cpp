@@ -250,7 +250,7 @@ OptionRegistry::OptionRegistry( const Log& log )
                               +[]( Config& c, const char* ) { return set_flag( c.stream.enabled ); } } },
         { "--net-bitrate",  { true, "preview bitrate 1000..100000 kbps", "1000..100000 kbps",
                               +[]( Config& c, const char* v ) { return set_int( v, 1000, 100000, c.stream.bitrate_kbps ); } } },
-        { "--net-fps",      { true, "preview stream fps 1..120, 0 = follow the source (VFR pts from dequeue times)", "0..120",
+        { "--net-fps",      { true, "preview stream fps 1..120, 0 = follow the source (VFR pts from publish times)", "0..120",
                               +[]( Config& c, const char* v ) { return set_int( v, 0, 120, c.stream.fps ); } } },
         { "--net-h264",     { false, "H.264/MPEG-TS preview instead of raw rgb24", nullptr,
                               +[]( Config& c, const char* ) { return set_flag( c.stream.h264 ); } } },
