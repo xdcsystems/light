@@ -6,7 +6,7 @@
 #include "core/log.hpp"
 #include "core/perf_clock.hpp"
 #include "core/session_warmup.hpp"
-#include "net_encoder.h"
+#include "net/net_encoder.hpp"
 
 namespace
 {
@@ -20,7 +20,7 @@ namespace
     }
 }  // namespace
 
-// Members in declaration order (net_encoder.h): the network layer, the
+// Members in declaration order (net_encoder.hpp): the network layer, the
 // frame ring, the composer (logs the stream layout), the codec (opens and
 // logs), the queue, the gate, the serve session. The body starts the serve
 // thread last, once everything it reaches is built; a throw anywhere

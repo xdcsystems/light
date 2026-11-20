@@ -22,8 +22,8 @@
 #include "core/net_perf.hpp"        // OverlayPerfWindow, EncPerfWindow
 #include "core/track.hpp"           // TrajList
 #include "render/gpu_box_drawer.hpp"
-#include "net_encoder.h"
-#include "net_preview.hpp"
+#include "net/net_encoder.hpp"
+#include "net/net_preview.hpp"
 #include "core/tracker.hpp"
 
 struct StreamConfig;

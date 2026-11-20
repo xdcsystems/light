@@ -81,10 +81,10 @@ add_executable(light_ai
     src/pipeline.cpp
     src/source/sources.cpp
     src/render/overlay_sink.cpp
-    src/tcp_pull_server.cpp
-    src/tcp_send.cpp
-    src/net_preview.cpp
-    src/net_encoder.cpp
+    src/net/tcp_pull_server.cpp
+    src/net/tcp_send.cpp
+    src/net/net_preview.cpp
+    src/net/net_encoder.cpp
     src/core/tracker.cpp
     src/render/gpu_box_drawer.cpp
     src/source/net_mjpeg_source.cpp

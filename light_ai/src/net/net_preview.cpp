@@ -11,11 +11,11 @@ extern "C"
 #include <libavutil/pixfmt.h>
 }
 
-#include "av_common.hpp"
+#include "net/av_common.hpp"
 #include "core/log.hpp"
-#include "muxer_teardown.hpp"
-#include "net_preview.hpp"
-#include "tcp_pull_server.hpp"
+#include "net/muxer_teardown.hpp"
+#include "net/net_preview.hpp"
+#include "net/tcp_pull_server.hpp"
 
 namespace
 {

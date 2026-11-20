@@ -16,7 +16,7 @@ extern "C"
 #include <libavutil/mem.h>
 }
 
-#include "tcp_pull_server.hpp"
+#include "net/tcp_pull_server.hpp"
 
 namespace
 {
@@ -27,7 +27,7 @@ namespace
     };
 
     // The AVIO write callback: the POSIX drain loop is tcp_send_chunk()
-    // (src/tcp_send.cpp, host-tested); its negative codes are -errno, which
+    // (src/net/tcp_send.cpp, host-tested); its negative codes are -errno, which
     // is exactly FFmpeg's AVERROR() on POSIX, except the peer-EOF marker.
     // NOLINTNEXTLINE(misc-redundant-expression): intentional drift guard - AVERROR(e) expands to -(e) on POSIX
     static_assert( AVERROR( EPIPE ) == -EPIPE && AVERROR( ETIMEDOUT ) == -ETIMEDOUT && AVERROR( EIO ) == -EIO,

@@ -1,4 +1,4 @@
-// tcp_send_chunk (src/tcp_send.cpp): TcpPullServer's AVIO write loop over a
+// tcp_send_chunk (src/net/tcp_send.cpp): TcpPullServer's AVIO write loop over a
 // real socket pair -- a whole chunk delivered, the peer gone, abort_client's
 // shutdown, no client, and the chunk-wide sndtimeo deadline (Low §3).
 
@@ -14,7 +14,7 @@
 
 #include "check.hpp"
 #include "suites.hpp"
-#include "tcp_pull_server.hpp"
+#include "net/tcp_pull_server.hpp"
 
 namespace
 {

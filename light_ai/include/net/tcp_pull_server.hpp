@@ -78,7 +78,7 @@ private:
 };
 
 // One AVIO chunk onto the client socket of ctx, all of it or an error
-// (src/tcp_send.cpp: POSIX only, no FFmpeg -- host-tested). Returns
+// (src/net/tcp_send.cpp: POSIX only, no FFmpeg -- host-tested). Returns
 // buf_size, or a negative code: -EPIPE (no client, peer gone, shut down by
 // abort_client), -ETIMEDOUT (the chunk missed its sndtimeo_sec deadline),
 // -EIO (any other errno), kTcpSendEof (send returned 0).

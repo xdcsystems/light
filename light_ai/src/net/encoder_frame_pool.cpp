@@ -12,7 +12,7 @@ extern "C"
 #include <libavutil/pixfmt.h>
 }
 
-#include "av_common.hpp"  // av_noop_free
+#include "net/av_common.hpp"  // av_noop_free
 #include "net/encoder_frame_pool.hpp"
 #include "core/throw_on.hpp"
 EncoderFramePool::EncoderFramePool( const StreamLayout& layout )
