@@ -252,10 +252,15 @@
 ---
 ## Статус реализации плана исправлений (раздел 4)
 
-**Обновлено:** 2026-11-19
+**Обновлено:** 2026-11-20
 
 | Этап | Состояние | Дата | Ветка / PR |
 |---|---|---|---|
-| PR 1 (Critical/High) | Завершён | 2026-11-19 | `fix/audit-p2-pr1` → PR #88 → влит в `fix/audit-p2` |
-| PR 2 (High/Medium) | Завершён | 2026-11-19 | `fix/audit-p2-pr2` → PR #89 → влит в `fix/audit-p2`  |
-| PR 3 (Medium-Defense/Low) | Завершён | 2026-11-19 | `fix/audit-p2-pr3` → PR #92 → в `fix/audit-p2` (issue #91, этапы 3a и 3b) |
+| PR 1 (Critical/High) | Завершён | 2026-11-18 | без issue → `fix/audit-p2-pr1` → PR #88 → `3117d76` влит в `fix/audit-p2` |
+| PR 2 (High/Medium) | Завершён | 2026-11-19 | без issue → `fix/audit-p2-pr2` → PR #89 → `8c6bf24` влит в `fix/audit-p2` |
+| PR 3 (Medium-Defense/Low) | Завершён | 2026-11-19 | issue #91 → `fix/audit-p2-pr3` → PR #92 → `1a0ee5f` влит в `fix/audit-p2` (этапы 3a и 3b) |
+| Доп.: инструменты (clangd 22, `TIDY_FILES`, лимиты размера функций в `src/`, правила проекта в гейте) | Завершён | 2026-11-20 | issue #93 → `fix/audit-p2-tooling` → PR #95 → `12fdf24` влит в `fix/audit-p2` |
+| Доп.: гейт `misc-const-correctness` в проходе `rules` | Завершён | 2026-11-20 | issue #94 → `fix/audit-p2-const` → PR #98 → `1cb2ab4` влит в `fix/audit-p2` |
+| Доп.: заметки о SDK платы для агентов (`CLAUDE.md`) | Завершён | 2026-11-20 | без issue → `docs/agent-sdk-notes` → PR #99 → `62d06a2` влит в `fix/audit-p2` |
+| Доп.: `noexcept` для закрепления потока на больших ядрах при старте; `#error` для неизвестной архитектуры в операциях DMA-кэша | Завершён | 2026-11-20 | issue #96 → `fix/audit-p2-noexcept-pin` → PR #100 → `6f738d8` влит в `fix/audit-p2` |
+| Доп.: доработки по ревью PR #92 и замечания ревью PR #98–#100 (обводка подписей, `sizeof(Pipeline)`, наборы `BoxFilter`, дрожание рамки person, tidy-probe, документация) | Завершён | 2026-11-20 | issue #97 → `fix/audit-p2-followups` → PR #101 → `69c8eb8` влит в `fix/audit-p2` |
