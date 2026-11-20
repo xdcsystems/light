@@ -71,10 +71,6 @@ bool SessionPtsFilter::stamp_packet( bool has_pts, int64_t raw_pkt_pts, bool is_
         if ( candidate >= 0 && candidate <= session_fpts )
             rel_pts = candidate;
     }
-    else if ( awaiting_key_ && !is_key )
-    {
-        return false;
-    }
 
     if ( awaiting_key_ )
     {

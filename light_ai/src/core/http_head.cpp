@@ -69,17 +69,24 @@ HttpHead parse_http_head( const uint8_t* p, size_t n )
         const size_t lf = line_scan::find_lf( p, s, n );
         if ( lf == kNpos )
             break;
-        const size_t ce = line_scan::content_end( p, s, lf );
+        const size_t line = s;
+        const size_t ce = line_scan::content_end( p, line, lf );
+        s = lf + 1;
         if ( status_end == kNpos )
-            status_end = ce;
-        else if ( ce == s )
-            head_len = lf + 1;
-        else if ( ct == kNpos && line_scan::starts_with_ci( p + s, ce - s, "content-type:" ) )
         {
-            ct = s;
+            status_end = ce;
+            continue;
+        }
+        if ( ce == line )
+        {
+            head_len = lf + 1;  // the blank line: the loop ends
+            continue;
+        }
+        if ( ct == kNpos && line_scan::starts_with_ci( p + line, ce - line, "content-type:" ) )
+        {
+            ct = line;
             ct_end = ce;
         }
-        s = lf + 1;
     }
     if ( head_len == kNpos )
     {

@@ -47,6 +47,28 @@ namespace glyph_font
         return kGlyphIndexQuestion;
     }
 
+    // A UTF-8 lead byte (not ASCII): the continuation bytes it announces and its payload bits in cp; 0 for a
+    // continuation byte or an invalid lead.
+    int utf8_lead( uint32_t c0, uint32_t& cp ) noexcept
+    {
+        if ( ( c0 & 0xE0u ) == 0xC0u )
+        {
+            cp = c0 & 0x1Fu;
+            return 1;
+        }
+        if ( ( c0 & 0xF0u ) == 0xE0u )
+        {
+            cp = c0 & 0x0Fu;
+            return 2;
+        }
+        if ( ( c0 & 0xF8u ) == 0xF0u )
+        {
+            cp = c0 & 0x07u;
+            return 3;
+        }
+        return 0;
+    }
+
     uint32_t next_utf8( const char* str, int len, int& pos ) noexcept
     {
         if ( pos >= len )
@@ -58,23 +80,8 @@ namespace glyph_font
             return c0;
         }
 
-        int need = 0;
         uint32_t cp = 0;
-        if ( ( c0 & 0xE0u ) == 0xC0u )
-        {
-            need = 1;
-            cp = c0 & 0x1Fu;
-        }
-        else if ( ( c0 & 0xF0u ) == 0xE0u )
-        {
-            need = 2;
-            cp = c0 & 0x0Fu;
-        }
-        else if ( ( c0 & 0xF8u ) == 0xF0u )
-        {
-            need = 3;
-            cp = c0 & 0x07u;
-        }
+        const int need = utf8_lead( c0, cp );
 
         if ( need == 0 )
         {

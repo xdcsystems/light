@@ -141,12 +141,12 @@ MuxSession::DrainEnd MuxSession::drain_queue( AVFormatContext* fc, const TcpPull
         if ( r < 0 )
         {
             maybe_log_perf( mperf, win_t0, prev_ww, tcp, true );
-            if ( r == AVERROR( EPIPE ) )
-                log_.info() << "enc: viewer disconnected (tcp), session ends\n";
-            else if ( r == AVERROR( ETIMEDOUT ) )
-                log_.info() << "enc: viewer stalled (send timeout), session ends\n";
-            else
-                log_.error() << "enc: write failed: " << av_err_str( r ) << " (packet lost)\n";
+            switch ( r )
+            {
+                case AVERROR( EPIPE ): log_.info() << "enc: viewer disconnected (tcp), session ends\n"; break;
+                case AVERROR( ETIMEDOUT ): log_.info() << "enc: viewer stalled (send timeout), session ends\n"; break;
+                default: log_.error() << "enc: write failed: " << av_err_str( r ) << " (packet lost)\n"; break;
+            }
             return DrainEnd::WriteFailed;
         }
     }
@@ -211,15 +211,10 @@ MuxSession::Transport::~Transport()
 
 void MuxSession::Transport::close()
 {
-    if ( tcp_pull )
-    {
-        if ( tcp )
-            tcp->close_client();
-    }
-    else if ( udp_pb )
-    {
+    if ( tcp_pull && tcp )
+        tcp->close_client();
+    if ( !tcp_pull && udp_pb )
         avio_closep( &udp_pb );
-    }
 }
 
 // Out-of-line dtor of the class-local FcGuard: 

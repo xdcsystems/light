@@ -166,7 +166,7 @@ Status RknnEngine::setup_outputs( bool keep_native_outputs )
             out_attrs_[i].type = RKNN_TENSOR_FLOAT16;
             out_attrs_[i].size = out_attrs_[i].n_elems * sizeof( uint16_t );
         }
-        else if ( keep_native_outputs )
+        if ( keep_native_outputs )
         {
             const uint32_t need = out_attrs_[i].n_elems * tensor_elem_bytes( out_attrs_[i].type );
             if ( out_attrs_[i].size < need )

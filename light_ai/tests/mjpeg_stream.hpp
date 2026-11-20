@@ -118,10 +118,12 @@ DriveResult drive( MultipartReader& r, const Bytes& s, Chunks mode, size_t cap, 
         if ( fed == s.size() )
             break;
         size_t k = w.room();
-        if ( mode == Chunks::OneByte )
-            k = 1;
-        else if ( mode == Chunks::Random )
-            k = pick( rng );
+        switch ( mode )
+        {
+            case Chunks::Whole: break;
+            case Chunks::OneByte: k = 1; break;
+            case Chunks::Random: k = pick( rng ); break;
+        }
         if ( k > s.size() - fed )
             k = s.size() - fed;
         fed += w.append( s.data() + fed, k );

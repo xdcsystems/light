@@ -243,9 +243,9 @@ private:
             return {};
         if ( !hot )
             log_.info() << "camera: discovery adopted " << found << '\n';
-        else if ( first )
+        if ( hot && first )
             log_.info() << "camera: hot-attach adopted " << node_ << " -> " << found << '\n';
-        else
+        if ( hot && !first )
             log_.info() << "source s" << idx_ << ": identity adopted: " << node_ << " -> " << found << '\n';
         node_ = found;
         return {};

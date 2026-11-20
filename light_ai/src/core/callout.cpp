@@ -208,6 +208,30 @@ namespace
             item.segs[item.n_segs++] = { x0, y0, x1, y1 };
     }
 
+    // The vertical leg of the L-bend: column lx from the label row ly to the box (none when ly crosses the box).
+    void push_leg_y( CalloutItem& item, int lx, int ly, const CalloutRect& b ) noexcept
+    {
+        if ( ly < b.y0 )
+        {
+            push_seg( item, lx, ly, lx + 1, b.y0 );
+            return;
+        }
+        if ( ly >= b.y1 )
+            push_seg( item, lx, b.y1, lx + 1, ly + 1 );
+    }
+
+    // The horizontal leg of the L-bend: row ly from the label to column lx (none when lx is inside the label).
+    void push_leg_x( CalloutItem& item, int lx, int ly, const CalloutRect& p ) noexcept
+    {
+        if ( p.x1 <= lx )
+        {
+            push_seg( item, p.x1, ly, lx, ly + 1 );
+            return;
+        }
+        if ( p.x0 > lx )
+            push_seg( item, lx + 1, ly, p.x0, ly + 1 );
+    }
+
     void build_connector( CalloutItem& item ) noexcept
     {
         item.n_segs = 0;
@@ -223,8 +247,11 @@ namespace
             const int pcx = ( p.x0 + p.x1 ) / 2;
             const int vx = std::clamp( pcx, ox0, ox1 - 1 );
             if ( p.y1 <= b.y0 )
+            {
                 push_seg( item, vx, p.y1, vx + 1, b.y0 );
-            else if ( b.y1 <= p.y0 )
+                return;
+            }
+            if ( b.y1 <= p.y0 )
                 push_seg( item, vx, b.y1, vx + 1, p.y0 );
             return;
         }
@@ -236,8 +263,11 @@ namespace
             const int pcy = ( p.y0 + p.y1 ) / 2;
             const int hy = std::clamp( pcy, oy0, oy1 - 1 );
             if ( p.x1 <= b.x0 )
+            {
                 push_seg( item, p.x1, hy, b.x0, hy + 1 );
-            else if ( b.x1 <= p.x0 )
+                return;
+            }
+            if ( b.x1 <= p.x0 )
                 push_seg( item, b.x1, hy, p.x0, hy + 1 );
             return;
         }
@@ -245,15 +275,8 @@ namespace
         // Disjoint in both axes: 2-segment orthogonal L-bend without corner overlap.
         const int lx = std::clamp( ( b.x0 + b.x1 ) / 2, b.x0, b.x1 - 1 );
         const int ly = std::clamp( ( p.y0 + p.y1 ) / 2, p.y0, p.y1 - 1 );
-        if ( ly < b.y0 )
-            push_seg( item, lx, ly, lx + 1, b.y0 );
-        else if ( ly >= b.y1 )
-            push_seg( item, lx, b.y1, lx + 1, ly + 1 );
-
-        if ( p.x1 <= lx )
-            push_seg( item, p.x1, ly, lx, ly + 1 );
-        else if ( p.x0 > lx )
-            push_seg( item, lx + 1, ly, p.x0, ly + 1 );
+        push_leg_y( item, lx, ly, b );
+        push_leg_x( item, lx, ly, p );
     }
 
     void assign_accent( int id, CalloutItem& item ) noexcept

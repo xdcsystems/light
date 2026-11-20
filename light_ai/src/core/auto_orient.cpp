@@ -57,11 +57,10 @@ namespace
                 return d.conf * 0.35f;
             if ( d.w > d.h * 1.45f )
                 return -d.conf * 0.20f;
+            return 0.0f;
         }
-        else if ( is_horizontal_coco( d.cls ) && d.w >= d.h * 1.05f )
-        {
+        if ( is_horizontal_coco( d.cls ) && d.w >= d.h * 1.05f )
             return d.conf * 0.25f;
-        }
         return 0.0f;
     }
 
@@ -90,11 +89,10 @@ namespace
                 second_sc = best_sc;
                 best_sc = adj[i];
                 best_idx = i;
+                continue;
             }
-            else if ( adj[i] > second_sc )
-            {
+            if ( adj[i] > second_sc )
                 second_sc = adj[i];
-            }
         }
     }
 

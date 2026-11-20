@@ -110,8 +110,9 @@ CliOptions::ParseStatus CliOptions::prepass( int argc, char** argv, std::string&
                 return ParseStatus::Error;
             }
             config_path = argv[++i];
+            continue;
         }
-        else if ( !std::strcmp( argv[i], "-h" ) || !std::strcmp( argv[i], "--help" ) )
+        if ( !std::strcmp( argv[i], "-h" ) || !std::strcmp( argv[i], "--help" ) )
             want_help = true;
     }
     return want_help ? ParseStatus::Help : ParseStatus::Run;

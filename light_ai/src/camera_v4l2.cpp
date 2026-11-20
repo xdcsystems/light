@@ -46,10 +46,14 @@ namespace
     Status setup_errno( const char* what, int e )
     {
         Errc c = Errc::Failed;
-        if ( e == ENOENT || e == ENODEV || e == ENXIO )
-            c = Errc::Absent;
-        else if ( e == EBUSY )
-            c = Errc::Busy;
+        switch ( e )
+        {
+            case ENOENT:
+            case ENODEV:
+            case ENXIO: c = Errc::Absent; break;
+            case EBUSY: c = Errc::Busy; break;
+            default: break;
+        }
         return errno_status( c, what, e );
     }
 

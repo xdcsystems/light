@@ -84,7 +84,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
         ts_us_ = ( ts_us >= 0 ) ? now_us : -1;
         ring_.advance();
     }
-    else if ( warm_ready && cfg_.layout.nsrc > 1 )
+    if ( !do_enc && warm_ready && cfg_.layout.nsrc > 1 )
     {
         canvas_dirty_ = true;
         dirty_ts_us_ = ts_us;

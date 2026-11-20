@@ -122,10 +122,9 @@ inline int parse_exif_orient( const uint8_t* seg, size_t seglen )
         return -1;
     const uint8_t* tiff = seg + 8;
     const size_t tiff_len = seglen - 8;
-    bool le = false;
-    if ( tiff[0] == 'I' && tiff[1] == 'I' && tiff[2] == 0x2A && tiff[3] == 0x00 )
-        le = true;
-    else if ( tiff[0] != 'M' || tiff[1] != 'M' || tiff[2] != 0x00 || tiff[3] != 0x2A )
+    const bool le = tiff[0] == 'I' && tiff[1] == 'I' && tiff[2] == 0x2A && tiff[3] == 0x00;
+    const bool be = tiff[0] == 'M' && tiff[1] == 'M' && tiff[2] == 0x00 && tiff[3] == 0x2A;
+    if ( !le && !be )
         return -1;
     const size_t ifd_off = exif_u32( tiff + 4, le );
     if ( ifd_off + 2 > tiff_len )

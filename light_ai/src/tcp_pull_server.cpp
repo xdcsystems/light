@@ -165,12 +165,10 @@ void TcpPullServer::close_client() noexcept
     {
         av_freep( &pb_->buffer );
         avio_context_free( &pb_ );
-        iobuf_ = nullptr;
+        iobuf_ = nullptr;  // the context owned it (or its replacement): freed above
     }
-    else if ( iobuf_ )
-    {
+    if ( iobuf_ )  // allocated, but no context took it over
         av_freep( &iobuf_ );
-    }
     int fd = -1;
     {
         const std::lock_guard<std::mutex> lk( cfd_mx_ );

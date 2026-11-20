@@ -58,25 +58,38 @@ namespace check_detail
 
     // A value as CHECK_EQ / CHECK_NEAR print it: bool as true/false, (un)signed char (uint8_t) as a number,
     // a plain char quoted, an enum as its underlying value, floating point with every significant digit.
-    template <typename T>
+    // One overload per kind (no if / else-if chain, constexpr included: tidy custom-no-else-if); the exact
+    // non-template ones win over the templates, and every overload comes before the enum one, which calls them
+    // with a built-in type (no ADL: only the overloads declared above it count).
+    inline void put_value( std::ostream& os, bool v ) { os << ( v ? "true" : "false" ); }
+
+    inline void put_value( std::ostream& os, char v )
+    {
+        os << '\'';
+        put_escaped( os, v );
+        os << '\'';
+    }
+
+    inline void put_value( std::ostream& os, signed char v ) { os << static_cast<int>( v ); }
+
+    inline void put_value( std::ostream& os, unsigned char v ) { os << static_cast<int>( v ); }
+
+    template <typename T, std::enable_if_t<std::is_floating_point_v<T>, int> = 0>
     void put_value( std::ostream& os, const T& v )
     {
-        if constexpr ( std::is_enum_v<T> )
-            put_value( os, static_cast<std::underlying_type_t<T>>( v ) );
-        else if constexpr ( std::is_same_v<T, bool> )
-            os << ( v ? "true" : "false" );
-        else if constexpr ( std::is_same_v<T, char> )
-        {
-            os << '\'';
-            put_escaped( os, v );
-            os << '\'';
-        }
-        else if constexpr ( std::is_same_v<T, signed char> || std::is_same_v<T, unsigned char> )
-            os << static_cast<int>( v );
-        else if constexpr ( std::is_floating_point_v<T> )
-            os << std::setprecision( std::numeric_limits<T>::max_digits10 ) << v;
-        else
-            os << v;
+        os << std::setprecision( std::numeric_limits<T>::max_digits10 ) << v;
+    }
+
+    template <typename T, std::enable_if_t<!std::is_enum_v<T> && !std::is_floating_point_v<T>, int> = 0>
+    void put_value( std::ostream& os, const T& v )
+    {
+        os << v;
+    }
+
+    template <typename T, std::enable_if_t<std::is_enum_v<T>, int> = 0>
+    void put_value( std::ostream& os, const T& v )
+    {
+        put_value( os, static_cast<std::underlying_type_t<T>>( v ) );
     }
 
     // CHECK_STR_EQ's view of one side; a null const char* is kept apart from "" and never equals anything.
