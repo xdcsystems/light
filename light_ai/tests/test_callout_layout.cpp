@@ -5,6 +5,7 @@
 
 #include "check.hpp"
 #include "core/callout.hpp"
+#include "core/glyph_font.hpp"
 #include "suites.hpp"
 
 namespace
@@ -97,20 +98,22 @@ namespace
             const float h_usb = static_cast<float>( usb.d[0].label.y1 - usb.d[0].label.y0 );
             const float h_phone = static_cast<float>( phone.d[0].label.y1 - phone.d[0].label.y0 );
             CHECK_NEAR( t, h_phone * 0.75f, h_usb, 2.0f );  // within the integer rounding of the rect
-            CHECK( t, phone.d[0].scale > usb.d[0].scale );
-            // #97 item 1: the outline is 2 * scale, so it is 1 px on both tiles (1.33 px in the phone tensor).
-            CHECK_NEAR( t, usb.d[0].outline, 1.0f, 1e-6f );
-            CHECK_NEAR( t, phone.d[0].outline * 0.75f, usb.d[0].outline, 1e-5f );
+            // #97 item 1, #108: the scale follows the tile, so the text and its outline (baked,
+            // kOutlinePx = 2 atlas px = 2 * scale) land the same size on both tiles: 1 px of
+            // outline at the default, 1.33 px in the phone tensor.
+            CHECK_NEAR( t, usb.d[0].scale, 0.5f, 1e-6f );
+            CHECK_NEAR( t, phone.d[0].scale * 0.75f, usb.d[0].scale, 1e-5f );
+            CHECK_NEAR( t, static_cast<float>( glyph_font::kOutlinePx ) * usb.d[0].scale, 1.0f, 1e-6f );
         }
-        // At --label-scale 2 the phone outline is 2.667 px (2 px on the tile), but the layout keeps
-        // the integer unit lround( 2 * 1.333 ) = 3: the paddings are 4 * 3 / 2 * 3 px as before.
+        // At --label-scale 2 the phone outline is 2 * 1.333 = 2.667 px (2 px on the tile), but the layout
+        // keeps the integer unit lround( 2 * 1.333 ) = 3: the paddings are 4 * 3 / 2 * 3 px as before.
         CalloutList phone2 {};
         compute_callouts( trajs, lb, 1.0f, 1.0f, { false, callout_text_scale( 2, 0.75f ) }, phone2 );
         CHECK( t, phone2.n == 1 );
         if ( phone2.n == 1 )
         {
-            CHECK_NEAR( t, phone2.d[0].outline, 8.0f / 3.0f, 1e-5f );
-            CHECK_NEAR( t, phone2.d[0].outline * 0.75f, 2.0f, 1e-5f );
+            CHECK_NEAR( t, phone2.d[0].scale, 4.0f / 3.0f, 1e-5f );
+            CHECK_NEAR( t, static_cast<float>( glyph_font::kOutlinePx ) * phone2.d[0].scale * 0.75f, 2.0f, 1e-5f );
             CHECK( t, phone2.d[0].text_x - phone2.d[0].label.x0 == 4 * 3 && phone2.d[0].text_y - phone2.d[0].label.y0 == 2 * 3 );
         }
         // A bad config scale falls back to the 11 px default instead of a degenerate label.
@@ -148,11 +151,11 @@ void test_callout_layout( TestRun& t )
         CHECK( t, out.n == 1 );
         CHECK( t, std::string( out.d[0].text ) == "Person #99" );
         CHECK( t, inside_even( out.d[0].label, lb ) );
-        // Default scale 0.5 (11 px): the label rect = the scaled text + 4 / 2 px padding, outline 1 px.
+        // Default scale 0.5 (11 px): the label rect = the scaled text + 4 / 2 px padding, outline 2 * 0.5 = 1 px.
         const int text_w = ( glyph_font::text_width( "Person #99" ) + 1 ) / 2;
         CHECK( t, out.d[0].label.y1 - out.d[0].label.y0 >= ( glyph_font::kLineH + 1 ) / 2 + 2 * 2 );
         CHECK( t, out.d[0].label.x1 - out.d[0].label.x0 >= text_w + 2 * 4 );
-        CHECK( t, out.d[0].scale == 0.5f && out.d[0].outline == 1.0f );
+        CHECK( t, out.d[0].scale == 0.5f );
         CHECK( t, out.d[0].text_x == out.d[0].label.x0 + 4 && out.d[0].text_y == out.d[0].label.y0 + 2 );
     }
 

@@ -68,8 +68,9 @@ namespace
         }
     }
 
-    // NO SIGNAL plate (idle canvas): IdlePlate rasterizes the label into
-    // the Y plane once at init (core/idle_plate.hpp); the DMA sync is here.
+    // NO SIGNAL plate (idle canvas): IdlePlate blends the label into the gray
+    // Y plane (read-modify-write) once at init (core/idle_plate.hpp); the DMA
+    // sync is here (DmaSync RW: the pixels are read too).
     void draw_no_signal( MppBuffer mb, const StreamLayout& lay )
     {
         if ( !mb )
@@ -78,7 +79,7 @@ namespace
         if ( !py )
             return;
         const dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
-        IdlePlate plate;
+        const IdlePlate plate {};
         plate.draw( Plane8 { py, lay.w, lay.vstride }, lay );
         dma::cache_clean( py, mpp_buffer_get_size( mb ) );
     }

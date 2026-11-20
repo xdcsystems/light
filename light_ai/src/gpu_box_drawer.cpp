@@ -49,10 +49,21 @@ namespace
             "precision highp float; attribute vec2 a_pos; attribute vec2 a_uv; attribute vec4 a_col; "
             "varying vec2 v_uv; varying vec4 v_col; "
             "void main(){ gl_Position=vec4(a_pos,0.,1.); v_uv=a_uv; v_col=a_col; }";
+    // The outlined text in two passes (#108): the atlas is GL_LUMINANCE_ALPHA, L = the
+    // glyph fill, A = its baked dark outline, and the vertex alpha selects the plane:
+    //   a = v_col.a * L + (1 - v_col.a) * A,  out = v_col.rgb * a + dst * (1 - a)
+    // (premultiplied here, blended with GL_ONE, GL_ONE_MINUS_SRC_ALPHA). The outline pass
+    // draws every glyph of a label with alpha 0 in the outline gray (a = A), then the fill
+    // pass draws them again in white with alpha 255 (a = L): all outlines under all
+    // fills, as the former 8 offset passes + 1 white pass, so the outline of a glyph
+    // never covers the ink of its neighbour (one pass per glyph would: the padded quads
+    // of adjacent glyphs overlap). Solid quads sample the block (L = 1, A = 0): a = v_col.a,
+    // the plain "over".
     constexpr const char *kFS =
             "precision highp float; uniform sampler2D u_tex; "
             "varying vec2 v_uv; varying vec4 v_col; "
-            "void main(){ gl_FragColor=vec4(v_col.rgb, v_col.a * texture2D(u_tex, v_uv).a); }";
+            "void main(){ vec4 t = texture2D(u_tex, v_uv); float a = v_col.a * t.r + (1.0 - v_col.a) * t.a; "
+            "gl_FragColor = vec4(v_col.rgb * a, a); }";
 
     // One VBO for boxes (GpuBoxList::cap * kVertsPerBox) + callouts
     // (CalloutList::cap * kVertsPerCallout), allocated once in init().
@@ -138,52 +149,32 @@ namespace
         }
     }
 
-    // One pass of the label text: every glyph of c offset by (ox, oy) tensor px,
-    // in one color. Glyph quads are the padded atlas rects scaled by c.scale at
-    // float positions; GL_LINEAR does the resampling.
-    void append_text_pass( QuadTarget& qt, const CalloutItem& c, float ox, float oy,
-                           uint8_t r, uint8_t g, uint8_t b, uint8_t a ) noexcept
+    // One pass of the label text of c, one quad a glyph: the padded atlas rects scaled by
+    // c.scale at float positions; GL_LINEAR does the resampling. The glyph walk is
+    // glyph_font::for_each_glyph, shared with the CPU path. The color picks the plane (kFS).
+    void append_text_pass( QuadTarget& qt, const CalloutItem& c, uint8_t gray, uint8_t a ) noexcept
     {
         const float sc = c.scale;
-        float pen = static_cast<float>( c.text_x ) + ox;
-        const float top = static_cast<float>( c.text_y ) + oy;
-        int pos = 0;
-        while ( pos < c.text_bytes )
-        {
-            const uint32_t cp = glyph_font::next_utf8( c.text, c.text_bytes, pos );
-            if ( cp == 0 )
-                break;
-            const int gi = glyph_font::glyph_index( cp );
-            const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( gi );
-            if ( m.w > 0 && m.h > 0 )
-            {
-                float u0 = 0.0f;
-                float v0 = 0.0f;
-                float u1 = 0.0f;
-                float v1 = 0.0f;
-                glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
-                const float fx = pen + static_cast<float>( m.dx ) * sc;
-                const float fy = top + static_cast<float>( m.dy ) * sc;
-                emit_quad( qt, fx, fy, fx + static_cast<float>( m.w ) * sc, fy + static_cast<float>( m.h ) * sc,
-                           u0, v0, u1, v1, r, g, b, a );
-            }
-            pen += static_cast<float>( m.adv ) * sc;
-        }
+        glyph_font::for_each_glyph( c.text, c.text_bytes, static_cast<float>( c.text_x ), static_cast<float>( c.text_y ), sc,
+                                    [&qt, sc, gray, a]( int gi, const glyph_font::GlyphMetric& m, float gx, float gy ) {
+                                        float u0 = 0.0f;
+                                        float v0 = 0.0f;
+                                        float u1 = 0.0f;
+                                        float v1 = 0.0f;
+                                        glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
+                                        emit_quad( qt, gx, gy, gx + static_cast<float>( m.w ) * sc, gy + static_cast<float>( m.h ) * sc,
+                                                   u0, v0, u1, v1, gray, gray, gray, a );
+                                    } );
     }
 
-    // Connector, then the text: kOutlineDirs dark passes around it (the outline
-    // that keeps white text readable on any background, #91 item 5), then white.
+    // Connector, then the text: the baked dark outline (alpha 0 selects the A plane, #108),
+    // then the white fill over it (alpha 255 selects L).
     void append_callout_quads( QuadTarget& qt, const CalloutItem& c ) noexcept
     {
         for ( int s = 0; s < c.n_segs; ++s )
             emit_solid_rect( qt, c.segs[s], c.r, c.g, c.b, 255 );
-        const float o = c.outline;
-        const float dirs[GpuBoxDrawer::kOutlineDirs][2] = {
-            { -o, -o }, { 0.0f, -o }, { o, -o }, { -o, 0.0f }, { o, 0.0f }, { -o, o }, { 0.0f, o }, { o, o } };
-        for ( const auto& d : dirs )
-            append_text_pass( qt, c, d[0], d[1], GpuBoxDrawer::kOutlineGray, GpuBoxDrawer::kOutlineGray,
-                              GpuBoxDrawer::kOutlineGray, GpuBoxDrawer::kOutlineAlpha );
-        append_text_pass( qt, c, 0.0f, 0.0f, 255, 255, 255, 255 );
+        append_text_pass( qt, c, CalloutConfig::kOutlineGray, 0 );
+        append_text_pass( qt, c, 255, 255 );
     }
 
     // Compile/link diagnostics: libmali returns non-zero handles even for
@@ -482,15 +473,20 @@ void GpuBoxDrawer::create_atlas()
     glActiveTexture( GL_TEXTURE0 );
     glBindTexture( GL_TEXTURE_2D, st_.atlas_tex );
     glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
-    // GL_LINEAR: the 22 px atlas is resampled to the label size (#91 item 5); every
-    // glyph rect has a transparent border and 2 px gaps, the solid block is 4x4,
-    // so no sample ever reaches a neighbour.
+    // GL_LINEAR: the 22 px atlas is resampled to the label size (#91 item 5). The quad
+    // UVs run to the glyph rect's edges, so a fragment center may sit closer than half a
+    // texel to an edge and GL_LINEAR then taps 1 texel outside the rect (never more:
+    // no mipmaps), into the gap. The invariant (tools/gen_glyph_font.py, asserted
+    // there): the outer ring of every rect is 0 in both planes and the gap is at least
+    // 1 px of zeros, so no sample ever reads a neighbour's ink. The solid block is 4x4,
+    // sampled at its center.
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-    glTexImage2D( GL_TEXTURE_2D, 0, GL_ALPHA, glyph_font::kAtlasW, glyph_font::kAtlasH, 0,
-                  GL_ALPHA, GL_UNSIGNED_BYTE, glyph_font::atlas() );
+    // (L, A) = (fill, outline) per texel: the shader reads them as .r and .a.
+    glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, glyph_font::kAtlasW, glyph_font::kAtlasH, 0,
+                  GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, glyph_font::atlas() );
     glBindTexture( GL_TEXTURE_2D, 0 );
 }
 
@@ -648,12 +644,12 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const Callou
     glDisable( GL_DEPTH_TEST );
     // Alpha blending: the per-vertex alpha was uploaded
     // but ignored (blend disabled, the RGB888 FBO stores no alpha).
-    // Porter-Duff over: the trail fade from BoxMapper (255..1)
-    // and the a = 255 detections render as computed. The context
-    // belongs to this drawer alone, so leaving blending on between
-    // draws is safe; every draw sets the state before drawing.
+    // Porter-Duff over, premultiplied in the shader (kFS): the trail
+    // fade from BoxMapper (255..1) and the a = 255 detections render
+    // as computed. The context belongs to this drawer alone, so leaving
+    // blending on between draws is safe; every draw sets the state before drawing.
     glEnable( GL_BLEND );
-    glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
+    glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
 
     if ( !st_.es3 )
         setup_attribs();  // ES3: attributes live in the VAO

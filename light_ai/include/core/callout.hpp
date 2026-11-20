@@ -22,8 +22,9 @@ struct CalloutRect
 // One track label: the box it belongs to, the label rect (layout only: nothing is
 // drawn there but the text -- no plate), the L-connector and the text. The text
 // is drawn at `scale` (atlas px -> tensor px) from the pen (text_x, text_y) =
-// the line top-left: white glyphs over an 8-way dark outline `outline` px wide
-// (2 * scale: the same width on every output tile).
+// the line top-left: white glyphs over the dark outline baked into the atlas
+// (glyph_font::kOutlinePx = 2 atlas px, so 2 * scale tensor px: the same width
+// on every output tile).
 struct CalloutItem
 {
     CalloutRect box {};
@@ -33,7 +34,6 @@ struct CalloutItem
     int text_x = 0;
     int text_y = 0;
     float scale = 0.5f;
-    float outline = 1.0f;
     uint8_t r = 255;
     uint8_t g = 255;
     uint8_t b = 255;
@@ -49,7 +49,11 @@ struct CalloutConfig
     {
         // Text size (font px) per --label-scale step on the output tile: 11 px DejaVu
         // has ~8 px capitals, the size of the former 1-px-stroke bitmap font.
-        kLabelPx = 11
+        kLabelPx = 11,
+        // The gray of the dark outline around the white text (#91 item 5), shared by
+        // the GPU and the CPU renderers. Its shape and alpha are baked into the A plane
+        // of the atlas (glyph_font::kOutlinePx, kOutlineAlpha; #108).
+        kOutlineGray = 16
     };
 
 public:

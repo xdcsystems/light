@@ -102,9 +102,9 @@ add_executable(light_ai
     src/core/pts_clock.cpp
     src/core/encode_pacer.cpp
     src/core/session_warmup.cpp
-    src/core/bitmap_font.cpp
     src/core/glyph_font.cpp
     src/core/callout.cpp
+    src/core/overlay_raster.cpp
     src/core/idle_plate.cpp
     src/core/status.cpp
     src/core/http_url.cpp
@@ -134,7 +134,6 @@ target_compile_definitions(light_ai PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)
 target_include_directories(light_ai PRIVATE
     include
     externals/inih
-    externals/fonts
     /usr/include/rockchip
     ${RKNN_API_INCLUDE_DIR}
     ${AV_INCLUDE_DIRS}

@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](#requirements--platform-constraints)
 [![Standard: C++17](https://img.shields.io/badge/C%2B%2B-17-orange.svg)](CMakeLists.txt)
-[![Tests: 62 suites / 9031 checks](https://img.shields.io/badge/Unit%20Tests-62%20suites%20%2F%209031%20checks-brightgreen.svg)](#tests)
+[![Tests: 63 suites / 9149 checks](https://img.shields.io/badge/Unit%20Tests-63%20suites%20%2F%209149%20checks-brightgreen.svg)](#tests)
 
 Zero-copy hardware-accelerated object detection, Kalman tracking, optional OSNet cross-camera Re-ID, and multi-camera H.264 streaming pipeline for Rockchip RK3588 (`V4L2` / HTTP MJPEG → `MPP` decode → `RGA3` letterbox & rotation → `RKNN` NPU + async Re-ID → `Mali G610` EGL/GLES box, EN/RU callout & trail overlay → `MPP` H.264 / MPEG-TS). Built in C++17 with no GStreamer, no OpenCV, no CPU pixel copies, and no virtual dispatch on the frame path.
 
@@ -43,7 +43,7 @@ Sample output frames captured directly from the encoded H.264 preview stream on 
 Run from `light_ai/` inside your repository checkout on an RK3588 board *(on boards booting from eMMC with an external NVMe or USB SSD attached, keep the checkout on the external drive to avoid eMMC flash wear)*:
 
 ```bash
-# 1. Build + run host unit tests (62 suites) + TSan (6 suites) + 2-pass clang-tidy
+# 1. Build + run host unit tests (63 suites) + TSan (6 suites) + 2-pass clang-tidy
 ./scripts/build.sh
 
 # 2. Run host unit tests + ThreadSanitizer suites standalone
@@ -96,7 +96,7 @@ flowchart TB
 - **Output side vs. recognition gating:**
   1. **No viewer attached:** The output path sleeps completely — no GPU/CPU box drawing, no RGA compose, no `NO SIGNAL` tile generation, and no H.264 encoding (`enc` reports `0.0 ms`).
   2. **Recognition never sleeps:** Capture, MPP decode, RKNN inference, and Kalman tracking always run regardless of viewer state.
-  3. **Viewer attached:** Online sources run the full render/compose/encode path; absent or disconnected sources display the pre-rendered gray `NO SIGNAL` tile (`IdlePlate` + `BitmapFont`).
+  3. **Viewer attached:** Online sources run the full render/compose/encode path; absent or disconnected sources display the pre-rendered gray `NO SIGNAL` tile (`IdlePlate`: the DejaVu label font of the callouts, 21 px capitals, no outline).
 - **Canonical stream canvases (`NetEncoder`):**
   - `1` source: `640×480` (letterbox band cropped 1:1 from NPU tensor).
   - `2` sources: `1280×480` side-by-side (`2×1` of `640×480` tiles).
@@ -127,7 +127,7 @@ The codebase contains **93 headers** under [`include/`](include/) and **56 trans
 | `yolo_postprocess.hpp`, `coco_names.h` | Worker-local `YoloDecode` wrapper and 80-class COCO label lookup table |
 | `box_smoother.h`, `tracker.hpp` | 32-slot matcher / coaster for non-person boxes (`cls != 0`, display-filtered by `BoxFilter`) and 8-slot Kalman + greedy IoU tracker (`kMaxMiss = 6`, `global_id`, `gen`) |
 | `box_mapper.h`, `overlay_sink.hpp` | Maps tracks, trails, EN/RU callouts, and non-person boxes; owns GPU/CPU draw parity + network output |
-| `gpu_box_drawer.hpp` | Mali G610 EGL/GBM + GLES2/3 batched box, trail & `GL_ALPHA` callout label renderer (with CPU fallback) |
+| `gpu_box_drawer.hpp` | Mali G610 EGL/GBM + GLES2/3 batched box, trail & `GL_LUMINANCE_ALPHA` callout label renderer (outline + fill pass; CPU fallback in `core/overlay_raster.hpp`) |
 | `net_encoder.h`, `net_preview.hpp` | `h264_rkmpp` MPEG-TS encoder facade (`= default` dtor) and raw RGB24 NUT preview server |
 | `tcp_pull_server.hpp`, `av_common.hpp`, `muxer_teardown.hpp` | Single-viewer TCP pull transport (`TCP_NODELAY`, `2 MiB` `SO_SNDBUF`, `15 s` `SO_SNDTIMEO`, `abort_client()`), FFmpeg helpers, RAII muxer teardown |
 | `cal_dumper.hpp`, `jpeg_probe.hpp` | `--dump-cal` / `--cal` PPM writer and JPEG `SOFn` + EXIF `Orientation` probe |
@@ -141,9 +141,9 @@ The codebase contains **93 headers** under [`include/`](include/) and **56 trans
 
 - **Primitives & Errors:** `status.hpp` (`Status`, `Errc`, `Sys`, `ErrnoText`), `log.hpp` (`Log`, thread-safe RAII `Line`), `stop_flag.hpp` (`StopFlag`, `sleep_interruptible`), `fixed_fmt.hpp`, `line_scan.hpp`.
 - **Geometry & Detection:** `geometry.hpp` (`LbGeom`, `band_geom`), `detection.hpp` (`Detection`, `DetList`), `frame_view.hpp` (`TensorRef` with `stride_bytes`, `TensorSet`, `FrameView`), `fp16.hpp` (`fp16_to_float`), `box_math.hpp` (`box_iou`, `box_iou_corners`, `greedy_iou_match`), `yolo_decoder.hpp` (`YoloDecoder`, `yolo_head_shape`, `Box::seq` NMS ordering).
-- **Tracking, Re-ID & Overlay:** `track.hpp` (`TrackLife`, `TrajPoint`, `TrackState`, `TrajList`), `kalman_axis.hpp`, `associator.hpp`, `trail_window.hpp`, `box_filter.hpp` (`BoxFilter` One-Euro + backlash dead zone, `TrackBoxFilters`: the one display filter of every drawn box), `gpu_box.hpp` (`GpuBox`, `GpuBoxList`), `glyph_font.hpp` (proportional DejaVu Sans, 147 glyphs: digits, Latin, Cyrillic, label punctuation; a `256×196` 8-bit atlas baked at 22 px by `tools/gen_glyph_font.py`, sampled bilinearly; zero-heap UTF-8), `callout.hpp` (`compute_callouts` with per-camera `CalloutHistory` hysteresis; plate-free white labels with a dark outline; `callout_text_scale` gives every source the same letter size on its output tile), `auto_orient.hpp` (`AutoOrient` EXIF + 4-angle scoring), `global_track.hpp` (`GlobalTrackTable`, crop scheduler), `reid_queue.hpp` (`BasicReidQueue`).
+- **Tracking, Re-ID & Overlay:** `track.hpp` (`TrackLife`, `TrajPoint`, `TrackState`, `TrajList`), `kalman_axis.hpp`, `associator.hpp`, `trail_window.hpp`, `box_filter.hpp` (`BoxFilter` One-Euro + backlash dead zone, `TrackBoxFilters`: the one display filter of every drawn box), `gpu_box.hpp` (`GpuBox`, `GpuBoxList`), `glyph_font.hpp` (proportional DejaVu Sans, 147 glyphs: digits, Latin, Cyrillic, label punctuation; a `256×296` atlas of two 8-bit planes, fill and the baked 2 px dark outline (`151,552` bytes), baked at 22 px by `tools/gen_glyph_font.py`, sampled bilinearly; `for_each_glyph` / `raster_text`: the one glyph walk of every renderer; zero-heap UTF-8), `callout.hpp` (`compute_callouts` with per-camera `CalloutHistory` hysteresis; plate-free white labels with a dark outline; `callout_text_scale` gives every source the same letter size on its output tile), `overlay_raster.hpp` (`draw_boxes_cpu`, `draw_callouts_cpu`: the CPU twin of `GpuBoxDrawer`, the `--cpu-draw` / no-GPU fallback), `auto_orient.hpp` (`AutoOrient` EXIF + 4-angle scoring), `global_track.hpp` (`GlobalTrackTable`, crop scheduler), `reid_queue.hpp` (`BasicReidQueue`).
 - **HTTP/MJPEG Parsing:** `byte_window.hpp`, `http_url.hpp`, `http_head.hpp`, `multipart_reader.hpp`.
-- **Encoder/Stream State:** `encoder_config.hpp`, `param_set_cache.hpp`, `pts_clock.hpp` (`PtsClock`, `SessionPtsFilter`), `encode_pacer.hpp`, `session_warmup.hpp`, `bitmap_font.hpp`, `idle_plate.hpp`, `packet_queue.hpp`, `session_gate.hpp`.
+- **Encoder/Stream State:** `encoder_config.hpp`, `param_set_cache.hpp`, `pts_clock.hpp` (`PtsClock`, `SessionPtsFilter`), `encode_pacer.hpp`, `session_warmup.hpp`, `idle_plate.hpp`, `packet_queue.hpp`, `session_gate.hpp`.
 
 ### Configuration, Source & Network Subdirectories
 
@@ -230,7 +230,7 @@ python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4 c
 
 [`tests/CMakeLists.txt`](tests/CMakeLists.txt) is an independent host CMake project requiring only a C++17 compiler and `pthread` (zero Rockchip/FFmpeg/EGL dependencies — runs identically on the board and on x86_64/arm64 hosts).
 
-- **Unit binary (`build/tests/light_ai_tests`):** **62 suites, 9,031 checks**.
+- **Unit binary (`build/tests/light_ai_tests`):** **63 suites, 9,149 checks**.
 - **ThreadSanitizer binary (`build/tests/light_ai_tests_tsan`, `-fsanitize=thread`):** **6 threaded suites, 23 checks** (`source_threads`, `source_prober_threads`, `preview_ring_threads`, `packet_queue_threads`, `session_gate_threads`, `reid_worker_tsan`).
 - **Custom runner options ([`tests/suite_runner.hpp`](tests/suite_runner.hpp)):**
   ```bash
@@ -239,10 +239,10 @@ python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4 c
   ```
   Exits `0` on pass, `1` on check failure, `2` on invalid runner argument.
 
-### Covered Test Suites (62 Total in `tests/test_main.cpp`)
+### Covered Test Suites (63 Total in `tests/test_main.cpp`)
 
 - **Core & Containers:** `check_harness`, `pod_containers`, `geometry`, `fp16`, `box_math`, `rga_limits`, `fixed_fmt`, `status`, `stop_flag`, `log`, `timings`
-- **Detection, Tracking, Labels, Re-ID & Reference:** `yolo_decoder`, `yolo_head_shape`, `box_filter`, `box_smoother`, `kalman_axis`, `associator`, `auto_orient`, `trail_window`, `tracker`, `glyph_font`, `callout_layout`, `box_mapper`, `global_track`, `reid_worker_tsan` *(TSan)*, `reference_chain` (Layer B golden check; see [`tests/data/README`](tests/data/README))
+- **Detection, Tracking, Labels, Re-ID & Reference:** `yolo_decoder`, `yolo_head_shape`, `box_filter`, `box_smoother`, `kalman_axis`, `associator`, `auto_orient`, `trail_window`, `tracker`, `glyph_font`, `callout_layout`, `overlay_raster`, `box_mapper`, `global_track`, `reid_worker_tsan` *(TSan)*, `reference_chain` (Layer B golden check; see [`tests/data/README`](tests/data/README))
 - **Config, CLI, Signals & Affinity:** `config`, `signals`, `cpu_affinity`, `console_reporter`, `cal_dumper`
 - **Inference Pool:** `inference_pool`, `infer_slot_threads`
 - **Sources & HTTP MJPEG:** `jpeg_probe`, `byte_window`, `http_url`, `http_head`, `multipart_reader`, `line_scan`, `buffered_socket`, `mjpeg_slot_pool`, `net_mjpeg_source`, `usb_node_locator`, `source_channel`, `source_threads` *(TSan)*, `source_set`, `source_prober`, `source_prober_threads` *(TSan)*
@@ -396,4 +396,4 @@ All **27 options** (plus `--help` / `-h`) are shared between the CLI parser and 
   - [`misc/README.md`](misc/README.md) — local untracked YOLOv5s + OSNet Re-ID models and artifact inventory.
 - **Licensing:**
   - `light_ai` source code is licensed under the **[MIT License](LICENSE)**.
-  - Third-party dependencies (`inih` BSD-3-Clause, `stb_easy_font.h` MIT/Unlicense, `rockchip_mpp`/`librga` Apache-2.0, `FFmpeg` LGPL-2.1+/GPL note, `librknnrt.so` proprietary Rockchip runtime, and untracked `YOLOv5` / `OSNet` `.rknn` models) are detailed in **[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)**.
+  - Third-party dependencies (`inih` BSD-3-Clause, DejaVu Sans glyph data (Bitstream Vera license), `rockchip_mpp`/`librga` Apache-2.0, `FFmpeg` LGPL-2.1+/GPL note, `librknnrt.so` proprietary Rockchip runtime, and untracked `YOLOv5` / `OSNet` `.rknn` models) are detailed in **[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)**.
