@@ -1,6 +1,6 @@
 # Contributing to `light_ai`
 
-This guide documents the project's coding rules, error model, comment style, and verification gates. Keep changes strictly scoped to `light_ai/` and target `master` via pull requests.
+This guide documents the project's coding rules, error model, comment style, and verification gates. Keep changes strictly scoped to `light_ai/` and target `master` via pull requests (during an audit, its integration branch: see `CLAUDE.md`).
 
 ## Coding Rules
 

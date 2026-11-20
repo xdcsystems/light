@@ -69,9 +69,16 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   and if git refuses the checkout because of them, ask. Never stash, reset or discard.
 - Stage explicit paths inside `light_ai/` (paths relative to this directory: `git add src/x.cpp`),
   never `git add -A` / `git add .` from the git root / `git commit -a`.
-- Base branch: `master` (`fix/audit-p0` merged in PR #73, `fix/audit-p1` merged in PR #81). One branch per task/stage; PR into `master`
-  with `gh pr create --base master`. The user reviews and merges.
-- Never push to `master` directly, never force-push, never rewrite pushed history.
+- Base branch: `master`. While an audit runs, its integration branch is the base (now `fix/audit-p2`): one branch per
+  task/stage, created from it, PR back into it with `gh pr create --base fix/audit-p2`. The user reviews and merges.
+  GitHub reads `Closes #N` in a PR only when the PR targets the default branch (`master`), so the main session closes
+  the issue (`gh issue close N`) after the user confirms the merge. `master` gets the whole audit through one PR
+  `fix/audit-p2` -> `master`, which the user merges; after it, the base is `master` again (`gh pr create --base master`).
+  Update this bullet and the next one when an audit branch is merged or a new one starts. Earlier audit branches:
+  `fix/audit-p0` reached `master` through PR #5, a direct merge `64f71cb` and finally PR #73; `fix/audit-p1` through
+  PR #81.
+- Never push to `master` or the audit's integration branch (now `fix/audit-p2`) directly, never force-push, never rewrite
+  pushed history.
 - Before a PR, the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
   (CMake build + 62 unit suites + 6 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
