@@ -101,7 +101,7 @@ void report( va_list ap )
 int use()
 {
     static int local = 0;                  // custom-no-static-local
-    int* p = new int( 1 );                 // custom-no-new-delete
+    const int* p = new int( 1 );           // custom-no-new-delete
     const int v = *p;
     delete p;                              // custom-no-new-delete
     void* m = std::malloc( 4 );            // custom-no-new-delete (the malloc family)
@@ -119,7 +119,7 @@ int use()
     std::free( strdup( "z" ) );            // custom-no-new-delete x2 (strdup through the redeclaration, free)
     char* text = nullptr;
     asprintf( &text, "%d", v );            // custom-no-printf and custom-no-new-delete (prints and allocates)
-    std::cout << local;                    // custom-no-std-stream
+    std::cout << ++local;                  // custom-no-std-stream
     std::wcout << L"w";                    // custom-no-std-stream (the w- form)
     try
     {
@@ -193,8 +193,8 @@ void loops( int n, volatile int& sink )
     {
         // nothing
     }
-    int arr[3] = {};
-    for ( int& v : arr );                  // custom-no-empty-loop (a range-for)
+    const int arr[3] = {};
+    for ( const int& v : arr );            // custom-no-empty-loop (a range-for)
     do {} while ( ++sink < n );            // custom-no-empty-loop
 }
 
@@ -229,6 +229,25 @@ int more_flow( int n, volatile int& sink )
     return sink;
 }
 
+// misc-const-correctness (#94): each kind the gate asks for, one per line.
+int read_ref( std::vector<int>& seen )     // misc-const-correctness (a reference parameter of a free function)
+{
+    return static_cast<int>( seen.size() );
+}
+int read_ptr( int* in )                    // misc-const-correctness (the pointee of a pointer parameter)
+{
+    return *in;
+}
+int const_kinds( int seed, int* cell )
+{
+    int value = seed;                      // misc-const-correctness (a local value)
+    auto copy = seed;                      // misc-const-correctness (an auto local)
+    auto twice = []( int x ) { return 2 * x; };  // misc-const-correctness (a lambda object)
+    int* at = cell;                        // misc-const-correctness (the pointee of a local pointer)
+    int& alias = *cell;                    // misc-const-correctness (a local reference)
+    return value + copy + twice( *at ) + alias;
+}
+
 // Near misses: none of the lines below may hit. An extra hit fails the self-test like a missing one.
 constexpr int kLimit = 7;  // a constexpr global: not mutable
 const int kConstGlobal = 8;  // a const global: not mutable
@@ -246,7 +265,7 @@ int near_misses()
     std::string s;
     std::istringstream in( "a" );
     std::getline( in, s );  // std::getline, not the C library ::getline
-    auto lam = []( int x ) { return x + 1; };
+    const auto lam = []( int x ) { return x + 1; };
     int ( *fp )( int ) = lam;  // the conversion instantiates the implicit static __invoke of a capture-less lambda
     return error( "x" ) + kLimit + kConstGlobal + fp( 1 );
 }
@@ -287,4 +306,27 @@ int quiet_flow( int n, volatile int& sink )
         default: break;
     }
     return sink;
+}
+
+// misc-const-correctness near misses (#94): written, bound to T&, already const, or out of the check's scope.
+void bump( int& n );
+struct SizeReader
+{
+    int size_of( std::vector<int>& v ) const { return static_cast<int>( v.size() ); }  // a member function parameter
+};
+template <class T>
+int dependent( const T& x )
+{
+    T copy = x;  // a local of a dependent type
+    return static_cast<int>( sizeof( copy ) );
+}
+std::string const_quiet( int seed )  // a value parameter
+{
+    int n = seed;
+    ++n;  // written
+    int m = 0;
+    bump( m );  // bound to T&
+    const int* cp = &seed;  // a pointer variable: top-level const is not asked for (WarnPointersAsValues)
+    std::string s = std::to_string( n + m + *cp + dependent( seed ) );
+    return s;  // returned: const would turn the move into a copy
 }

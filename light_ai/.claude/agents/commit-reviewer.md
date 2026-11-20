@@ -15,8 +15,8 @@ that change anything (add, commit, checkout, merge, stash, reset, push).
 - Input: a commit hash (or range) from the main session.
 - Read the diff with `git show <hash> -- light_ai/` and the surrounding code it touches.
 - Check against the **(review)** rules of CLAUDE.md "Project rules" and CONTRIBUTING.md "Coding Rules" and
-  "Error & Exception Model". The **(gate)** rules are enforced by scripts/tidy_run.sh (the custom-* checks of
-  the rules pass, scripts/rules_lint.sh, both self-tested): do not re-check them by hand and do not report
+  "Error & Exception Model". The **(gate)** rules are enforced by scripts/tidy_run.sh (the custom-* checks and
+  misc-const-correctness of the rules pass, scripts/rules_lint.sh, both self-tested): do not re-check them by hand and do not report
   them; the gate run before the push does.
 
 ## What to check
@@ -26,10 +26,13 @@ that change anything (add, commit, checkout, merge, stash, reset, push).
 4. Project rules the gate cannot see: zero-copy dma-buf frames (no CPU pixel copies), no heap growth on
    recovery and frame paths, throw only on the startup path, noexcept frame path and thread bodies,
    Status / outcome-enum usage, header layout (functions, then a fresh label for data), dependencies
-   injected by reference, `const` by default, preallocated outputs cleared by the callee, branch tables.
+   injected by reference, `const` by default where misc-const-correctness is blind (member function /
+   constructor / lambda parameters, dependent locals in templates, `const` methods, `const&` instead of a
+   copy), preallocated outputs cleared by the callee, branch tables.
    A `#else` branch for another arch is invisible to the gate on this board: review it for every rule.
    Every new or changed `NOLINT(...)`: its reason after `: ` is true for the code at that line, and a
-   NOLINT(custom-...) site is described in CONTRIBUTING.md (its allowlist line is checked by the gate).
+   NOLINT(custom-...) or NOLINT(misc-const-correctness) site is described in CONTRIBUTING.md (its allowlist
+   line is checked by the gate).
 5. Comments and docs: every changed comment matches the code; docs/state.md or AUDIT_REPORT.md
    status is not claimed as done when the code says otherwise.
 6. Behavioural invariants: output side sleeps without viewer, recognition never sleeps,

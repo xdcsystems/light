@@ -2,27 +2,51 @@
 # The main pass is the system clang-tidy 11 with the .clang-tidy files of the tree. This pass runs the pinned PyPI
 # clang-tidy in light_ai/venv (README, Build) with --config-file and --experimental-custom-checks, and only:
 #   readability-function-cognitive-complexity  LLVM 12+, not in clang-tidy 11 (#43);
+#   misc-const-correctness                     LLVM 15+, not in clang-tidy 11 (#94): "const by default" (CONTRIBUTING,
+#                                              Coding Rules) for the locals and the parameters of free functions;
 #   custom-*                                   the project rules of CONTRIBUTING.md (Coding Rules, Error Model)
 #                                              as clang-query matchers (#93): LLVM 21+ query-based custom checks.
-# The other checks stay on clang-tidy 11. LLVM 23 can parse the root .clang-tidy since #93 (its
+# Every other check runs in the main pass (clang-tidy 11). LLVM 23 can parse the root .clang-tidy since #93 (its
 # AnalyzeTemporaryDtors key is gone), but this pass keeps its own file.
+# Option keys: every option of a check here is written out, defaults included, and tidy_run.sh runs
+# --verify-config on this file before the self-test: a mistyped key is silently ignored by clang-tidy, and the
+# self-test cannot see a typo whose default equals the intended value.
 # Self-test: a matcher with a typo matches nothing and the gate stays green, so tidy_run.sh first runs this config
 # on tests/tidy_probe/ (the hits of each rule, the near misses that must stay silent, the exempt files) and fails
 # unless the hit sites ("<fixture>:<line> <check>") are exactly tests/tidy_probe/expected_rules.txt. A change of a
 # check here goes with a change of the probe.
-# Suppression: NOLINT(custom-...) only with a reason and only at the sites of scripts/rules_allow.txt
-# (scripts/rules_lint.sh fails on any other).
+# Suppression: NOLINT(custom-...) and NOLINT(misc-const-correctness) only with a reason and only at the sites of
+# scripts/rules_allow.txt (scripts/rules_lint.sh fails on any other), never a NOLINTBEGIN / NOLINTEND range.
 # Scopes: every check covers src/, include/ and tests/ (the header filter), except:
 #   custom-no-printf, custom-no-std-stream  not in the test harness (a file directly in tests/: check.hpp,
 #                                           test_main.cpp, ... print with them); custom-no-std-stream also not in
 #                                           src/main.cpp, the one owner of std::cout / std::cerr.
 #   (clang-query takes a regex string as written: "[.]" for a dot, never "\\.")
-Checks: '-*,readability-function-cognitive-complexity,custom-*'
+Checks: '-*,readability-function-cognitive-complexity,misc-const-correctness,custom-*'
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*/light_ai/(src|include|tests)/.*'
 CheckOptions:
   - { key: readability-function-cognitive-complexity.Threshold,    value: '20' }  # flag functions above this
   - { key: readability-function-cognitive-complexity.IgnoreMacros, value: true }  # code expanded from a macro is not counted
+  # misc-const-correctness (#94): a local that is never changed is const, so is the pointee of a local pointer and the
+  # referent of a reference; the reference and pointer parameters of a free function too. Not seen by the check (so
+  # (review), CONTRIBUTING): a local of a dependent type in a template, the parameters of member functions,
+  # constructors and lambdas, value parameters, #else branches of another arch. A top-level "* const" is not asked
+  # for (WarnPointersAsValues): on a parameter it is not part of the signature and protects no data. The gate never
+  # runs -fix: the Transform* keys only shape the fix-it text of a finding.
+  - { key: misc-const-correctness.AnalyzeValues,               value: true }   # T x -> const T x
+  - { key: misc-const-correctness.AnalyzeReferences,           value: true }   # T& r -> const T& r
+  - { key: misc-const-correctness.AnalyzePointers,             value: true }   # pointers (the Warn* keys say which const)
+  - { key: misc-const-correctness.AnalyzeParameters,           value: true }   # reference / pointer parameters
+  - { key: misc-const-correctness.AnalyzeLambdas,              value: true }   # auto f = [..] -> const auto f
+  - { key: misc-const-correctness.AnalyzeAutoVariables,        value: true }   # auto x = ... -> const auto x
+  - { key: misc-const-correctness.WarnPointersAsPointers,      value: true }   # T* p -> const T* p
+  - { key: misc-const-correctness.WarnPointersAsValues,        value: false }  # T* p -> T* const p: not asked for
+  - { key: misc-const-correctness.TransformValues,             value: true }
+  - { key: misc-const-correctness.TransformReferences,         value: true }
+  - { key: misc-const-correctness.TransformPointersAsPointers, value: true }
+  - { key: misc-const-correctness.TransformPointersAsValues,   value: false }
+  - { key: misc-const-correctness.AllowedTypes,                value: '' }     # no type is exempt
 CustomChecks:
   # No statics (Coding Rules: no static data members, no static member functions, no function-local statics;
   # file-local helpers go in an anonymous namespace; no globals).

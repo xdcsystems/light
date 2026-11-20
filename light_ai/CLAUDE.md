@@ -34,7 +34,8 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   `SKIP_TSAN=1` / `SKIP_TIDY=1` to narrow intermediate iterations).
   Two-pass tidy gate: self-test + `scripts/rules_lint.sh` first, then `main` = system `clang-tidy-11`
   (`.clang-tidy`, `tests/.clang-tidy`) and `rules` = pinned `clang-tidy==23.1.4` in `venv/`
-  (`scripts/tidy_rules.yaml`: cognitive complexity 20 + the `custom-*` project rules; `cognitive` before #93).
+  (`scripts/tidy_rules.yaml`: cognitive complexity 20 + `misc-const-correctness` (#94) + the `custom-*` project
+  rules; `cognitive` before #93).
   Per-file logs: `build/tidy/{src,tests}/<path>.log` and `build/tidy/rules/{src,tests}/<path>.log`;
   self-test and lint: `build/tidy/selftest/`.
   Result cache: `build/tidy-cache` (`TIDY_NO_CACHE=1` disables it). See [README.md](README.md#build--static-analysis).
@@ -90,9 +91,10 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   keep baseline logs (`build/run_*.log`) to avoid re-measuring.
 
 ## Project rules (full text: [CONTRIBUTING.md](CONTRIBUTING.md))
-(gate) = enforced by `scripts/tidy_run.sh` (`custom-*` checks of the `rules` pass, `scripts/rules_lint.sh`, both
-self-tested on `tests/tidy_probe/`): nobody re-checks it by hand. Fix a (gate) finding like any other gate finding;
-a NOLINT that switches a `custom-*` check off (by name or glob: `*`, `cust*`; every NOLINT of a line counts) only
+(gate) = enforced by `scripts/tidy_run.sh` (`custom-*` checks and `misc-const-correctness` of the `rules` pass,
+`scripts/rules_lint.sh`, both self-tested on `tests/tidy_probe/`): nobody re-checks it by hand. Fix a (gate) finding
+like any other gate finding; a NOLINT that switches a `custom-*` check or `misc-const-correctness` off (by name or
+glob: `*`, `cust*`, `misc-*`; every NOLINT of a line counts) only
 with `: <reason>` and a line in `scripts/rules_allow.txt` (a CONTRIBUTING-listed site), decided by the main session;
 only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
 (review) = only `commit-reviewer` can judge it.
@@ -102,6 +104,9 @@ only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
   by the callee (review).
 - Pixels exist only as `dma-buf`s: no CPU pixel copies (review).
 - Dependencies injected by reference to a concrete class (`StopFlag&`, `const Log&`) (review).
+- `const` by default: unchanged locals, read-only pointees and read-only reference / pointer parameters of free
+  functions (gate: `misc-const-correctness`); member function / constructor / lambda parameters, dependent locals
+  in templates, `const` methods (review). A false positive is worked around in code or NOLINTed with a reason.
 - Diagnostics through `Log` (`include/core/log.hpp`); only `main.cpp` owns `std::cout`/`std::cerr`/`std::clog`;
   no C stdio output (gate).
 - Header layout: in each visibility section, functions first, then a fresh label for data (review).

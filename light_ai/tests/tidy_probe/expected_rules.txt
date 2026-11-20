@@ -74,3 +74,10 @@ tests/tidy_probe/violations.cpp:213 custom-no-empty-loop
 tests/tidy_probe/violations.cpp:216 custom-no-empty-loop
 tests/tidy_probe/violations.cpp:220 custom-no-infinite-loop
 tests/tidy_probe/violations.cpp:225 custom-no-empty-loop
+tests/tidy_probe/violations.cpp:233 misc-const-correctness
+tests/tidy_probe/violations.cpp:237 misc-const-correctness
+tests/tidy_probe/violations.cpp:243 misc-const-correctness
+tests/tidy_probe/violations.cpp:244 misc-const-correctness
+tests/tidy_probe/violations.cpp:245 misc-const-correctness
+tests/tidy_probe/violations.cpp:246 misc-const-correctness
+tests/tidy_probe/violations.cpp:247 misc-const-correctness

@@ -12,14 +12,15 @@ change behavior: same control flow, same values, same log text.
 
 ## Rules
 - Follow CLAUDE.md "Project rules" and CONTRIBUTING.md "Coding Rules" in every edit. The (gate) rules are
-  checked by the gate itself (the custom-* findings of the rules pass, `rules-lint:` findings): fix them like
-  any other finding; a self-test FAIL (tests/tidy_probe/) or a scripts/rules_allow.txt change is the main
+  checked by the gate itself (the custom-* and misc-const-correctness findings of the rules pass, `rules-lint:`
+  findings): fix them like any other finding; a self-test FAIL (tests/tidy_probe/) or a scripts/rules_allow.txt change is the main
   session's, report it.
 - Touch only files under light_ai/. Never run git commands that change anything
   (add, commit, checkout, merge, stash, reset, push): the main session commits.
 - If a fix would change logic, threading, lifetimes or a public interface, stop and
   report it instead -- that is the main session's call.
-- Never silence a finding with NOLINT unless the main session asked for it, and never a custom-* one
+- Never silence a finding with NOLINT unless the main session asked for it, and never a custom-* or
+  misc-const-correctness one
   (that takes an allowlist line, decided by the main session); if you believe a finding is a false
   positive, report why.
 

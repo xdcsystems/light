@@ -10,12 +10,13 @@
 #   banned-include   GStreamer or OpenCV (<gst/...>, <gstreamer...>, <opencv...>)
 #   core-include     include/core/ and src/core/ include only the C++17 standard library headers (the C++ names:
 #                    <cstdint>, not <stdint.h>), core/*, pod_list.hpp and pod_ring.hpp (SDK-free core: host tests)
-#   nolint           a NOLINT / NOLINTNEXTLINE whose check list switches a custom-* check off: an entry matching
-#                    one of the names in scripts/tidy_rules.yaml as clang-tidy globs it ('*' the only wildcard: '*',
-#                    'cust*', '*-catch-all'); every NOLINT of a line counts. Each one must be in the allowlist
+#   nolint           a NOLINT / NOLINTNEXTLINE whose check list switches a project rule off: an entry matching a
+#                    custom-* name of scripts/tidy_rules.yaml or misc-const-correctness (#94; it must be enabled in
+#                    the Checks of that file) as clang-tidy globs it ('*' the only wildcard: '*', 'cust*',
+#                    '*-catch-all', 'misc-*'); every NOLINT of a line counts. Each one must be in the allowlist
 #                    (CONTRIBUTING lists the sites)
 #   nolint-reason    such a NOLINT(...) without ": <reason>" after it
-#   nolint-range     a NOLINTBEGIN / NOLINTEND whose check list names a custom-* check (the same globs), or a bare
+#   nolint-range     a NOLINTBEGIN / NOLINTEND whose check list names a project rule (the same globs), or a bare
 #                    NOLINTBEGIN (every check, detail '*'; its bare NOLINTEND is not reported again): never
 #                    allowed, an allowlist line (no line number) must not cover a whole range; an allowlist line
 #                    for it fails as well
@@ -25,7 +26,8 @@
 # numbers: an edit above a site does not break it). A finding not on it fails, and so does an entry that matches
 # no finding (stale).
 # Output: one "path:line: rule: detail -- message" line per failing finding, sorted, then the summary line
-# "rules-lint: PASS|FAIL ...". Exit 0 clean, 1 findings, 2 usage (no root, no scripts/tidy_rules.yaml).
+# "rules-lint: PASS|FAIL ...". Exit 0 clean, 1 findings (or a policed built-in check not enabled in
+# scripts/tidy_rules.yaml), 2 usage (no root, no scripts/tidy_rules.yaml).
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd -P)"
 ROOT=${1:-"$HERE/.."}
 if [ ! -d "$ROOT" ]; then
@@ -40,11 +42,22 @@ root = sys.argv[1]
 if not os.path.exists(sys.argv[2]):
     print("rules-lint: no such config: " + sys.argv[2] + " (the custom check names come from it)")
     sys.exit(2)
-with open(sys.argv[2], encoding="utf-8") as f:  # the custom check names, as clang-tidy names them
-    CUSTOM = ["custom-" + m for m in re.findall(r'^\s*-\s*Name:\s*(\S+)', f.read(), re.M)]
+with open(sys.argv[2], encoding="utf-8") as f:
+    CFG = f.read()
+CUSTOM = ["custom-" + m for m in re.findall(r'^\s*-\s*Name:\s*(\S+)', CFG, re.M)]  # as clang-tidy names them
 if not CUSTOM:
     print("rules-lint: FAIL -- no custom check names in " + sys.argv[2])
     sys.exit(1)
+# The built-in checks of the rules pass that enforce a project rule (#94): their NOLINTs are policed like the
+# custom ones. Each must be enabled by name in the Checks of the config, or this list has drifted from it.
+BUILTIN = ("misc-const-correctness",)
+CHECKS = re.search(r"^Checks:\s*'([^']*)'", CFG, re.M)
+ENABLED = [c.strip() for c in CHECKS.group(1).split(",")] if CHECKS else []
+for name in BUILTIN:
+    if name not in ENABLED:
+        print("rules-lint: FAIL -- " + name + " is policed here but not enabled in the Checks of " + sys.argv[2])
+        sys.exit(1)
+POLICED = CUSTOM + list(BUILTIN)
 MAX_COLS = 140
 STD = set("""algorithm any array atomic bitset cassert cctype cerrno cfenv cfloat charconv chrono cinttypes climits
 clocale cmath codecvt complex condition_variable csetjmp csignal cstdarg cstddef cstdint cstdio cstdlib cstring
@@ -89,7 +102,7 @@ def check_nolint(rel, n, text):
                     "switches the custom checks off")
             continue
         entries = [c.strip() for c in paren.group(1).split(",") if c.strip()]
-        custom = [c for c in entries if any(glob_re(c).fullmatch(name) for name in CUSTOM)]
+        custom = [c for c in entries if any(glob_re(c).fullmatch(name) for name in POLICED)]
         if kind in ("BEGIN", "END"):
             for c in custom:
                 add(rel, n, "nolint-range", c,
@@ -98,7 +111,7 @@ def check_nolint(rel, n, text):
         for c in custom:
             add(rel, n, "nolint", c, "a project rule switched off: only at the sites of scripts/rules_allow.txt")
         if custom and not re.match(r'\s*:\s*\S', after[paren.end():]):
-            add(rel, n, "nolint-reason", ",".join(custom), "NOLINT(custom-...) needs ': <reason>' after it")
+            add(rel, n, "nolint-reason", ",".join(custom), "a NOLINT of a project rule needs ': <reason>' after it")
 
 
 def check_file(rel, path):

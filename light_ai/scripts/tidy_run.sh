@@ -2,15 +2,15 @@
 # tidy_run.sh: the clang-tidy gate (M6; #42, #43). One clang-tidy per TU, the TUs in parallel, a per-TU
 # timeout, an exact per-TU result cache (scripts/tidy_cache.py makes the key). The TUs: src/**/*.cpp (compile DB
 # build/) and tests/*.cpp (the host tests' own DB, build/tests: configured here, not built, so SKIP_TESTS=1 works;
-# tests/.clang-tidy relaxes only the function size). First the rules self-test and scripts/rules_lint.sh (#93, below),
-# then two passes, one after the other (the same job count: RAM is the limit), over the same TUs and the same
-# stripped compile DBs:
+# tests/.clang-tidy relaxes only the function size). First the rules self-test, --verify-config of the rules config
+# and scripts/rules_lint.sh (#93, #94, below), then two passes, one after the other (the same job count: RAM is
+# the limit), over the same TUs and the same stripped compile DBs:
 #   main   the system clang-tidy 11 with the .clang-tidy files of the tree: every check of the project;
 #   rules  the pinned PyPI clang-tidy in light_ai/venv (RULES_VERSION) with scripts/tidy_rules.yaml only
-#          (--experimental-custom-checks): readability-function-cognitive-complexity, which LLVM 11 does not have
-#          (#43), and the custom-* project rules (#93: no statics, globals, virtuals, inheritance, manual heap,
-#          smart pointers, const_cast, printf, std::cout outside main.cpp, catch (...); #95: else-if, empty or
-#          endless loops). The venv belongs to the
+#          (--experimental-custom-checks): readability-function-cognitive-complexity and misc-const-correctness,
+#          which LLVM 11 does not have (#43, #94), and the custom-* project rules (#93: no statics, globals,
+#          virtuals, inheritance, manual heap, smart pointers, const_cast, printf, std::cout outside main.cpp,
+#          catch (...); #95: else-if, empty or endless loops). The venv belongs to the
 #          user: the gate only reads it; a missing binary or another version fails the gate at once, with the
 #          install command (README, Build). Named "cognitive" before #93.
 # Usage: bash scripts/tidy_run.sh [timeout_sec]
@@ -186,6 +186,26 @@ else
   echo "tidy self-test: rules FAIL -- the hit sites differ from $PROBE/expected_rules.txt (logs: $SELF):"
   tail -n +3 "$SELF/rules.diff"
   SELF_FAIL=1
+fi
+# --verify-config (#94): clang-tidy ignores a mistyped option key without a word, and the probe above cannot see a
+# typo whose default equals the intended value. LLVM 23 cannot resolve the custom-* glob there (the custom checks
+# exist only at run time), so that one line is expected and dropped; any other line fails. The step proves itself
+# on $PROBE/verify_typo.yaml (one mistyped key): no "unknown check option" there means it no longer reports one.
+VERIFY_NOISE="check glob 'custom-\*' doesn't match any known check"
+"$RULES_TIDY" --experimental-custom-checks --config-file="$PROJ_ROOT/$PROBE/verify_typo.yaml" --verify-config \
+  > "$SELF/verify-typo.log" 2>&1
+"$RULES_TIDY" --experimental-custom-checks --config-file="$RULES_CFG" --verify-config > "$SELF/verify.log" 2>&1
+grep -v "$VERIFY_NOISE" "$SELF/verify.log" > "$SELF/verify.txt"
+if ! grep -q "unknown check option 'misc-const-correctness.WarnPointersAsValue'" "$SELF/verify-typo.log"; then
+  echo "tidy self-test: verify-config FAIL -- no report of the mistyped key of $PROBE/verify_typo.yaml:"
+  cat "$SELF/verify-typo.log"
+  SELF_FAIL=1
+elif [ -s "$SELF/verify.txt" ]; then
+  echo "tidy self-test: verify-config FAIL -- $RULES_CFG:"
+  cat "$SELF/verify.txt"
+  SELF_FAIL=1
+else
+  echo "tidy self-test: verify-config PASS (every check and option key of $(basename "$RULES_CFG") is known)"
 fi
 bash "$HERE/rules_lint.sh" "$PROJ_ROOT/$PROBE/lint" | grep -v '^rules-lint:' > "$SELF/lint.txt"
 if diff -u <(grep -v '^#' "$PROBE/expected_lint.txt") "$SELF/lint.txt" > "$SELF/lint.diff"; then
