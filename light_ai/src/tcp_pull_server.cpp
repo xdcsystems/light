@@ -32,6 +32,7 @@ namespace
     // NOLINTNEXTLINE(misc-redundant-expression): intentional drift guard - AVERROR(e) expands to -(e) on POSIX
     static_assert( AVERROR( EPIPE ) == -EPIPE && AVERROR( ETIMEDOUT ) == -ETIMEDOUT && AVERROR( EIO ) == -EIO,
                    "AVERROR is not -errno on this platform" );
+    // NOLINTNEXTLINE(misc-const-correctness): avio_alloc_context fixes the callback type, opaque is void*
     int write_packet( void* opaque, const uint8_t* buf, int buf_size )
     {
         const int r = tcp_send_chunk( *static_cast<const TcpPullServer::WriteCtx*>( opaque ), buf, buf_size );

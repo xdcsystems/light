@@ -112,21 +112,22 @@ void NetPreview::serve() noexcept
             const std::lock_guard<std::mutex> lk( mx );
             slot = nullptr;
         }
-    } tcp_reg( tcp_mx_, active_tcp_, tcp );
+    };
+    const TcpReg tcp_reg( tcp_mx_, active_tcp_, tcp );
     // The bind retries until it succeeds or quit ends the thread; the run
     // keeps going without a viewer.
-    if ( Status st = retry_listen( [&] { return tcp.listen(); }, quit_, log_, "net", port_ ); !st.ok() )
+    if ( const Status st = retry_listen( [&] { return tcp.listen(); }, quit_, log_, "net", port_ ); !st.ok() )
         return;
     log_.info() << "net: listening on tcp port " << port_ << " (viewer: ffplay tcp://<board-ip>:" << port_ << ")\n";
 
     while ( !quit_.load() )
     {
-        if ( Status ast = tcp.accept_client( quit_ ); !ast.ok() )
+        if ( const Status ast = tcp.accept_client( quit_ ); !ast.ok() )
             continue;
 
         NutSessionGuard s( tcp );
         AVStream* st = nullptr;
-        if ( Status ost = open_session( tcp, s.fc, st ); !ost.ok() )
+        if ( const Status ost = open_session( tcp, s.fc, st ); !ost.ok() )
         {
             log_.error() << "net: " << ost << '\n';
             continue;

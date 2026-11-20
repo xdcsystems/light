@@ -224,7 +224,7 @@ void NetEncoder::run_encoded( uint32_t epoch, std::chrono::steady_clock::time_po
     const auto enc_t0 = std::chrono::steady_clock::now();
     // No session or epoch changed while cropping: drop the stale frame.
     gate_.run( epoch, [this]( const SessionGate::Session& s ) {
-        if ( Status est = codec_.encode( ring_.frame( ring_.current() ), ts_us_, s, queue_ ); !est.ok() )
+        if ( const Status est = codec_.encode( ring_.frame( ring_.current() ), ts_us_, s, queue_ ); !est.ok() )
             queue_.fail( s.epoch );
     } );
     const double h264_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - enc_t0 ).count();
