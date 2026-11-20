@@ -19,29 +19,40 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Board SDK (self-built libraries, forks)
 Checked 2026-11-20. Sources: `/mnt/nvme_data/work` (`~/work` links there): user-owned, read only -- never build,
-install, rebase, push or clean there without the user's decision (a new `/usr/local` install changes every later
-gate and FPS figure). The distro copies (`librockchip-mpp1` 1.5.0, `librga2` 2.2.0, FFmpeg 4.x `so.58`) stay
-installed.
+install, rebase, push or clean there without the user's decision (a new `/usr/local` install changes every later gate
+and FPS figure). The distro packages stay installed: `librockchip-mpp1` 1.5.0 and `librga2` 2.2.0 (dpkg versions;
+their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
 - FFmpeg `ffmpeg-rockchip/`: our fork (`myfork` = `xdcsystems/ffmpeg-rockchip`, `origin` =
-  `nyanmisaka/ffmpeg-rockchip`). Installed `master` `129a3cf0d7` = `origin/8.1` (FFmpeg 8.1.3) + 2 own `h264_rkmpp`
-  EOS fixes (`f5f6da6337`, `129a3cf0d7`); `/usr/local`, `libavcodec` 62.28.103, configured with `--enable-gpl
+  `nyanmisaka/ffmpeg-rockchip`). Installed build `129a3cf0d7` (`ffmpeg -version`) = `origin/8.1` (`b187bf5276`, FFmpeg
+  8.1.3) + 2 own `h264_rkmpp` EOS fixes (`f5f6da6337`, `129a3cf0d7`); `master` = `myfork/master` = `10b361b5d4`, which
+  only adds `STATE-NOTES.md`. `/usr/local`, `libavcodec` 62.28.103, configured with `--prefix=/usr/local --enable-gpl
   --enable-version3 --enable-rkmpp --enable-rkrga --enable-libdrm --enable-libx264 --enable-libx265 --enable-libvpx
-  --enable-shared`. Upstream PR nyanmisaka/ffmpeg-rockchip#273 (branch `xdc-rkmpp-eos-fixes-v2`, open) is built
-  in-tree only, never installed. The fork's `STATE-NOTES.md` is its log (it still says the `.102` libs were removed;
-  they are in `/usr/local/lib`). CMake pins `libav*` via `FFMPEG_PKGCONF_DIR` (`/usr/local/lib/pkgconfig`) so the
+  --enable-pic --enable-shared --disable-static`. Upstream PR nyanmisaka/ffmpeg-rockchip#273 (open): head
+  `xdcsystems:xdc-upstream-sync` = `a9f8736d02` = local `xdc-rkmpp-eos-fixes-v2` (upstream `master` + the 2 fixes;
+  that local branch tracks `origin/master`, not the fork); built in-tree only, never installed. The fork's
+  `STATE-NOTES.md` is its log but is stale: its "~592 local commits" count against `origin/master`
+  (`origin/8.1..master` is 3), `myfork/master` = `129a3cf0d7`, and that the `.102` libs were removed (7 `*.so.*.102`
+  are still in `/usr/local/lib`). CMake pins `libav*` via `FFMPEG_PKGCONF_DIR` (`/usr/local/lib/pkgconfig`) so the
   distro FFmpeg cannot leak in.
-- MPP `mpp/`: `HermanChen/mpp` `develop` @ `20959ec3`, no local commits; Release, shared, prefix `/usr/local`
-  (`rockchip_mpp.pc` 1.3.10, installed 2026-11-03; file list in `mpp/install_manifest.txt`).
-- RGA `librga/`: `airockchip/librga` 1.10.6_[3], the vendor's prebuilt `libs/Linux/gcc-aarch64/librga.so` copied to
-  `/usr/local/lib` (hand-written `.pc`). There is no `/usr/local/include/rga/`: `<im2d.h>`/`<rga.h>` come from the
-  distro `librga-dev` 2.2.0 in `/usr/include/rga/` (`im2d.h` identical, `im2d_version.h` and `rga.h` differ).
-- RKNN `rknn_model_zoo/`: V2.5.0; `/usr/lib/librknnrt.so` (2.5.0) is a copy of its `3rdparty/rknpu2/Linux/aarch64/`.
-  `rknn_api.h` exists only in that checkout: `CMakeLists.txt` finds it through a `HINTS` path into
-  `~/work/rknn_model_zoo/3rdparty/rknpu2/include`, so the checkout is a build dependency (`-DRKNN_ROOT=` overrides).
-- Which MPP/RGA a process loads depends on the loader: `ld.so.conf` lists `/lib/aarch64-linux-gnu` before
-  `/usr/local/lib`. `light_ai` has `RUNPATH /usr/local/lib`, loads the `/usr/local` copies, and `libavcodec` reuses
-  them. The `/usr/local/bin/ffmpeg` CLI has no RPATH and runs on the distro MPP 1.5.0 / librga 2.2.0: a CLI test of
-  the fork needs `LD_LIBRARY_PATH=/usr/local/lib`. Check: `ldd build/light_ai | grep -E 'av|mpp|rga|rknn'`.
+- MPP `mpp/`: `HermanChen/mpp` `develop` @ `20959ec3`, no local commits; Release, shared, prefix `/usr/local` (headers
+  in `/usr/local/include/rockchip/`, `rockchip_mpp.pc` 1.3.10, installed 2026-11-03; file list in
+  `mpp/install_manifest.txt`). `CMakeLists.txt` also adds `-I/usr/include/rockchip` (the distro 1.5.0 headers):
+  harmless while every include is `<rockchip/...>` (resolved in `/usr/local/include`), but a bare
+  `#include <rk_mpi.h>` would pick the distro header.
+- RGA `librga/`: `airockchip/librga` 1.10.6_[3] (`2b32edc`). The vendor's prebuilt `libs/Linux/gcc-aarch64/librga.so`
+  is copied to `/usr/local/lib` (`librga.so.2` links to it; hand-written `librga.pc`, `-I/usr/local/include`), and its
+  headers are installed flat in `/usr/local/include/` (`im2d*.h`, `rga.h`, `drmrga.h`, `RgaApi.h`, ...; identical to
+  `librga/include`, no `rga/` subdir). Headers and library match (1.10.6). The distro `/usr/include/rga/` (2.2.0,
+  different `im2d_version.h` / `rga.h`) is not on light_ai's include path.
+- RKNN `rknn_model_zoo/`: V2.5.0 (`837db8e`); `/usr/lib/librknnrt.so` (2.5.0) is a copy of its
+  `3rdparty/rknpu2/Linux/aarch64/librknnrt.so`. `rknn_api.h` exists only in that checkout: `CMakeLists.txt` finds it
+  through the `HINTS` path `/mnt/nvme_data/work/rknn_model_zoo/3rdparty/rknpu2/include`, so the checkout is a build
+  dependency (`-DRKNN_ROOT=` overrides).
+- Which MPP/RGA a process loads depends on the loader: `ld.so.conf.d` lists `/lib/aarch64-linux-gnu` before
+  `/usr/local/lib`. `light_ai` has `RUNPATH /usr/local/lib`, loads the `/usr/local` copies, and `libavcodec` (no
+  RPATH) reuses them. The `/usr/local/bin/ffmpeg` CLI has no RPATH and runs on the distro MPP 1.5.0 / librga 2.2.0: a
+  CLI test of the fork needs `LD_LIBRARY_PATH=/usr/local/lib`.
+  Check: `ldd build/light_ai | grep -E 'av|mpp|rga|rknn'`.
 
 ## Workflow
 - Tasks arrive as GitHub issues ("Выполни issue #N"): read the issue, post the plan as a comment
