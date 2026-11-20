@@ -30,7 +30,7 @@
 
 #include "core/encoder_config.hpp"
 #include "core/geometry.hpp"
-#include "rkmpp_drm_pool.hpp"
+#include "media/rkmpp_drm_pool.hpp"
 #include "core/status.hpp"
 
 class Log;

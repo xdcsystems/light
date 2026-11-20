@@ -73,8 +73,8 @@ set(CMAKE_INSTALL_RPATH "/usr/local/lib")
 add_executable(light_ai
     src/main.cpp
     src/source/camera_v4l2.cpp
-    src/mpp_decoder.cpp
-    src/rga_resizer.cpp
+    src/media/mpp_decoder.cpp
+    src/media/rga_resizer.cpp
     src/reid_worker.cpp
     src/rknn_engine.cpp
     src/yolo_postprocess.cpp

@@ -5,9 +5,9 @@
 #include <cstring>
 #include <rockchip/mpp_log.h>
 
-#include "mpp_decoder.hpp"
+#include "media/mpp_decoder.hpp"
 #include "core/log.hpp"
-#include "dma_sync.hpp"
+#include "media/dma_sync.hpp"
 #include "core/jpeg_probe.hpp"
 
 namespace

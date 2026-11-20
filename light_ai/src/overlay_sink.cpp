@@ -11,7 +11,7 @@
 #include "core/overlay_raster.hpp"  // draw_boxes_cpu, draw_callouts_cpu
 #include "core/rga_limits.hpp"  // rgb888_stride_px
 #include "core/status.hpp"
-#include "dma_sync.hpp"
+#include "media/dma_sync.hpp"
 #include "core/timings.hpp"
 
 namespace

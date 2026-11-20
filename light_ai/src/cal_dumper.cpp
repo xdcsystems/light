@@ -5,7 +5,7 @@
 #include <sstream>
 
 #include "cal_dumper.hpp"
-#include "dma_sync.hpp"
+#include "media/dma_sync.hpp"
 
 std::string cal_dump_path( const CalConfig& cal, CalKind kind, int frame_idx )
 {

@@ -56,7 +56,7 @@ namespace rga_limits
     }
 
     // Bytes the NV12 aux buffer needs for a w x h source: 16-aligned strides,
-    // x2 headroom over the 3/2 NV12 size (rga_resizer.h contract).
+    // x2 headroom over the 3/2 NV12 size (rga_resizer.hpp contract).
     constexpr size_t aux_bytes( int w, int h ) noexcept
     {
         return static_cast<size_t>( align16( aux_side( w ) ) ) * static_cast<size_t>( align16( aux_side( h ) ) ) * 2;

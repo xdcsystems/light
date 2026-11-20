@@ -4,7 +4,7 @@
 #include <im2d.h>
 #include <rga.h>
 
-#include "rga_resizer.h"
+#include "media/rga_resizer.hpp"
 #include "core/log.hpp"
 #include "core/rga_limits.hpp"
 
@@ -172,7 +172,7 @@ Status RgaResizer::crop_resize( const CropImage& src_img, LbGeom crop_roi, const
     {
         if ( aux_fd < 0 || w_aux <= 0 || h_aux <= 0 )
             return make_status( Errc::Failed, "RGA crop: >8x downscale without aux_fd" );
-        // aux is RGB888 with 16-aligned strides (see crop_resize in rga_resizer.h).
+        // aux is RGB888 with 16-aligned strides (see crop_resize in rga_resizer.hpp).
         if ( Status st = rga_check( improcess( wrap( cur.fd, cur.w, cur.h, cur.w_stride, cur.h, RK_FORMAT_RGB_888 ),
                                                wrap( aux_fd, w_aux, h_aux, align16( w_aux ), align16( h_aux ), RK_FORMAT_RGB_888 ),
                                                {}, sr, { 0, 0, w_aux, h_aux }, {}, -1, nullptr, &opt, IM_SYNC ),

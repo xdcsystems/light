@@ -19,7 +19,7 @@
 #include "inference_pool.hpp"
 #include "overlay_sink.hpp"
 #include "reid_worker.hpp"
-#include "rga_resizer.h"
+#include "media/rga_resizer.hpp"
 #include "rknn_engine.hpp"
 #include "source/source_prober.hpp"
 #include "source/source_set.hpp"

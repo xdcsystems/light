@@ -7,7 +7,7 @@
 #include <string>
 
 #include "source/media_source.hpp"
-#include "mpp_decoder.hpp"
+#include "media/mpp_decoder.hpp"
 #include "source/source_channel.hpp"
 #include "source/usb_node_locator.hpp"
 

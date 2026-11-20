@@ -20,7 +20,7 @@
 #include <rockchip/rk_mpi.h>
 
 #include "core/status.hpp"
-#include "dma_sync.hpp"
+#include "media/dma_sync.hpp"
 
 template <int N>
 struct RkmppDrmPool
