@@ -412,7 +412,7 @@ int Pipeline::acquire_slot( int& ok )
             std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
         k = pool_.try_acquire();
     }
-    return k >= 0 ? k : -1;
+    return k;  // try_acquire(): a slot index or -1
 }
 
 // RGA resize into the slot's tensor, optional cal dump, one-time

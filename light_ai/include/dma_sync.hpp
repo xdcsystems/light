@@ -50,8 +50,9 @@ private:
         s.flags = flags;
         int rc = 0;
         do
+        {
             rc = ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s );
-        while ( rc < 0 && errno == EINTR );
+        } while ( rc < 0 && errno == EINTR );
     }
 
 private:

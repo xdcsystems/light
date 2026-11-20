@@ -332,8 +332,9 @@ int CameraV4L2::wait_clean( v4l2_buffer& buf, int timeout_ms )
 {
     int rc = 0;
     do
+    {
         rc = dequeue_once( buf, timeout_ms );
-    while ( rc == kDequeueAgain );
+    } while ( rc == kDequeueAgain );
     return rc;
 }
 

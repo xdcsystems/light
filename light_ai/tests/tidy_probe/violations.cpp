@@ -198,6 +198,33 @@ void loops( int n, volatile int& sink )
     do {} while ( ++sink < n );            // custom-no-empty-loop
 }
 
+template <class T>
+int more_flow( int n, volatile int& sink )
+{
+    if constexpr ( sizeof( T ) == 1 )
+    {
+        sink = 1;
+    }
+    else
+    {                                      // custom-no-else-if (an else whose only statement is an if constexpr)
+        if constexpr ( sizeof( T ) == 2 )
+            sink = 2;
+    }
+    do                                     // custom-no-empty-loop (a ';' body of a do)
+        ;
+    while ( ++sink < n );
+    while ( ++sink < n )                   // custom-no-empty-loop (null statements only)
+    {
+        ;
+    }
+    while ( static_cast<bool>( 1 ) )      // custom-no-infinite-loop (through an explicit cast)
+    {
+        if ( ++sink > n )
+            break;
+    }
+    return sink;
+}
+
 // Near misses: none of the lines below may hit. An extra hit fails the self-test like a missing one.
 constexpr int kLimit = 7;  // a constexpr global: not mutable
 const int kConstGlobal = 8;  // a const global: not mutable
