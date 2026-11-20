@@ -23,7 +23,9 @@ namespace
     }
 
     // The layout unit: 1 px at the 11 px default (scale 0.5), growing with the
-    // text -- the gaps, paddings and the outline scale with it.
+    // text -- the gaps and paddings scale with it. An integer, so the label rects
+    // stay on the pixel grid; the outline is not drawn from it but from the float
+    // 2 * scale, so its width on the output tile is the same on every tile (#97).
     int layout_unit( float scale ) noexcept
     {
         return std::max( 1, static_cast<int>( std::lround( 2.0f * clean_scale( scale ) ) ) );
@@ -337,7 +339,7 @@ namespace
             pick_best_label( i, find_prev_slot( hist, tr.id, tr.gen ), pw, ph, sk, work, out, cands, nc );
         item.label = best.rect;
         item.scale = sc;
-        item.outline = static_cast<float>( sk );
+        item.outline = 2.0f * sc;  // the layout unit before rounding: 1 px at the default
         item.text_x = item.label.x0 + kPadX * sk;
         item.text_y = item.label.y0 + kPadY * sk;
         assign_accent( disp_id, item );
