@@ -25,7 +25,7 @@ void test_cpu_affinity( TestRun& t )
 
     static_assert( noexcept( pin_current_thread_to_big_cores( "x", log ) ), "the pin is called from noexcept thread bodies" );
 
-    // The fixture really throws: a direct log line on a scratch stream with the same setup.
+    // The fixture really throws: a direct stream write with the same setup.
     {
         std::filebuf dead;
         std::ostream probe( &dead );
@@ -51,5 +51,5 @@ void test_cpu_affinity( TestRun& t )
     } );
     worker.join();
     CHECK( t, returned );
-    CHECK( t, out.bad() || err.bad() );
+    CHECK( t, out.bad() != err.bad() );  // exactly one line: info to out (pinned) or warn to err (fallback)
 }
