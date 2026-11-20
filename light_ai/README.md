@@ -241,9 +241,9 @@ python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4 c
 
 ### Covered Test Suites (62 Total in `tests/test_main.cpp`)
 
-- **Core & Containers:** `check_harness`, `pod_containers`, `geometry`, `fp16`, `box_math`, `rga_limits`, `fixed_fmt`, `status`, `stop_flag`, `log`, `cpu_affinity`, `timings`
+- **Core & Containers:** `check_harness`, `pod_containers`, `geometry`, `fp16`, `box_math`, `rga_limits`, `fixed_fmt`, `status`, `stop_flag`, `log`, `timings`
 - **Detection, Tracking, Labels, Re-ID & Reference:** `yolo_decoder`, `yolo_head_shape`, `box_filter`, `box_smoother`, `kalman_axis`, `associator`, `auto_orient`, `trail_window`, `tracker`, `glyph_font`, `callout_layout`, `box_mapper`, `global_track`, `reid_worker_tsan` *(TSan)*, `reference_chain` (Layer B golden check; see [`tests/data/README`](tests/data/README))
-- **Config, CLI & Signals:** `config`, `signals`, `console_reporter`, `cal_dumper`
+- **Config, CLI, Signals & Affinity:** `config`, `signals`, `cpu_affinity`, `console_reporter`, `cal_dumper`
 - **Inference Pool:** `inference_pool`, `infer_slot_threads`
 - **Sources & HTTP MJPEG:** `jpeg_probe`, `byte_window`, `http_url`, `http_head`, `multipart_reader`, `line_scan`, `buffered_socket`, `mjpeg_slot_pool`, `net_mjpeg_source`, `usb_node_locator`, `source_channel`, `source_threads` *(TSan)*, `source_set`, `source_prober`, `source_prober_threads` *(TSan)*
 - **Encoder, Session & Transport:** `tcp_retry`, `tcp_send`, `encoder_config`, `param_set_cache`, `pts_clock`, `encode_pacer`, `session_warmup`, `idle_plate`, `preview_ring`, `preview_ring_threads` *(TSan)*, `packet_queue`, `packet_queue_threads` *(TSan)*, `session_gate`, `session_gate_threads` *(TSan)*

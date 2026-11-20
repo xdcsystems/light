@@ -43,7 +43,14 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   is copied to `/usr/local/lib` (`librga.so.2` links to it; hand-written `librga.pc`, `-I/usr/local/include`), and its
   headers are installed flat in `/usr/local/include/` (`im2d*.h`, `rga.h`, `drmrga.h`, `RgaApi.h`, ...; identical to
   `librga/include`, no `rga/` subdir). Headers and library match (1.10.6). The distro `/usr/include/rga/` (2.2.0,
-  different `im2d_version.h` / `rga.h`) is not on light_ai's include path.
+  different `im2d_version.h` / `rga.h`) is reachable through the default `/usr/include`: harmless while RGA is
+  included as `<im2d.h>` / `<rga.h>` (resolved in `/usr/local/include`, searched first; today only
+  `src/rga_resizer.cpp` and `src/net/frame_composer.cpp`), but `#include <rga/im2d.h>` would pick the 2.2.0 headers
+  against the 1.10.6 library.
+- Include paths: of the pkg-config `MPP` / `RGA` / `AV` sets, only `AV_INCLUDE_DIRS` reaches
+  `target_include_directories` (`CMakeLists.txt`; `MPP_INCLUDE_DIRS` / `RGA_INCLUDE_DIRS` are not passed, only their
+  libraries are linked). The `/usr/local` headers come from `AV_INCLUDE_DIRS` or the default `/usr/local/include`, so
+  the `-I` of the hand-written `librga.pc` plays no part.
 - RKNN `rknn_model_zoo/`: V2.5.0 (`837db8e`); `/usr/lib/librknnrt.so` (2.5.0) is a copy of its
   `3rdparty/rknpu2/Linux/aarch64/librknnrt.so`. `rknn_api.h` exists only in that checkout: `CMakeLists.txt` finds it
   through the `HINTS` path `/mnt/nvme_data/work/rknn_model_zoo/3rdparty/rknpu2/include`, so the checkout is a build
