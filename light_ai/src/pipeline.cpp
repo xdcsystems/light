@@ -415,9 +415,9 @@ int Pipeline::acquire_slot( int& ok ) noexcept
     return k;  // try_acquire(): a slot index or -1
 }
 
-// RGA resize into the slot's tensor, optional cal dump, one-time
-// cross-check of the RGA letterbox geometry against the single-owner
-// one, then the job goes to the pool.
+// RGA resize into the slot's tensor (resize_into_slot), optional cal dump,
+// one-time cross-check of the RGA letterbox geometry against the expected
+// band, then the job goes to the pool (frame_dispatch).
 
 void Pipeline::prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept
 {
@@ -431,31 +431,40 @@ void Pipeline::prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept
     }
 }
 
+// The band is band_geom of the oriented size for every rot: at the source's
+// own rotation that is SourceGeom::lb, which SourceChannel::attach computes
+// from the same oriented size (test_source_channel pins the equality).
+// A failed resize leaves tensor_band_[slot] as it was; the caller still
+// submits the job, with rga_ok = false.
+Status Pipeline::resize_into_slot( int slot, int src, int fd_src, int rot, SlotResize& out ) noexcept
+{
+    const SourceChannel& ch = srcs_[src];
+    const SourceGeom& ss = ch.geom();  // Live: the frame thread owns it
+    const int raw_w = ss.raw_w > 0 ? ss.raw_w : ss.w;
+    const int raw_h = ss.raw_h > 0 ? ss.raw_h : ss.h;
+    auto_orient::oriented_dims( raw_w, raw_h, rot, out.w, out.h );
+    out.band = band_geom( out.w, out.h, model_w_, model_h_ );
+    prepare_tensor_band( slot, out.band );
+
+    const TensorRef tn = pool_.tensor( slot );
+    const RgaResizer::ResizeSrc src_img { fd_src, raw_w, raw_h, ch.hor_stride(), ch.ver_stride(),
+                                          ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 };
+    const RgaResizer::CropImage dst_img { tn.fd, model_w_, model_h_, rga_limits::rgb888_stride_px( tn.stride_bytes, model_w_ ) };
+    const RgaResizer::AuxImage aux { ss.aux_fd, rga_limits::aux_side( raw_w ), rga_limits::aux_side( raw_h ) };
+    const Status st = rga_.resize( src_img, dst_img, aux, rot, &out.rga );
+    if ( st.ok() )
+        tensor_band_[static_cast<size_t>( slot )] = out.band;
+    return st;
+}
+
 bool Pipeline::submit_orient_probe( int src, int fd_src, int rot, int job_idx, int& ok ) noexcept
 {
     const int slot = acquire_slot( ok );
     if ( slot < 0 )
         return false;
-    const SourceChannel& ch = srcs_[src];
-    const SourceGeom& ss = ch.geom();
-    const int raw_w = ss.raw_w > 0 ? ss.raw_w : ss.w;
-    const int raw_h = ss.raw_h > 0 ? ss.raw_h : ss.h;
-    int ew = 0;
-    int eh = 0;
-    auto_orient::oriented_dims( raw_w, raw_h, rot, ew, eh );
-    const LbGeom elb = band_geom( ew, eh, model_w_, model_h_ );
-    prepare_tensor_band( slot, elb );
-
-    const TensorRef tn = pool_.tensor( slot );
-    LbGeom lg {};
-    const int yuv_fmt = ( ch.out_fmt() == MPP_FMT_YUV420SP ) ? 0 : 1;
-    const RgaResizer::ResizeSrc src_img { fd_src, raw_w, raw_h, ch.hor_stride(), ch.ver_stride(), yuv_fmt };
-    const RgaResizer::CropImage dst_img { tn.fd, model_w_, model_h_, rga_limits::rgb888_stride_px( tn.stride_bytes, model_w_ ) };
-    const RgaResizer::AuxImage aux { ss.aux_fd, rga_limits::aux_side( raw_w ), rga_limits::aux_side( raw_h ) };
-    const Status rga_st = rga_.resize( src_img, dst_img, aux, rot, &lg );
-    if ( rga_st.ok() )
-        tensor_band_[static_cast<size_t>( slot )] = elb;
-    const InferJob job { src, ew, eh, job_idx, -1, rga_st.ok(), elb, {} };
+    SlotResize rs {};
+    const Status rga_st = resize_into_slot( slot, src, fd_src, rot, rs );
+    const InferJob job { src, rs.w, rs.h, job_idx, -1, rga_st.ok(), rs.band, {} };
     return pool_.submit( slot, job );
 }
 
@@ -544,47 +553,33 @@ void Pipeline::update_auto_orient( int src, int fd_src, int& ok ) noexcept
 void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms ) noexcept
 {
     const auto t3 = clk::now();
-    const SourceChannel& ch = srcs_[src];
-    const SourceGeom& ss = ch.geom();  // Live: the frame thread owns it
-    const int rot = an_[src].cur_rot;
-    const int raw_w = ss.raw_w > 0 ? ss.raw_w : ss.w;
-    const int raw_h = ss.raw_h > 0 ? ss.raw_h : ss.h;
-    int eff_w = 0;
-    int eff_h = 0;
-    auto_orient::oriented_dims( raw_w, raw_h, rot, eff_w, eff_h );
-    const LbGeom eff_lb = ( rot == ss.rot_deg ) ? ss.lb : band_geom( eff_w, eff_h, model_w_, model_h_ );
-    prepare_tensor_band( slot, eff_lb );
-
-    const TensorRef tn = pool_.tensor( slot );
-    LbGeom lg {};
-    const RgaResizer::ResizeSrc src_img { fd_src, raw_w, raw_h, ch.hor_stride(), ch.ver_stride(),
-                                          ch.out_fmt() == MPP_FMT_YUV420SP ? 0 : 1 };
-    const RgaResizer::CropImage dst_img { tn.fd, model_w_, model_h_, rga_limits::rgb888_stride_px( tn.stride_bytes, model_w_ ) };
-    const RgaResizer::AuxImage aux { ss.aux_fd, rga_limits::aux_side( raw_w ), rga_limits::aux_side( raw_h ) };
-    const Status rga_st = rga_.resize( src_img, dst_img, aux, rot, &lg );
+    SlotResize rs {};
+    const Status rga_st = resize_into_slot( slot, src, fd_src, an_[src].cur_rot, rs );
     if ( rga_st.ok() )
     {
+        const TensorRef tn = pool_.tensor( slot );
         cal_dumper_.maybe( frame_idx, tn.fd, static_cast<const uint8_t*>( tn.data ), tn.size );
-        // Cross-check RGA geometry against the owning source's (warn once).
-        if ( !lb_warned_ && ( lg.left != eff_lb.left || lg.top != eff_lb.top || lg.w != eff_lb.w || lg.h != eff_lb.h ) )
+        // Cross-check the RGA geometry against the expected band (warn once).
+        const LbGeom& lg = rs.rga;
+        const LbGeom& eb = rs.band;
+        if ( !lb_warned_ && ( lg.left != eb.left || lg.top != eb.top || lg.w != eb.w || lg.h != eb.h ) )
         {
             lb_warned_ = true;
             log_.warn() << "pipeline: RGA letterbox drift (src " << src << "): x=" << lg.left << " top=" << lg.top
                         << " w=" << lg.w << " h=" << lg.h
-                        << " vs x=" << eff_lb.left << " top=" << eff_lb.top << " w=" << eff_lb.w << " h=" << eff_lb.h << '\n';
+                        << " vs x=" << eb.left << " top=" << eb.top << " w=" << eb.w << " h=" << eb.h << '\n';
         }
-        tensor_band_[static_cast<size_t>( slot )] = eff_lb;
     }
     const auto t3b = clk::now();
 
     InferJob job {};
     job.src_idx = src;
-    job.src_w = eff_w;
-    job.src_h = eff_h;
+    job.src_w = rs.w;
+    job.src_h = rs.h;
     job.frame = frame_idx;
     job.ts_us = ts_us;
     job.rga_ok = rga_st.ok();
-    job.lb = eff_lb;
+    job.lb = rs.band;
     job.tr.cam = cam_ms;
     job.tr.dec = dec_ms;
     job.tr.rga = ms( t3, t3b );

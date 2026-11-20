@@ -57,6 +57,16 @@ class Pipeline
         int frames = 0;  // frames dispatched from this source (the cal/box-log frame index)
     };
 
+    // One RGA write into a pool tensor (resize_into_slot): the oriented
+    // source size, the band it fills in the tensor, the band RGA reported.
+    struct SlotResize
+    {
+        int w = 0;
+        int h = 0;
+        LbGeom band {};
+        LbGeom rga {};
+    };
+
 public:
     // stop: set by SignalWaiter on SIGINT/SIGTERM; log: the process diagnostics.
     // Both are owned by main() and outlive the Pipeline.
@@ -94,6 +104,11 @@ private:
     int acquire_slot( int& ok ) noexcept;      // claim-or-drain; idx or -1 on stop
 
     void prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept;
+    // The frame fd_src of source src, rotated by rot, into slot's tensor: the
+    // bars re-grayed on a band change, the RGA resize, and on success the
+    // slot's band. out: the oriented size and the expected band on every
+    // path; out.rga is set only on success.
+    Status resize_into_slot( int slot, int src, int fd_src, int rot, SlotResize& out ) noexcept;
     bool submit_orient_probe( int src, int fd_src, int rot, int job_idx, int& ok ) noexcept;
     bool probe_rot_batch( int src, int fd_src, const int* rots, int n_rots, float* scores, int& ok ) noexcept;
     void update_auto_orient( int src, int fd_src, int& ok ) noexcept;
@@ -125,8 +140,9 @@ private:
     int model_h_ = 0;  // taken from the model, not from flags
     
     // M5: per-source letterbox geometry lives in SourceChannel::geom().lb; the
-    // RGA per-frame LbGeom is cross-checked against the owning source's
-    // in frame_dispatch (one-time warn).
+    // RGA per-frame LbGeom is cross-checked against the band_geom of the
+    // oriented size (the same band at the source's own rotation) in
+    // frame_dispatch (one-time warn).
     bool lb_warned_ = false;
     CalDumper cal_dumper_;
     int reconnects_ = 0;   // source disconnects recovered this run
