@@ -48,9 +48,11 @@ private:
             return;
         dma_buf_sync s {};
         s.flags = flags;
-        while ( ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s ) < 0 && errno == EINTR )
+        int rc = 0;
+        do
         {
-        }
+            rc = ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s );
+        } while ( rc < 0 && errno == EINTR );
     }
 
 private:
@@ -85,10 +87,7 @@ inline void cache_clean( const void* p, size_t len )
         __asm__ volatile( "dc cvac, %0" :: "r"( addr ) : "memory" );
     __asm__ volatile( "dsb sy" ::: "memory" );  // NOLINT(hicpp-no-assembler): barrier required after DC ops
 #else
-    // No cache-maintenance instruction on this arch; the builtin is
-    // a no-op there - the cross-check build compiles and stays honest.
-    auto* b = static_cast<char*>( const_cast<void*>( p ) );
-    __builtin___clear_cache( b, b + len );
+    // x86 is DMA-coherent; nothing to clean (p and len are used by the early return).
 #endif
 }
 
@@ -114,9 +113,7 @@ inline void cache_drop( const void* p, size_t len )
         __asm__ volatile( "dc civac, %0" :: "r"( addr ) : "memory" );
     __asm__ volatile( "dsb sy" ::: "memory" );  // NOLINT(hicpp-no-assembler): barrier required after DC ops
 #else
-    // x86 is DMA-coherent; nothing to drop.
-    (void) p;
-    (void) len;
+    // x86 is DMA-coherent; nothing to drop (p and len are used by the early return).
 #endif
 }
 

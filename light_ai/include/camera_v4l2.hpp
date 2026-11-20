@@ -88,6 +88,9 @@ private:
     // 0, or the errno class for *err (poll_frame's EAGAIN / EIO, the DQBUF errno,
     // EIO once the corrupt streak reaches kBufCount).
     int wait_clean( v4l2_buffer& buf, int timeout_ms );
+    // One poll + DQBUF of wait_clean: 0, an errno as above, or -1 (kDequeueAgain in camera_v4l2.cpp: DQBUF
+    // EINTR / EAGAIN, or a corrupt buffer requeued below the stall threshold).
+    int dequeue_once( v4l2_buffer& buf, int timeout_ms );
     // skip_to_newest: the drain-ahead -- at most kBufCount - 1 buffers that are
     // already done replace buf with the newest clean one; the others are requeued.
     void skip_to_newest( v4l2_buffer& buf );

@@ -1,0 +1,65 @@
+# .clangd: editor diagnostics on the board (#93) -- clangd 22.1.1 in light_ai/venv (README, Build), started by the
+# Claude Code clangd-lsp plugin through ~/.local/bin/clangd (CLAUDE.md). Hints only: the gate (scripts/tidy_run.sh)
+# stays the authority. CompilationDatabase needs clangd >= 12; the system clangd 11 ignores it.
+CompileFlags:
+  CompilationDatabase: build
+  Remove: [-mtune=*, -mcpu=*]   # GCC big.LITTLE flags, rejected by clang (tidy_run.sh strips them too)
+Index:
+  Background: Skip              # no project index: 3.8 GB RAM is shared with the gate and the FPS runs; search is grep
+Diagnostics:
+  ClangTidy:
+    # The checks come from the .clang-tidy files of the tree ('*' minus the disabled ones), read by clang-tidy 22 here.
+    # The rules pass of the gate (scripts/tidy_rules.yaml): the same check and options. Its custom-* project rules
+    # need --experimental-custom-checks, which clangd does not run: TIDY_FILES (CLAUDE.md) covers them.
+    Add: [readability-function-cognitive-complexity]
+    # Checks that LLVM 11 (the main pass) does not have and that '*' turns on here: they fired on the tree when
+    # measured (#93: venv clang-tidy 23.1.4, the root config, the checks missing from `clang-tidy-11 --list-checks`,
+    # every TU) and the gate does not enforce them. A check new in LLVM 12+ not listed here may still show up.
+    # Known difference: LLVM 22 counts constructor initializers as statements in readability-function-size
+    # (Pipeline::Pipeline 67 > 60), clang-tidy 11 does not.
+    Remove:
+      - boost-use-ranges
+      - bugprone-empty-catch
+      - bugprone-implicit-widening-of-multiplication-result
+      - bugprone-invalid-enum-default-initialization
+      - bugprone-multi-level-implicit-pointer-conversion
+      - bugprone-signed-bitwise
+      - bugprone-suspicious-stringview-data-usage
+      - bugprone-unchecked-optional-access
+      - cert-err33-c
+      - cppcoreguidelines-avoid-const-or-ref-data-members
+      - cppcoreguidelines-avoid-do-while
+      - cppcoreguidelines-missing-std-forward
+      - cppcoreguidelines-prefer-member-initializer
+      - cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+      - cppcoreguidelines-use-enum-class
+      - llvm-prefer-static-over-anonymous-namespace
+      - llvm-use-ranges
+      - misc-const-correctness
+      - misc-include-cleaner
+      - modernize-avoid-c-style-cast
+      - modernize-avoid-variadic-functions
+      - modernize-use-scoped-lock
+      - performance-avoid-endl
+      - performance-enum-size
+      - performance-no-int-to-ptr
+      - performance-string-view-conversions
+      - portability-avoid-pragma-once
+      - portability-no-assembler
+      - readability-avoid-nested-conditional-operator
+      - readability-inconsistent-ifelse-braces
+      - readability-math-missing-parentheses
+      - readability-redundant-lambda-parameter-list
+      - readability-suspicious-call-argument
+      - readability-trailing-comma
+      - readability-use-concise-preprocessor-directives
+      - readability-use-std-min-max
+    CheckOptions:
+      readability-function-cognitive-complexity.Threshold: 20
+      readability-function-cognitive-complexity.IgnoreMacros: true
+---
+# The host tests: their own compile DB (configured by scripts/test.sh / tidy_run.sh, not built by build.sh).
+If:
+  PathMatch: tests/.*
+CompileFlags:
+  CompilationDatabase: build/tests

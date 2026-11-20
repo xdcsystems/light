@@ -1,0 +1,22 @@
+# expected_lint.txt: the rules_lint.sh self-test of scripts/tidy_run.sh (#93): its exact output on tests/tidy_probe/lint/.
+include/core/bad.hpp:3: core-include: rga/im2d.h -- core/ includes only the C++17 standard library
+include/core/bad.hpp:5: core-include: rga_resizer.h -- core/ includes only core/*, pod_list.hpp, pod_ring.hpp
+include/new.h:1: header-ext -- new headers use .hpp (CONTRIBUTING, Header extensions)
+src/x.cpp:3: banned-include: gst/gst.h -- no GStreamer, no OpenCV
+src/x.cpp:3: include-order: gst/gst.h -- system and SDK headers first, project headers last
+src/x.cpp:4: line-length -- 141 columns > 140
+src/x.cpp:6: nolint: custom-no-virtual -- a project rule switched off: only at the sites of scripts/rules_allow.txt
+src/x.cpp:6: nolint-reason: custom-no-virtual -- NOLINT(custom-...) needs ': <reason>' after it
+src/x.cpp:7: nolint: custom-no-static-local -- a project rule switched off: only at the sites of scripts/rules_allow.txt
+src/x.cpp:9: nolint-blanket -- NOLINT without a check list (clang-tidy reads one anywhere in a line, prose too) switches the custom checks off
+src/x.cpp:11: nolint-range: * -- NOLINTBEGIN / NOLINTEND cannot switch a project rule off: NOLINT or NOLINTNEXTLINE at the site
+src/x.cpp:13: nolint-range: * -- NOLINTBEGIN / NOLINTEND cannot switch a project rule off: NOLINT or NOLINTNEXTLINE at the site
+src/x.cpp:14: nolint: custom-no-catch-all -- a project rule switched off: only at the sites of scripts/rules_allow.txt
+src/x.cpp:15: nolint: *-catch-all -- a project rule switched off: only at the sites of scripts/rules_allow.txt
+src/x.cpp:15: nolint: cust* -- a project rule switched off: only at the sites of scripts/rules_allow.txt
+src/x.cpp:18: nolint-range: custom-no-catch-all -- NOLINTBEGIN / NOLINTEND cannot switch a project rule off: NOLINT or NOLINTNEXTLINE at the site
+src/x.cpp:20: nolint-range: custom-no-catch-all -- NOLINTBEGIN / NOLINTEND cannot switch a project rule off: NOLINT or NOLINTNEXTLINE at the site
+src/x.cpp:24: nolint-range: * -- NOLINTBEGIN / NOLINTEND cannot switch a project rule off: NOLINT or NOLINTNEXTLINE at the site
+scripts/rules_allow.txt:5: stale: src/gone.cpp nolint custom-no-catch-all -- matches no finding
+scripts/rules_allow.txt:6: not allowable: src/x.cpp nolint-range custom-no-catch-all -- a NOLINT range or a blanket NOLINT is never allowed
+scripts/rules_allow.txt:7: not allowable: src/x.cpp nolint-blanket -- a NOLINT range or a blanket NOLINT is never allowed

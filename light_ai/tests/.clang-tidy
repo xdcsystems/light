@@ -9,9 +9,11 @@ CheckOptions:
   # statements and locals; the root thresholds (sized for the pipeline's functions) would split suites for no
   # reader's gain. The maxima of tests/ measured with clang-tidy 11 after #43 (lines rounded up to the ten, the
   # counts exact): lines 167 (test_tracker), statements 135 (test_tracker), variables 43 (test_tracker),
-  # nesting 5 (test_source_prober_threads: a lambda's loop inside the thread body). Branches stay at the root's 11
-  # and parameters at 20: no suite is above them. Cognitive complexity is not relaxed (the second pass: 20).
+  # nesting 5 (test_source_prober_threads: a lambda's loop inside the thread body). Branches stay at 11, pinned here
+  # (the root raised its own to 15 in #93; a suite branches little, its cases are table rows), parameters at the
+  # root's 20: no suite is above them. Cognitive complexity is not relaxed (the second pass: 20).
   - { key: readability-function-size.LineThreshold,      value: '170' }
   - { key: readability-function-size.StatementThreshold, value: '135' }
+  - { key: readability-function-size.BranchThreshold,    value: '11' }
   - { key: readability-function-size.VariableThreshold,  value: '43' }
   - { key: readability-function-size.NestingThreshold,   value: '5' }

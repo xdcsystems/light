@@ -49,7 +49,8 @@ fi
 
 if [ "${SKIP_TIDY:-0}" != "1" ]; then
     echo "==> clang-tidy gate (SKIP_TIDY=1 to skip):"
-    bash "$PROJ_ROOT/scripts/tidy_run.sh" 600 || {
+    # always every TU: a TIDY_FILES left in the environment (a subset run, #93) must not narrow the gate
+    env -u TIDY_FILES bash "$PROJ_ROOT/scripts/tidy_run.sh" 600 || {
         echo "tidy gate FAILED -- build rejected"
         exit 1
     }

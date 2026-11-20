@@ -114,18 +114,9 @@ MuxSession::DrainEnd MuxSession::drain_queue( AVFormatContext* fc, const TcpPull
     // The queue's key gate was armed by open() (late join mid-GOP must
     // not decode P-frames against a missing reference) and is re-armed by
     // an overflow flush; pop() drops packets until the first IDR.
-    for ( ;; )
+    PacketQueue::Popped got = timed_pop( mperf );
+    while ( got.what == PacketQueue::Pop::Packet )
     {
-        const auto pop_t0 = std::chrono::steady_clock::now();
-        const PacketQueue::Popped got = queue_.pop( mux_pkt_.slot() );
-        const double pop_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - pop_t0 ).count();
-        if ( pop_ms > mperf.pop_wait_ms_max )
-            mperf.pop_wait_ms_max = pop_ms;
-        if ( got.what == PacketQueue::Pop::Stopped || got.what == PacketQueue::Pop::Failed )
-        {
-            maybe_log_perf( mperf, win_t0, prev_ww, tcp, true );
-            return got.what == PacketQueue::Pop::Stopped ? DrainEnd::Stopped : DrainEnd::Failed;
-        }
         const int q_rem = got.left;
         // Ownership of the packet buffer moved into mux_pkt_ via
         // av_packet_move_ref; mux_write consumes and unrefs it without
@@ -141,15 +132,28 @@ MuxSession::DrainEnd MuxSession::drain_queue( AVFormatContext* fc, const TcpPull
         if ( r < 0 )
         {
             maybe_log_perf( mperf, win_t0, prev_ww, tcp, true );
-            if ( r == AVERROR( EPIPE ) )
-                log_.info() << "enc: viewer disconnected (tcp), session ends\n";
-            else if ( r == AVERROR( ETIMEDOUT ) )
-                log_.info() << "enc: viewer stalled (send timeout), session ends\n";
-            else
-                log_.error() << "enc: write failed: " << av_err_str( r ) << " (packet lost)\n";
+            switch ( r )
+            {
+                case AVERROR( EPIPE ): log_.info() << "enc: viewer disconnected (tcp), session ends\n"; break;
+                case AVERROR( ETIMEDOUT ): log_.info() << "enc: viewer stalled (send timeout), session ends\n"; break;
+                default: log_.error() << "enc: write failed: " << av_err_str( r ) << " (packet lost)\n"; break;
+            }
             return DrainEnd::WriteFailed;
         }
+        got = timed_pop( mperf );
     }
+    maybe_log_perf( mperf, win_t0, prev_ww, tcp, true );
+    return got.what == PacketQueue::Pop::Stopped ? DrainEnd::Stopped : DrainEnd::Failed;
+}
+
+PacketQueue::Popped MuxSession::timed_pop( MuxPerfWindow& mperf )
+{
+    const auto pop_t0 = std::chrono::steady_clock::now();
+    const PacketQueue::Popped got = queue_.pop( mux_pkt_.slot() );
+    const double pop_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - pop_t0 ).count();
+    if ( pop_ms > mperf.pop_wait_ms_max )
+        mperf.pop_wait_ms_max = pop_ms;
+    return got;
 }
 
 void MuxSession::maybe_log_perf( MuxPerfWindow& mperf,
@@ -211,15 +215,10 @@ MuxSession::Transport::~Transport()
 
 void MuxSession::Transport::close()
 {
-    if ( tcp_pull )
-    {
-        if ( tcp )
-            tcp->close_client();
-    }
-    else if ( udp_pb )
-    {
+    if ( tcp_pull && tcp )
+        tcp->close_client();
+    if ( !tcp_pull && udp_pb )
         avio_closep( &udp_pb );
-    }
 }
 
 // Out-of-line dtor of the class-local FcGuard: 

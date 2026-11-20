@@ -218,7 +218,7 @@ private:
             for ( int k = 0; k < n_; ++k )
                 workers_[static_cast<size_t>( k )] = std::thread( &InferencePool::worker_loop, this, k );
         }
-        catch ( ... )
+        catch ( ... )  // NOLINT(custom-no-catch-all): startup, a failed std::thread start; cleans up, then rethrows
         {
             // std::thread can fail to start (system_error): join the ones
             // already running, or their joinable handles would terminate().

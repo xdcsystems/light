@@ -552,7 +552,11 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
         log_.warn() << "drawer: import tensor failed (slot " << slot << ", 0x" << std::hex << eglGetError() << std::dec << ")\n";
         return make_status( Errc::Failed, "drawer: import tensor failed" );
     }
-    for ( int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i ) {}  // bounded clear of prior GL errors
+    for ( int i = 0; i < 16; ++i )  // bounded clear of prior GL errors
+    {
+        if ( glGetError() == GL_NO_ERROR )
+            break;
+    }
     glGenTextures( 1, &si.tex );
     glBindTexture( GL_TEXTURE_2D, si.tex );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
@@ -581,18 +585,18 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     }
     glBindTexture( GL_TEXTURE_2D, 0 );
     glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-    if ( st_.w == 0 )
-    {
-        st_.w = w;
-        st_.h = h;
-        st_.stride = stride;
-    }
-    else if ( st_.w != w || st_.h != h || st_.stride != stride )
+    if ( st_.w != 0 && ( st_.w != w || st_.h != h || st_.stride != stride ) )
     {
         log_.warn() << "drawer: slot " << slot << " geometry mismatch: " << w << 'x' << h << " stride=" << stride
                   << " vs " << st_.w << 'x' << st_.h << " stride=" << st_.stride << '\n';
         release_slot( slot );
         return make_status( Errc::Failed, "drawer: slot geometry mismatch" );
+    }
+    if ( st_.w == 0 )  // the first slot sets the geometry every later slot must match
+    {
+        st_.w = w;
+        st_.h = h;
+        st_.stride = stride;
     }
     log_.info() << "drawer: tensor attached (slot " << slot << ") " << w << 'x' << h << " stride=" << stride
               << " (native fence: " << ( st_.native_fence ? "yes" : "no" ) << ")\n";

@@ -32,11 +32,28 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
   (CMake build + 61 unit suites + 6 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
   `SKIP_TSAN=1` / `SKIP_TIDY=1` to narrow intermediate iterations).
-  Two-pass tidy gate: `main` = system `clang-tidy-11` (`.clang-tidy`, `tests/.clang-tidy`),
-  `cognitive` = pinned `clang-tidy==23.1.4` in `venv/` (`scripts/tidy_cognitive.yaml`, Threshold 20).
-  Per-file logs: `build/tidy/{src,tests}/<path>.log` and `build/tidy/cognitive/{src,tests}/<path>.log`.
+  Two-pass tidy gate: self-test + `scripts/rules_lint.sh` first, then `main` = system `clang-tidy-11`
+  (`.clang-tidy`, `tests/.clang-tidy`) and `rules` = pinned `clang-tidy==23.1.4` in `venv/`
+  (`scripts/tidy_rules.yaml`: cognitive complexity 20 + the `custom-*` project rules; `cognitive` before #93).
+  Per-file logs: `build/tidy/{src,tests}/<path>.log` and `build/tidy/rules/{src,tests}/<path>.log`;
+  self-test and lint: `build/tidy/selftest/`.
   Result cache: `build/tidy-cache` (`TIDY_NO_CACHE=1` disables it). See [README.md](README.md#build--static-analysis).
-- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 61 suites / 9,012 checks + 6 TSan suites / 23 checks).
+- Quick tidy on changed files (#93): the main session may run it itself on 1-3 changed TUs and print only
+  the findings, never the full output:
+      TIDY_FILES="src/a.cpp tests/b.cpp" bash scripts/tidy_run.sh > build/tidy-files.log 2>&1; echo rc=$?
+      grep -E ': error: |^tidy: (PASS|FAIL|bad)' build/tidy-files.log
+  Self-test, lint, both passes, the same cache and logs, only those TUs (`.cpp` only; a header -> a TU that includes it;
+  exit 2 on a bad entry). It is not the gate: the full gate and live runs stay with `board-check` before
+  every push, and the per-commit `commit-reviewer` review does not change.
+- Editor diagnostics: `clangd 22.1.1` in `venv/` with the tracked `.clangd` (both compile DBs, cognitive
+  complexity 20, no background index). The `clangd-lsp` plugin starts `clangd` from `PATH`, so a user-level
+  link points at the venv: `~/.local/bin/clangd -> /mnt/nvme_data/linaro/Projects/light/light_ai/venv/bin/clangd`
+  (remove: `rm ~/.local/bin/clangd`, then clangd 11 from `/usr/bin` is used again; a rebuilt venv without
+  `clangd` leaves the link dangling -> reinstall: `venv/bin/pip install --no-cache-dir clangd==22.1.1`).
+  CLI check of one file: `venv/bin/clangd --check=src/a.cpp 2>&1 | grep -E '^E\[[^]]*\] \['` (diagnostics only;
+  the exit code is not a verdict: `--check` also fails on refactoring tweaks it cannot apply).
+  The diagnostics are hints only; the gate stays the authority.
+- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 61 suites / 9,022 checks + 6 TSan suites / 23 checks).
   Single suite / flake hunt: `./build/tests/light_ai_tests [substr...] [--repeat N]` (also `light_ai_tests_tsan`;
   exit 2 on bad args).
 - Live run:
@@ -73,24 +90,35 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   keep baseline logs (`build/run_*.log`) to avoid re-measuring.
 
 ## Project rules (full text: [CONTRIBUTING.md](CONTRIBUTING.md))
-- C++17. No virtuals or inheritance hierarchies; templates for static polymorphism.
-- No manual heap (`new`/`delete`, `unique_ptr`/`shared_ptr`), no statics of any kind, no globals.
-  Frame path: no allocation; preallocated members cleared at entry by the callee.
-- Pixels exist only as `dma-buf`s: no CPU pixel copies.
-- Dependencies injected by reference to a concrete class (`StopFlag&`, `const Log&`).
-- Diagnostics through `Log` (`include/core/log.hpp`); only `main.cpp` owns `std::cout`/`std::cerr`.
-- Header layout: in each visibility section, functions first, then a fresh label for data.
-- Header extensions: new headers use `.hpp`; nine legacy `.h` headers stay as-is unless refactored.
-- `core/` includes only the C++17 standard library and `pod_list.hpp`/`pod_ring.hpp` (keeps tests SDK-free).
-- Exception: header-only libraries in `externals/` (`stb_easy_font.h`) may keep file
+(gate) = enforced by `scripts/tidy_run.sh` (`custom-*` checks of the `rules` pass, `scripts/rules_lint.sh`, both
+self-tested on `tests/tidy_probe/`): nobody re-checks it by hand. Fix a (gate) finding like any other gate finding;
+a NOLINT that switches a `custom-*` check off (by name or glob: `*`, `cust*`; every NOLINT of a line counts) only
+with `: <reason>` and a line in `scripts/rules_allow.txt` (a CONTRIBUTING-listed site), decided by the main session;
+only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
+(review) = only `commit-reviewer` can judge it.
+- C++17 (review). No virtuals or inheritance hierarchies (gate); templates for static polymorphism.
+- No manual heap (`new`/`delete`, `malloc` family, `unique_ptr`/`shared_ptr`/`weak_ptr`), no statics of any
+  kind, no globals, no `const_cast` (gate). Frame path: no allocation; preallocated members cleared at entry
+  by the callee (review).
+- Pixels exist only as `dma-buf`s: no CPU pixel copies (review).
+- Dependencies injected by reference to a concrete class (`StopFlag&`, `const Log&`) (review).
+- Diagnostics through `Log` (`include/core/log.hpp`); only `main.cpp` owns `std::cout`/`std::cerr`/`std::clog`;
+  no C stdio output (gate).
+- Header layout: in each visibility section, functions first, then a fresh label for data (review).
+- Header extensions: new headers use `.hpp`; nine legacy `.h` headers stay as-is unless refactored (gate).
+- `core/` includes only the C++17 standard library and `pod_list.hpp`/`pod_ring.hpp` (keeps tests SDK-free)
+  (gate); include order: system and SDK headers first (gate); no GStreamer / OpenCV (gate).
+- Exception (review): header-only libraries in `externals/` (`stb_easy_font.h`) may keep file
   statics; include them only from `.cpp` files, never from a project header.
 - Errors (`Status` / `noexcept`): recoverable failures return `Status` (`include/core/status.hpp`);
   exceptions (`std::runtime_error` via `throw_on`) are startup-only; frame path and thread bodies are
-  `noexcept` (no `throw`, no `catch (...)`). Exit codes: `0` clean, `1` runtime fatal, `2` bad CLI/config,
-  `3` startup failure.
-- Output side vs recognition: no viewer -> output side sleeps completely (`enc=0.0`); recognition never
+  `noexcept` (no `throw`: review; no `catch (...)` outside the three allowlisted sites of CONTRIBUTING: gate).
+  Exit codes (review): `0` clean, `1` runtime fatal, `2` bad CLI/config, `3` startup failure.
+- Output side vs recognition (review): no viewer -> output side sleeps completely (`enc=0.0`); recognition never
   sleeps; with viewer, online sources run full path and absent sources show `NO SIGNAL`.
-- Comments match the code and docs; max line length `140` (`.clang-format`).
+- Control flow (gate): no `if` / `else if` ladders (`if constexpr` too; `switch`, tables, early returns,
+  independent `if`s), no loop with an empty body, no `for (;;)` / `while (true)`: every loop states its exit condition.
+- Comments match the code and docs (review); max line length `140` (`.clang-format`; gate).
 
 ## Completed refactoring stages (0–7, `fix/audit-p0` @ `3ccd8ae`, merged in PR #73)
 Full milestone history and A/B records live in [docs/roadmap.md](docs/roadmap.md) and [docs/state.md](docs/state.md).

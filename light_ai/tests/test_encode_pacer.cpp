@@ -1,5 +1,11 @@
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+
 #include "check.hpp"
 #include "core/encode_pacer.hpp"
+#include "core/net_perf.hpp"
 #include "suites.hpp"
 
 namespace
@@ -85,6 +91,28 @@ namespace
         CHECK( t, !p.admit( 45000, 0, 3 ) );
         CHECK( t, p.admit( 46000, 0, 3 ) );
     }
+
+    // The encoder's perf histograms (net_perf.hpp): an edge value opens the next bucket of the < table and closes
+    // its bucket of the <= table; NaN lands in the last bucket of both.
+    void perf_buckets( TestRun& t )
+    {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        EncPerfWindow enc;  // <10, 10-30, 30-50, 50-100, 100-250, >=250 ms
+        const std::array<double, 11> enc_ms { 9.99, 10.0, 29.9, 30.0, 50.0, 99.0, 100.0, 249.0, 250.0, 1e9, nan };
+        for ( const double ms : enc_ms )
+            enc.add_dt_enc( ms );
+        const std::array<uint32_t, 6> enc_want { 1, 2, 1, 2, 2, 3 };
+        for ( size_t i = 0; i < enc_want.size(); ++i )
+            CHECK_EQ( t, enc.dt_enc_hist[i], enc_want[i] );
+
+        MuxPerfWindow mux;  // <=5, 5-20, 20-100, >100 ms
+        const std::array<double, 7> mux_ms { 5.0, 5.01, 20.0, 20.5, 100.0, 100.1, nan };
+        for ( const double ms : mux_ms )
+            mux.add_mux_write( ms );
+        const std::array<uint32_t, 4> mux_want { 1, 2, 2, 2 };
+        for ( size_t i = 0; i < mux_want.size(); ++i )
+            CHECK_EQ( t, mux.mux_write_hist[i], mux_want[i] );
+    }
 }  // namespace
 
 void test_encode_pacer( TestRun& t )
@@ -94,4 +122,5 @@ void test_encode_pacer( TestRun& t )
     multi_vfr( t );
     epochs( t );
     idle( t );
+    perf_buckets( t );
 }

@@ -22,21 +22,19 @@ namespace
 
     int wait_writable( int fd, std::chrono::steady_clock::time_point deadline ) noexcept
     {
-        for ( ;; )
+        int pr = 0;
+        do
         {
             const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(
                 deadline - std::chrono::steady_clock::now() ).count();
             if ( rem <= 0 )
                 return -ETIMEDOUT;
             pollfd pf { fd, POLLOUT, 0 };
-            const int pr = ::poll( &pf, 1, static_cast<int>( rem ) );
-            if ( pr > 0 )
-                return 0;
-            if ( pr == 0 )
-                return -ETIMEDOUT;
-            if ( errno != EINTR )
-                return -EIO;
-        }
+            pr = ::poll( &pf, 1, static_cast<int>( rem ) );
+        } while ( pr < 0 && errno == EINTR );
+        if ( pr > 0 )
+            return 0;
+        return pr == 0 ? -ETIMEDOUT : -EIO;
     }
 }  // namespace
 

@@ -83,6 +83,19 @@ struct DriveResult
     size_t pending = 0;  // unconsumed bytes when the stream ran out
 };
 
+// The bytes of the next refill: the window's room, one byte or a random 1..97, never past the stream's end.
+inline size_t next_chunk( Chunks mode, size_t room, size_t left, std::uniform_int_distribution<size_t>& pick, std::mt19937& rng )
+{
+    size_t k = room;
+    switch ( mode )
+    {
+        case Chunks::Whole: break;
+        case Chunks::OneByte: k = 1; break;
+        case Chunks::Random: k = pick( rng ); break;
+    }
+    return k > left ? left : k;
+}
+
 template <size_t N>
 DriveResult drive( MultipartReader& r, const Bytes& s, Chunks mode, size_t cap, uint32_t seed = 7 )
 {
@@ -92,7 +105,8 @@ DriveResult drive( MultipartReader& r, const Bytes& s, Chunks mode, size_t cap, 
     std::uniform_int_distribution<size_t> pick( 1, 97 );
     DriveResult out;
     size_t fed = 0;
-    while ( true )
+    bool more = true;  // false once the stream is fed whole and the reader has nothing left to give
+    while ( more )
     {
         const MultipartReader::Step st = r.feed( w.data(), w.size(), dst.data() );
         w.consume( st.consumed );
@@ -115,16 +129,9 @@ DriveResult drive( MultipartReader& r, const Bytes& s, Chunks mode, size_t cap, 
             r.resync();
             continue;
         }
-        if ( fed == s.size() )
-            break;
-        size_t k = w.room();
-        if ( mode == Chunks::OneByte )
-            k = 1;
-        else if ( mode == Chunks::Random )
-            k = pick( rng );
-        if ( k > s.size() - fed )
-            k = s.size() - fed;
-        fed += w.append( s.data() + fed, k );
+        more = fed < s.size();
+        if ( more )
+            fed += w.append( s.data() + fed, next_chunk( mode, w.room(), s.size() - fed, pick, rng ) );
     }
     out.pending = w.size();
     return out;

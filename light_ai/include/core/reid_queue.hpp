@@ -94,21 +94,24 @@ public:
     }
 
 private:
+    // Blocks for the next job; false once stop is requested and the queue is drained.
+    bool next_job( ReidJob& job ) noexcept
+    {
+        std::unique_lock<std::mutex> lk( mx_ );
+        cv_.wait( lk, [this]() { return stop_ || !jobs_.empty(); } );
+        if ( stop_ && jobs_.empty() )
+            return false;
+        job = jobs_.front();
+        jobs_.pop();
+        return true;
+    }
+
     void worker_loop() noexcept
     {
         on_start_();
-        while ( true )
+        ReidJob job {};
+        while ( next_job( job ) )
         {
-            ReidJob job {};
-            {
-                std::unique_lock<std::mutex> lk( mx_ );
-                cv_.wait( lk, [this]() { return stop_ || !jobs_.empty(); } );
-                if ( stop_ && jobs_.empty() )
-                    return;
-                job = jobs_.front();
-                jobs_.pop();
-            }
-
             states_[job.slot].store( ReidSlotState::Busy, std::memory_order_release );
             ReidResult res {};
             res.src_idx = job.src_idx;

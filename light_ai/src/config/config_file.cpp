@@ -124,12 +124,12 @@ bool ConfigFileLoader::load( const char* path, Config& cfg ) const
         // ini.h: -1 = file open error, -2 = memory allocation error
         // (only with INI_USE_STACK=0 -- unreachable in this build, kept
         // for completeness); any other nonzero = the first error line.
-        if ( rc == -1 )
-            log_->error() << "config: cannot open file: " << path << '\n';
-        else if ( rc == -2 )
-            log_->error() << "config: out of memory while parsing: " << path << '\n';
-        else
-            log_->error() << "config: rejected: " << path << " (line " << rc << ")\n";
+        switch ( rc )
+        {
+            case -1: log_->error() << "config: cannot open file: " << path << '\n'; break;
+            case -2: log_->error() << "config: out of memory while parsing: " << path << '\n'; break;
+            default: log_->error() << "config: rejected: " << path << " (line " << rc << ")\n"; break;
+        }
         return false;
     }
     log_->info() << "config: loaded " << path << '\n';

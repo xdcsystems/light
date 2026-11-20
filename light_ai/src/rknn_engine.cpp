@@ -14,7 +14,9 @@ RknnEngine::RknnEngine( const char* model_path, const Log& log ) : log_( log )
 {
     log_.info() << "loading model: " << model_path << '\n';
 
-    if ( rknn_init( &ctx_, const_cast<char*>( model_path ), 0, 0, nullptr ) != RKNN_SUCC ) // NOLINT(cppcoreguidelines-pro-type-const-cast)
+    // rknn_init takes the model as a non-const void*; with size 0 it is the .rknn path, which it only reads.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast,custom-no-const-cast): SDK signature, read-only path
+    if ( rknn_init( &ctx_, const_cast<char*>( model_path ), 0, 0, nullptr ) != RKNN_SUCC )
     {
         ctx_ = 0;
         throw std::runtime_error( std::string( "rknn_init failed for " ) + model_path );
@@ -164,7 +166,7 @@ Status RknnEngine::setup_outputs( bool keep_native_outputs )
             out_attrs_[i].type = RKNN_TENSOR_FLOAT16;
             out_attrs_[i].size = out_attrs_[i].n_elems * sizeof( uint16_t );
         }
-        else if ( keep_native_outputs )
+        if ( keep_native_outputs )
         {
             const uint32_t need = out_attrs_[i].n_elems * tensor_elem_bytes( out_attrs_[i].type );
             if ( out_attrs_[i].size < need )
@@ -239,8 +241,8 @@ Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
     const uint32_t packed_u8 = row_bytes * static_cast<uint32_t>( in_h_ );
     const uint32_t raw_sz = in_attr_.size_with_stride ? in_attr_.size_with_stride : in_attr_.size;
     const uint32_t in_size = ( native_type == RKNN_TENSOR_UINT8 || native_type == RKNN_TENSOR_INT8 )
-                                 ? ( raw_sz >= packed_u8 ? raw_sz : packed_u8 )
-                                 : packed_u8;
+            ? ( raw_sz >= packed_u8 ? raw_sz : packed_u8 )
+            : packed_u8;
     in_attr_.size = in_size;
 
     in_mems_.assign( static_cast<size_t>( input_slots ), nullptr );
@@ -270,9 +272,8 @@ Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
 
     in_stride_bytes_ = row_bytes;
 
-    log_.info() << "model input: " << in_w_ << 'x' << in_h_ << ' '
-                << get_type_string( in_attr_.type ) << " zp=" << in_attr_.zp << " scale=" << in_attr_.scale
-                << ", outputs: " << out_attrs_.size() << "\n";
+    log_.info() << "model input: " << in_w_ << 'x' << in_h_ << ' ' << get_type_string( in_attr_.type ) << " zp=" << in_attr_.zp
+                << " scale=" << in_attr_.scale << ", outputs: " << out_attrs_.size() << "\n";
     for ( size_t i = 0; i < out_attrs_.size(); ++i )
     {
         log_.info() << "  out[" << i << "]: " << out_attrs_[i].n_elems << " elems, " << get_type_string( out_attrs_[i].type ) << "\n";
@@ -341,7 +342,7 @@ Status RknnEngine::run() const
     if ( !ctx_ )
         return make_status( Errc::Failed, "engine not initialized" );
     const int rc = rknn_run( ctx_, nullptr );
-    return rc == RKNN_SUCC ? Status{} : sdk_status( Errc::Failed, "rknn_run failed", rc );
+    return rc == RKNN_SUCC ? Status {} : sdk_status( Errc::Failed, "rknn_run failed", rc );
 }
 
 Status RknnEngine::set_core_mask( unsigned mask ) const

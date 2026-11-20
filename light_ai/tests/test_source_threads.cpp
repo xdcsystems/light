@@ -82,7 +82,7 @@ namespace
                 const FrameStatus st = c.poll( 0, f );
                 if ( st == FrameStatus::Frame )
                     static_cast<void>( c.decode( f ) );
-                else if ( st == FrameStatus::Detached )
+                if ( st == FrameStatus::Detached )
                 {
                     c.detach();
                     ++detaches;

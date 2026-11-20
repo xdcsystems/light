@@ -122,19 +122,16 @@ ByteSpan ParamSetCache::prepare( uint8_t* data, size_t size )
     if ( hdr_len_ == 0 )
     {
         const size_t hl = annexb::header_len( data, size );
-        if ( hl > 0 )
+        if ( hl > 0 && hl <= kHdrCap )
         {
-            if ( hl <= kHdrCap )
-            {
-                std::memcpy( hdr_.data(), data, hl );
-                hdr_len_ = hl;
-                log_.info() << "enc: h264 header captured: " << hdr_len_ << " bytes, repeating on every IDR\n";
-            }
-            else if ( !oversized_logged_ )
-            {
-                oversized_logged_ = true;
-                log_.warn() << "enc: h264 header too large to cache (" << hl << " > " << static_cast<size_t>( kHdrCap ) << ")\n";
-            }
+            std::memcpy( hdr_.data(), data, hl );
+            hdr_len_ = hl;
+            log_.info() << "enc: h264 header captured: " << hdr_len_ << " bytes, repeating on every IDR\n";
+        }
+        if ( hl > kHdrCap && !oversized_logged_ )
+        {
+            oversized_logged_ = true;
+            log_.warn() << "enc: h264 header too large to cache (" << hl << " > " << static_cast<size_t>( kHdrCap ) << ")\n";
         }
         return as_is;
     }

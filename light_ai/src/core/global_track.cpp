@@ -116,11 +116,10 @@ namespace
                 m.second_sim = m.best_sim;
                 m.best_sim = sim;
                 m.best_slot = s;
+                continue;
             }
-            else if ( sim > m.second_sim )
-            {
+            if ( sim > m.second_sim )
                 m.second_sim = sim;
-            }
         }
         return m;
     }

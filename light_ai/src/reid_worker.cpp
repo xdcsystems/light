@@ -53,35 +53,33 @@ namespace
         if ( dim <= 0 || dim > reid_cfg::kReidDimMax )
             return false;
 
-        if ( attr.type == RKNN_TENSOR_FLOAT32 )
+        const int zp = attr.zp;
+        const float sc = attr.scale;
+        switch ( attr.type )
         {
-            std::memcpy( res.feat.data(), raw, static_cast<std::size_t>( dim ) * sizeof( float ) );
-        }
-        else if ( attr.type == RKNN_TENSOR_FLOAT16 )
-        {
-            const auto* fp16 = reinterpret_cast<const uint16_t*>( raw );
-            std::transform( fp16, fp16 + dim, res.feat.begin(), fp16_to_float );
-        }
-        else if ( attr.type == RKNN_TENSOR_INT8 )
-        {
-            const int zp = attr.zp;
-            const float sc = attr.scale;
-            std::transform( raw, raw + dim, res.feat.begin(), [zp, sc]( int8_t q ) {
-                return static_cast<float>( static_cast<int>( q ) - zp ) * sc;
-            } );
-        }
-        else if ( attr.type == RKNN_TENSOR_UINT8 )
-        {
-            const auto* u8 = reinterpret_cast<const uint8_t*>( raw );
-            const int zp = attr.zp;
-            const float sc = attr.scale;
-            std::transform( u8, u8 + dim, res.feat.begin(), [zp, sc]( uint8_t q ) {
-                return static_cast<float>( static_cast<int>( q ) - zp ) * sc;
-            } );
-        }
-        else
-        {
-            return false;
+            case RKNN_TENSOR_FLOAT32:
+                std::memcpy( res.feat.data(), raw, static_cast<std::size_t>( dim ) * sizeof( float ) );
+                break;
+            case RKNN_TENSOR_FLOAT16:
+            {
+                const auto* fp16 = reinterpret_cast<const uint16_t*>( raw );
+                std::transform( fp16, fp16 + dim, res.feat.begin(), fp16_to_float );
+                break;
+            }
+            case RKNN_TENSOR_INT8:
+                std::transform( raw, raw + dim, res.feat.begin(), [zp, sc]( int8_t q ) {
+                    return static_cast<float>( static_cast<int>( q ) - zp ) * sc;
+                } );
+                break;
+            case RKNN_TENSOR_UINT8:
+            {
+                const auto* u8 = reinterpret_cast<const uint8_t*>( raw );
+                std::transform( u8, u8 + dim, res.feat.begin(), [zp, sc]( uint8_t q ) {
+                    return static_cast<float>( static_cast<int>( q ) - zp ) * sc;
+                } );
+                break;
+            }
+            default: return false;
         }
 
         res.dim = dim;
@@ -109,11 +107,13 @@ void ReidWorker::BigCorePin::operator()() const noexcept
 {
     if ( log == nullptr )
         return;
+    // Once at the reid worker thread start (BasicReidQueue::worker_loop, before its job loop), not the frame path.
+    // The pin itself is not noexcept: it can throw only from the Log stream (bad_alloc, an ios failure).
     try
     {
         pin_current_thread_to_big_cores( "reid worker", *log );
     }
-    catch ( ... )
+    catch ( ... )  // NOLINT(custom-no-catch-all): thread start, best-effort pin; the noexcept thread body must not terminate
     {
     }
 }

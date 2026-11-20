@@ -112,6 +112,9 @@ private:
     Status prime_first_frame();
     // One complete part is buffered in the window: no fill needed.
     bool part_buffered() const;
+    // Pulls the bytes already queued in the kernel socket buffer (0 ms polls) until a whole part is buffered
+    // or nothing more is queued.
+    void pull_queued();
     // The desync protocol: the buffered window is dropped, the reader resyncs.
     void drop_window();
     int acquire_rx_slot();

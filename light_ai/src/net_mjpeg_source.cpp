@@ -103,29 +103,35 @@ Status NetMjpegSource::read_headers()
     // deadline caps the wall clock: a head dripped a byte per watchdog
     // window used to keep the prober (or the frame thread) here forever.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds( kPollMs );
-    while ( true )
+    HttpHead h = parse_http_head( sock_.data(), sock_.size() );
+    while ( h.parse == HttpHead::Parse::NeedMore )
     {
-        const HttpHead h = parse_http_head( sock_.data(), sock_.size() );
-        if ( h.parse == HttpHead::Parse::Ok )
-        {
-            // Cannot fail while the caps match (the static_assert above);
-            // checked anyway: the reason comes from the reader itself.
-            if ( Status rst = parts_.reset( h.boundary, h.boundary_len ); !rst.ok() )
-                return rst;
-            sock_.consume( h.len );
-            return {};
-        }
-        if ( h.parse == HttpHead::Parse::Error )
-            return h.err;
-        if ( fill_before( deadline ) == BufferedSocket::Fill::Data )
-            continue;
-        return make_status( Errc::Timeout, "no HTTP response within the watchdog window" );
+        if ( fill_before( deadline ) != BufferedSocket::Fill::Data )
+            return make_status( Errc::Timeout, "no HTTP response within the watchdog window" );
+        h = parse_http_head( sock_.data(), sock_.size() );
     }
+    if ( h.parse == HttpHead::Parse::Error )
+        return h.err;
+    // Cannot fail while the caps match (the static_assert above);
+    // checked anyway: the reason comes from the reader itself.
+    if ( Status rst = parts_.reset( h.boundary, h.boundary_len ); !rst.ok() )
+        return rst;
+    sock_.consume( h.len );
+    return {};
 }
 
 bool NetMjpegSource::part_buffered() const
 {
     return parts_.part_buffered( sock_.data(), sock_.size() );
+}
+
+void NetMjpegSource::pull_queued()
+{
+    while ( !part_buffered() )
+    {
+        if ( sock_.fill( 0 ) != BufferedSocket::Fill::Data )
+            return;
+    }
 }
 
 void NetMjpegSource::drop_window()
@@ -155,7 +161,8 @@ NetMjpegSource::Read NetMjpegSource::step_nonblocking_part( int slot, int timeou
 {
     uint8_t* const dst = pool_.data( slot );
     int wait_ms = timeout_ms;
-    while ( true )
+    BufferedSocket::Fill r = BufferedSocket::Fill::Data;
+    while ( r == BufferedSocket::Fill::Data )
     {
         const MultipartReader::Step st = parts_.feed( sock_.data(), sock_.size(), dst );
         sock_.consume( st.consumed );
@@ -171,18 +178,14 @@ NetMjpegSource::Read NetMjpegSource::step_nonblocking_part( int slot, int timeou
             rx_slot_ = -1;
             return Read::Oversized;
         }
-        const BufferedSocket::Fill r = sock_.fill( wait_ms );
-        if ( r == BufferedSocket::Fill::Data )
-        {
-            wait_ms = 0;  // drain remaining queued bytes without blocking again
-            continue;
-        }
-        if ( r == BufferedSocket::Fill::Timeout || r == BufferedSocket::Fill::Interrupted )
-            return Read::Pending;  // keep rx_slot_ and parts_ state for next poll
-        parts_.resync();
-        rx_slot_ = -1;
-        return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
+        r = sock_.fill( wait_ms );
+        wait_ms = 0;  // after data: drain remaining queued bytes without blocking again
     }
+    if ( r == BufferedSocket::Fill::Timeout || r == BufferedSocket::Fill::Interrupted )
+        return Read::Pending;  // keep rx_slot_ and parts_ state for next poll
+    parts_.resync();
+    rx_slot_ = -1;
+    return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
 }
 
 void NetMjpegSource::start()
@@ -226,7 +229,8 @@ NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
     // only by the window filling up (BufferedSocket Full -> Desync).
     using clk = std::chrono::steady_clock;
     clk::time_point deadline = clk::time_point::max();
-    while ( true )
+    BufferedSocket::Fill r = BufferedSocket::Fill::Data;
+    while ( r == BufferedSocket::Fill::Data )
     {
         const MultipartReader::Step st = parts_.feed( sock_.data(), sock_.size(), dst );
         sock_.consume( st.consumed );
@@ -244,13 +248,11 @@ NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
             rx_slot_ = -1;
             return Read::Oversized;
         }
-        const BufferedSocket::Fill r = deadline == clk::time_point::max() ? sock_.fill_until( kPollMs ) : fill_before( deadline );
-        if ( r == BufferedSocket::Fill::Data )
-            continue;
-        parts_.resync();  // cancelled, watchdog / deadline, EOF / error, or a wedged-full window
-        rx_slot_ = -1;
-        return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
+        r = deadline == clk::time_point::max() ? sock_.fill_until( kPollMs ) : fill_before( deadline );
     }
+    parts_.resync();  // cancelled, watchdog / deadline, EOF / error, or a wedged-full window
+    rx_slot_ = -1;
+    return r == BufferedSocket::Fill::Full ? Read::Desync : Read::Lost;
 }
 
 void NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )
@@ -260,9 +262,7 @@ void NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )
         return;
     // Pull any bytes already queued in the kernel socket buffer (0 ms poll)
     // so a multi-frame Wi-Fi burst is collapsed to the freshest complete frame.
-    while ( !part_buffered() && sock_.fill( 0 ) == BufferedSocket::Fill::Data )
-    {
-    }
+    pull_queued();
     for ( int skip = 0; skip < kSkipMax && part_buffered(); ++skip )
     {
         uint32_t next_n = 0;
@@ -282,9 +282,7 @@ void NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )
             n = next_n;
         }
         ++skip_parts_cnt_;
-        while ( !part_buffered() && sock_.fill( 0 ) == BufferedSocket::Fill::Data )
-        {
-        }
+        pull_queued();
     }
 }
 

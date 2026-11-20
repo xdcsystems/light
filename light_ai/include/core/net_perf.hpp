@@ -26,17 +26,10 @@ struct EncPerfWindow
     void add_dt_enc( double ms ) noexcept
     {
         max_dt_enc_ms = std::max( max_dt_enc_ms, ms );
-        size_t idx = 5;
-        if ( ms < 10.0 )
-            idx = 0;
-        else if ( ms < 30.0 )
-            idx = 1;
-        else if ( ms < 50.0 )
-            idx = 2;
-        else if ( ms < 100.0 )
-            idx = 3;
-        else if ( ms < 250.0 )
-            idx = 4;
+        constexpr std::array<double, 5> edges { 10.0, 30.0, 50.0, 100.0, 250.0 };
+        size_t idx = 0;  // the edges ms is not below (NaN is below none: the last bucket)
+        for ( const double edge : edges )
+            idx += static_cast<size_t>( !( ms < edge ) );
         ++dt_enc_hist[idx];
     }
 
@@ -71,13 +64,10 @@ struct MuxPerfWindow
     // Buckets: <=5, 5-20, 20-100, >100 ms.
     void add_mux_write( double ms ) noexcept
     {
-        size_t idx = 3;
-        if ( ms <= 5.0 )
-            idx = 0;
-        else if ( ms <= 20.0 )
-            idx = 1;
-        else if ( ms <= 100.0 )
-            idx = 2;
+        constexpr std::array<double, 3> edges { 5.0, 20.0, 100.0 };
+        size_t idx = 0;  // the edges ms is above (NaN is at none: the last bucket)
+        for ( const double edge : edges )
+            idx += static_cast<size_t>( !( ms <= edge ) );
         ++mux_write_hist[idx];
     }
 
