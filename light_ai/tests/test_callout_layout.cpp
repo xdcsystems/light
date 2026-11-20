@@ -92,15 +92,16 @@ namespace
         compute_callouts( trajs, lb, 1.0f, 1.0f, { false, callout_text_scale( 1, 1.0f ) }, usb );
         compute_callouts( trajs, lb, 1.0f, 1.0f, { false, callout_text_scale( 1, 0.75f ) }, phone );
         CHECK( t, usb.n == 1 && phone.n == 1 );
-        if ( usb.n != 1 || phone.n != 1 )
-            return;
-        const float h_usb = static_cast<float>( usb.d[0].label.y1 - usb.d[0].label.y0 );
-        const float h_phone = static_cast<float>( phone.d[0].label.y1 - phone.d[0].label.y0 );
-        CHECK_NEAR( t, h_phone * 0.75f, h_usb, 2.0f );  // within the integer rounding of the rect
-        CHECK( t, phone.d[0].scale > usb.d[0].scale );
-        // #97 item 1: the outline is 2 * scale, so it is 1 px on both tiles (1.33 px in the phone tensor).
-        CHECK_NEAR( t, usb.d[0].outline, 1.0f, 1e-6f );
-        CHECK_NEAR( t, phone.d[0].outline * 0.75f, usb.d[0].outline, 1e-5f );
+        if ( usb.n == 1 && phone.n == 1 )
+        {
+            const float h_usb = static_cast<float>( usb.d[0].label.y1 - usb.d[0].label.y0 );
+            const float h_phone = static_cast<float>( phone.d[0].label.y1 - phone.d[0].label.y0 );
+            CHECK_NEAR( t, h_phone * 0.75f, h_usb, 2.0f );  // within the integer rounding of the rect
+            CHECK( t, phone.d[0].scale > usb.d[0].scale );
+            // #97 item 1: the outline is 2 * scale, so it is 1 px on both tiles (1.33 px in the phone tensor).
+            CHECK_NEAR( t, usb.d[0].outline, 1.0f, 1e-6f );
+            CHECK_NEAR( t, phone.d[0].outline * 0.75f, usb.d[0].outline, 1e-5f );
+        }
         // At --label-scale 2 the phone outline is 2.667 px (2 px on the tile), but the layout keeps
         // the integer unit lround( 2 * 1.333 ) = 3: the paddings are 4 * 3 / 2 * 3 px as before.
         CalloutList phone2 {};
