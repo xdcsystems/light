@@ -53,9 +53,9 @@
 #include <string>
 #include <vector>
 
-#include "box_mapper.h"
+#include "render/box_mapper.hpp"
 #include "core/box_math.hpp"
-#include "box_smoother.h"
+#include "render/box_smoother.hpp"
 #include "check.hpp"
 #include "core/geometry.hpp"
 #include "suites.hpp"

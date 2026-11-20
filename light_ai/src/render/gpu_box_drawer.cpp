@@ -21,7 +21,7 @@
 #include <string_view>
 #include <drm/drm_fourcc.h>
 
-#include "gpu_box_drawer.hpp"
+#include "render/gpu_box_drawer.hpp"
 #include "core/glyph_font.hpp"
 #include "core/log.hpp"
 

@@ -80,16 +80,16 @@ add_executable(light_ai
     src/npu/yolo_postprocess.cpp
     src/pipeline.cpp
     src/source/sources.cpp
-    src/overlay_sink.cpp
+    src/render/overlay_sink.cpp
     src/tcp_pull_server.cpp
     src/tcp_send.cpp
     src/net_preview.cpp
     src/net_encoder.cpp
     src/core/tracker.cpp
-    src/gpu_box_drawer.cpp
+    src/render/gpu_box_drawer.cpp
     src/source/net_mjpeg_source.cpp
-    src/box_mapper.cpp
-    src/box_smoother.cpp
+    src/render/box_mapper.cpp
+    src/render/box_smoother.cpp
     src/core/timings.cpp
     src/console_reporter.cpp
     src/npu/cal_dumper.cpp

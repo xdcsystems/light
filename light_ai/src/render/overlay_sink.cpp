@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "overlay_sink.hpp"
-#include "box_mapper.h"
+#include "render/overlay_sink.hpp"
+#include "render/box_mapper.hpp"
 #include "config/config.hpp"  // StreamConfig
 #include "core/frame_view.hpp"
 #include "core/log.hpp"

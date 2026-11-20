@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <optional>
 
-#include "box_mapper.h"             // BoxMapper
+#include "render/box_mapper.hpp"    // BoxMapper
 #include "config/config.hpp"        // LabelLang
 #include "core/box_filter.hpp"      // TrackBoxFilters
 #include "core/callout.hpp"         // CalloutHistory, CalloutList
@@ -21,7 +21,7 @@
 #include "core/global_track.hpp"    // reid_cfg::kMaxSources
 #include "core/net_perf.hpp"        // OverlayPerfWindow, EncPerfWindow
 #include "core/track.hpp"           // TrajList
-#include "gpu_box_drawer.hpp"
+#include "render/gpu_box_drawer.hpp"
 #include "net_encoder.h"
 #include "net_preview.hpp"
 #include "core/tracker.hpp"

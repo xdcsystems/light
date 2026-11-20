@@ -1,6 +1,6 @@
 #include <algorithm>
 
-#include "box_smoother.h"
+#include "render/box_smoother.hpp"
 #include "core/box_math.hpp"
 
 void BoxSmoother::set_log( const std::string& path, const Log& log )

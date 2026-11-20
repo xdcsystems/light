@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 
-#include "box_smoother.h"
+#include "render/box_smoother.hpp"
 #include "npu/cal_dumper.hpp"
 #include "core/status.hpp"
 #include "config/config.hpp"
@@ -17,7 +17,7 @@
 #include "core/frame_trace.hpp"
 #include "core/global_track.hpp"
 #include "npu/inference_pool.hpp"
-#include "overlay_sink.hpp"
+#include "render/overlay_sink.hpp"
 #include "npu/reid_worker.hpp"
 #include "media/rga_resizer.hpp"
 #include "npu/rknn_engine.hpp"

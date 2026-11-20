@@ -2,7 +2,7 @@
 #include <cmath>
 #include <cstdint>
 
-#include "box_mapper.h"
+#include "render/box_mapper.hpp"
 
 void BoxMapper::fill( const DetList& dets, const TrajList& trajs, const TrajList& post, const Tracker& tracker,
                       GpuBoxList& boxes, const LbGeom& lb, float sx, float sy, int64_t now_us ) noexcept
