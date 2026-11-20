@@ -58,6 +58,20 @@ namespace box_filter
         kAxes = 4  // cx, cy, w, h
     };
 
+    // The two parameter sets of the project (#97 item 3), one definition for the
+    // code and the tests. Namespace-scope constants: internal linkage, one copy per
+    // TU -- use them in .cpp files (as BoxSmoother and OverlaySink do), not from an
+    // inline function of a header.
+    //
+    // BoxSmoother, raw YOLO boxes of mostly static objects: jitter 2-4 px median,
+    // 5-9 px p90 frame to frame (chairs in reference/ref_evening.csv) -- a low still
+    // cutoff and a 2 % dead zone.
+    constexpr BoxFilterParams kRawBoxParams { 0.5f, 0.01f, 1.0f, 0.02f, 2.0f, 0.5f };
+    // OverlaySink, person boxes from the Kalman posterior, already smooth in
+    // position: a higher still cutoff and speed gain than the raw boxes keep the box
+    // on a walking person (the dead zone still holds a standing one still).
+    constexpr BoxFilterParams kTrackBoxParams { 1.0f, 0.05f, 1.0f, 0.01f, 2.0f, 0.5f };
+
     // One axis of the One-Euro filter.
     struct Axis
     {

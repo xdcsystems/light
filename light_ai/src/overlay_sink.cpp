@@ -378,7 +378,7 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
     TrajList disp = trajs;
     const bool valid_src = frame.src_idx >= 0 && frame.src_idx < reid_cfg::kMaxSources;
     if ( valid_src )
-        track_filt_[frame.src_idx].apply( disp, frame.ts_us, kTrackFilter );
+        track_filt_[frame.src_idx].apply( disp, frame.ts_us, box_filter::kTrackBoxParams );
     boxes_.clear();
     mapper_.fill( dets, disp, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
     callouts_.clear();

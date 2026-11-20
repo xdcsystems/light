@@ -22,7 +22,8 @@ struct CalloutRect
 // One track label: the box it belongs to, the label rect (layout only: nothing is
 // drawn there but the text -- no plate), the L-connector and the text. The text
 // is drawn at `scale` (atlas px -> tensor px) from the pen (text_x, text_y) =
-// the line top-left: white glyphs over an 8-way dark outline `outline` px wide.
+// the line top-left: white glyphs over an 8-way dark outline `outline` px wide
+// (2 * scale: the same width on every output tile).
 struct CalloutItem
 {
     CalloutRect box {};

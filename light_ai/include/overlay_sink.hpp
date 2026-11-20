@@ -13,7 +13,7 @@
 
 #include "box_mapper.h"             // BoxMapper
 #include "config/config.hpp"        // LabelLang
-#include "core/box_filter.hpp"      // TrackBoxFilters, BoxFilterParams
+#include "core/box_filter.hpp"      // TrackBoxFilters
 #include "core/callout.hpp"         // CalloutHistory, CalloutList
 #include "core/detection.hpp"       // DetList
 #include "core/encoder_config.hpp"  // StreamLayout, place_tile
@@ -85,10 +85,6 @@ private:
     CalloutList callouts_ {};
     std::array<CalloutHistory, reid_cfg::kMaxSources> callout_hist_ {};
     std::array<TrackBoxFilters, reid_cfg::kMaxSources> track_filt_ {};
-    // Person boxes come from the Kalman posterior, already smooth in position:
-    // a higher still cutoff and speed gain than the raw boxes of BoxSmoother keep
-    // the box on a walking person (the dead zone still holds a standing one still).
-    const BoxFilterParams kTrackFilter { 1.0f, 0.05f, 1.0f, 0.01f, 2.0f, 0.5f };
     StreamLayout layout_ {};  // the h264 stream geometry (tiled_): the callout tile scale
     bool tiled_ = false;
     LabelLang label_lang_ = LabelLang::En;
