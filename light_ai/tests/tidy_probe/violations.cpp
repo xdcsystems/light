@@ -132,6 +132,72 @@ int use()
            + WithStatic::sfn() + Derived {}.b + static_cast<int>( Holder {}.p != nullptr ) + tangled( 1, 1, 1 );
 }
 
+// Control flow: else-if ladders, empty loop bodies, loops without a real exit condition.
+int ladders( int a )
+{
+    if ( a == 0 )
+        return 1;
+    else if ( a == 1 )                     // custom-no-else-if
+        return 2;
+    if ( a == 2 )
+    {
+        return 3;
+    }
+    else
+    {                                      // custom-no-else-if (an else whose only statement is an if)
+        if ( a == 3 )
+            return 4;
+    }
+    return 0;
+}
+template <class T>
+int kind_of()
+{
+    if constexpr ( sizeof( T ) == 1 )
+        return 1;
+    else if constexpr ( sizeof( T ) == 2 )  // custom-no-else-if (if constexpr too)
+        return 2;
+    else
+        return 4;
+}
+void loops( int n, volatile int& sink )
+{
+    for ( ;; )                             // custom-no-infinite-loop (no condition)
+    {
+        if ( ++sink > n )
+            break;
+    }
+    for ( ; true; )                        // custom-no-infinite-loop
+    {
+        if ( ++sink > n )
+            break;
+    }
+    while ( true )                         // custom-no-infinite-loop
+    {
+        if ( ++sink > n )
+            break;
+    }
+    while ( 1 )                            // custom-no-infinite-loop (a non-zero integer literal)
+    {
+        if ( ++sink > n )
+            break;
+    }
+    do                                     // custom-no-infinite-loop (in parentheses)
+    {
+        if ( ++sink > n )
+            break;
+    } while ( ( true ) );
+    for ( int i = 0; i < n; ++i ) {}       // custom-no-empty-loop
+    while ( ++sink < n );                  // custom-no-empty-loop (a ';' body)
+    while ( ++sink < n )                   // custom-no-empty-loop (a comment is not a statement)
+    {
+        // nothing
+    }
+    int arr[3] = {};
+    for ( int& v : arr );                  // custom-no-empty-loop (a range-for)
+    do {} while ( ++sink < n );            // custom-no-empty-loop
+}
+
 // Near misses: none of the lines below may hit. An extra hit fails the self-test like a missing one.
 constexpr int kLimit = 7;  // a constexpr global: not mutable
 const int kConstGlobal = 8;  // a const global: not mutable
@@ -152,4 +218,34 @@ int near_misses()
     auto lam = []( int x ) { return x + 1; };
     int ( *fp )( int ) = lam;  // the conversion instantiates the implicit static __invoke of a capture-less lambda
     return error( "x" ) + kLimit + kConstGlobal + fp( 1 );
+}
+
+int quiet_flow( int n, volatile int& sink )
+{
+    if ( n == 0 )
+        return 0;
+    if ( n == 1 )  // independent ifs: not a ladder
+        return 1;
+    if ( n > 5 )
+    {
+        sink = 1;
+    }
+    else  // an else with more than an if in it
+    {
+        sink = 2;
+        if ( n == 3 )
+            sink = 3;
+    }
+    while ( sink < n )  // a real condition and a body
+        sink = sink + 1;
+    do
+    {
+        sink = 4;
+    } while ( 0 );  // a false literal: runs once
+    switch ( n )
+    {
+        case 2: return 2;
+        default: break;
+    }
+    return sink;
 }

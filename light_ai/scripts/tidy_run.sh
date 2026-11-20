@@ -9,7 +9,8 @@
 #   rules  the pinned PyPI clang-tidy in light_ai/venv (RULES_VERSION) with scripts/tidy_rules.yaml only
 #          (--experimental-custom-checks): readability-function-cognitive-complexity, which LLVM 11 does not have
 #          (#43), and the custom-* project rules (#93: no statics, globals, virtuals, inheritance, manual heap,
-#          smart pointers, const_cast, printf, std::cout outside main.cpp, catch (...)). The venv belongs to the
+#          smart pointers, const_cast, printf, std::cout outside main.cpp, catch (...); #95: else-if, empty or
+#          endless loops). The venv belongs to the
 #          user: the gate only reads it; a missing binary or another version fails the gate at once, with the
 #          install command (README, Build). Named "cognitive" before #93.
 # Usage: bash scripts/tidy_run.sh [timeout_sec]

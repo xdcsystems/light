@@ -129,6 +129,36 @@ CustomChecks:
       - BindName: d
         Message: "std::cout / cerr / clog (and the w- forms) outside src/main.cpp: use the injected const Log& (CONTRIBUTING, I/O & logging)"
         Level: Warning
+  # Control flow (PR #95 comment 7025795592): no if / else-if ladders, no loop with an empty body, no loop with an
+  # empty or always-true condition. Each loop states its real exit condition; the body does the work.
+  - Name: no-else-if
+    # the hit is the else-if itself (one per rung); if constexpr too (no exception), and an else whose only
+    # statement is an if (else { if ... }: the same ladder in braces)
+    Query: |
+      match ifStmt(hasElse(stmt(anyOf(ifStmt(), compoundStmt(statementCountIs(1), has(ifStmt())))).bind("d")))
+    Diagnostic:
+      - BindName: d
+        Message: "else-if: use a switch, a table, early returns or independent ifs (CONTRIBUTING, Control flow)"
+        Level: Warning
+  - Name: no-empty-loop
+    # a body of ';' or '{}' (comments do not count): the condition does the work, out of sight
+    Query: |
+      let EMPTY stmt(anyOf(nullStmt(), compoundStmt(statementCountIs(0))))
+      match stmt(anyOf(forStmt(hasBody(EMPTY)), whileStmt(hasBody(EMPTY)), doStmt(hasBody(EMPTY)), cxxForRangeStmt(hasBody(EMPTY)))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "loop with an empty body: move the step into the body (CONTRIBUTING, Control flow)"
+        Level: Warning
+  - Name: no-infinite-loop
+    # for (;;) or a literal condition: true or a non-zero integer (through parens and casts); a named constant is
+    # not caught (the matcher sees literals only)
+    Query: |
+      let TRUE expr(ignoringParenImpCasts(anyOf(cxxBoolLiteral(equals(true)), integerLiteral(unless(equals(0))))))
+      match stmt(anyOf(forStmt(unless(hasCondition(expr()))), forStmt(hasCondition(TRUE)), whileStmt(hasCondition(TRUE)), doStmt(hasCondition(TRUE)))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "loop without a real exit condition (for (;;), while (true)): loop on the condition that ends it (CONTRIBUTING, Control flow)"
+        Level: Warning
   # Error model: no catch (...) except the documented startup sites (CONTRIBUTING, scripts/rules_allow.txt).
   - Name: no-catch-all
     Query: |

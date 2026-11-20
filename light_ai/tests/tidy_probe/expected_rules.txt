@@ -56,3 +56,16 @@ tests/tidy_probe/violations.cpp:122 custom-no-std-stream
 tests/tidy_probe/violations.cpp:123 custom-no-std-stream
 tests/tidy_probe/violations.cpp:126 custom-no-std-stream
 tests/tidy_probe/violations.cpp:128 custom-no-catch-all
+tests/tidy_probe/violations.cpp:140 custom-no-else-if
+tests/tidy_probe/violations.cpp:147 custom-no-else-if
+tests/tidy_probe/violations.cpp:158 custom-no-else-if
+tests/tidy_probe/violations.cpp:165 custom-no-infinite-loop
+tests/tidy_probe/violations.cpp:170 custom-no-infinite-loop
+tests/tidy_probe/violations.cpp:175 custom-no-infinite-loop
+tests/tidy_probe/violations.cpp:180 custom-no-infinite-loop
+tests/tidy_probe/violations.cpp:185 custom-no-infinite-loop
+tests/tidy_probe/violations.cpp:190 custom-no-empty-loop
+tests/tidy_probe/violations.cpp:191 custom-no-empty-loop
+tests/tidy_probe/violations.cpp:192 custom-no-empty-loop
+tests/tidy_probe/violations.cpp:197 custom-no-empty-loop
+tests/tidy_probe/violations.cpp:198 custom-no-empty-loop

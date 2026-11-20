@@ -6,6 +6,7 @@ WarningsAsErrors: '*'
 CheckOptions:
   - { key: hicpp-special-member-functions.AllowSoleDefaultDtor, value: '1' } # When set to 1 this check doesn’t flag classes with a sole, explicitly defaulted destructor.
   - { key: modernize-use-override.IgnoreDestructors,     value: '1' } # If set to non-zero, this check will not diagnose destructors.
+  - { key: hicpp-multiway-paths-covered.WarnOnMissingElse, value: '1' } # an if / else-if chain without a final else (PR #95; the rules pass bans else-if outright: custom-no-else-if)
   # readability-function-size: the maxima after stage 6e (measured on the board, clang-tidy 11; lines rounded up
   # to the ten, the counts exact): lines 87 (MppDecoder::init), statements 60 (GpuBoxDrawer::draw_slot),
   # branches 11 (MppDecoder::init, TcpPullServer::accept_client), nesting 4 (YoloDecoder::collect_head,

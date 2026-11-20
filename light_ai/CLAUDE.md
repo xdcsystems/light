@@ -116,6 +116,8 @@ only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
   Exit codes (review): `0` clean, `1` runtime fatal, `2` bad CLI/config, `3` startup failure.
 - Output side vs recognition (review): no viewer -> output side sleeps completely (`enc=0.0`); recognition never
   sleeps; with viewer, online sources run full path and absent sources show `NO SIGNAL`.
+- Control flow (gate): no `if` / `else if` ladders (`if constexpr` too; `switch`, tables, early returns,
+  independent `if`s), no loop with an empty body, no `for (;;)` / `while (true)`: every loop states its exit condition.
 - Comments match the code and docs (review); max line length `140` (`.clang-format`; gate).
 
 ## Completed refactoring stages (0–7, `fix/audit-p0` @ `3ccd8ae`, merged in PR #73)
