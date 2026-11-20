@@ -55,6 +55,7 @@ add_executable(light_ai_tests
     test_cpu_affinity.cpp
     test_inference_pool.cpp
     test_timings.cpp
+    test_perf_clock.cpp
     test_console_reporter.cpp
     test_cal_dumper.cpp
     test_usb_node_locator.cpp

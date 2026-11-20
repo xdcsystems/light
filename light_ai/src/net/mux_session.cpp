@@ -16,6 +16,7 @@ extern "C"
 #include "av_common.hpp"  // av_err_str
 #include "core/fixed_fmt.hpp"
 #include "core/log.hpp"
+#include "core/perf_clock.hpp"
 #include "muxer_teardown.hpp"
 #include "net/mux_session.hpp"
 #include "tcp_pull_server.hpp"
@@ -124,7 +125,7 @@ MuxSession::DrainEnd MuxSession::drain_queue( AVFormatContext* fc, const TcpPull
         // freeing the preallocated AVPacket struct.
         const auto mw_t0 = std::chrono::steady_clock::now();
         const int r = mux_write( fc, mux_pkt_.get() );
-        const double mw_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - mw_t0 ).count();
+        const double mw_ms = ms_since( mw_t0 );
         mperf.add_mux_write( mw_ms );
         ++mperf.pkts;
         if ( mw_ms > 20.0 )
@@ -151,7 +152,7 @@ PacketQueue::Popped MuxSession::timed_pop( MuxPerfWindow& mperf )
 {
     const auto pop_t0 = std::chrono::steady_clock::now();
     const PacketQueue::Popped got = queue_.pop( mux_pkt_.slot() );
-    const double pop_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - pop_t0 ).count();
+    const double pop_ms = ms_since( pop_t0 );
     if ( pop_ms > mperf.pop_wait_ms_max )
         mperf.pop_wait_ms_max = pop_ms;
     return got;
@@ -164,7 +165,7 @@ void MuxSession::maybe_log_perf( MuxPerfWindow& mperf,
                                  bool force ) noexcept
 {
     const auto now = std::chrono::steady_clock::now();
-    const double elapsed = std::chrono::duration<double, std::milli>( now - win_t0 ).count();
+    const double elapsed = ms_between( win_t0, now );
     if ( ( !force && elapsed < 5000.0 ) || mperf.pkts == 0 )
         return;
     const uint64_t ww_now = tcp != nullptr ? tcp->wait_writable_cnt() : 0;

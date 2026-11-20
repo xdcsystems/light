@@ -4,6 +4,7 @@
 #include "core/encode_pacer.hpp"
 #include "core/encoder_config.hpp"
 #include "core/log.hpp"
+#include "core/perf_clock.hpp"
 #include "core/session_warmup.hpp"
 #include "net_encoder.h"
 
@@ -98,7 +99,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     const int slot = ring_.current();
     const auto cmp_t0 = std::chrono::steady_clock::now();
     const Status cst = composer_.compose( tensor_fd, tp, slot, do_enc ? ring_.buf( slot ) : nullptr );
-    const double cmp_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - cmp_t0 ).count();
+    const double cmp_ms = ms_since( cmp_t0 );
     if ( cmp_ms > perf_.compose_ms_max )
         perf_.compose_ms_max = cmp_ms;
     if ( !cst.ok() )
@@ -138,7 +139,7 @@ void NetEncoder::flush_dirty() noexcept
     const int slot = ring_.advance();
     const auto cmp_t0 = std::chrono::steady_clock::now();
     const Status cst = composer_.flush_canvas( ring_.buf( slot ) );
-    const double cmp_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - cmp_t0 ).count();
+    const double cmp_ms = ms_since( cmp_t0 );
     if ( cmp_ms > perf_.compose_ms_max )
         perf_.compose_ms_max = cmp_ms;
     if ( !cst.ok() )
@@ -199,7 +200,7 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noe
     const int slot = ring_.advance();
     const auto cmp_t0 = std::chrono::steady_clock::now();
     const Status ist = composer_.compose_idle( absent, nabs, slot, ring_.buf( slot ) );
-    const double cmp_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - cmp_t0 ).count();
+    const double cmp_ms = ms_since( cmp_t0 );
     if ( cmp_ms > perf_.compose_ms_max )
         perf_.compose_ms_max = cmp_ms;
     if ( !ist.ok() )
@@ -214,7 +215,7 @@ void NetEncoder::run_encoded( uint32_t epoch, std::chrono::steady_clock::time_po
 {
     if ( has_last_enc_ && epoch == perf_epoch_ )
     {
-        const double dt_ms = std::chrono::duration<double, std::milli>( now - last_enc_tp_ ).count();
+        const double dt_ms = ms_between( last_enc_tp_, now );
         perf_.add_dt_enc( dt_ms );
     }
     last_enc_tp_ = now;
@@ -227,7 +228,7 @@ void NetEncoder::run_encoded( uint32_t epoch, std::chrono::steady_clock::time_po
         if ( const Status est = codec_.encode( ring_.frame( ring_.current() ), ts_us_, s, queue_ ); !est.ok() )
             queue_.fail( s.epoch );
     } );
-    const double h264_ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - enc_t0 ).count();
+    const double h264_ms = ms_since( enc_t0 );
     if ( h264_ms > perf_.h264_ms_max )
         perf_.h264_ms_max = h264_ms;
 }
