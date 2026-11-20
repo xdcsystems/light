@@ -56,6 +56,7 @@ namespace
     // Standard inih handler signature (no line-number parameter):
     // ini_parse() returns the FIRST-error line (it keeps parsing past
     // errors), reported once by ConfigFileLoader::load.
+    // NOLINTNEXTLINE(misc-const-correctness): ini_handler fixes the callback type, user is void*
     int cfg_file_handler( void* user, const char* section, const char* key,
             const char* value )
     {
