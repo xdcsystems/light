@@ -108,7 +108,7 @@ flowchart TB
 
 ## Modules & Headers
 
-The codebase contains **93 headers** under [`include/`](include/) and **56 translation units** under [`src/`](src/) + [`externals/inih/ini.c`](externals/inih/ini.c).
+The codebase contains **95 headers** under [`include/`](include/) and **57 translation units** under [`src/`](src/) + [`externals/inih/ini.c`](externals/inih/ini.c).
 
 ### Top-Level Pipeline & Hardware Modules (`include/`, `src/`)
 

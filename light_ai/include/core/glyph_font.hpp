@@ -98,8 +98,9 @@ namespace glyph_font
     // while its corners are finite).
     // Precondition: scale is finite and > 0, and the quad corners gx, gy, gx + m.w * scale,
     // gy + m.h * scale are finite (the 1 / scale and the spans assume it). raster_text, the
-    // only caller, checks the scale and the start pen; the corners then stay finite for any
-    // scale far below FLT_MAX (the callers use about 1..3), not for one near it.
+    // only caller, checks that the scale and the start pen are finite; the corners then stay
+    // finite for a pen and a scale far below FLT_MAX (the callers: a pen inside the tile, a
+    // scale of a few units), not for one near it.
     template <typename F>
     void raster_glyph( int gi, const GlyphMetric& m, float gx, float gy, float scale, int w, int h, F& visit ) noexcept
     {
