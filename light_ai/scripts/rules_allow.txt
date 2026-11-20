@@ -8,6 +8,13 @@ src/net_preview.cpp nolint custom-no-catch-all
 src/reid_worker.cpp nolint custom-no-catch-all
 src/rknn_engine.cpp nolint custom-no-const-cast
 
+# NOLINT(misc-const-correctness) sites (#94; CONTRIBUTING, const by default): a type fixed by the C or C++ API, not
+# by us. The reason sits in the NOLINT.
+src/config/config_file.cpp nolint misc-const-correctness
+src/tcp_pull_server.cpp nolint misc-const-correctness
+tests/test_main.cpp nolint misc-const-correctness
+tests/tsan_main.cpp nolint misc-const-correctness
+
 # The vendored header-only stb_easy_font (externals/), included from one core .cpp (CONTRIBUTING, No statics).
 src/core/bitmap_font.cpp core-include stb_easy_font.h
 

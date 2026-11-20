@@ -286,7 +286,7 @@ private:
         }
         if ( !dec_ready_ )
         {
-            if ( Status st = dec_.init( w, h ); !st.ok() )
+            if ( const Status st = dec_.init( w, h ); !st.ok() )
             {
                 if ( hot )
                     log_.warn() << "probe s" << idx_ << ": mpp decoder init failed - staying absent\n";

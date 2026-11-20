@@ -118,7 +118,7 @@ namespace
     void test_slow_ramp( TestRun& t )
     {
         const float speeds[4] = { 0.5f, 1.0f, 2.0f, 3.0f };
-        for ( float spd : speeds )
+        for ( const float spd : speeds )
             check_slow_ramp( t, spd );
     }
 }  // namespace
@@ -247,7 +247,7 @@ void test_box_smoother( TestRun& t )
         CHECK( t, lerr.str().empty() );
         sm.set_log( "/nonexistent-dir/box.csv", log );
         CHECK( t, lerr.str() == "smoother: box-log open failed for '/nonexistent-dir/box.csv' - A/B logging disabled\n" );
-        DetList out;
+        const DetList out;
         sm.log_frame( 0, one( det( 1, 1, 1, 1, 0 ) ), out );  // no CSV open: a no-op
         CHECK( t, lout.str().empty() );
     }

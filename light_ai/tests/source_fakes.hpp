@@ -144,7 +144,7 @@ struct FakeHost
     int usb_capture_nodes( std::array<int, kMaxCandidates>& out ) const
     {
         int n = 0;
-        for ( int v : usb )
+        for ( const int v : usb )
             out[static_cast<size_t>( n++ )] = v;
         return n;
     }

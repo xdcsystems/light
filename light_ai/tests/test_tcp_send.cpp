@@ -74,7 +74,7 @@ void test_tcp_send( TestRun& t )
     }
     // No client: EPIPE without touching any fd.
     {
-        TcpPullServer::WriteCtx ctx( 2 );
+        const TcpPullServer::WriteCtx ctx( 2 );
         const uint8_t b[4] = { 1, 2, 3, 4 };
         CHECK( t, tcp_send_chunk( ctx, b, 4 ) == -EPIPE );
     }
@@ -90,7 +90,7 @@ void test_tcp_send( TestRun& t )
     }
     // abort_client's shutdown( SHUT_RDWR ): the next chunk fails with EPIPE at once.
     {
-        Pair p;
+        const Pair p;
         TcpPullServer::WriteCtx ctx( 2 );
         ctx.cfd.store( p.fd[0] );
         ::shutdown( p.fd[0], SHUT_RDWR );
@@ -100,7 +100,7 @@ void test_tcp_send( TestRun& t )
     // A stalled viewer (never reads): the chunk-wide deadline ends the send
     // with ETIMEDOUT after sndtimeo_sec, partial progress included.
     {
-        Pair p;
+        const Pair p;
         TcpPullServer::WriteCtx ctx( 1 );
         ctx.cfd.store( p.fd[0] );
         const timeval tv { 1, 0 };

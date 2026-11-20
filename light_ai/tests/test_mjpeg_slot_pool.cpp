@@ -44,8 +44,8 @@ void test_mjpeg_slot_pool( TestRun& t )
     p.release_all();
     CHECK( t, p.free_slot() == 0 && !p.in_flight( 3 ) );
     // swap: the memory moves, the in-flight flags stay with the indices.
-    uint8_t* const m0 = p.data( 0 );
-    uint8_t* const m1 = p.data( 1 );
+    const uint8_t* const m0 = p.data( 0 );
+    const uint8_t* const m1 = p.data( 1 );
     p.mark( 0 );
     p.swap( 0, 1 );
     CHECK( t, p.data( 0 ) == m1 && p.data( 1 ) == m0 && p.in_flight( 0 ) && !p.in_flight( 1 ) );

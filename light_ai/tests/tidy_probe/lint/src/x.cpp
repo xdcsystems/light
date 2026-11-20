@@ -24,3 +24,9 @@ int l();
 // NOLINTBEGIN -- a bare range switches every check off: nolint-range *, never allowed
 int m();
 // NOLINTEND -- a bare END only closes it: silent
+int n();  // NOLINT(misc-const-correctness)
+int o();  // NOLINT(misc-*): a glob over the built-in project rule (#94)
+// NOLINTBEGIN(misc-const-correctness): a range of the built-in project rule is never allowed either
+int p();
+// NOLINTEND(misc-const-correctness)
+int q();  // NOLINT(misc-unused-parameters): a built-in check that is not a project rule, not counted

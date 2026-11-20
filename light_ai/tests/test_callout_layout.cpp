@@ -126,7 +126,7 @@ void test_callout_layout( TestRun& t )
     {
         TrajList trajs {};
         trajs.push( TrackState { 3, TRACK_DEAD, 300.0f, 300.0f, 0.0f, 0.0f, 80.0f, 160.0f, 5 } );
-        TrackState t1 { 2, TRACK_TENT, 400.0f, 320.0f, 0.0f, 0.0f, 90.0f, 180.0f, 1, 99 };
+        const TrackState t1 { 2, TRACK_TENT, 400.0f, 320.0f, 0.0f, 0.0f, 90.0f, 180.0f, 1, 99 };
         trajs.push( t1 );
         CalloutList out {};
         compute_callouts( trajs, lb, sx, sy, { false }, out );

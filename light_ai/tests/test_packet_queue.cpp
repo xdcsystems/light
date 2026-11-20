@@ -80,7 +80,7 @@ namespace
     {
         Stats st;
         {
-            Queue q( FakeOps { &st } );
+            const Queue q( FakeOps { &st } );
             CHECK( t, st.inits == 4 && st.releases == 0 );
         }
         CHECK( t, st.releases == 4 );
@@ -90,7 +90,7 @@ namespace
         bool threw = false;
         try
         {
-            Queue q( FakeOps { &bad } );
+            const Queue q( FakeOps { &bad } );
         }
         catch ( const std::runtime_error& )
         {
@@ -143,7 +143,7 @@ namespace
         CHECK( t, pu.flushed == 4 && pu.drops == 1 && q.depth() == 1 );
         push( q, 6, true );
         FakePkt out;
-        Queue::Popped r = q.pop( out );  // 5 is dropped by the re-armed gate
+        const Queue::Popped r = q.pop( out );  // 5 is dropped by the re-armed gate
         CHECK( t, r.what == Pop::Packet && out.seq == 6 );
         // A second overflow counts on.
         for ( int s = 7; s <= 10; ++s )

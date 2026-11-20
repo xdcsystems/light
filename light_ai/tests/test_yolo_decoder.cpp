@@ -280,8 +280,8 @@ namespace
         YoloDecoder dec( 0.25f, 0.45f, log );
         Head p3( 8, 8 );
         put_reference( p3 );
-        Head odd( 5, 5 );    // 64 % 5 != 0
-        Head s4( 16, 16 );   // stride 4: no anchor set
+        const Head odd( 5, 5 );    // 64 % 5 != 0
+        const Head s4( 16, 16 );   // stride 4: no anchor set
         YoloHead bad_layout = p3.view();
         bad_layout.ch = 20;  // not 3 anchors
         const YoloHead heads[3] = { odd.view(), s4.view(), YoloHead {} };

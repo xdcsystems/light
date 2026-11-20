@@ -256,7 +256,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
     {
         if ( fs == FrameStatus::Stopped || stop_.requested() )
             return Step::Stop;
-        if ( Status hst = handle_source_failure( f ); !hst.ok() )
+        if ( const Status hst = handle_source_failure( f ); !hst.ok() )
         {
             st = hst;
             return Step::Fatal;
@@ -277,7 +277,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
         {
             EncodedFrame df = f;
             df.st = dec_st;
-            if ( Status hst = handle_source_failure( df ); !hst.ok() )
+            if ( const Status hst = handle_source_failure( df ); !hst.ok() )
             {
                 st = hst;
                 return Step::Fatal;
@@ -455,7 +455,7 @@ bool Pipeline::submit_orient_probe( int src, int fd_src, int rot, int job_idx, i
                                        rga_limits::rgb888_stride_px( tn.stride_bytes, model_w_ ) );
     if ( rga_st.ok() )
         tensor_band_[static_cast<size_t>( slot )] = elb;
-    InferJob job { src, ew, eh, job_idx, -1, rga_st.ok(), elb, {} };
+    const InferJob job { src, ew, eh, job_idx, -1, rga_st.ok(), elb, {} };
     return pool_.submit( slot, job );
 }
 

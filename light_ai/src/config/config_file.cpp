@@ -56,10 +56,11 @@ namespace
     // Standard inih handler signature (no line-number parameter):
     // ini_parse() returns the FIRST-error line (it keeps parsing past
     // errors), reported once by ConfigFileLoader::load.
+    // NOLINTNEXTLINE(misc-const-correctness): ini_handler fixes the callback type, user is void*
     int cfg_file_handler( void* user, const char* section, const char* key,
             const char* value )
     {
-        CfgFileCtx* cx = static_cast<CfgFileCtx*>( user );
+        const CfgFileCtx* cx = static_cast<const CfgFileCtx*>( user );
         // inih passes section = "" (NOT nullptr) for entries parsed
         // before any [section] header -- the empty name is the normal
         // flat case, only a real named section is an error.

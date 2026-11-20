@@ -74,12 +74,13 @@ void MuxSession::serve() noexcept
             const std::lock_guard<std::mutex> lk( mx );
             slot = nullptr;
         }
-    } tcp_reg( tcp_mx_, active_tcp_, tcp );
+    };
+    const TcpReg tcp_reg( tcp_mx_, active_tcp_, tcp );
     if ( tcp_pull )
     {
         // The bind retries until it succeeds or stop() ends the thread;
         // the run keeps going without a viewer (README, Run).
-        if ( Status st = retry_listen( [&] { return tcp.listen(); }, quit_, log_, "enc", cfg_.port ); !st.ok() )
+        if ( const Status st = retry_listen( [&] { return tcp.listen(); }, quit_, log_, "enc", cfg_.port ); !st.ok() )
             return;
         log_.info() << "enc: PULL mode: listening on tcp port " << cfg_.port << 
                      " (viewer: ffplay -fflags nobuffer tcp://<board-ip>:" << cfg_.port << ")\n";
@@ -290,7 +291,7 @@ Status MuxSession::setup_stream( AVFormatContext* fc, AVStream** st_out, int64_t
     av_dict_set( &mux_opts, "mpegts_flags", "+pat_pmt_at_frames+resend_headers", 0 );
     av_dict_set( &mux_opts, "pat_period", "0.1", 0 );
     av_dict_set( &mux_opts, "sdt_period", "0.25", 0 );
-    int ret2 = avformat_write_header( fc, &mux_opts );
+    const int ret2 = avformat_write_header( fc, &mux_opts );
     av_dict_free( &mux_opts );
     if ( ret2 < 0 )
     {
@@ -344,17 +345,17 @@ void MuxSession::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
     // Local guard instead of unique_ptr: the Transport pattern used
     // above; same declaration position -> same destruction order
     // (fc dies AFTER the Transport, as before).
-    FcGuard fc { raw };
+    const FcGuard fc { raw };
 
     Transport t;
     t.tcp = &tcp;
     t.tcp_pull = tcp_pull;
-    if ( Status tst = open_transport( url, fc.p, t ); !tst.ok() )
+    if ( const Status tst = open_transport( url, fc.p, t ); !tst.ok() )
         return;
 
     AVStream* st = nullptr;
     int64_t frame_step = 1;
-    if ( Status sst = setup_stream( fc.p, &st, &frame_step, tcp_pull ); !sst.ok() )
+    if ( const Status sst = setup_stream( fc.p, &st, &frame_step, tcp_pull ); !sst.ok() )
         return;
 
     // Session open order: the queue first (cleared, key gate armed, this

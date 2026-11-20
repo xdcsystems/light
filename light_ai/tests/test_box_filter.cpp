@@ -42,7 +42,7 @@ namespace
         BoxFilter f;
         const BoxCWH truth { 400.0f, 300.0f, w, h };
         f.reset( truth );
-        auto jittered = [&n, &truth, amp]() {
+        const auto jittered = [&n, &truth, amp]() {
             return BoxCWH { truth.cx + n.next( amp ), truth.cy + n.next( amp ), truth.w + n.next( amp ), truth.h + n.next( amp ) };
         };
         for ( int k = 0; k < 60; ++k )

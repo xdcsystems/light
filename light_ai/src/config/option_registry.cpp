@@ -105,9 +105,10 @@ namespace
         return true;
     }
 
-    bool apply_config( Config& c, const char* )
+    // --config is read by CliOptions::prepass before any option; its table entry only accepts the key. The
+    // parameters stay unnamed: the Entry::apply signature is fixed and this one reads neither.
+    bool apply_config( Config&, const char* )
     {
-        ( void ) c;
         return true;
     }
 

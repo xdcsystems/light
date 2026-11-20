@@ -7,6 +7,7 @@
 #include "suite_runner.hpp"
 #include "suites.hpp"
 
+// NOLINTNEXTLINE(misc-const-correctness): the standard fixes the type of main's argv as char**
 int main( int argc, char** argv )
 {
     const Suite suites[] = {

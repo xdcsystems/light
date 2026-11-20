@@ -126,7 +126,7 @@ inline void fill_and_flush( int fd, void* p, unsigned char val, size_t size )
 {
     if ( !p || size == 0 )
         return;
-    DmaSync sync( fd, true );
+    const DmaSync sync( fd, true );
     std::memset( p, val, size );
     cache_clean( p, size );
 }

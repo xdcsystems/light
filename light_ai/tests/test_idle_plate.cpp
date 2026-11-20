@@ -45,7 +45,7 @@ namespace
 
     bool only( const std::vector<uint8_t>& p, uint8_t a, uint8_t b )
     {
-        for ( uint8_t v : p )
+        for ( const uint8_t v : p )
             if ( v != a && v != b )
                 return false;
         return true;
@@ -119,7 +119,7 @@ namespace
     uint64_t fnv1a( const std::vector<uint8_t>& p )
     {
         uint64_t h = 1469598103934665603ULL;
-        for ( uint8_t v : p )
+        for ( const uint8_t v : p )
         {
             h ^= v;
             h *= 1099511628211ULL;

@@ -36,9 +36,9 @@ Status NetMjpegSource::setup_device( const std::string& url )
     };
 
     HttpUrl u;
-    if ( Status st = parse_http_url( url, u ); !st.ok() )
+    if ( const Status st = parse_http_url( url, u ); !st.ok() )
         return warn( st );
-    if ( Status st = sock_.connect( u.host, u.port ); !st.ok() )
+    if ( const Status st = sock_.connect( u.host, u.port ); !st.ok() )
         return warn( st );
     Status st = send_get( u.host, u.port, u.path );
     if ( st.ok() )
