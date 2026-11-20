@@ -65,11 +65,11 @@ public:
     enum
     {
         kVertsPerBox = 4 * 6,
-        // The label text: kOutlineDirs dark passes + one white pass (#91 item 5).
-        kOutlineDirs = 8,
-        kTextPasses = kOutlineDirs + 1,
+        // The label text: the baked outline pass + the fill pass (#108; it was 8
+        // offset outline passes + 1 white pass).
+        kTextPasses = 2,
         // Connector segments + the longest label (kLabelCap - 1 glyphs) in every
-        // text pass, 6 vertices a quad: 6 * (2 + 31 * 9) = 1686. Checked against
+        // text pass, 6 vertices a quad: 6 * (2 + 31 * 2) = 384. Checked against
         // CalloutItem below.
         kVertsPerCallout = 6 * ( 2 + ( glyph_font::kLabelCap - 1 ) * kTextPasses ),
         // One draw is one source's frame: every box of it and one callout per
@@ -90,7 +90,8 @@ private:
         int w = 0, h = 0;
         uint32_t stride = 0;
 
-        // Preallocated draw() staging buffer (128 boxes + 8 callouts).
+        // Preallocated draw() staging buffer (128 boxes + 8 callouts):
+        // kMaxVerts = 3072 + 8 * 384 = 6144 vertices, 122,880 bytes.
         std::array<BatchVert, kMaxVerts> vstage {};
 
         // Per-slot import cache. Geometry (w/h/stride) is shared across
@@ -170,7 +171,7 @@ private:
     bool load_entry_points();
     // Config (with the fallback), ES3 context then ES2, made current.
     bool create_context();
-    // Uploads GL_ALPHA glyph + solid-slot atlas texture once during init().
+    // Uploads the GL_LUMINANCE_ALPHA (fill, outline) glyph + solid-slot atlas texture once during init().
     void create_atlas();
     // The batch VBO, and the VAO on ES3. Cannot fail.
     void create_buffers();

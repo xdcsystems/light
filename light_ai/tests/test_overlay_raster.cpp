@@ -107,7 +107,6 @@ namespace
     {
         CalloutItem c {};
         c.scale = callout_text_scale( ls, 1.0f );
-        c.outline = 2.0f * c.scale;
         c.text_bytes = glyph_font::format_person( c.text, glyph_font::kLabelCap, 7, false );
         c.text_x = pad;
         c.text_y = pad;
@@ -154,6 +153,19 @@ namespace
                 CHECK( t, ink_in( tile, 1 + ls, 0, tile.w, far, bg ).n == 0 );
                 CHECK( t, ink_in( tile, tile.w - far, 0, tile.w, tile.h, bg ).n == 0 );
                 CHECK( t, ink_in( tile, 1 + ls, tile.h - far, tile.w, tile.h, bg ).n == 0 );
+                // All outlines under all fills (#108): a pixel fully inside any glyph's fill stays
+                // white, whatever the outline of a neighbouring glyph quad under it ("#7", "rs").
+                int covered = 0;
+                int dimmed = 0;
+                glyph_font::raster_text( c.text, c.text_bytes, static_cast<float>( c.text_x ), static_cast<float>( c.text_y ), c.scale,
+                                         tile.w, tile.h, [&]( int px, int py, const glyph_font::Texel2& s ) {
+                                             if ( s.fill < 254.5f )
+                                                 return;
+                                             ++covered;
+                                             dimmed += tile.px( px, py )[0] != 255 ? 1 : 0;
+                                         } );
+                CHECK( t, covered > 0 );
+                CHECK_EQ( t, dimmed, 0 );
                 if ( dump_dir != nullptr )
                     tile.dump( std::string( dump_dir ) + "/callout_ls" + std::to_string( ls ) + ( bg > 100 ? "_light" : "_dark" )
                                + ".ppm" );

@@ -42,80 +42,24 @@ namespace
         }
     }
 
-    // A glyph's padded atlas rect placed in tensor px: tensor (x, y) maps to
-    // atlas (ax0 + (x - x0) * inv, ay0 + (y - y0) * inv).
-    struct GlyphQuad
+    // One text pass of a callout (the CPU twin of append_text_pass in gpu_box_drawer.cpp):
+    // every covered pixel blends gray at the coverage of one atlas plane (the fill or
+    // the baked outline, #108), unrounded until the pixel is written.
+    void draw_text_pass_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutItem& c, bool outline, uint8_t gray ) noexcept
     {
-        int idx = 0;
-        float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;  // the quad in tensor px
-        float ax0 = 0.0f, ay0 = 0.0f;                      // its top-left in the atlas
-        float inv = 1.0f;                                  // atlas px per tensor px
-    };
-
-    // One tensor row of quad q at atlas row ay: every pixel center inside the
-    // quad takes the bilinear alpha (the GL_LINEAR equivalent of the GPU path).
-    void draw_glyph_row_cpu( uint8_t* line, int w, const GlyphQuad& q, float ay, uint8_t r, uint8_t g, uint8_t b,
-                             unsigned a_mul ) noexcept
-    {
-        const int px0 = std::max( 0, static_cast<int>( std::floor( q.x0 ) ) );
-        const int px1 = std::min( w, static_cast<int>( std::ceil( q.x1 ) ) );
-        for ( int px = px0; px < px1; ++px )
-        {
-            const float cx = static_cast<float>( px ) + 0.5f;
-            if ( cx < q.x0 || cx >= q.x1 )
-                continue;
-            const float cov = glyph_font::sample( q.idx, q.ax0 + ( cx - q.x0 ) * q.inv, ay ) * static_cast<float>( a_mul ) / 255.0f;
-            const auto a = static_cast<unsigned>( std::lround( cov ) );
-            if ( a != 0u )
-                blend_px( line + static_cast<std::ptrdiff_t>( px ) * 3, r, g, b, a );
-        }
-    }
-
-    // One glyph at float pen position (x0, y0) = its padded rect's top-left in
-    // tensor px, scaled by sc: every covered pixel center maps back into the atlas.
-    void draw_glyph_cpu( uint8_t* rgb, int w, int h, int stride, float x0, float y0, int glyph_idx, float sc,
-                         uint8_t r, uint8_t g, uint8_t b, unsigned a_mul ) noexcept
-    {
-        const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( glyph_idx );
-        if ( m.w == 0 || m.h == 0 || !( sc > 0.0f ) )
-            return;
-        const GlyphQuad q { glyph_idx,
-                            x0,
-                            y0,
-                            x0 + static_cast<float>( m.w ) * sc,
-                            y0 + static_cast<float>( m.h ) * sc,
-                            static_cast<float>( m.ax ),
-                            static_cast<float>( m.ay ),
-                            1.0f / sc };
-        const int py0 = std::max( 0, static_cast<int>( std::floor( q.y0 ) ) );
-        const int py1 = std::min( h, static_cast<int>( std::ceil( q.y1 ) ) );
-        for ( int py = py0; py < py1; ++py )
-        {
-            const float cy = static_cast<float>( py ) + 0.5f;
-            if ( cy < q.y0 || cy >= q.y1 )
-                continue;
-            draw_glyph_row_cpu( rgb + static_cast<size_t>( py ) * stride, w, q, q.ay0 + ( cy - q.y0 ) * q.inv, r, g, b, a_mul );
-        }
-    }
-
-    // One text pass of a callout (the CPU twin of append_text_pass in gpu_box_drawer.cpp).
-    void draw_text_pass_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutItem& c, float ox, float oy,
-                             uint8_t r, uint8_t g, uint8_t b, unsigned a ) noexcept
-    {
-        float pen = static_cast<float>( c.text_x ) + ox;
-        const float top = static_cast<float>( c.text_y ) + oy;
-        int pos = 0;
-        while ( pos < c.text_bytes )
-        {
-            const uint32_t cp = glyph_font::next_utf8( c.text, c.text_bytes, pos );
-            if ( cp == 0 )
-                break;
-            const int gi = glyph_font::glyph_index( cp );
-            const glyph_font::GlyphMetric& m = glyph_font::glyph_metrics( gi );
-            draw_glyph_cpu( rgb, w, h, stride, pen + static_cast<float>( m.dx ) * c.scale, top + static_cast<float>( m.dy ) * c.scale,
-                            gi, c.scale, r, g, b, a );
-            pen += static_cast<float>( m.adv ) * c.scale;
-        }
+        const auto visit = [rgb, stride, outline, gray]( int px, int py, const glyph_font::Texel2& t ) {
+            const float cov = ( outline ? t.outline : t.fill ) / 255.0f;
+            if ( cov <= 0.0f )
+                return;
+            uint8_t* p = rgb + static_cast<size_t>( py ) * stride + static_cast<std::ptrdiff_t>( px ) * 3;
+            for ( int k = 0; k < 3; ++k )
+            {
+                const float v = static_cast<float>( gray ) * cov + static_cast<float>( p[k] ) * ( 1.0f - cov );
+                p[k] = static_cast<uint8_t>( std::lround( std::clamp( v, 0.0f, 255.0f ) ) );
+            }
+        };
+        glyph_font::raster_text( c.text, c.text_bytes, static_cast<float>( c.text_x ), static_cast<float>( c.text_y ), c.scale, w, h,
+                                 visit );
     }
 
 }  // namespace
@@ -166,7 +110,8 @@ void draw_boxes_cpu( uint8_t* rgb, int w, int h, int stride, const GpuBox* boxes
     }
 }
 
-// Connector, the 8-way dark outline, the white text: the GPU path's order and colors.
+// Connector, the baked dark outline of the whole label, then its white fill: the GPU
+// path's order and colors (all outlines under all fills).
 void draw_callouts_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutList& list ) noexcept
 {
     for ( int i = 0; i < list.n; ++i )
@@ -174,13 +119,7 @@ void draw_callouts_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutLis
         const CalloutItem& c = list.d[i];
         for ( int s = 0; s < c.n_segs; ++s )
             fill_rect_cpu( rgb, w, h, stride, c.segs[s], c.r, c.g, c.b, 255u );
-        const float o = c.outline;
-        const float dirs[8][2] = {
-            { -o, -o }, { 0.0f, -o }, { o, -o }, { -o, 0.0f }, { o, 0.0f }, { -o, o }, { 0.0f, o }, { o, o } };
-        constexpr uint8_t gray = CalloutConfig::kOutlineGray;
-        for ( const auto& d : dirs )
-            draw_text_pass_cpu( rgb, w, h, stride, c, d[0], d[1], gray, gray, gray, CalloutConfig::kOutlineAlpha );
-        draw_text_pass_cpu( rgb, w, h, stride, c, 0.0f, 0.0f, 255, 255, 255, 255u );
+        draw_text_pass_cpu( rgb, w, h, stride, c, true, CalloutConfig::kOutlineGray );
+        draw_text_pass_cpu( rgb, w, h, stride, c, false, 255 );
     }
 }
-

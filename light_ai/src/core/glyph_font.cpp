@@ -1,4 +1,4 @@
-// The label font functions on top of the generated atlas (glyph_font_table.hpp,
+// The label font functions on top of the generated (L, A) atlas (glyph_font_table.hpp,
 // tools/gen_glyph_font.py). No state: everything reads the constexpr tables.
 
 #include <algorithm>
@@ -159,11 +159,11 @@ namespace glyph_font
 
     const uint8_t* atlas() noexcept { return kAtlas; }
 
-    float sample( int idx, float x, float y ) noexcept
+    Texel2 sample2( int idx, float x, float y ) noexcept
     {
         const GlyphMetric& m = metric_at( idx );
         if ( m.w == 0 || m.h == 0 || !std::isfinite( x ) || !std::isfinite( y ) )
-            return 0.0f;
+            return {};
         // Texel centers sit at +0.5: shift to center coordinates, clamp into the rect.
         const float fx = std::clamp( x - 0.5f, static_cast<float>( m.ax ), static_cast<float>( m.ax + m.w - 1 ) );
         const float fy = std::clamp( y - 0.5f, static_cast<float>( m.ay ), static_cast<float>( m.ay + m.h - 1 ) );
@@ -173,12 +173,16 @@ namespace glyph_font
         const int y1 = std::min( y0 + 1, m.ay + m.h - 1 );
         const float tx = fx - static_cast<float>( x0 );
         const float ty = fy - static_cast<float>( y0 );
-        const auto at = []( int px, int py ) {
-            return static_cast<float>( kAtlas[py * kAtlasW + px] );
+        // plane 0: L (fill), plane 1: A (outline)
+        const auto lerp2 = [x0, y0, x1, y1, tx, ty]( int plane ) {
+            const auto at = [plane]( int px, int py ) {
+                return static_cast<float>( kAtlas[( py * kAtlasW + px ) * 2 + plane] );
+            };
+            const float top = at( x0, y0 ) + ( at( x1, y0 ) - at( x0, y0 ) ) * tx;
+            const float bot = at( x0, y1 ) + ( at( x1, y1 ) - at( x0, y1 ) ) * tx;
+            return top + ( bot - top ) * ty;
         };
-        const float top = at( x0, y0 ) + ( at( x1, y0 ) - at( x0, y0 ) ) * tx;
-        const float bot = at( x0, y1 ) + ( at( x1, y1 ) - at( x0, y1 ) ) * tx;
-        return top + ( bot - top ) * ty;
+        return { lerp2( 0 ), lerp2( 1 ) };
     }
 
     int format_person( char* dst, int dst_cap, int id, bool lang_ru ) noexcept
