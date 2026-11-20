@@ -12,7 +12,7 @@
 #include "console_reporter.h"
 #include "core/auto_orient.hpp"
 #include "core/log.hpp"
-#include "core/net_perf.hpp"
+#include "core/perf_reporter.hpp"
 #include "core/stop_flag.hpp"
 #include "frame_trace.h"
 #include "core/global_track.hpp"
@@ -114,12 +114,6 @@ private:
     void update_auto_orient( int src, int fd_src, int& ok ) noexcept;
     // RGA into the slot's tensor, then submit to the pool.
     void frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms ) noexcept;
-    void record_frame_perf( int src, std::chrono::steady_clock::time_point tp ) noexcept;
-    void record_orient_perf( int src, double elapsed_ms ) noexcept;
-    void finish_step_perf( std::chrono::steady_clock::time_point t0 ) noexcept;
-    void maybe_log_perf( std::chrono::steady_clock::time_point now ) noexcept;
-    void log_src_perf() noexcept;
-    void log_enc_perf() noexcept;
 
 private:
     Config cfg_;
@@ -163,11 +157,9 @@ private:
     const Log& log_;        // diagnostics sink (main.cpp); safe from the worker and prober threads
     std::chrono::steady_clock::time_point t0_ {};  // run() start: the pts base of live frames and NO SIGNAL
     int64_t last_idle_us_ = -1;  // last NO SIGNAL publish stamp (us since t0_)
-    std::array<SourcePerfWindow, kMaxSources> src_perf_ {};
-    std::array<std::chrono::steady_clock::time_point, kMaxSources> last_frame_tp_ {};
-    std::array<bool, kMaxSources> has_last_frame_ {};
-    std::array<uint64_t, kMaxSources> prev_skip_parts_ {};
     uint64_t reid_crop_fail_ = 0;  // failed Re-ID crops (rate-limited warn in run_reid_stage)
-    double step_ms_max_ = 0.0;
-    std::chrono::steady_clock::time_point perf_win_start_ {};
+    // The source-side [perf] window and both 5 s [perf] lines (--net only;
+    // core/perf_reporter.hpp): fed by step(), probe_rot_batch() and
+    // reset_source_analytics(), logged from step() and idle_tick().
+    PerfReporter perf_;
 };

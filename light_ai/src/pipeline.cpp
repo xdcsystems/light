@@ -8,7 +8,6 @@
 #include <stdexcept>
 #include <thread>
 
-#include "core/fixed_fmt.hpp"
 #include "core/frame_view.hpp"
 #include "core/log.hpp"
 #include "core/rga_limits.hpp"
@@ -50,6 +49,7 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
   , rep_( log )
   , stop_( stop )
   , log_( log )
+  , perf_( cfg.stream.enabled, log )
 {
     // pool_ is up by now: the engines are loaded, their I/O is set up,
     // they are pinned to NPU cores and the workers wait for frames. If
@@ -183,7 +183,7 @@ void Pipeline::idle_tick() noexcept
     if ( !sink_.enabled() )
         return;
     sink_.flush_dirty();
-    maybe_log_perf( clk::now() );
+    perf_.tick( clk::now(), srcs_, sink_ );
     const int64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t0_ ).count();
     const int64_t step_us = cfg_.stream.fps > 0 ? 1000000LL / cfg_.stream.fps : 40000;
@@ -261,16 +261,15 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
             st = hst;
             return Step::Fatal;
         }
-        finish_step_perf( t0 );
+        perf_.step_done( t0, clk::now(), srcs_, sink_ );
         return Step::Skipped;
     }
     const auto t1 = clk::now();
-    record_frame_perf( f.src, t1 );
+    perf_.frame( f.src, t1 );
     Status dec_st;
     const int fd_src = srcs_[f.src].decode( f, &dec_st );
     const auto t2 = clk::now();
-    if ( cfg_.stream.enabled && f.src >= 0 && f.src < kMaxSources )
-        src_perf_[f.src].dec_ms_max = std::max( src_perf_[f.src].dec_ms_max, ms( t1, t2 ) );
+    perf_.decode( f.src, ms( t1, t2 ) );
     if ( fd_src < 0 )
     {
         if ( !dec_st.ok() )
@@ -283,7 +282,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
                 return Step::Fatal;
             }
         }
-        finish_step_perf( t0 );
+        perf_.step_done( t0, clk::now(), srcs_, sink_ );
         return Step::Skipped;
     }
 
@@ -305,7 +304,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
     frame_dispatch( slot, f.src, an_[f.src].frames++, fd_src, ts_us, ms( t0, t1 ), ms( t1, t2 ) );
     if ( pool_.size() == 1 )
         ok += publish_oldest();
-    finish_step_perf( t0 );
+    perf_.step_done( t0, clk::now(), srcs_, sink_ );
     return Step::Dispatched;
 }
 
@@ -313,7 +312,7 @@ Status Pipeline::run()
 {
     int ok = 0;
     t0_ = clk::now();
-    perf_win_start_ = t0_;
+    perf_.start( t0_ );
     // Hot-attach prober (README): a local, so its destructor stops and joins
     // it on ANY exit of run() -- drain, fatal error, exception unwind. Spawned
     // BEFORE the pin below: it keeps the scheduler default (cpu_affinity.hpp).
@@ -364,7 +363,7 @@ void Pipeline::reset_source_analytics( int src ) noexcept
     const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( clk::now() - t0_ ).count();
     global_tracks_.sync_cam( src, trajs_, ts_us );
     sink_.reset_source( src );
-    has_last_frame_[src] = false;
+    perf_.source_reset( src );
 }
 
 Status Pipeline::handle_source_failure( const EncodedFrame& f ) noexcept
@@ -414,10 +413,6 @@ int Pipeline::acquire_slot( int& ok ) noexcept
     }
     return k;  // try_acquire(): a slot index or -1
 }
-
-// RGA resize into the slot's tensor (resize_into_slot), optional cal dump,
-// one-time cross-check of the RGA letterbox geometry against the expected
-// band, then the job goes to the pool (frame_dispatch).
 
 void Pipeline::prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept
 {
@@ -475,7 +470,7 @@ bool Pipeline::probe_rot_batch( int src, int fd_src, const int* rots, int n_rots
         ok += publish_oldest();
     if ( stop_.requested() )
     {
-        record_orient_perf( src, ms( pt0, clk::now() ) );
+        perf_.orient( src, ms( pt0, clk::now() ) );
         return false;
     }
 
@@ -496,7 +491,7 @@ bool Pipeline::probe_rot_batch( int src, int fd_src, const int* rots, int n_rots
         }
         off += batch;
     }
-    record_orient_perf( src, ms( pt0, clk::now() ) );
+    perf_.orient( src, ms( pt0, clk::now() ) );
     return !stop_.requested();
 }
 
@@ -550,6 +545,9 @@ void Pipeline::update_auto_orient( int src, int fd_src, int& ok ) noexcept
     }
 }
 
+// RGA resize into the slot's tensor (resize_into_slot), optional cal dump,
+// one-time cross-check of the RGA letterbox geometry against the expected
+// band, then the job goes to the pool.
 void Pipeline::frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms ) noexcept
 {
     const auto t3 = clk::now();
@@ -675,91 +673,4 @@ void Pipeline::run_reid_stage( const FrameView& view ) noexcept
         if ( reid_worker_->submit( job ) )
             global_tracks_.mark_dispatched( view.src_idx, reqs[i].local_id, reqs[i].gen );
     }
-}
-
-void Pipeline::record_frame_perf( int src, std::chrono::steady_clock::time_point tp ) noexcept
-{
-    if ( !cfg_.stream.enabled || src < 0 || src >= kMaxSources )
-        return;
-    SourcePerfWindow& sp = src_perf_[src];
-    if ( has_last_frame_[src] )
-        sp.max_dq_gap_ms = std::max( sp.max_dq_gap_ms, ms( last_frame_tp_[src], tp ) );
-    last_frame_tp_[src] = tp;
-    has_last_frame_[src] = true;
-    ++sp.frames;
-}
-
-void Pipeline::record_orient_perf( int src, double elapsed_ms ) noexcept
-{
-    if ( !cfg_.stream.enabled || src < 0 || src >= kMaxSources )
-        return;
-    SourcePerfWindow& sp = src_perf_[src];
-    ++sp.orient_probe_cnt;
-    sp.orient_probe_ms_max = std::max( sp.orient_probe_ms_max, elapsed_ms );
-}
-
-void Pipeline::finish_step_perf( std::chrono::steady_clock::time_point t0 ) noexcept
-{
-    if ( !cfg_.stream.enabled )
-        return;
-    const auto now = clk::now();
-    step_ms_max_ = std::max( step_ms_max_, ms( t0, now ) );
-    maybe_log_perf( now );
-}
-
-void Pipeline::maybe_log_perf( std::chrono::steady_clock::time_point now ) noexcept
-{
-    if ( !cfg_.stream.enabled || ms( perf_win_start_, now ) < 5000.0 )
-        return;
-    log_src_perf();
-    log_enc_perf();
-    perf_win_start_ = now;
-}
-
-void Pipeline::log_src_perf() noexcept
-{
-    Log::Line line = log_.info();
-    line << "[perf] src step_max=" << Fixed { step_ms_max_, 1 };
-    step_ms_max_ = 0.0;
-    for ( int s = 0; s < srcs_.size(); ++s )
-    {
-        SourcePerfWindow& sp = src_perf_[s];
-        sp.eagain_cnt = srcs_.take_eagain_cnt( s );
-        const uint64_t skip_now = srcs_[s].skip_parts_cnt();
-        sp.skip_parts_cnt = static_cast<uint32_t>( skip_now - prev_skip_parts_[s] );
-        prev_skip_parts_[s] = skip_now;
-        line << " | s" << s << " f=" << sp.frames << " dq_max=" << Fixed { sp.max_dq_gap_ms, 1 }
-             << " eagain=" << sp.eagain_cnt << " dec_max=" << Fixed { sp.dec_ms_max, 1 }
-             << " or_cnt=" << sp.orient_probe_cnt << " or_max=" << Fixed { sp.orient_probe_ms_max, 1 }
-             << " skip=" << sp.skip_parts_cnt;
-        sp.reset();
-    }
-    line << '\n';
-}
-
-void Pipeline::log_enc_perf() noexcept
-{
-    const OverlayPerfWindow op = sink_.take_perf();
-    const EncPerfWindow ep = sink_.take_enc_perf();
-    Log::Line line = log_.info();
-    if ( sink_.has_enc_perf() )
-    {
-        line << "[perf] enc admit=" << ep.enc_admit << " skip=" << ep.enc_skip
-             << " idle_a=" << ep.idle_admit << " idle_s=" << ep.idle_skip
-             << " dt_max=" << Fixed { ep.max_dt_enc_ms, 1 }
-             << " dt_hist=[" << ep.dt_enc_hist[0] << ',' << ep.dt_enc_hist[1] << ','
-             << ep.dt_enc_hist[2] << ',' << ep.dt_enc_hist[3] << ','
-             << ep.dt_enc_hist[4] << ',' << ep.dt_enc_hist[5] << ']'
-             << " h264_max=" << Fixed { ep.h264_ms_max, 1 }
-             << " cmp_max=" << Fixed { ep.compose_ms_max, 1 }
-             << " eagain=" << ep.eagain_cnt << " clamp=" << ep.pts_clamp_cnt
-             << " qflush=" << ep.q_flush_cnt << " | ";
-    }
-    else
-    {
-        line << "[perf] ";
-    }
-    line << "ovl gpu_max=" << Fixed { op.gpu_draw_ms_max, 1 }
-         << " sync_max=" << Fixed { op.sync_cpu_ms_max, 1 }
-         << " ftmo=" << op.fence_tmo_cnt << '\n';
 }

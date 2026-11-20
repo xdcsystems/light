@@ -106,6 +106,7 @@ add_executable(light_ai
     src/core/callout.cpp
     src/core/overlay_raster.cpp
     src/core/idle_plate.cpp
+    src/core/perf_reporter.cpp
     src/core/status.cpp
     src/core/http_url.cpp
     src/core/http_head.cpp

@@ -214,14 +214,12 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noe
 
 void NetEncoder::run_encoded( uint32_t epoch, std::chrono::steady_clock::time_point now ) noexcept
 {
-    if ( has_last_enc_ && epoch == perf_epoch_ )
-    {
-        const double dt_ms = ms_between( last_enc_tp_, now );
-        perf_.add_dt_enc( dt_ms );
-    }
-    last_enc_tp_ = now;
-    has_last_enc_ = true;
+    if ( epoch != perf_epoch_ )
+        enc_lap_.reset();  // no interval across sessions
     perf_epoch_ = epoch;
+    double dt_ms = 0.0;
+    if ( enc_lap_.lap( now, dt_ms ) )
+        perf_.add_dt_enc( dt_ms );
 
     const auto enc_t0 = PerfClock::now();
     // No session or epoch changed while cropping: drop the stale frame.
@@ -236,15 +234,9 @@ void NetEncoder::run_encoded( uint32_t epoch, std::chrono::steady_clock::time_po
 
 EncPerfWindow NetEncoder::take_perf() noexcept
 {
-    const uint64_t ea = codec_.eagain_cnt();
-    const uint64_t pc = codec_.pts_clamp_cnt();
-    const uint64_t qf = codec_.q_flush_cnt();
-    perf_.eagain_cnt = static_cast<uint32_t>( ea - prev_eagain_cnt_ );
-    perf_.pts_clamp_cnt = static_cast<uint32_t>( pc - prev_pts_clamp_cnt_ );
-    perf_.q_flush_cnt = static_cast<uint32_t>( qf - prev_q_flush_cnt_ );
-    prev_eagain_cnt_ = ea;
-    prev_pts_clamp_cnt_ = pc;
-    prev_q_flush_cnt_ = qf;
+    perf_.eagain_cnt = eagain_.take( codec_.eagain_cnt() );
+    perf_.pts_clamp_cnt = pts_clamp_.take( codec_.pts_clamp_cnt() );
+    perf_.q_flush_cnt = q_flush_.take( codec_.q_flush_cnt() );
     const EncPerfWindow out = perf_;
     perf_.reset();
     return out;
