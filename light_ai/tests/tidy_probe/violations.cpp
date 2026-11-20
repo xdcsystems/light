@@ -247,6 +247,17 @@ int const_kinds( int seed, int* cell )
     int& alias = *cell;                    // misc-const-correctness (a local reference)
     return value + copy + twice( *at ) + alias;
 }
+template <class T>
+int tmpl_local( const T& v )
+{
+    int scale = 2;                         // misc-const-correctness (a non-dependent local in a function template)
+    T copy = v;                            // none: a local of a dependent type is (review), the check skips it
+    return scale * static_cast<int>( copy );
+}
+int tmpl_use()
+{
+    return tmpl_local( 3 ) + tmpl_local( 4.0 );  // two instantiations, no second hit on the template's lines
+}
 
 // Near misses: none of the lines below may hit. An extra hit fails the self-test like a missing one.
 constexpr int kLimit = 7;  // a constexpr global: not mutable
@@ -268,6 +279,18 @@ int near_misses()
     const auto lam = []( int x ) { return x + 1; };
     int ( *fp )( int ) = lam;  // the conversion instantiates the implicit static __invoke of a capture-less lambda
     return error( "x" ) + kLimit + kConstGlobal + fp( 1 );
+}
+
+struct Xy
+{
+    int x;
+    int y;
+};
+int binding_near_miss( int seed )
+{
+    const Xy p { seed, seed + 1 };
+    auto [x, y] = p;  // the names of a structured binding are (review): only p is checked, and p is const
+    return x + y;
 }
 
 int quiet_flow( int n, volatile int& sink )

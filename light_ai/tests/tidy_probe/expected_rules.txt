@@ -81,3 +81,4 @@ tests/tidy_probe/violations.cpp:244 misc-const-correctness
 tests/tidy_probe/violations.cpp:245 misc-const-correctness
 tests/tidy_probe/violations.cpp:246 misc-const-correctness
 tests/tidy_probe/violations.cpp:247 misc-const-correctness
+tests/tidy_probe/violations.cpp:253 misc-const-correctness
