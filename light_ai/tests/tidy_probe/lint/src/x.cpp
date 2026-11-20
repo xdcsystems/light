@@ -21,6 +21,6 @@ int k();
 // NOLINTBEGIN(readability-x): not a custom check, not counted
 int l();
 // NOLINTEND(readability-x)
-// NOLINTBEGIN -- a bare range switches every check off: nolint-blanket here
+// NOLINTBEGIN -- a bare range switches every check off: nolint-range *, never allowed
 int m();
 // NOLINTEND -- a bare END only closes it: silent

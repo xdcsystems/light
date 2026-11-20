@@ -15,11 +15,12 @@
 #                    'cust*', '*-catch-all'); every NOLINT of a line counts. Each one must be in the allowlist
 #                    (CONTRIBUTING lists the sites)
 #   nolint-reason    such a NOLINT(...) without ": <reason>" after it
-#   nolint-range     a NOLINTBEGIN / NOLINTEND whose check list names a custom-* check (the same globs): never
+#   nolint-range     a NOLINTBEGIN / NOLINTEND whose check list names a custom-* check (the same globs), or a bare
+#                    NOLINTBEGIN (every check, detail '*'; its bare NOLINTEND is not reported again): never
 #                    allowed, an allowlist line (no line number) must not cover a whole range; an allowlist line
 #                    for it fails as well
 #   nolint-blanket   a NOLINT without a check list, prose included (clang-tidy honours one anywhere in a line):
-#                    it would switch the custom checks off too
+#                    it would switch the custom checks off too; never allowed, like nolint-range
 # Allowlist: <root>/scripts/rules_allow.txt, one line per allowed finding: "<path> <rule> [<detail>]" (no line
 # numbers: an edit above a site does not break it). A finding not on it fails, and so does an entry that matches
 # no finding (stale).
@@ -59,6 +60,7 @@ PAREN = re.compile(r'\(([^)]*)\)')
 BANNED = ("gst/", "gstreamer", "opencv")
 
 findings = []  # (path, line, rule, detail, message)
+NEVER = ("nolint-range", "nolint-blanket")  # rules no allowlist line can allow
 
 
 def add(path, line, rule, detail, message):
@@ -78,7 +80,10 @@ def check_nolint(rel, n, text):
         after = text[m.end():marks[i + 1].start() if i + 1 < len(marks) else len(text)]
         paren = PAREN.match(after)
         if paren is None:
-            if kind != "END":  # a bare END only closes a bare BEGIN, reported there
+            if kind == "BEGIN":  # a bare range switches every check off, the custom ones too
+                add(rel, n, "nolint-range", "*",
+                    "NOLINTBEGIN / NOLINTEND cannot switch a project rule off: NOLINT or NOLINTNEXTLINE at the site")
+            elif kind != "END":  # a bare END only closes a bare BEGIN, reported there
                 add(rel, n, "nolint-blanket", "",
                     "NOLINT without a check list (clang-tidy reads one anywhere in a line, prose too) "
                     "switches the custom checks off")
@@ -151,15 +156,15 @@ out = []
 allowed = 0
 for path, line, rule, detail, message in sorted(findings, key=lambda x: (x[0], x[1], x[2], x[3])):
     for a in allow:
-        if not a[2] and a[0] == (path, rule, detail) and rule != "nolint-range":
+        if not a[2] and a[0] == (path, rule, detail) and rule not in NEVER:
             a[2] = True
             allowed += 1
             break
     else:
         out.append("%s:%d: %s%s -- %s" % (path, line, rule, ": " + detail if detail else "", message))
 for key, n, used in allow:
-    if key[1] == "nolint-range":
-        out.append("scripts/rules_allow.txt:%d: not allowable: %s -- a NOLINTBEGIN / NOLINTEND range is never allowed"
+    if key[1] in NEVER:
+        out.append("scripts/rules_allow.txt:%d: not allowable: %s -- a NOLINT range or a blanket NOLINT is never allowed"
                    % (n, " ".join(k for k in key if k)))
     elif not used:
         out.append("scripts/rules_allow.txt:%d: stale: %s -- matches no finding" % (n, " ".join(k for k in key if k)))
