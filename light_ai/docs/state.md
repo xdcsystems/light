@@ -1519,3 +1519,76 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
 - **Commits 7-8 (`a49c40c`, `140fc0b`):** #109 nits: `glyph_font::raster_glyph` states its precondition (finite scale > 0 and finite quad corners; `raster_text` implies it for a pen and a scale far below `FLT_MAX`); `IdlePlate::pen()` returns `{ x, y }` from one ink-box walk (was `pen_x` / `pen_y`, a walk each).
 - **Size:** lines added / removed per commit (all files; `src` + `include` code lines without comments and blank lines in brackets): 1 `+182 / -11` (`+70 / -9`), 2 `+82 / -72` (`+54 / -60`), 3 `+80 / -58` (`+54 / -38`), 4 `+95 / -47` (`+38 / -40`), 5 `+79 / -40` (`+49 / -33`), 6 `+423 / -137` (`+158 / -127`), 7 `+20 / -16` (`+12 / -12`). The #103 estimates (`-25`, `-30`, `-25`, `-60..80`) are not reached: each duplicated block now exists once, but the helpers, their structs, declarations and comments outweigh the removed copies. `sizeof(Pipeline)` `2,061,592 -> 2,061,640` B (`+48`: the `Lap` padding and `PerfReporter`'s flag and `Log&`), `sizeof(NetEncoder)` `6,048 -> 6,056` B.
 - **Verification:** full gate rc=0 (`65` unit suites / `9,322` checks, `6` TSan suites / `23` checks, 2-pass tidy `0` findings, rules-lint `16` allowed); Layer A pool 1 and pool 3 `cmp`-identical to `reference/ref_evening.csv` (`1063` frames, `9.969` FPS replay-paced); Layer B `reference_chain` max `|d|` 0. Live A/B against a `b5dce21` build (worktree under `build/`), 70 s each with an ffmpeg TCP viewer on the board: USB single view `19.691` (base) vs `23.409` FPS (head; camera-paced, `cam` 48 vs 40 ms); USB + phone + an absent third source (2x2, NO SIGNAL tile) `53.762` vs `54.081` FPS; head with `light-usb-replug off` / `on` of the USB camera: detach, NO SIGNAL publishing (`idle_a` ~120 per window), re-attach `1280x960`. The `[perf] src` / `enc` / `mux` lines have the same keys, order and precision in both binaries; no warn / error line in one binary's log that is not in the other's. Logs: `build/run_110_{base,head}_{usb,mv}.log`, `build/run_110_head_nosig.log`.
+
+## Audit P2 Stage E -- header layout by domain folders, legacy .h -> .hpp (2026-11-21, `fix/audit-p2-e`, issue #112)
+
+- **Layout:** every root header moves into a domain folder, its `.cpp` into the same folder under `src/`; only `src/main.cpp` stays at the `src/` root, and `include/` has no files at its root. New folders `app/`, `sys/`, `media/`, `npu/`, `render/`; `core/`, `source/`, `net/` grow. The nine legacy `.h` headers become `.hpp` (`config/config_file.hpp`, `config/option_registry.hpp` in place). `git mv` only, no code change; totals stay `95` headers / `57` TUs.
+- **Placement vs the #103 grouping (plan and review on #112):** `av_common`, `muxer_teardown` -> `net/` (only `net/` includes them); `frame_trace`, `timings`, `jpeg_probe` -> `core/` (std + `core/*` only; in `app/` / `source/` they would make `npu/`, `render/`, `media/` include upward); `cpu_affinity`, `process_env`, `signal_waiter` -> `sys/` (the POSIX wrappers). Folder dependencies point one way: `core <- config, media, sys <- source, npu, net <- render <- app <- main`.
+- **Commits:** one per folder (`a381d49` core, `a8bc857` source, `1e9c287` media, `701c847` npu, `387bef4` render, `53cc661` net, `20da6f2` sys, `00a8c26` app + the two `config/` renames); each changes only include lines, the two build lists (same source order), comments that name a moved path or a renamed `.h`, and its own `scripts/rules_allow.txt` lines (rules-lint flags a stale line, so an entry moves with its file). Then `c9850f3`: `core-include` allows std and `core/*` only (`CORE_LOCAL` gone; probe `core/bad.hpp` also includes the old root name `pod_ring.hpp`, now a finding), and `adbafde`: the `header-ext` finding says "headers use .hpp, no .h".
+- **Verification:** full gate rc=0 (`65` unit suites / `9,322` checks, `6` TSan suites / `23` checks, 2-pass tidy `0` findings, rules-lint `7` allowed, was `16`); every commit built and passed the host tests on its own. Same binary: `light_ai` and `light_ai_tests` built at `dbf9926` and at the head (Release, same source path, same source order), stripped and unstripped `cmp`-identical (sha256 of the stripped `light_ai` `9fe85af99b47a09dfea99fccc814e55fad52e154f4818519e35687c978ba71ff`, `light_ai_tests` `834efeae00ccf7e5aa8b5059c41e9a0a5371b1821f3064976caa3a08229efa71`). A first `light_ai_tests` pair differed only because the two trees were configured through different source paths (`/home/linaro/...` symlink vs `/mnt/nvme_data/...`): the test binary carries the absolute `__FILE__` of the test sources and `LIGHT_AI_TEST_DATA_DIR`. Layer A pool 1 and pool 3 `cmp`-identical to `reference/ref_evening.csv` (`1063` frames); Layer B `reference_chain` max `|d|` 0. No live run (identical binaries).
+- **Old -> new paths** (resolves references in the history sections above, `docs/roadmap.md` and `AUDIT_REPORT.md`, which keep the old paths):
+
+| Folder | Old path | New path |
+|---|---|---|
+| `core/` | `include/pod_list.hpp` | `include/core/pod_list.hpp` |
+| `core/` | `include/pod_ring.hpp` | `include/core/pod_ring.hpp` |
+| `core/` | `include/tracker.hpp` | `include/core/tracker.hpp` |
+| `core/` | `src/tracker.cpp` | `src/core/tracker.cpp` |
+| `core/` | `include/throw_on.hpp` | `include/core/throw_on.hpp` |
+| `core/` | `include/frame_trace.h` | `include/core/frame_trace.hpp` |
+| `core/` | `include/timings.hpp` | `include/core/timings.hpp` |
+| `core/` | `src/timings.cpp` | `src/core/timings.cpp` |
+| `core/` | `include/jpeg_probe.hpp` | `include/core/jpeg_probe.hpp` |
+| `source/` | `include/camera_v4l2.hpp` | `include/source/camera_v4l2.hpp` |
+| `source/` | `src/camera_v4l2.cpp` | `src/source/camera_v4l2.cpp` |
+| `source/` | `include/net_mjpeg_source.hpp` | `include/source/net_mjpeg_source.hpp` |
+| `source/` | `src/net_mjpeg_source.cpp` | `src/source/net_mjpeg_source.cpp` |
+| `source/` | `include/media_source.hpp` | `include/source/media_source.hpp` |
+| `source/` | `include/sources.hpp` | `include/source/sources.hpp` |
+| `source/` | `src/sources.cpp` | `src/source/sources.cpp` |
+| `media/` | `include/mpp_decoder.hpp` | `include/media/mpp_decoder.hpp` |
+| `media/` | `src/mpp_decoder.cpp` | `src/media/mpp_decoder.cpp` |
+| `media/` | `include/rga_resizer.h` | `include/media/rga_resizer.hpp` |
+| `media/` | `src/rga_resizer.cpp` | `src/media/rga_resizer.cpp` |
+| `media/` | `include/dma_sync.hpp` | `include/media/dma_sync.hpp` |
+| `media/` | `include/rkmpp_drm_pool.hpp` | `include/media/rkmpp_drm_pool.hpp` |
+| `npu/` | `include/rknn_engine.hpp` | `include/npu/rknn_engine.hpp` |
+| `npu/` | `src/rknn_engine.cpp` | `src/npu/rknn_engine.cpp` |
+| `npu/` | `include/inference_pool.hpp` | `include/npu/inference_pool.hpp` |
+| `npu/` | `include/infer_slot.hpp` | `include/npu/infer_slot.hpp` |
+| `npu/` | `include/reid_worker.hpp` | `include/npu/reid_worker.hpp` |
+| `npu/` | `src/reid_worker.cpp` | `src/npu/reid_worker.cpp` |
+| `npu/` | `include/yolo_postprocess.hpp` | `include/npu/yolo_postprocess.hpp` |
+| `npu/` | `src/yolo_postprocess.cpp` | `src/npu/yolo_postprocess.cpp` |
+| `npu/` | `include/cal_dumper.hpp` | `include/npu/cal_dumper.hpp` |
+| `npu/` | `src/cal_dumper.cpp` | `src/npu/cal_dumper.cpp` |
+| `npu/` | `include/coco_names.h` | `include/npu/coco_names.hpp` |
+| `render/` | `include/gpu_box_drawer.hpp` | `include/render/gpu_box_drawer.hpp` |
+| `render/` | `src/gpu_box_drawer.cpp` | `src/render/gpu_box_drawer.cpp` |
+| `render/` | `include/overlay_sink.hpp` | `include/render/overlay_sink.hpp` |
+| `render/` | `src/overlay_sink.cpp` | `src/render/overlay_sink.cpp` |
+| `render/` | `include/box_mapper.h` | `include/render/box_mapper.hpp` |
+| `render/` | `src/box_mapper.cpp` | `src/render/box_mapper.cpp` |
+| `render/` | `include/box_smoother.h` | `include/render/box_smoother.hpp` |
+| `render/` | `src/box_smoother.cpp` | `src/render/box_smoother.cpp` |
+| `net/` | `include/net_encoder.h` | `include/net/net_encoder.hpp` |
+| `net/` | `src/net_encoder.cpp` | `src/net/net_encoder.cpp` |
+| `net/` | `include/net_preview.hpp` | `include/net/net_preview.hpp` |
+| `net/` | `src/net_preview.cpp` | `src/net/net_preview.cpp` |
+| `net/` | `include/tcp_pull_server.hpp` | `include/net/tcp_pull_server.hpp` |
+| `net/` | `src/tcp_pull_server.cpp` | `src/net/tcp_pull_server.cpp` |
+| `net/` | `src/tcp_send.cpp` | `src/net/tcp_send.cpp` |
+| `net/` | `include/av_common.hpp` | `include/net/av_common.hpp` |
+| `net/` | `include/muxer_teardown.hpp` | `include/net/muxer_teardown.hpp` |
+| `sys/` | `include/cpu_affinity.hpp` | `include/sys/cpu_affinity.hpp` |
+| `sys/` | `src/cpu_affinity.cpp` | `src/sys/cpu_affinity.cpp` |
+| `sys/` | `include/process_env.hpp` | `include/sys/process_env.hpp` |
+| `sys/` | `src/process_env.cpp` | `src/sys/process_env.cpp` |
+| `sys/` | `include/signal_waiter.hpp` | `include/sys/signal_waiter.hpp` |
+| `sys/` | `src/signal_waiter.cpp` | `src/sys/signal_waiter.cpp` |
+| `app/` | `include/pipeline.hpp` | `include/app/pipeline.hpp` |
+| `app/` | `src/pipeline.cpp` | `src/app/pipeline.cpp` |
+| `app/` | `include/console_reporter.h` | `include/app/console_reporter.hpp` |
+| `app/` | `src/console_reporter.cpp` | `src/app/console_reporter.cpp` |
+| `config/` | `include/config/config_file.h` | `include/config/config_file.hpp` |
+| `config/` | `include/config/option_registry.h` | `include/config/option_registry.hpp` |
