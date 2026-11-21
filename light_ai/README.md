@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](#requirements--platform-constraints)
 [![Standard: C++17](https://img.shields.io/badge/C%2B%2B-17-orange.svg)](CMakeLists.txt)
-[![Tests: 65 suites / 9322 checks](https://img.shields.io/badge/Unit%20Tests-65%20suites%20%2F%209322%20checks-brightgreen.svg)](#tests)
+[![Tests: 65 suites / 9357 checks](https://img.shields.io/badge/Unit%20Tests-65%20suites%20%2F%209357%20checks-brightgreen.svg)](#tests)
 
 Zero-copy hardware-accelerated object detection, Kalman tracking, optional OSNet cross-camera Re-ID, and multi-camera H.264 streaming pipeline for Rockchip RK3588 (`V4L2` / HTTP MJPEG → `MPP` decode → `RGA3` letterbox & rotation → `RKNN` NPU + async Re-ID → `Mali G610` EGL/GLES box, EN/RU callout & trail overlay → `MPP` H.264 / MPEG-TS). Built in C++17 with no GStreamer, no OpenCV, no CPU pixel copies, and no virtual dispatch on the frame path.
 
@@ -217,7 +217,7 @@ python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4 c
 
 [`tests/CMakeLists.txt`](tests/CMakeLists.txt) is an independent host CMake project requiring only a C++17 compiler and `pthread` (zero Rockchip/FFmpeg/EGL dependencies — runs identically on the board and on x86_64/arm64 hosts).
 
-- **Unit binary (`build/tests/light_ai_tests`):** **65 suites, 9,322 checks**.
+- **Unit binary (`build/tests/light_ai_tests`):** **65 suites, 9,357 checks**.
 - **ThreadSanitizer binary (`build/tests/light_ai_tests_tsan`, `-fsanitize=thread`):** **6 threaded suites, 23 checks** (`source_threads`, `source_prober_threads`, `preview_ring_threads`, `packet_queue_threads`, `session_gate_threads`, `reid_worker_tsan`).
 - **Custom runner options ([`tests/suite_runner.hpp`](tests/suite_runner.hpp)):**
   ```bash
@@ -275,10 +275,10 @@ All **27 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 | `--help`, `-h` | — | — | Print generated option list and exit `0` |
 | `--config` | `<path>` | *(none)* | Load flat `key = value` INI config before CLI flags |
 | `--device` | `<path>` | `/dev/video20` | V4L2 camera device (repeatable up to 4 total sources; accumulates into `Config::sources`) |
-| `--net-src` | `<url>` | *(none)* | HTTP MJPEG pull source (`http://host:port/path`; repeatable up to 4 total sources) |
+| `--net-src` | `<url>` | *(none)* | HTTP MJPEG pull source (`http://host:port/path`; repeatable up to 4 total sources). A numeric IPv4 host needs no DNS; a hostname is resolved on every (re)connect without blocking the prober for long: the lookup is bounded to `5 s` (then up to `5 s` more for the TCP connect) and abandoned within `100 ms` on stop. A lookup glibc cannot cancel is waited for at exit, at most the resolver's own timeout (`/etc/resolv.conf` `timeout` × `attempts` per nameserver) |
 | `--src-rot` | `0\|90\|180\|270` | `auto` | Override automatic source orientation detection (`0`, `90`, `180`, `270` degrees via RGA) |
 | `--model` | `<path>` | `./misc/yolov5s_relu_int8_mmse_v5.rknn` | RKNN model path |
-| `--reid-model` | `<path>` | `./misc/osnet_x1_0_imagenet.rknn` | Re-ID RKNN model path for cross-camera global IDs (`none` or `off` disables) |
+| `--reid-model` | `<path>` | `./misc/osnet_x1_0_imagenet.rknn` | Re-ID RKNN model path for cross-camera global IDs (`none` or `off` disables). Re-ID crops the detector input in one RGA pass: a detector input over `8×` the Re-ID input on a side (e.g. `1280` into OSNet `128×256`) logs one error and leaves Re-ID off, recognition runs on |
 | `--reid-thr` | `0.0..1.0` | `0.62` | Re-ID cosine similarity threshold |
 | `--label-lang` | `en\|ru` | `en` | Callout label language (`Person #N` vs. `Человек #N`) |
 | `--label-scale` | `1..4` | `1` | Callout text size: `11 px` font (about `8 px` capitals) per step on the output tile, the same on every source (the tile scale of `place_tile` is compensated); `3..4` magnify the 22 px atlas, so the text is soft |
@@ -304,6 +304,7 @@ All **27 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 ### Runtime Behavior Notes
 
 - **Busy port resilience:** If TCP port `--net-port` is already in use, `retry_listen()` logs one warning and retries every `2 s` while recognition continues uninterrupted.
+- **Source size change:** A source that comes back at another resolution (an MJPEG server or phone app restarted at another size, a camera replugged in another mode) re-attaches at the new size: `SourceChannel` re-initializes its decoder (`source sN: geometry changed A -> B, re-initializing the decoder`) and the source's tracks and orientation start over.
 - **Graceful shutdown:** `ProcessEnv` + `SignalWaiter` handle `SIGINT`/`SIGTERM` without globals during `Pipeline::run()`, draining the pool, printing `TOTAL` timings, flushing `h264_rkmpp`, and calling `STREAMOFF`.
 - **File ownership after `sudo`:** A `sudo` run creates `build/cal.ppm` / `dataset/` files owned by `root`; restore ownership with `sudo -n chown -R "$(id -un):" build dataset`.
 

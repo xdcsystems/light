@@ -350,27 +350,24 @@ Status RknnEngine::set_core_mask( unsigned mask ) const
     if ( !ctx_ )
         return make_status( Errc::Failed, "engine not initialized" );
 
-    // M4: the accepted values are the numeric flags of rknn_api.h:
-    // CORE_0=1, CORE_1=2, CORE_0_1=3, CORE_2=4, CORE_0_1_2=7
-    // (see rknn_api.h lines 245-250).
-    //  - 1/2/4 are the per-core flags — the pool pins one engine per core with these;
-    //  - 3/7 are the pair/triple masks of the single-context path.
-    // So the switch is only a whitelist: 0 = AUTO keeps the runtime default (no call),
-    // any other non-whitelisted value is a caller bug: loud log, -1.
-
+    // mask is an rknn_core_mask value:
+    //  - RKNN_NPU_CORE_AUTO (--core 0): the runtime default stays, no call, ok;
+    //  - RKNN_NPU_CORE_0 / _1 / _2 (the pool pins one engine per core with these) and
+    //    RKNN_NPU_CORE_0_1 / _0_1_2 (the single-context path): rknn_set_core_mask, ok or
+    //    Failed with the SDK code;
+    //  - anything else (RKNN_NPU_CORE_ALL too) is a caller bug: a warning and Invalid,
+    //    no call -- skipping the pin silently would hide it behind an ok.
     switch ( mask )
     {
-        case 1:  // RKNN_NPU_CORE_0
-        case 2:  // RKNN_NPU_CORE_1
-        case 3:  // RKNN_NPU_CORE_0_1
-        case 4:  // RKNN_NPU_CORE_2
-        case 7:  // RKNN_NPU_CORE_0_1_2
+        case RKNN_NPU_CORE_AUTO:
+            return {};
+        case RKNN_NPU_CORE_0:
+        case RKNN_NPU_CORE_1:
+        case RKNN_NPU_CORE_0_1:
+        case RKNN_NPU_CORE_2:
+        case RKNN_NPU_CORE_0_1_2:
             break;
         default:
-            if ( mask == 0 )
-                return {};  // AUTO by design (--core 0): keep the runtime default, no call
-            // Anything else is a caller bug: silently skipping the pin
-            // would hide it behind a working-looking return of 0.
             log_.warn() << "rknn_set_core_mask: invalid mask 0x" << std::hex << mask << std::dec << ", pin skipped\n";
             return make_status( Errc::Invalid, "invalid core mask" );
     }

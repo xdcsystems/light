@@ -124,7 +124,7 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
 
     global_tracks_.set_sim_thr( cfg_.infer.reid_thr );
     if ( !cfg_.infer.reid_model.empty() )
-        reid_worker_.emplace( cfg_.infer.reid_model.c_str(), pool_.size(), cfg_.infer.core, log_ );
+        start_reid();
 
     if ( cfg_.cal.frames > 0 && cfg_.cal.dir.empty() )
     {
@@ -137,6 +137,21 @@ Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
     // Last, so run() starts at the live edge: the camera STREAMON and the net
     // socket drain happen after the encoder and the GPU drawer are up.
     attach_sources();
+}
+
+// Re-ID crops the detector tensor in one RGA pass (run_reid_stage passes no
+// aux buffer): a detector input over 8x the Re-ID input on a side would fail
+// every crop, so Re-ID stays off and recognition runs on without it.
+void Pipeline::start_reid()
+{
+    reid_worker_.emplace( cfg_.infer.reid_model.c_str(), pool_.size(), cfg_.infer.core, log_ );
+    const int rw = reid_worker_->input_width();
+    const int rh = reid_worker_->input_height();
+    if ( !rga_limits::reid_crop_needs_aux( model_w_, model_h_, rw, rh ) )
+        return;
+    log_.error() << "reid: detector input " << model_w_ << 'x' << model_h_ << " is over " << rga_limits::kMaxRatio << "x the Re-ID input "
+                 << rw << 'x' << rh << " on a side (the one-pass RGA crop limit) - Re-ID off, worker released\n";
+    reid_worker_.reset();
 }
 
 // The first attach of every channel, through the same SourceChannel::attach
@@ -660,6 +675,7 @@ void Pipeline::run_reid_stage( const FrameView& view ) noexcept
         const RgaResizer::CropImage src_img { view.tensor.fd, model_w_, model_h_,
                                               rga_limits::rgb888_stride_px( view.tensor.stride_bytes, model_w_ ) };
         const RgaResizer::CropImage dst_img { dst.fd, rw, rh, rga_limits::rgb888_stride_px( dst.stride_bytes, rw ) };
+        // No aux: start_reid() keeps Re-ID off when a crop could need the two-pass path.
         if ( const Status cst = rga_.crop_resize( src_img, reqs[i].srect, dst_img, {} ); !cst.ok() )
         {
             // A failed crop only skips this Re-ID sample (the slot stays free),

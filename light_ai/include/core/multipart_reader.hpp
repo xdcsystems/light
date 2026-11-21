@@ -76,6 +76,11 @@ public:
     bool in_body() const noexcept { return cur_.phase == Phase::Body; }
     // Past a delimiter line, reading the part's header lines.
     bool in_header() const noexcept { return cur_.phase == Phase::Header; }
+    // Body bytes of the current part delivered to dst so far (an oversized
+    // part with a Content-Length: skipped so far); 0 outside the body. A body
+    // without Content-Length may still hold bytes back in the window (a
+    // delimiter split across refills), and its skipped bytes do not count.
+    size_t body_bytes() const noexcept { return cur_.phase == Phase::Body ? cur_.got : 0; }
 
 private:
     enum class Phase : uint8_t
@@ -95,7 +100,7 @@ private:
         Phase phase = Phase::Delimiter;
         Form form = Form::Open;
         long need = -1;     // Content-Length of the current part, -1 = none
-        size_t got = 0;     // body bytes delivered (or skipped) so far
+        size_t got = 0;     // body bytes delivered so far (skipped too with a Content-Length, not when scanned)
         bool skip = false;  // true while draining an oversized (> body_cap) part
     };
 

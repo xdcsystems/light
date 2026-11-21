@@ -48,6 +48,16 @@ namespace rga_limits
         return ew > kMaxRatio * w_dst || eh > kMaxRatio * h_dst;
     }
 
+    // Re-ID crops (Pipeline::run_reid_stage) come from the detector tensor
+    // (model_w x model_h) in one crop_resize pass, with no aux buffer: the
+    // largest crop, the whole tensor, must fit the 8x downscale into the
+    // Re-ID input (reid_w x reid_h). True: some crops would fail -- Re-ID
+    // stays off (the Pipeline ctor). YOLO 640x640 into OSNet 128x256 fits.
+    constexpr bool reid_crop_needs_aux( int model_w, int model_h, int reid_w, int reid_h ) noexcept
+    {
+        return needs_two_pass( model_w, model_h, reid_w, reid_h, false );
+    }
+
     // The aux (pass-1) side for a source side: half, rounded up to even
     // (NV12 needs even sides; plain v / 2 truncates an odd half).
     constexpr int aux_side( int v ) noexcept

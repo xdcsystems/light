@@ -28,6 +28,13 @@ void test_rga_limits( TestRun& t )
     CHECK( t, needs_two_pass( 400, 5130, 640, 5200, true ) );    // tall source, turned: its height meets dst width
     CHECK( t, !needs_two_pass( 400, 5130, 640, 5200, false ) );  // unturned it fits the tall dst
 
+    // Re-ID crops: the whole detector tensor must fit one pass into the Re-ID input.
+    CHECK( t, !reid_crop_needs_aux( 640, 640, 128, 256 ) );  // YOLO 640 -> OSNet 128x256
+    CHECK( t, !reid_crop_needs_aux( 512, 640, 64, 80 ) );    // exactly 8x on both sides
+    CHECK( t, reid_crop_needs_aux( 513, 640, 64, 80 ) );     // over 8x in width
+    CHECK( t, reid_crop_needs_aux( 640, 648, 128, 80 ) );    // over 8x in height
+    CHECK( t, reid_crop_needs_aux( 1280, 1280, 128, 256 ) ); // a 1280 detector into OSNet
+
     // Aux sides: half, rounded up to even (an odd half would break NV12).
     CHECK( t, aux_side( 1280 ) == 640 );
     CHECK( t, aux_side( 1282 ) == 642 );   // 641 -> 642

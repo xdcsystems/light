@@ -147,6 +147,7 @@ target_link_libraries(light_ai PRIVATE
     ${AV_LIBRARIES}
     ${RKNN_RT_LIBRARY}
     pthread
+    anl   # getaddrinfo_a / gai_suspend / gai_cancel (BufferedSocket hostname lookup)
     ${EGL_LIBRARIES}
     dl
 )

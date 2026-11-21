@@ -84,6 +84,7 @@ public:
     Status run();
 
 private:
+    void start_reid();      // ctor: the Re-ID worker, off when its crops would need the RGA aux pass
     void attach_sources();  // ctor, last: the first attach of every channel (STREAMON)
 
     // One frame: next_frame -> decode -> dispatch -> publish (pool 1).

@@ -22,6 +22,7 @@ Each rule is marked **(gate)**, **(review)** or both. **(gate)** means `scripts/
 - **Branch tables over `if`-chains** (review)**:** Dispatch over fixed sets via `switch` or `constexpr` tables (reference: `BoxMapper::det_color` in [`src/render/box_mapper.cpp`](src/render/box_mapper.cpp)).
 - **Preallocated buffer contract** (review)**:** Cross-frame output parameters are never assumed empty — the callee clears them at entry (e.g. `out.clear()` in `YoloDecoder::decode`).
 - **SDK-free `core/`** (gate: `core-include`)**:** [`include/core/`](include/core/) and [`src/core/`](src/core/) may include only the C++17 standard library and `core/*`. This keeps host unit tests free of MPP/RGA/RKNN/EGL/FFmpeg dependencies.
+- **SDK headers through the vendor paths** (gate: `sdk-include`, #117)**:** RGA as `<im2d.h>` / `<rga.h>` (the vendor librga 1.10.6 headers in `/usr/local/include`), never `<rga/...>` (the distro 2.2.0 headers, against the 1.10.6 library); MPP as `<rockchip/...>`, never a bare `<rk_*.h>` (`<rk_mpi.h>`, `<rk_type.h>`, ...), `<vpu.h>`, `<vpu_api.h>` or `<mpp_*.h>` (the distro 1.5.0 headers through `-I/usr/include/rockchip`). CLAUDE.md, "Board SDK", has the paths.
 
 ## Error & Exception Model
 
@@ -53,7 +54,7 @@ Every PR targeting `master` must pass the full board gate:
 
 This runs:
 1. Release CMake build (`light_ai`).
-2. Host unit tests (`light_ai_tests` — 65 suites, 9,322 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 6 suites, 23 checks).
+2. Host unit tests (`light_ai_tests` — 65 suites, 9,357 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 6 suites, 23 checks).
 3. Two-pass `clang-tidy` gate ([`scripts/tidy_run.sh`](scripts/tidy_run.sh)):
    - **self-test + lint:** the rules pass on [`tests/tidy_probe/`](tests/tidy_probe) and [`scripts/rules_lint.sh`](scripts/rules_lint.sh) on its fixture tree must give exactly the expected hits, and `--verify-config` must know every check option key of `scripts/tidy_rules.yaml`; then `rules_lint.sh` over the tree.
    - **main:** system `clang-tidy-11` against [`.clang-tidy`](.clang-tidy) (`tests/` uses [`tests/.clang-tidy`](tests/.clang-tidy)).

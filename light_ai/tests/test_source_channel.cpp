@@ -125,6 +125,55 @@ namespace
             }
         }
     }
+
+    // A re-attach at another size re-initializes the decoder and recomputes
+    // the geometry, the band and the aux need (#117).
+    void reattach_new_geometry( TestRun& t )
+    {
+        {
+            Rig r;
+            r.dev.w = 640;
+            r.dev.h = 480;
+            CHECK( t, r.attach( false ) == Attach::Live && r.dec.inits == 1 && r.ch.geom().aux_fd == -1 );
+            const uint32_t seq = r.ch.attach_seq();
+            r.ch.detach();
+            r.dev.w = 1280;
+            r.dev.h = 720;
+            CHECK( t, r.attach( true ) == Attach::Live && r.ch.state() == State::Live && r.dec.inits == 2 );
+            CHECK( t, r.out.str().find( "source s1: geometry changed 640x480 -> 1280x720, re-initializing the decoder\n" )
+                          != std::string::npos );
+            const SourceGeom& g = r.ch.geom();
+            CHECK( t, g.raw_w == 1280 && g.raw_h == 720 && g.w == 1280 && g.h == 720 && g.aux_fd == -1 );
+            const LbGeom lb = band_geom( 1280, 720, 640, 640 );
+            CHECK( t, g.lb.left == lb.left && g.lb.top == lb.top && g.lb.w == lb.w && g.lb.h == lb.h );
+            CHECK( t, r.ch.attach_seq() == seq + 1u );  // the frame thread resets orientation and tracks
+            // The same size again: the decoder stays.
+            r.ch.detach();
+            CHECK( t, r.attach( true ) == Attach::Live && r.dec.inits == 2 );
+        }
+        // The aux buffer of the old size is dropped and requested again for the new one.
+        {
+            Rig r( SourceKind::NetMjpeg, 64 );
+            r.dev.w = 640;
+            r.dev.h = 480;
+            CHECK( t, r.attach( false ) == Attach::Live && r.ch.geom().aux_fd == 9 && r.dec.aux_calls == 1 );
+            CHECK( t, r.dec.last_aux_bytes == rga_limits::aux_bytes( 640, 480 ) );
+            r.ch.detach();
+            r.dev.w = 1280;
+            r.dev.h = 720;
+            CHECK( t, r.attach( true ) == Attach::Live && r.dec.inits == 2 && r.dec.aux_calls == 2 );
+            CHECK( t, r.ch.geom().aux_fd == 9 && r.dec.last_aux_bytes == rga_limits::aux_bytes( 1280, 720 ) );
+            // A failed re-init stays absent and tries again on the next attach.
+            r.ch.detach();
+            r.dev.w = 800;
+            r.dev.h = 600;
+            r.dec.init_rc = 1;
+            CHECK( t, r.attach( true ) == Attach::DecoderFailed && r.ch.state() == State::Detached && r.dec.inits == 3 );
+            r.dec.init_rc = 0;
+            CHECK( t, r.attach( true ) == Attach::Live && r.dec.inits == 4 && r.ch.geom().raw_w == 800 );
+            CHECK( t, r.dec.last_aux_bytes == rga_limits::aux_bytes( 800, 600 ) );
+        }
+    }
 }  // namespace
 
 void test_source_channel( TestRun& t )
@@ -201,18 +250,6 @@ void test_source_channel( TestRun& t )
         CHECK( t, r.frame() == 7 );
         CHECK( t, r.dev.requeues == 6 );  // every dequeued buffer goes back
     }
-    // Geometry guard: a re-attach with another size than the decoder's stays out.
-    {
-        Rig r;
-        CHECK( t, r.attach( false ) == Attach::Live );
-        r.ch.detach();
-        r.dev.w = 640;
-        r.dev.h = 480;
-        CHECK( t, r.attach( true ) == Attach::DecoderFailed && r.ch.state() == State::Detached );
-        CHECK( t, r.err.str().find( "source s1: geometry changed 1280x960 -> 640x480 - decoder stays at 1280x960, not attaching\n" )
-                          != std::string::npos );
-        CHECK( t, r.dec.inits == 1 && r.ch.geom().w == 1280 );
-    }
     // Empty packet: never decoded, requeued, logged; the warm-up is not consumed.
     {
         Rig r;
@@ -279,4 +316,5 @@ void test_source_channel( TestRun& t )
     }
     aux_stride_sizing( t );
     band_is_oriented_band_geom( t );
+    reattach_new_geometry( t );
 }

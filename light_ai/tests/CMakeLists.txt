@@ -132,7 +132,7 @@ target_include_directories(light_ai_tests PRIVATE
 target_compile_options(light_ai_tests PRIVATE -Wall -Wextra)
 
 find_package(Threads REQUIRED)
-target_link_libraries(light_ai_tests PRIVATE Threads::Threads)
+target_link_libraries(light_ai_tests PRIVATE Threads::Threads anl)  # anl: BufferedSocket's getaddrinfo_a
 
 # Threaded suites under ThreadSanitizer (the SourceChannel hand-over, the
 # SourceProber thread against a detaching frame thread): a data

@@ -387,6 +387,41 @@ namespace
     }
 }  // namespace
 
+namespace
+{
+    // body_bytes(): 0 before and after the body, the delivered count inside it
+    // (Content-Length and scanned bodies), as NetMjpegSource's part deadline reads it.
+    void body_bytes_progress( TestRun& t )
+    {
+        const std::string text = "--frame\r\nContent-Length: 10\r\n\r\n0123456789";
+        const Bytes in( text.begin(), text.end() );
+        const size_t body_at = text.find( "0123" );
+        MultipartReader r = reader( "frame" );
+        uint8_t dst[kCap] = {};
+        CHECK( t, r.body_bytes() == 0 && !r.in_body() );
+        MultipartReader::Step st = r.feed( in.data(), body_at - 4, dst );
+        CHECK( t, st.ev == Event::NeedMore && r.in_header() && r.body_bytes() == 0 );
+        size_t off = st.consumed;
+        st = r.feed( in.data() + off, body_at - off, dst );
+        CHECK( t, st.ev == Event::NeedMore && r.in_body() && r.body_bytes() == 0 );
+        off += st.consumed;
+        st = r.feed( in.data() + off, 4, dst );
+        CHECK( t, st.ev == Event::NeedMore && st.consumed == 4 && r.body_bytes() == 4 );
+        off += st.consumed;
+        st = r.feed( in.data() + off, in.size() - off, dst );
+        CHECK( t, st.ev == Event::Part && st.size == 10 && !r.in_body() && r.body_bytes() == 0 );
+        // Scanned body (no Content-Length): what is delivered counts; a tail that
+        // could start the next delimiter stays in the caller's window.
+        const std::string scan_text = "--frame\r\n\r\n" + std::string( 100, 'x' );
+        const Bytes scan( scan_text.begin(), scan_text.end() );
+        MultipartReader s = reader( "frame" );
+        st = s.feed( scan.data(), scan.size(), dst );
+        CHECK( t, st.ev == Event::NeedMore && s.in_body() && s.body_bytes() > 0 && s.body_bytes() <= 100 );
+        s.resync();
+        CHECK( t, s.body_bytes() == 0 );
+    }
+}  // namespace
+
 void test_multipart_reader( TestRun& t )
 {
     const Bytes a = mjpeg_test::load_fixture( "tiny_16x16.jpg" );
@@ -401,4 +436,5 @@ void test_multipart_reader( TestRun& t )
     zero_byte_body( t, a );
     desync_and_resync( t, a, b );
     queued_parts( t, a, b );
+    body_bytes_progress( t );
 }
