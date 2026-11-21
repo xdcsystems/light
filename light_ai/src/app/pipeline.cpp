@@ -150,7 +150,7 @@ void Pipeline::start_reid()
     if ( !rga_limits::reid_crop_needs_aux( model_w_, model_h_, rw, rh ) )
         return;
     log_.error() << "reid: detector input " << model_w_ << 'x' << model_h_ << " is over " << rga_limits::kMaxRatio << "x the Re-ID input "
-                 << rw << 'x' << rh << " on a side (the one-pass RGA crop limit) - Re-ID off\n";
+                 << rw << 'x' << rh << " on a side (the one-pass RGA crop limit) - Re-ID off, worker released\n";
     reid_worker_.reset();
 }
 
