@@ -1,7 +1,12 @@
+#include <algorithm>
 #include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <exception>
+#include <malloc.h>
 #include <sched.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 
 #include "core/log.hpp"
 #include "core/status.hpp"
@@ -9,7 +14,26 @@
 
 namespace
 {
-    enum { kBigCpuFirst = 4, kBigCpuLast = 7 };  // RK3588: Cortex-A76 cluster
+    enum
+    {
+        kBigCpuFirst = 4,
+        kBigCpuLast = 7,  // RK3588: Cortex-A76 cluster
+        kStackPageBytes = 4096,
+        kMaxPrefaultBytes = 512 * 1024
+    };
+
+#if defined( __GNUC__ ) || defined( __clang__ )
+    __attribute__( ( noinline ) )
+#endif
+    void touch_stack_pages( std::size_t remaining ) noexcept
+    {
+        volatile unsigned char page[kStackPageBytes];
+        page[0] = 0;
+        page[sizeof( page ) - 1] = 0;
+        if ( remaining > sizeof( page ) )
+            touch_stack_pages( remaining - sizeof( page ) );
+        static_cast<void>( page[0] );
+    }
 
     void log_pin_result( const char* who, int cpu, bool pinned, const Log& log )
     {
@@ -101,4 +125,43 @@ void lock_process_memory( const Log& log ) noexcept
     catch ( const std::exception& )
     {
     }
+}
+
+
+void prefault_current_thread_stack( std::size_t bytes ) noexcept
+{
+    const std::size_t clamped = std::min<std::size_t>( bytes, kMaxPrefaultBytes );
+    if ( clamped > 0 )
+        touch_stack_pages( clamped );
+}
+
+void configure_rt_allocator( const Log& log ) noexcept
+{
+    const int trim_ok = ::mallopt( M_TRIM_THRESHOLD, -1 );
+    const int mmap_ok = ::mallopt( M_MMAP_MAX, 0 );
+    try
+    {
+        if ( trim_ok == 0 || mmap_ok == 0 )
+        {
+            log.warn() << "mallopt: trim_ok=" << trim_ok << " mmap_ok=" << mmap_ok << " (continuing)\n";
+            return;
+        }
+        log.info() << "mallopt: M_TRIM_THRESHOLD=-1, M_MMAP_MAX=0 OK\n";
+    }
+    catch ( const std::exception& )
+    {
+    }
+}
+
+void read_thread_page_faults( uint64_t& minflt, uint64_t& majflt ) noexcept
+{
+    struct rusage ru {};
+    if ( ::getrusage( RUSAGE_THREAD, &ru ) == 0 )
+    {
+        minflt = ru.ru_minflt > 0 ? static_cast<uint64_t>( ru.ru_minflt ) : 0U;
+        majflt = ru.ru_majflt > 0 ? static_cast<uint64_t>( ru.ru_majflt ) : 0U;
+        return;
+    }
+    minflt = 0;
+    majflt = 0;
 }

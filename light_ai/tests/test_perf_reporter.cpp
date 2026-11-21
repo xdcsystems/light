@@ -198,6 +198,34 @@ namespace
         CHECK_EQ( t, sink.takes, 0 );
         CHECK_EQ( t, srcs.eagain[0], 3U );
     }
+
+    void rt_telemetry( TestRun& t )
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        PerfReporter perf( true, log );
+        FakeSrcs srcs;
+        srcs.n = 1;
+        FakeSink sink;
+        sink.has_enc = false;
+        perf.start( at_us( 0 ) );
+        perf.enable_rt( 10.0 );
+        perf.seed_rt_faults( 100, 1 );
+
+        for ( int i = 0; i < 99; ++i )
+            perf.step_done( at_us( i * 10000 ), at_us( i * 10000 + 5000 ), srcs, sink );
+        perf.step_done( at_us( 990000 ), at_us( 990000 + 15000 ), srcs, sink );
+        perf.note_rt_faults( 103, 1 );
+        perf.tick( at_us( 5000000 ), srcs, sink );
+
+        const std::string expected =
+            "[perf] src step_max=15.0 | s0 f=0 dq_max=0.0 eagain=0 dec_max=0.0 or_cnt=0 or_max=0.0 skip=0\n"
+            "[perf] ovl gpu_max=0.0 sync_max=0.0 ftmo=0\n"
+            "[perf] rt step_p99=15.0 deadline_miss=1 minflt=3 majflt=0\n";
+        CHECK_STR_EQ( t, out.str(), expected );
+        CHECK( t, err.str().empty() );
+    }
 }  // namespace
 
 void test_perf_reporter( TestRun& t )
@@ -205,4 +233,5 @@ void test_perf_reporter( TestRun& t )
     two_sources_two_windows( t );
     one_source_no_encoder( t );
     disabled( t );
+    rt_telemetry( t );
 }

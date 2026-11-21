@@ -57,6 +57,19 @@ namespace
     }
 }  // namespace
 
+namespace
+{
+    void sample_rt_faults_if_due( PerfReporter& perf, PerfClock::time_point now ) noexcept
+    {
+        if ( !perf.window_due( now ) )
+            return;
+        uint64_t minflt = 0;
+        uint64_t majflt = 0;
+        read_thread_page_faults( minflt, majflt );
+        perf.note_rt_faults( minflt, majflt );
+    }
+}  // namespace
+
 Pipeline::Pipeline( const Config& cfg, const StopFlag& stop, const Log& log )
   : cfg_( cfg )
   , sources_( stop, log )
@@ -146,6 +159,22 @@ void Pipeline::sync_and_orient( int src, int fd_src, int& ok ) noexcept
         reset_source( src );
 }
 
+
+
+void Pipeline::idle_perf() noexcept
+{
+    const auto now = clk::now();
+    sample_rt_faults_if_due( perf_, now );
+    perf_.tick( now, sources_.sources(), output_ );
+}
+
+void Pipeline::step_done_perf( PerfClock::time_point t0 ) noexcept
+{
+    const auto now = clk::now();
+    sample_rt_faults_if_due( perf_, now );
+    perf_.step_done( t0, now, sources_.sources(), output_ );
+}
+
 Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
 {
     st = Status {};
@@ -153,7 +182,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
     EncodedFrame f {};
     const auto drain_fn = [this, &ok]() noexcept { drain_done_slots( ok ); };
     const auto idle_fn = [this]() noexcept {
-        perf_.tick( clk::now(), sources_.sources(), output_ );
+        idle_perf();
         output_.idle_tick( t0_, sources_.sources() );
     };
     const auto reset_fn = [this]( int s ) noexcept { reset_source( s ); };
@@ -168,7 +197,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
             st = hst;
             return Step::Fatal;
         }
-        perf_.step_done( t0, clk::now(), sources_.sources(), output_ );
+        step_done_perf( t0 );
         return Step::Skipped;
     }
 
@@ -189,7 +218,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
                 return Step::Fatal;
             }
         }
-        perf_.step_done( t0, clk::now(), sources_.sources(), output_ );
+        step_done_perf( t0 );
         return Step::Skipped;
     }
 
@@ -209,7 +238,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
                          ms( t0, t1 ), ms( t1, t2 ) );
     if ( pool_.size() == 1 )
         ok += publish_oldest();
-    perf_.step_done( t0, clk::now(), sources_.sources(), output_ );
+    step_done_perf( t0 );
     return Step::Dispatched;
 }
 
@@ -223,8 +252,17 @@ Status Pipeline::run()
     // exit. Spawned BEFORE the RT pin so it keeps the scheduler default.
     SourceSupervisor::SourceProber prober( sources_.sources(), sources_.locator(), log_ );
     prober.start();
+    configure_rt_allocator( log_ );
     lock_process_memory( log_ );
+    prefault_current_thread_stack();
     pin_current_thread_rt( "pipeline main", 4, 80, log_ );
+    perf_.enable_rt( 60.0 );
+    {
+        uint64_t minflt = 0;
+        uint64_t majflt = 0;
+        read_thread_page_faults( minflt, majflt );
+        perf_.seed_rt_faults( minflt, majflt );
+    }
     analytics_.init_box_logs( cfg_.box_log, sources_.size() );
     sources_.reset_stall_clocks( t0_ );
 

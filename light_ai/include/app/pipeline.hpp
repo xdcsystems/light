@@ -50,6 +50,8 @@ private:
     // One frame: next_frame -> decode -> orient -> dispatch -> publish (pool 1).
     // st: the fatal reason, filled only on Step::Fatal (cleared at entry).
     Step step( int& ok, Status& st ) noexcept;
+    void step_done_perf( PerfClock::time_point t0 ) noexcept;
+    void idle_perf() noexcept;
     void sync_and_orient( int src, int fd_src, int& ok ) noexcept;
     void drain_done_slots( int& ok ) noexcept;
     int publish_oldest() noexcept;  // collect -> analytics -> output; 1 if valid

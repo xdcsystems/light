@@ -1,6 +1,7 @@
 // test_cpu_affinity.cpp: pin_current_thread_to_big_cores is noexcept and survives a throwing Log stream (#96).
 // The pin runs inside its own std::thread, so the runner's CPU mask stays untouched.
 
+#include <cstdint>
 #include <fstream>
 #include <ios>
 #include <ostream>
@@ -52,4 +53,12 @@ void test_cpu_affinity( TestRun& t )
     worker.join();
     CHECK( t, returned );
     CHECK( t, out.bad() != err.bad() );  // exactly one line: info to out (pinned) or warn to err (fallback)
+
+    uint64_t minflt = 0;
+    uint64_t majflt = 0;
+    static_assert( noexcept( prefault_current_thread_stack() ), "prefault must be noexcept" );
+    static_assert( noexcept( configure_rt_allocator( log ) ), "configure_rt_allocator must be noexcept" );
+    static_assert( noexcept( read_thread_page_faults( minflt, majflt ) ), "read_thread_page_faults must be noexcept" );
+    prefault_current_thread_stack( 64 * 1024 );
+    read_thread_page_faults( minflt, majflt );
 }

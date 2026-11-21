@@ -179,6 +179,7 @@ bool StreamOutput::take_work( PublishJob& pjob, bool& has_pub, IdleJob& ijob, bo
 
 void StreamOutput::worker_loop() noexcept
 {
+    prefault_current_thread_stack();
     pin_current_thread_rt( "stream output", -1, 60, log_ );
     PublishJob pjob {};
     IdleJob ijob {};
