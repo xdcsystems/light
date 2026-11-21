@@ -100,7 +100,7 @@ private:
         Phase phase = Phase::Delimiter;
         Form form = Form::Open;
         long need = -1;     // Content-Length of the current part, -1 = none
-        size_t got = 0;     // body bytes delivered (or skipped) so far
+        size_t got = 0;     // body bytes delivered so far (skipped too with a Content-Length, not when scanned)
         bool skip = false;  // true while draining an oversized (> body_cap) part
     };
 
