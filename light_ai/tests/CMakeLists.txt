@@ -102,20 +102,20 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/trail_window.cpp
     ${LIGHT_AI_ROOT}/src/source/buffered_socket.cpp
     ${LIGHT_AI_ROOT}/src/source/mjpeg_slot_pool.cpp
-    ${LIGHT_AI_ROOT}/src/net_mjpeg_source.cpp
-    ${LIGHT_AI_ROOT}/src/box_smoother.cpp
-    ${LIGHT_AI_ROOT}/src/tracker.cpp
-    ${LIGHT_AI_ROOT}/src/box_mapper.cpp
+    ${LIGHT_AI_ROOT}/src/source/net_mjpeg_source.cpp
+    ${LIGHT_AI_ROOT}/src/render/box_smoother.cpp
+    ${LIGHT_AI_ROOT}/src/core/tracker.cpp
+    ${LIGHT_AI_ROOT}/src/render/box_mapper.cpp
     ${LIGHT_AI_ROOT}/src/config/cli.cpp
     ${LIGHT_AI_ROOT}/src/config/option_registry.cpp
     ${LIGHT_AI_ROOT}/src/config/config_file.cpp
-    ${LIGHT_AI_ROOT}/src/process_env.cpp
-    ${LIGHT_AI_ROOT}/src/signal_waiter.cpp
-    ${LIGHT_AI_ROOT}/src/cpu_affinity.cpp
-    ${LIGHT_AI_ROOT}/src/timings.cpp
-    ${LIGHT_AI_ROOT}/src/console_reporter.cpp
-    ${LIGHT_AI_ROOT}/src/cal_dumper.cpp
-    ${LIGHT_AI_ROOT}/src/tcp_send.cpp
+    ${LIGHT_AI_ROOT}/src/sys/process_env.cpp
+    ${LIGHT_AI_ROOT}/src/sys/signal_waiter.cpp
+    ${LIGHT_AI_ROOT}/src/sys/cpu_affinity.cpp
+    ${LIGHT_AI_ROOT}/src/core/timings.cpp
+    ${LIGHT_AI_ROOT}/src/app/console_reporter.cpp
+    ${LIGHT_AI_ROOT}/src/npu/cal_dumper.cpp
+    ${LIGHT_AI_ROOT}/src/net/tcp_send.cpp
     ${LIGHT_AI_ROOT}/externals/inih/ini.c
 )
 # Same inih switch as the main target: the config-file handler relies on it.

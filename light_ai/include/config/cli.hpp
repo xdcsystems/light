@@ -4,7 +4,7 @@
 #include <string>
 
 #include "config/config.hpp"  // Config and its sections
-#include "config/option_registry.h"
+#include "config/option_registry.hpp"
 #include "core/log.hpp"
 
 // CliOptions: the single place that reads and validates the command

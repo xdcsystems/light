@@ -21,7 +21,7 @@
 #include <cstdint>
 
 #include "core/track.hpp"  // TrajPoint
-#include "pod_ring.hpp"
+#include "core/pod_ring.hpp"
 
 class TrailWindow
 {

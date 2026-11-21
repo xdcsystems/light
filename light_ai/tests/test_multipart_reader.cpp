@@ -7,7 +7,7 @@
 
 #include "check.hpp"
 #include "core/multipart_reader.hpp"
-#include "jpeg_probe.hpp"
+#include "core/jpeg_probe.hpp"
 #include "mjpeg_stream.hpp"
 #include "suites.hpp"
 

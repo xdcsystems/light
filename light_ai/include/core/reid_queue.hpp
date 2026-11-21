@@ -13,7 +13,7 @@
 #include <utility>
 
 #include "core/global_track.hpp"
-#include "pod_ring.hpp"
+#include "core/pod_ring.hpp"
 
 enum class ReidSlotState : uint8_t
 {

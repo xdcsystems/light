@@ -17,7 +17,7 @@
 #include <string>
 #include <string_view>
 
-#include "config/option_registry.h"
+#include "config/option_registry.hpp"
 #include "config/config.hpp"
 
 namespace

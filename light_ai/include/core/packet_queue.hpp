@@ -33,7 +33,7 @@
 #include <mutex>
 #include <stdexcept>
 
-#include "pod_ring.hpp"
+#include "core/pod_ring.hpp"
 
 template <class Pkt, class Ops, int N>
 class BasicPacketQueue

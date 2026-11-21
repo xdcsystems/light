@@ -12,7 +12,7 @@
 #include <system_error>
 #include <vector>
 
-#include "cal_dumper.hpp"
+#include "npu/cal_dumper.hpp"
 #include "check.hpp"
 #include "config/config.hpp"
 #include "core/log.hpp"

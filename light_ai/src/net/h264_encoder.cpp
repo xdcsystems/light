@@ -11,7 +11,7 @@ extern "C"
 #include <libavutil/pixfmt.h>
 }
 
-#include "av_common.hpp"  // av_err_str
+#include "net/av_common.hpp"  // av_err_str
 #include "core/log.hpp"
 #include "net/h264_encoder.hpp"
 

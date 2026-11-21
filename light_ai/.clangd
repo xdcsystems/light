@@ -14,7 +14,7 @@ Diagnostics:
     # covers them.
     Add: [readability-function-cognitive-complexity, misc-const-correctness]
     # clangd 22 runs a check it rates slow (misc-const-correctness) only with FastCheckFilter None (#94). Measured with
-    # `clangd --check`: src/pipeline.cpp 7.8 -> 8.0 s, and no other diagnostic on four TUs (every other check that
+    # `clangd --check`: src/app/pipeline.cpp 7.8 -> 8.0 s, and no other diagnostic on four TUs (every other check that
     # None lets in is in Remove below).
     FastCheckFilter: None
     # Checks that LLVM 11 (the main pass) does not have and that '*' turns on here: they fired on the tree when

@@ -45,7 +45,7 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   `librga/include`, no `rga/` subdir). Headers and library match (1.10.6). The distro `/usr/include/rga/` (2.2.0,
   different `im2d_version.h` / `rga.h`) is reachable through the default `/usr/include`: harmless while RGA is
   included as `<im2d.h>` / `<rga.h>` (resolved in `/usr/local/include`, searched first; today only
-  `src/rga_resizer.cpp` and `src/net/frame_composer.cpp`), but `#include <rga/im2d.h>` would pick the 2.2.0 headers
+  `src/media/rga_resizer.cpp` and `src/net/frame_composer.cpp`), but `#include <rga/im2d.h>` would pick the 2.2.0 headers
   against the 1.10.6 library.
 - Include paths: of the pkg-config `MPP` / `RGA` / `AV` sets, only `AV_INCLUDE_DIRS` reaches
   `target_include_directories` (`CMakeLists.txt`; `MPP_INCLUDE_DIRS` / `RGA_INCLUDE_DIRS` are not passed, only their
@@ -161,8 +161,8 @@ only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
 - Diagnostics through `Log` (`include/core/log.hpp`); only `main.cpp` owns `std::cout`/`std::cerr`/`std::clog`;
   no C stdio output (gate).
 - Header layout: in each visibility section, functions first, then a fresh label for data (review).
-- Header extensions: new headers use `.hpp`; nine legacy `.h` headers stay as-is unless refactored (gate).
-- `core/` includes only the C++17 standard library and `pod_list.hpp`/`pod_ring.hpp` (keeps tests SDK-free)
+- Header extensions: headers use `.hpp`, no `.h` (gate).
+- `core/` includes only the C++17 standard library and `core/*` (keeps tests SDK-free)
   (gate); include order: system and SDK headers first (gate); no GStreamer / OpenCV (gate).
 - Exception (review): header-only libraries in `externals/` may keep file statics; include them
   only from `.cpp` files, never from a project header.

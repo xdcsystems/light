@@ -18,7 +18,7 @@
 #include "core/log.hpp"
 #include "loopback.hpp"
 #include "mjpeg_stream.hpp"
-#include "net_mjpeg_source.hpp"
+#include "source/net_mjpeg_source.hpp"
 #include "suites.hpp"
 
 using loopback::Listener;

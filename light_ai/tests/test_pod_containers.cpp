@@ -1,6 +1,6 @@
 #include "check.hpp"
-#include "pod_list.hpp"
-#include "pod_ring.hpp"
+#include "core/pod_list.hpp"
+#include "core/pod_ring.hpp"
 #include "suites.hpp"
 
 void test_pod_containers( TestRun& t )

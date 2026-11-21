@@ -2,7 +2,7 @@
 #include <vector>
 
 #include "check.hpp"
-#include "jpeg_probe.hpp"
+#include "core/jpeg_probe.hpp"
 #include "suites.hpp"
 
 namespace

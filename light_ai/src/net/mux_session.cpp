@@ -13,13 +13,13 @@ extern "C"
 #include <libavutil/pixfmt.h>
 }
 
-#include "av_common.hpp"  // av_err_str
+#include "net/av_common.hpp"  // av_err_str
 #include "core/fixed_fmt.hpp"
 #include "core/log.hpp"
 #include "core/perf_clock.hpp"
-#include "muxer_teardown.hpp"
+#include "net/muxer_teardown.hpp"
 #include "net/mux_session.hpp"
-#include "tcp_pull_server.hpp"
+#include "net/tcp_pull_server.hpp"
 
 MuxSession::MuxSession( const EncoderConfig& cfg, PacketQueue& queue, SessionGate& gate, const Log& log )
   : log_( log )

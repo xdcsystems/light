@@ -31,7 +31,7 @@
 #include "core/log.hpp"
 #include "core/rga_limits.hpp"  // needs_two_pass, aux_bytes: shared with RgaResizer
 #include "core/status.hpp"
-#include "jpeg_probe.hpp"
+#include "core/jpeg_probe.hpp"
 #include "source/source_types.hpp"
 
 template <class Src, class Dec>

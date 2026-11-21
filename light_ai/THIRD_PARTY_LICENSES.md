@@ -15,7 +15,7 @@
 | **System GPU** | `EGL`, `GLESv2`, `libgbm` (Mali / Mesa) | **Vendor / Khronos / MIT** | No (system lib) | Dynamically linked / `dlopen`ed at runtime |
 | **NPU Runtime** | Rockchip `rknnrt` (`librknnrt.so`, `rknn_api.h`) | **Proprietary** (Rockchip) | No (SDK runtime) | Rockchip Electronics Co., Ltd. All rights reserved |
 | **Models (`.rknn`)** | YOLOv5s detector & OSNet Re-ID models (`misc/*.rknn`) | **AGPL-3.0** *(Ultralytics YOLOv5)* / **Apache-2.0** *(rknn_model_zoo)* / **MIT** *(OSNet / torchreid)* | No (`.gitignore`d) | Not tracked in Git; user-supplied at runtime (`--model`, `--reid-model`) |
-| **Class labels** | [`include/coco_names.h`](include/coco_names.h) | **CC BY 4.0** (MS COCO taxonomy) | Yes | Standard 80 COCO class name strings |
+| **Class labels** | [`include/npu/coco_names.hpp`](include/npu/coco_names.hpp) | **CC BY 4.0** (MS COCO taxonomy) | Yes | Standard 80 COCO class name strings |
 
 ---
 

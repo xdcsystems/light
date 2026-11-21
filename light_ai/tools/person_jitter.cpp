@@ -22,7 +22,7 @@
 //
 // Build and run (from light_ai/):
 //   g++ -std=gnu++17 -O2 -Wall -Wextra -Iinclude -o build/person_jitter tools/person_jitter.cpp
-//       src/tracker.cpp src/core/associator.cpp src/core/trail_window.cpp   (one command line)
+//       src/core/tracker.cpp src/core/associator.cpp src/core/trail_window.cpp   (one command line)
 //   ./build/person_jitter reference/ref_evening.csv
 
 #include <algorithm>
@@ -39,7 +39,7 @@
 #include "core/box_filter.hpp"
 #include "core/detection.hpp"
 #include "core/track.hpp"
-#include "tracker.hpp"
+#include "core/tracker.hpp"
 
 namespace
 {

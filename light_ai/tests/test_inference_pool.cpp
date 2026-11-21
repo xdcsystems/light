@@ -20,8 +20,8 @@
 #include "core/detection.hpp"
 #include "core/frame_view.hpp"
 #include "core/log.hpp"
-#include "infer_slot.hpp"
-#include "inference_pool.hpp"
+#include "npu/infer_slot.hpp"
+#include "npu/inference_pool.hpp"
 #include "suites.hpp"
 
 namespace

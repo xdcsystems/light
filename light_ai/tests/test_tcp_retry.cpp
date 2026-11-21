@@ -9,7 +9,7 @@
 #include "core/log.hpp"
 #include "core/status.hpp"
 #include "suites.hpp"
-#include "tcp_pull_server.hpp"
+#include "net/tcp_pull_server.hpp"
 
 void test_tcp_retry( TestRun& t )
 {

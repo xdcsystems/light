@@ -23,7 +23,7 @@
 #include <rockchip/rk_mpi.h>
 
 #include "core/encoder_config.hpp"
-#include "rkmpp_drm_pool.hpp"
+#include "media/rkmpp_drm_pool.hpp"
 
 struct AVFrame;
 

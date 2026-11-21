@@ -7,7 +7,7 @@
 
 #include <cstdint>
 
-#include "pod_list.hpp"
+#include "core/pod_list.hpp"
 
 // Colors are in tensor RGB888 semantics (byte0 = R);
 // the GPU implementation swaps R/B internally -- the dma-buf reads as BGR to the GPU.

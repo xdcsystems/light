@@ -9,10 +9,10 @@
 
 #include "core/idle_plate.hpp"
 #include "core/log.hpp"
-#include "dma_sync.hpp"
+#include "media/dma_sync.hpp"
 #include "net/encoder_frame_pool.hpp"
 #include "net/frame_composer.hpp"
-#include "throw_on.hpp"
+#include "core/throw_on.hpp"
 namespace
 {
     // Explicit strides: the VU plane lands at w * vstride -- exactly where

@@ -1,7 +1,8 @@
 # expected_lint.txt: the rules_lint.sh self-test of scripts/tidy_run.sh (#93): its exact output on tests/tidy_probe/lint/.
 include/core/bad.hpp:3: core-include: rga/im2d.h -- core/ includes only the C++17 standard library
-include/core/bad.hpp:5: core-include: rga_resizer.h -- core/ includes only core/*, pod_list.hpp, pod_ring.hpp
-include/new.h:1: header-ext -- new headers use .hpp (CONTRIBUTING, Header extensions)
+include/core/bad.hpp:5: core-include: media/rga_resizer.hpp -- core/ includes only core/*
+include/core/bad.hpp:6: core-include: pod_ring.hpp -- core/ includes only core/*
+include/new.h:1: header-ext -- headers use .hpp, no .h (CONTRIBUTING, Header extensions)
 src/x.cpp:3: banned-include: gst/gst.h -- no GStreamer, no OpenCV
 src/x.cpp:3: include-order: gst/gst.h -- system and SDK headers first, project headers last
 src/x.cpp:4: line-length -- 141 columns > 140

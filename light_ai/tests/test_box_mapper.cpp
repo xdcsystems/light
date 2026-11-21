@@ -1,7 +1,7 @@
 #include <cmath>
 #include <cstdint>
 
-#include "box_mapper.h"
+#include "render/box_mapper.hpp"
 #include "check.hpp"
 #include "suites.hpp"
 

@@ -1,7 +1,7 @@
 #include <cmath>
 #include <sstream>
 
-#include "box_smoother.h"
+#include "render/box_smoother.hpp"
 #include "check.hpp"
 #include "suites.hpp"
 

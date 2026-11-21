@@ -1,6 +1,6 @@
 // Letterbox geometry: the domain type shared by the resize, postprocess,
 // overlay and encoder layers. Pure integer math, no SDK dependencies
-// (moved out of rga_resizer.h so consumers stop including the RGA layer).
+// (moved out of rga_resizer.hpp so consumers stop including the RGA layer).
 
 #pragma once
 

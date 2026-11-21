@@ -4,7 +4,7 @@
 #include "check.hpp"
 #include "core/log.hpp"
 #include "suites.hpp"
-#include "timings.hpp"
+#include "core/timings.hpp"
 
 namespace
 {
