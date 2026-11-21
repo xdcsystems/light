@@ -308,16 +308,6 @@ bool OverlaySink::draw_prepared_into_tensor( const FrameView& frame,
     return true;
 }
 
-double OverlaySink::draw_and_publish( const FrameView& frame,
-                                      const DetList& dets,
-                                      const TrajList& trajs,
-                                      const Tracker& tracker,
-                                      bool defer_encode ) noexcept
-{
-    prepare_overlay( frame, dets, trajs, tracker, boxes_, callouts_ );
-    return render_and_publish( frame, boxes_, callouts_, defer_encode );
-}
-
 double OverlaySink::render_and_publish( const FrameView& frame,
                                         const GpuBoxList& boxes,
                                         const CalloutList& callouts,
@@ -357,7 +347,7 @@ double OverlaySink::render_and_publish( const FrameView& frame,
         const auto t5 = clk::now();
         enc_->publish( tn.fd, frame.lb, frame.ts_us, frame.src_idx, defer_encode, hook );
         const auto t6 = clk::now();
-        enc_ms = ms( t5, t6 );
+        enc_ms += ms( t5, t6 );
     }
     return enc_ms;
 }

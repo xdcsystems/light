@@ -41,6 +41,12 @@ constexpr EGLTimeKHR kFenceWaitNs = 100ull * 1000 * 1000;
 
 namespace
 {
+    struct EglUnbind
+    {
+        EGLDisplay dpy;
+        ~EglUnbind() { eglMakeCurrent( dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT ); }
+    };
+
     bool has( const char *exts, const char *name ) { return exts && strstr( exts, name ) != nullptr; }
 
     // Per-vertex color (normalized ubyte attribute) instead of the per-box
@@ -142,15 +148,17 @@ namespace
             const float x1 = std::ceil( b.x1 );
             const float y1 = std::ceil( b.y1 );
             emit_quad( qt, x0, y0, x1, y0 + t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
-            emit_quad( qt, x0, y1 - t, x1, y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            if ( y1 - y0 > t )
+                emit_quad( qt, x0, y1 - t, x1, y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
             // Vertical bars stop short of the horizontal ones: each corner
             // pixel is blended once (M-10). Porter-Duff over is not
             // idempotent for a < 255 -- the semi-transparent trail dots had
             // bright double corners unlike draw_boxes_cpu.
             if ( y1 - t <= y0 + t )
-                continue;  // 2 px tall: the two horizontal bars cover it
+                continue;  // <= 2 px tall: horizontal bar(s) cover it
             emit_quad( qt, x0, y0 + t, x0 + t, y1 - t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
-            emit_quad( qt, x1 - t, y0 + t, x1, y1 - t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            if ( x1 - x0 > t )
+                emit_quad( qt, x1 - t, y0 + t, x1, y1 - t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
         }
     }
 
@@ -533,6 +541,7 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     if ( si.img != EGL_NO_IMAGE_KHR )
         return {};  // idempotent: the pool attaches each slot once
     make_current();
+    const EglUnbind unbind { st_.dpy };
 
     EGLint iattr[] = { 
         EGL_WIDTH,
@@ -604,7 +613,6 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     }
     log_.info() << "drawer: tensor attached (slot " << slot << ") " << w << 'x' << h << " stride=" << stride
               << " (native fence: " << ( st_.native_fence ? "yes" : "no" ) << ")\n";
-    eglMakeCurrent( st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );
     return {};
 }
 

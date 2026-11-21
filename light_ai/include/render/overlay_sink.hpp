@@ -52,14 +52,6 @@ public:
     bool viewer_live() const noexcept;
     void release_worker_context() noexcept;
 
-    // Draws the overlay and publishes the frame; returns the publish time, ms
-    // (0 when no viewer is connected).
-    double draw_and_publish( const FrameView& frame,
-                             const DetList& dets,
-                             const TrajList& trajs,
-                             const Tracker& tracker,
-                             bool defer_encode = false ) noexcept;
-
     // Split path for async StreamOutput: prepare_overlay() runs on the pipeline
     // thread (reads Tracker/filters), render_and_publish() runs on the output thread.
     void prepare_overlay( const FrameView& frame,
@@ -104,8 +96,6 @@ private:
     std::optional<NetEncoder> enc_ {};
     std::optional<GpuBoxDrawer> drawer_ {};
     BoxMapper mapper_ {};
-    GpuBoxList boxes_ {};
-    CalloutList callouts_ {};
     std::array<CalloutHistory, reid_cfg::kMaxSources> callout_hist_ {};
     std::array<TrackBoxFilters, reid_cfg::kMaxSources> track_filt_ {};
     StreamLayout layout_ {};  // h264 stream geometry (tiled_): 1:1 overlay target
