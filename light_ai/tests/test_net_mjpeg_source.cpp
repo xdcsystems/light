@@ -212,14 +212,20 @@ namespace
         CHECK( t, idx >= 0 && !eio && f == v1 );
     }
 
-    void refused( TestRun& t, const Bytes& a, const Bytes& wide )
+    void resize_and_refusals( TestRun& t, const Bytes& a, const Bytes& wide )
     {
         std::string why;
-        // Another resolution on reconnect: refused, the decoder keeps its size.
+        // Another resolution on reconnect: adopted (SourceChannel re-initializes
+        // the decoder), and its frames pass the geometry check.
         {
             Rig r;
             CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
-            CHECK( t, r.open( kHead + parts( { wide }, false ), why ) == -1 && why == "stream resolution changed on reconnect" );
+            CHECK( t, r.open( kHead + parts( { wide, variant( wide, 0x55 ) }, false ), why ) == 0 );
+            CHECK( t, r.src.width() == 32 && r.src.height() == 16 );
+            r.src.start();
+            int err = 0;
+            Bytes f;
+            CHECK( t, r.dequeue( 1000, err, f ) >= 0 && f == variant( wide, 0x55 ) );
         }
         // The head's errors come through with their texts.
         {
@@ -589,7 +595,7 @@ void test_net_mjpeg_source( TestRun& t )
     large_jpeg_nonblocking( t, a );
     oversized_part_recovers( t, a );
     bad_retry_counts_blocking( t, a );
-    refused( t, a, wide );
+    resize_and_refusals( t, a, wide );
     cancel_stops_blocking_read( t, a );
     slow_drip_head_times_out( t );
     slow_drip_part_times_out( t, a, false );

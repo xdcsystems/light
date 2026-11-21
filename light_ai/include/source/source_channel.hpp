@@ -57,7 +57,7 @@ public:
     {
         Live,
         Absent,         // device not there / not streaming: the prober retries
-        DecoderFailed,  // decoder init failed, or the geometry differs from the decoder's
+        DecoderFailed,  // decoder init failed
         AuxFailed       // two-pass aux buffer allocation failed
     };
 
@@ -272,17 +272,19 @@ private:
         return ( rot_auto_ || quarter_turn() ) && rga_limits::needs_two_pass( w, h, model_w_, model_h_, true );
     }
 
-    // Decoder (first attach only), geometry guard, aux buffer, letterbox.
+    // Decoder (first attach, or a re-attach at another size), aux buffer, letterbox.
+    // A geometry change re-initializes the decoder like the NoMemory path:
+    // attach runs only while the channel is not Live, so the frame thread holds
+    // no decoded buffer of the old decoder (frame_dispatch uses the decoded fd
+    // synchronously), and MppDecoder::init tears the old decoder down first.
     Attach prepare_decode( int w, int h, bool hot, Status& why )
     {
         if ( dec_ready_ && ( w != dec_w_ || h != dec_h_ ) )
         {
-            // The decoder's buffers are sized for the first geometry; feeding it
-            // another size is not supported yet -- stay absent and say why.
-            log_.warn() << "source s" << idx_ << ": geometry changed " << dec_w_ << 'x' << dec_h_ << " -> " << w << 'x' << h
-                        << " - decoder stays at " << dec_w_ << 'x' << dec_h_ << ", not attaching\n";
-            why = make_status( Errc::Unsupported, "geometry changed" );
-            return Attach::DecoderFailed;
+            log_.info() << "source s" << idx_ << ": geometry changed " << dec_w_ << 'x' << dec_h_ << " -> " << w << 'x' << h
+                        << ", re-initializing the decoder\n";
+            geom_.aux_fd = -1;  // sized for the old geometry; the decoder owns it and drops it on init
+            dec_ready_ = false;
         }
         if ( !dec_ready_ )
         {

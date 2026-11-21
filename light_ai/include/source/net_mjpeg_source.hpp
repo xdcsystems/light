@@ -107,7 +107,7 @@ private:
     // Response head (core/http_head.hpp) -> the reader's boundary.
     Status read_headers();
     // After the head: the first JPEG frame primed into slot 0, its SOFn
-    // geometry checked against a locked one (a reconnect).
+    // geometry adopted (also on a reconnect at another size).
     Status prime_first_frame();
     // One complete part is buffered in the window: no fill needed.
     bool part_buffered() const;

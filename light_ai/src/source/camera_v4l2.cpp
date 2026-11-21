@@ -96,7 +96,7 @@ Status CameraV4L2::setup_steps( const std::string& dev, int& got_w, int& got_h )
         return st;
     // Not adopted here (M-15): a trial() setup is torn down right after, and
     // reconnect() adopts only once STREAMON succeeded -- any failed attempt
-    // leaves the locked session dimensions as they were.
+    // leaves the session dimensions (the next request) as they were.
     return {};
 }
 
@@ -118,10 +118,10 @@ Status CameraV4L2::open_node( const std::string& dev )
 }
 
 // Read back the actual mode negotiated by the driver (VIDIOC_G_FMT).
-// At startup (width_ == 0) any negotiated MJPEG mode is accepted and
-// reconnect() adopts it after STREAMON; on a mid-run reconnect
-// (width_ > 0) the dimensions are already locked into the
-// decoder/encoder and must match.
+// The request is the default mode at startup (width_ == 0) and the last
+// session's mode on a reconnect; any negotiated MJPEG mode is accepted and
+// reconnect() adopts it after STREAMON (a camera back in another mode
+// re-attaches: SourceChannel re-initializes the decoder).
 Status CameraV4L2::negotiate_format( int& got_w, int& got_h )
 {
     const unsigned req_w = width_ > 0 ? static_cast<unsigned>( width_ ) : kDefaultWidth;
@@ -149,8 +149,7 @@ Status CameraV4L2::negotiate_format( int& got_w, int& got_h )
     }
     got_w = static_cast<int>( gfmt.fmt.pix.width );
     got_h = static_cast<int>( gfmt.fmt.pix.height );
-    if ( gfmt.fmt.pix.pixelformat != V4L2_PIX_FMT_MJPEG || got_w < 16 || got_h < 16
-         || ( width_ > 0 && ( got_w != width_ || got_h != height_ ) ) )
+    if ( gfmt.fmt.pix.pixelformat != V4L2_PIX_FMT_MJPEG || got_w < 16 || got_h < 16 )
     {
         log_.warn() << "camera: mode mismatch: requested " << req_w << 'x' << req_h << " MJPEG, got " << got_w << 'x'
                   << got_h << " fourcc=" << std::hex << gfmt.fmt.pix.pixelformat << std::dec << '\n';
@@ -289,8 +288,7 @@ Status CameraV4L2::reconnect( const std::string& dev )
         teardown();
         return setup_errno( "STREAMON", e );
     }
-    // The stream runs: the negotiated mode becomes the session's (startup)
-    // or is the locked one already (negotiate_format checked the match).
+    // The stream runs: the negotiated mode becomes the session's.
     width_ = got_w;
     height_ = got_h;
     err_streak_ = 0;  // fresh device session (stream running) — the corrupt streak starts over

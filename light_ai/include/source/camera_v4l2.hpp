@@ -36,11 +36,11 @@ public:
 
     // Full open+verify path for a node:
     // open, S_FMT, G_FMT verification, REQBUFS, mmap, QBUF.
-    // Nothing is trusted blindly: a substituted camera mode is caught here exactly like at startup.
+    // Nothing is trusted blindly: a mode that is not MJPEG or under 16 px is caught here, exactly like at startup.
     // Non-throwing: a failure tears down and returns its Status (Absent: the node
     // is not there; Busy; Unsupported: the mode; NoMemory: mmap); details are logged here.
     // Does not adopt the negotiated size: that is reconnect()'s, after STREAMON
-    // (a trial() setup must not lock the session mode).
+    // (a trial() setup must not change the session mode).
     Status setup_device( const std::string& dev );
 
     // Release the fd and all mappings; safe on a partially-open or already-dead device

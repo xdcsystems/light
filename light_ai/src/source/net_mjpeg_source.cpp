@@ -56,7 +56,9 @@ Status NetMjpegSource::setup_device( const std::string& url )
 }
 
 // Prime the first JPEG frame into slot 0 to read its SOFn geometry
-// before MppDecoder / NetEncoder / RgaResizer are initialized.
+// before MppDecoder / NetEncoder / RgaResizer are initialized. Every
+// connect adopts the stream's size: a server restarted at another
+// resolution re-attaches (SourceChannel re-initializes the decoder).
 Status NetMjpegSource::prime_first_frame()
 {
     uint32_t n = 0;
@@ -65,8 +67,6 @@ Status NetMjpegSource::prime_first_frame()
     JpegSofInfo info {};
     if ( !jpeg_frame_check( pool_.data( 0 ), n, info ) )
         return make_status( Errc::Invalid, "initial JPEG frame is incomplete or missing SOFn" );
-    if ( width_ > 0 && height_ > 0 && ( info.w != width_ || info.h != height_ ) )
-        return make_status( Errc::Unsupported, "stream resolution changed on reconnect" );
     width_ = info.w;
     height_ = info.h;
     primed_len_ = n;
