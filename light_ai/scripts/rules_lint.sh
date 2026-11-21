@@ -118,7 +118,7 @@ def check_nolint(rel, n, text):
 
 def check_file(rel, path):
     if rel.endswith(".h"):
-        add(rel, 1, "header-ext", "", "new headers use .hpp (CONTRIBUTING, Header extensions)")
+        add(rel, 1, "header-ext", "", "headers use .hpp, no .h (CONTRIBUTING, Header extensions)")
     core = rel.startswith("include/core/") or rel.startswith("src/core/")
     seen_quote = False
     with open(path, encoding="utf-8", errors="replace") as f:
