@@ -587,8 +587,8 @@ namespace
 
     // #117: the part deadline starts at the first body byte. The next part's
     // header comes right after the frame; its body starts after a 1.5 s gap
-    // (under kPollMs) and arrives in 4 pieces 1.5 s apart: 6 s from the header,
-    // 4.5 s from the first body byte -> Part (it was Lost while kPartMs ran
+    // (under kPollMs) and arrives in 5 pieces 1 s apart: 5.5 s from the header,
+    // 4 s from the first body byte -> Part (it was Lost while kPartMs ran
     // from the first header byte).
     void body_deadline_from_first_byte( TestRun& t, const Bytes& a )
     {
@@ -605,19 +605,19 @@ namespace
         const size_t body_at = next.find( "\r\n\r\n", next.find( "--frame" ) ) + 4;
         std::thread feeder( [&r, &next, body_at] {
             r.send( next.substr( 0, body_at ) );  // the delimiter and the whole header
-            const size_t piece = ( next.size() - body_at ) / 4;
-            for ( size_t i = 0; i < 4; ++i )
+            const size_t piece = ( next.size() - body_at ) / 5;
+            for ( size_t i = 0; i < 5; ++i )
             {
-                std::this_thread::sleep_for( std::chrono::milliseconds( 1500 ) );
+                std::this_thread::sleep_for( std::chrono::milliseconds( i == 0 ? 1500 : 1000 ) );
                 const size_t from = body_at + i * piece;
-                r.send( i < 3 ? next.substr( from, piece ) : next.substr( from ) );
+                r.send( i < 4 ? next.substr( from, piece ) : next.substr( from ) );
             }
         } );
         const auto t0 = std::chrono::steady_clock::now();
         const Status st = r.src.dequeue( idx, sz, -1 );
         const auto el = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - t0 ).count();
         feeder.join();
-        CHECK( t, st.ok() && el >= 5800 && el < 7500 );
+        CHECK( t, st.ok() && el >= 5300 && el < 7000 );
         if ( st.ok() )
         {
             const auto* p = static_cast<const uint8_t*>( r.src.buffer( idx ) );

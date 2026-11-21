@@ -76,9 +76,10 @@ public:
     bool in_body() const noexcept { return cur_.phase == Phase::Body; }
     // Past a delimiter line, reading the part's header lines.
     bool in_header() const noexcept { return cur_.phase == Phase::Header; }
-    // Body bytes of the current part delivered to dst (or skipped, oversized)
-    // so far; 0 outside the body. A body without Content-Length may still
-    // hold bytes back in the window (a delimiter split across refills).
+    // Body bytes of the current part delivered to dst so far (an oversized
+    // part with a Content-Length: skipped so far); 0 outside the body. A body
+    // without Content-Length may still hold bytes back in the window (a
+    // delimiter split across refills), and its skipped bytes do not count.
     size_t body_bytes() const noexcept { return cur_.phase == Phase::Body ? cur_.got : 0; }
 
 private:
