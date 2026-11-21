@@ -17,9 +17,9 @@
 #include <ios>
 #include <mutex>
 #include <ostream>
-#include <sstream>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 #include "core/fixed_fmt.hpp"
 
@@ -87,6 +87,9 @@ public:
             return *this;
         }
 
+        Line& operator<<( signed char v ) { return write_signed( v ); }
+        Line& operator<<( unsigned char v ) { return write_unsigned( v ); }
+
         Line& operator<<( bool v )
         {
             if ( sink_.write != nullptr )
@@ -148,6 +151,8 @@ public:
             return *this;
         }
 
+        Line& operator<<( short v ) { return write_signed( v ); }
+        Line& operator<<( unsigned short v ) { return write_unsigned( v ); }
         Line& operator<<( int v ) { return write_signed( v ); }
         Line& operator<<( long v ) { return write_signed( v ); }
         Line& operator<<( long long v ) { return write_signed( v ); }
@@ -157,22 +162,26 @@ public:
         Line& operator<<( float v ) { return write_float( static_cast<double>( v ) ); }
         Line& operator<<( double v ) { return write_float( v ); }
 
-        template <typename T>
-        Line& operator<<( const T& v )
+        Line& operator<<( const void* v )
         {
             if ( sink_.write != nullptr )
             {
-                std::ostringstream tmp;
-                if ( hex_ )
-                    tmp << std::hex;
-                tmp << v;
-                const std::string s = tmp.str();
-                append_bytes( s.data(), s.size() );
+                append_bytes( "0x", 2 );
+                const bool saved_hex = hex_;
+                hex_ = true;
+                append_uint( reinterpret_cast<uintptr_t>( v ) );
+                hex_ = saved_hex;
                 return *this;
             }
             if ( os_ )
                 *os_ << v;
             return *this;
+        }
+
+        template <typename T, std::enable_if_t<std::is_enum_v<T>, int> = 0>
+        Line& operator<<( T v )
+        {
+            return *this << static_cast<std::underlying_type_t<T>>( v );
         }
 
         // Stream manipulators (std::hex, std::dec, std::fixed, ...).

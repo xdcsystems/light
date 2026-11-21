@@ -247,9 +247,6 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
 Status Pipeline::run()
 {
     int ok = 0;
-    t0_ = clk::now();
-    t0_cap_us_ = std::chrono::duration_cast<std::chrono::microseconds>( t0_.time_since_epoch() ).count();
-    perf_.start( t0_ );
     // Hot-attach prober: local so its destructor stops and joins it on any
     // exit. Spawned BEFORE the RT pin so it keeps the scheduler default.
     SourceSupervisor::SourceProber prober( sources_.sources(), sources_.locator(), log_ );
@@ -258,6 +255,11 @@ Status Pipeline::run()
     lock_process_memory( log_ );
     prefault_current_thread_stack();
     pin_current_thread_rt( "pipeline main", 4, 80, log_ );
+    analytics_.init_box_logs( cfg_.box_log, sources_.size() );
+
+    t0_ = clk::now();
+    t0_cap_us_ = std::chrono::duration_cast<std::chrono::microseconds>( t0_.time_since_epoch() ).count();
+    perf_.start( t0_ );
     perf_.enable_rt( 60.0 );
     {
         uint64_t minflt = 0;
@@ -265,9 +267,8 @@ Status Pipeline::run()
         read_thread_page_faults( minflt, majflt );
         perf_.seed_rt_faults( minflt, majflt );
     }
-    analytics_.init_box_logs( cfg_.box_log, sources_.size() );
     sources_.reset_stall_clocks( t0_ );
-    watchdog_.ping_now( clk::now() );
+    watchdog_.ping_now( t0_ );
 
     for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.requested(); )
     {

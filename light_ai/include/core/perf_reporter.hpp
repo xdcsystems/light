@@ -1,5 +1,5 @@
 // PerfReporter: the source-side [perf] window of the pipeline and the owner
-// of its two 5-second lines (--net active only; #110):
+// of its 5-second lines (--net active only; #110, plus [perf] rt when enable_rt() is active):
 //   [perf] src step_max=.. | s0 f=.. dq_max=.. eagain=.. dec_max=.. or_cnt=.. or_max=.. skip=.. | s1 ...
 //   [perf] enc admit=.. skip=.. idle_a=.. idle_s=.. dt_max=.. dt_hist=[..] h264_max=.. cmp_max=.. eagain=.. clamp=..
 //          qflush=.. | ovl gpu_max=.. sync_max=.. ftmo=..   (no encoder: "[perf] ovl ...")
@@ -79,7 +79,7 @@ public:
         tick( now, srcs, sink );
     }
 
-    // Logs both lines once kWindowMs have passed since the window start,
+    // Logs the [perf] lines once kWindowMs have passed since the window start,
     // then starts the next window at now.
     template <class Srcs, class Sink>
     void tick( PerfClock::time_point now, Srcs& srcs, Sink& sink ) noexcept

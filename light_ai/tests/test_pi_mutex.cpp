@@ -18,6 +18,7 @@ void test_pi_mutex( TestRun& t )
     // 1. PiMutex + PiCondVar producer/consumer handoff (TSan-verified).
     {
         light_ai::platform::PiMutex mx;
+        CHECK( t, mx.prio_inherit_enabled() );
         light_ai::platform::PiCondVar cv;
         int value = 0;
         bool ready = false;

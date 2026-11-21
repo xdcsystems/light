@@ -8,6 +8,7 @@
 #include <cmath>
 #include <ostream>
 
+#include "core/log.hpp"
 #include "core/pod_list.hpp"
 
 struct Detection
@@ -32,8 +33,12 @@ inline bool det_usable( const Detection& d ) noexcept
 // no newline -- the caller supplies the row prefix and terminator).
 inline std::ostream& operator<<( std::ostream& os, const Detection& d )
 {
-    return os << d.cls << ',' << d.conf << ',' << d.x << ',' << d.y
-              << ',' << d.w << ',' << d.h;
+    return os << d.cls << ',' << d.conf << ',' << d.x << ',' << d.y << ',' << d.w << ',' << d.h;
+}
+
+inline Log::Line& operator<<( Log::Line& os, const Detection& d )
+{
+    return os << d.cls << ',' << d.conf << ',' << d.x << ',' << d.y << ',' << d.w << ',' << d.h;
 }
 
 using DetList = PodList<Detection, 128>;

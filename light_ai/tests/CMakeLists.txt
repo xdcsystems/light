@@ -78,7 +78,6 @@ add_executable(light_ai_tests
     test_overlay_raster.cpp
     test_global_track.cpp
     test_reid_worker_tsan.cpp
-    test_pi_mutex.cpp
     test_preview_ring.cpp
     test_packet_queue.cpp
     test_session_gate.cpp

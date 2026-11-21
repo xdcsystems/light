@@ -26,10 +26,10 @@
 #include <cstdint>
 #include <mutex>
 
-#include "platform/pi_mutex.hpp"
 #include "core/detection.hpp"  // DetList
-#include "core/geometry.hpp"   // LbGeom
 #include "core/frame_trace.hpp"
+#include "core/geometry.hpp"   // LbGeom
+#include "platform/pi_mutex.hpp"
 
 // What the pipeline thread hands to a worker with one frame. The tensor
 // itself is not here: slot k always runs on engine k, and RGA has written

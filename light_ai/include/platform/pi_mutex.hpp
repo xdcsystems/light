@@ -48,8 +48,8 @@ public:
         pthread_mutexattr_t attr {};
         ::pthread_mutexattr_init( &attr );
         const int set_rc = ::pthread_mutexattr_setprotocol( &attr, PTHREAD_PRIO_INHERIT );
-        int init_rc = ( set_rc == 0 ) ? ::pthread_mutex_init( &mx_, &attr ) : set_rc;
-        if ( init_rc == 0 )
+        const int pi_rc = ( set_rc == 0 ) ? ::pthread_mutex_init( &mx_, &attr ) : set_rc;
+        if ( pi_rc == 0 )
         {
             pi_active_ = true;
             ::pthread_mutexattr_destroy( &attr );
@@ -58,13 +58,13 @@ public:
 
         // Fallback when kernel/container does not support PTHREAD_PRIO_INHERIT.
         ::pthread_mutexattr_setprotocol( &attr, PTHREAD_PRIO_NONE );
-        init_rc = ::pthread_mutex_init( &mx_, &attr );
+        ::pthread_mutex_init( &mx_, &attr );
         ::pthread_mutexattr_destroy( &attr );
         if ( log != nullptr )
         {
             try
             {
-                log->warn() << "pi_mutex: PTHREAD_PRIO_INHERIT unsupported (rc=" << init_rc
+                log->warn() << "pi_mutex: PTHREAD_PRIO_INHERIT unsupported (rc=" << pi_rc
                             << "), fallback to PTHREAD_PRIO_NONE\n";
             }
             catch ( const std::exception& )

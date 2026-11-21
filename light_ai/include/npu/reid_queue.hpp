@@ -12,9 +12,9 @@
 #include <utility>
 
 #include "core/global_track.hpp"
-#include "platform/pi_mutex.hpp"
 #include "core/pod_ring.hpp"
 #include "platform/joining_thread.hpp"
+#include "platform/pi_mutex.hpp"
 
 enum class ReidSlotState : uint8_t
 {

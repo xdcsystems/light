@@ -10,6 +10,8 @@ extern "C"
 #include <libavutil/error.h>
 }
 
+#include "core/log.hpp"
+
 struct AvErrText
 {
     char buf[AV_ERROR_MAX_STRING_SIZE] {};
@@ -23,6 +25,11 @@ inline AvErrText av_err_str( int ret ) noexcept
 }
 
 inline std::ostream& operator<<( std::ostream& os, const AvErrText& e )
+{
+    return os << static_cast<const char*>( e.buf );
+}
+
+inline Log::Line& operator<<( Log::Line& os, const AvErrText& e )
 {
     return os << static_cast<const char*>( e.buf );
 }

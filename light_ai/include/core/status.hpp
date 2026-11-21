@@ -21,6 +21,8 @@
 #include <cstdint>
 #include <ostream>
 
+#include "core/log.hpp"
+
 // The failure classes. Only the ones a caller branches on, plus Failed.
 enum class Errc : uint8_t
 {
@@ -88,3 +90,5 @@ struct ErrnoText
 
 std::ostream& operator<<( std::ostream& os, ErrnoText e );
 std::ostream& operator<<( std::ostream& os, const Status& s );
+Log::Line& operator<<( Log::Line& os, ErrnoText e );
+Log::Line& operator<<( Log::Line& os, const Status& s );

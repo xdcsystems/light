@@ -2,11 +2,11 @@
 #include <exception>
 #include <iostream>
 
+#include "app/pipeline.hpp"
 #include "config/cli.hpp"  // CliOptions: argv + config-file reading/validation
 #include "core/log.hpp"
-#include "platform/log_sink.hpp"
 #include "core/stop_flag.hpp"
-#include "app/pipeline.hpp"
+#include "platform/log_sink.hpp"
 #include "sys/process_env.hpp"
 #include "sys/signal_waiter.hpp"
 

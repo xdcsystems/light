@@ -79,7 +79,7 @@ public:
         {
             Slot& slot = slots_[pos & kMask];
             const uint32_t seq = slot.seq.load( std::memory_order_acquire );
-            const intptr_t diff = static_cast<intptr_t>( seq ) - static_cast<intptr_t>( pos );
+            const int32_t diff = static_cast<int32_t>( seq - pos );
             if ( diff == 0 )
             {
                 if ( head_.compare_exchange_weak( pos, pos + 1, std::memory_order_relaxed ) )
@@ -156,13 +156,28 @@ private:
     {
         if ( pin_to_a55_ )
             detail::pin_drainer_a55();
+        bool drained_any = false;
         while ( !stop_.load( std::memory_order_acquire ) )
         {
-            if ( !drain_one() )
+            if ( drain_one() )
             {
-                flush_dropped();
-                std::this_thread::sleep_for( std::chrono::milliseconds( 2 ) );
+                drained_any = true;
+                continue;
             }
+            flush_dropped();
+            if ( drained_any )
+            {
+                try
+                {
+                    out_.flush();
+                    err_.flush();
+                }
+                catch ( const std::exception& )
+                {
+                }
+                drained_any = false;
+            }
+            std::this_thread::sleep_for( std::chrono::milliseconds( 2 ) );
         }
         bool drained = true;
         while ( drained )
@@ -184,7 +199,7 @@ private:
     const bool pin_to_a55_;
     std::array<Slot, kCapacity> slots_ {};
     alignas( 64 ) std::atomic<uint32_t> head_ { 0 };
-    uint32_t tail_ = 0;
+    alignas( 64 ) uint32_t tail_ = 0;
     std::atomic<uint64_t> dropped_ { 0 };
     std::atomic<uint64_t> total_dropped_ { 0 };
     std::atomic<bool> stop_ { false };

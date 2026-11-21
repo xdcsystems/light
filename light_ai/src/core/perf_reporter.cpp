@@ -94,8 +94,8 @@ void PerfReporter::note_rt_faults( uint64_t minflt, uint64_t majflt ) noexcept
         seed_rt_faults( minflt, majflt );
         return;
     }
-    win_minflt_ = minflt >= prev_minflt_ ? ( minflt - prev_minflt_ ) : 0U;
-    win_majflt_ = majflt >= prev_majflt_ ? ( majflt - prev_majflt_ ) : 0U;
+    win_minflt_ += minflt >= prev_minflt_ ? ( minflt - prev_minflt_ ) : 0U;
+    win_majflt_ += majflt >= prev_majflt_ ? ( majflt - prev_majflt_ ) : 0U;
     prev_minflt_ = minflt;
     prev_majflt_ = majflt;
 }
