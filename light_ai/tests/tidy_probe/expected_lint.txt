@@ -8,6 +8,8 @@ src/sdk.cpp:2: sdk-include: rga/im2d.h -- use the vendor librga headers (<im2d.h
 src/sdk.cpp:3: sdk-include: rk_mpi.h -- use <rockchip/...>
 src/sdk.cpp:4: sdk-include: mpp_frame.h -- use <rockchip/...>
 src/sdk.cpp:5: sdk-include: vpu_api.h -- use <rockchip/...>
+src/sdk.cpp:11: sdk-include: rk_venc_cfg.h -- use <rockchip/...>
+src/sdk.cpp:12: sdk-include: vpu.h -- use <rockchip/...>
 src/x.cpp:3: banned-include: gst/gst.h -- no GStreamer, no OpenCV
 src/x.cpp:3: include-order: gst/gst.h -- system and SDK headers first, project headers last
 src/x.cpp:4: line-length -- 141 columns > 140

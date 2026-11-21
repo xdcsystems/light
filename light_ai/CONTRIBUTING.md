@@ -22,7 +22,7 @@ Each rule is marked **(gate)**, **(review)** or both. **(gate)** means `scripts/
 - **Branch tables over `if`-chains** (review)**:** Dispatch over fixed sets via `switch` or `constexpr` tables (reference: `BoxMapper::det_color` in [`src/render/box_mapper.cpp`](src/render/box_mapper.cpp)).
 - **Preallocated buffer contract** (review)**:** Cross-frame output parameters are never assumed empty — the callee clears them at entry (e.g. `out.clear()` in `YoloDecoder::decode`).
 - **SDK-free `core/`** (gate: `core-include`)**:** [`include/core/`](include/core/) and [`src/core/`](src/core/) may include only the C++17 standard library and `core/*`. This keeps host unit tests free of MPP/RGA/RKNN/EGL/FFmpeg dependencies.
-- **SDK headers through the vendor paths** (gate: `sdk-include`, #117)**:** RGA as `<im2d.h>` / `<rga.h>` (the vendor librga 1.10.6 headers in `/usr/local/include`), never `<rga/...>` (the distro 2.2.0 headers, against the 1.10.6 library); MPP as `<rockchip/...>`, never a bare `<rk_mpi.h>`, `<rk_type.h>`, `<rk_mpi_cmd.h>`, `<vpu_api.h>` or `<mpp_*.h>` (the distro 1.5.0 headers through `-I/usr/include/rockchip`). CLAUDE.md, "Board SDK", has the paths.
+- **SDK headers through the vendor paths** (gate: `sdk-include`, #117)**:** RGA as `<im2d.h>` / `<rga.h>` (the vendor librga 1.10.6 headers in `/usr/local/include`), never `<rga/...>` (the distro 2.2.0 headers, against the 1.10.6 library); MPP as `<rockchip/...>`, never a bare `<rk_*.h>` (`<rk_mpi.h>`, `<rk_type.h>`, ...), `<vpu.h>`, `<vpu_api.h>` or `<mpp_*.h>` (the distro 1.5.0 headers through `-I/usr/include/rockchip`). CLAUDE.md, "Board SDK", has the paths.
 
 ## Error & Exception Model
 

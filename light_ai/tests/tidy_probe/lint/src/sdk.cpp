@@ -8,3 +8,5 @@
 #include <im2d.h>
 #include <rga.h>
 #include <my_mpp_frame.h>
+#include <rk_venc_cfg.h>
+#include <vpu.h>
