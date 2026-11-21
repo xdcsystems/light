@@ -333,7 +333,7 @@ Status Pipeline::run()
     // BEFORE the pin below: it keeps the scheduler default (cpu_affinity.hpp).
     SourceProber prober( srcs_, locator_, log_ );
     prober.start();
-    pin_current_thread_to_big_cores( "pipeline main", log_ );
+    pin_current_thread_rt( "pipeline main", 4, 80, log_ );
     for ( int s = 0; s < srcs_.size(); ++s )
         an_[s].smoother.set_log( source_box_log( cfg_.box_log, s, srcs_.size() ), log_ );
     srcs_.reset_stall_clocks( t0_ );

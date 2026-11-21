@@ -1,4 +1,4 @@
-// CPU affinity of the hot threads: a bursty cv-woken worker is not
+// CPU affinity and RT priority of the hot threads: a bursty cv-woken worker is not
 // guaranteed to stay on the big cluster under CFS/EAS.
 // RK3588 stock DT: A76 = cpu 4-7.
 //
@@ -17,3 +17,7 @@ class Log;
 // startup. A throw from the Log stream (std::ios_base::failure, std::bad_alloc, std::system_error of its mutex) drops
 // that log line; the thread keeps running.
 void pin_current_thread_to_big_cores( const char* who, const Log& log ) noexcept;
+
+// Pins the calling thread to a specific A76 core (`cpu >= 0`) or the full A76 cluster (`cpu < 0`) and optionally
+// switches it to SCHED_FIFO (`rt_prio > 0`). Best-effort and noexcept.
+void pin_current_thread_rt( const char* who, int cpu, int rt_prio, const Log& log ) noexcept;

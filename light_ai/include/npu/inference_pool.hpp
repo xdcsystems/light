@@ -241,7 +241,7 @@ private:
     void worker_loop( int k ) noexcept
     {
         if ( opts_.pin_workers )
-            pin_current_thread_to_big_cores( "npu worker", log_ );
+            pin_current_thread_rt( "npu worker", 5 + ( k % 3 ), 70, log_ );
         const std::size_t i = static_cast<std::size_t>( k );
         const Engine& eng = engines_[i];
         Decode& dec = decoders_[i];

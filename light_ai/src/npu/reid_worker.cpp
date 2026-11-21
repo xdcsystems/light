@@ -113,7 +113,7 @@ void ReidWorker::BigCorePin::operator()() const noexcept
     if ( log == nullptr )
         return;
     // Once at the reid worker thread start (BasicReidQueue::worker_loop, before its job loop), not the frame path.
-    pin_current_thread_to_big_cores( "reid worker", *log );
+    pin_current_thread_rt( "reid worker", -1, 50, *log );
 }
 
 ReidWorker::ReidWorker( const char* model_path, int pool_size, int infer_core, const Log& log )
