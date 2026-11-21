@@ -1489,7 +1489,6 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
 - **Stage 3a (`0e6b389`..`0d04816`):** `core/rga_limits.hpp` shared by `RgaResizer` / `SourceChannel` / `Pipeline` / `RknnEngine` (M-9); the real tensor row stride reaches `CalDumper`, `FrameComposer`, `NetPreview` (M-11); YOLO head `ch >= 18` and box guards (M-14); `DmaSync` `EINTR` retry, `GpuBoxDrawer` `destroy_sync` / `EGLint` / single corner blend (M-10), `CameraV4L2` mode adopted after `STREAMON` and `munmap` before `close`, `NetMjpegSource` wall-clock head (2 s) and part (`kPartMs` 5 s) deadlines, `ParamSetCache` NAL-walking `is_idr` and a fixed repeat buffer (M-15); Low §1-2 hygiene; missing unit tests (Low §3).
 - **Stage 3b item 4 (`4448bb3`, `6dc6a14`, `3a9a34a`):** `core/box_filter.hpp` -- one display filter for every drawn box (One-Euro on cx, cy, w, h + a backlash dead zone `max(dz_min_px, dz_frac * size)`), replacing `BoxEnvelope` in `OverlaySink` and envelope + EMA in `BoxSmoother`. `OverlaySink` filters the TENT/CONF track boxes per source (`TrackBoxFilters`, keyed by `(id, gen)`); `BoxMapper` bends the trail head onto the filtered box over `kTrailBlend = 6` points. Tracker, Associator and Re-ID untouched: Layer A `raw,` lines byte-identical, `sm,` lines and the Layer B golden re-baselined (t / person / trail lines proven unchanged); static-object jitter e.g. chair (56) mean 1.60 -> 0.95 px, p90 4.25 -> 1.87 px.
 - **Stage 3b item 5 (`39ad3a6`, `88f536f`, `095345d`, `38b29ed`, `07bf92f`, `a49c1b6`):** the callout plate removed (`39ad3a6`) and a `--label-scale 1..4` option (`88f536f`, `kOptionCount = 27`); plate-free callouts in proportional DejaVu Sans (`tools/gen_glyph_font.py` -> `include/core/glyph_font_table.hpp`, 147 glyphs, `256x196` atlas baked at 22 px = 2x the 11 px default; `GL_LINEAR`, bilinear `glyph_font::sample()` on the CPU path; drawn downscaled at `--label-scale 1` (0.5 / 0.67), 1:1..1.33x at 2, magnified 1.5..2.67x and soft at 3..4), white text over an 8-way dark outline. The glyph scale is divided by the `place_tile` scale, so letters are the same size on the USB 4:3 tile (1.0) and the phone portrait tile (0.75). `kVertsPerCallout = 6 * (2 + 31 * 9) = 1686` with `static_assert`s on the per-callout and whole-batch budget. Text size reduced from 16 to 11 px after the user's screenshot review.
-- **Known leftovers:** M-9 -- Re-ID crops get no RGA3 aux pass (unreachable with the OSNet `128x256` input); blocking `getaddrinfo()` in `SourceProber` left out of scope; `NetMjpegSource`: a server that sends the next part's headers right after a frame arms the `kPartMs` (5 s) part deadline during the idle gap, so that gap (< 2 s: a longer one already ends as `Lost` by the per-fill `kPollMs` watchdog) counts toward the part's budget -- at least 3 s are left for the part itself; harmless at the frame sizes in use.
 - **Verification:** full gate rc=0 on `a49c1b6` (`61` unit suites / `9,012` checks, `6` TSan suites / `23` checks, 2-pass tidy `0` findings); live USB + phone run (`095345d`, 16 px text) `49.647 FPS`, TOTAL `cam=17.4 dec=1.4 rga=1.1 infer=26.4 post=0.1 enc=1.0 | sum=47.5 ms`, GPU drawing, `0` errors.
 
 ## Audit P2 follow-ups -- callout outline, `sizeof(Pipeline)`, filter sets, person jitter (2026-11-20, `fix/audit-p2-followups`, issue #97)
@@ -1521,7 +1520,7 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
 - **Commit 2 (`3fb3262`):** `NetEncoder::publish` / `flush_dirty` / `publish_idle` share `enter_session()`, `timed_compose()` and `compose_and_encode()` (the encoded tail, same order of side effects). Kept per publisher: `publish`'s canvas-only compose (current slot, `out = nullptr`, timed), `flush_dirty`'s return on a new session, `publish_idle`'s idle counters and untimed canvas-only plate; `publish_idle` still leaves `canvas_dirty_` alone without a session (harmless: `enter_session()` clears it first).
 - **Commit 3 (`da63b64`):** `RgaResizer::resize( const ResizeSrc&, const CropImage& dst, const AuxImage&, int rot_deg, LbGeom* )` replaces 15 positional parameters; `AuxImage` also for `crop_resize` (no `= {}` default: GCC rejects it for a nested struct with member initializers inside the enclosing class, so `run_reid_stage` passes `{}`).
 - **Commit 4 (`e205bc0`):** `Pipeline::resize_into_slot( slot, src, fd_src, rot, SlotResize& )` for `frame_dispatch` and `submit_orient_probe`; the band is always `band_geom( oriented_dims( raw, rot ) )` (the `rot == rot_deg ? ss.lb` shortcut is gone: `SourceChannel` computes `lb` from the same oriented size; new `test_source_channel` case, 5 sizes x 4 rotations).
-- **Commit 5 (`07ef72f`):** `NetMjpegSource::feed_part< Wait >` is the one part-feed loop; `PollWait` (`step_nonblocking_part`: Timeout / Interrupted pending) and `PartDeadline` (`read_part`: the kPartMs deadline from the first header byte, nothing pending) are nested structs, no virtuals, no static members.
+- **Commit 5 (`07ef72f`):** `NetMjpegSource::feed_part< Wait >` is the one part-feed loop; `PollWait` (`step_nonblocking_part`: Timeout / Interrupted pending) and `PartDeadline` (`read_part`: the kPartMs deadline from the first header byte, nothing pending; #117 arms it at the first body byte) are nested structs, no virtuals, no static members.
 - **Commit 6 (`a9c91f4`):** `core/perf_reporter.{hpp,cpp}` (`PerfReporter`) owns the source-side window and both 5 s lines (`[perf] src`, `[perf] enc ... | ovl` / `[perf] ovl`; `[perf] mux` stays in `MuxSession`). `tick< Srcs, Sink >` only collects the deltas; the two formatters are plain functions. `Pipeline` drops 6 methods and 6 members for one `perf_` member (call points unchanged); `NetEncoder`'s interval and counter members become `Lap` (reset on a new epoch) and 3 `CounterDelta`s. Suite `perf_reporter`: the full lines from fixed windows, byte-identical to what the `b5dce21` formatters print from the same windows.
 - **Commits 7-8 (`a49c40c`, `140fc0b`):** #109 nits: `glyph_font::raster_glyph` states its precondition (finite scale > 0 and finite quad corners; `raster_text` implies it for a pen and a scale far below `FLT_MAX`); `IdlePlate::pen()` returns `{ x, y }` from one ink-box walk (was `pen_x` / `pen_y`, a walk each).
 - **Size:** lines added / removed per commit (all files; `src` + `include` code lines without comments and blank lines in brackets): 1 `+182 / -11` (`+70 / -9`), 2 `+82 / -72` (`+54 / -60`), 3 `+80 / -58` (`+54 / -38`), 4 `+95 / -47` (`+38 / -40`), 5 `+79 / -40` (`+49 / -33`), 6 `+423 / -137` (`+158 / -127`), 7 `+20 / -16` (`+12 / -12`). The #103 estimates (`-25`, `-30`, `-25`, `-60..80`) are not reached: each duplicated block now exists once, but the helpers, their structs, declarations and comments outweigh the removed copies. `sizeof(Pipeline)` `2,061,592 -> 2,061,640` B (`+48`: the `Lap` padding and `PerfReporter`'s flag and `Log&`), `sizeof(NetEncoder)` `6,048 -> 6,056` B.
@@ -1599,3 +1598,98 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
 | `app/` | `src/console_reporter.cpp` | `src/app/console_reporter.cpp` |
 | `config/` | `include/config/config_file.h` | `include/config/config_file.hpp` |
 | `config/` | `include/config/option_registry.h` | `include/config/option_registry.hpp` |
+
+## Audit P2 pre-master tails -- bounded DNS, re-attach on a new size, SDK include rule, named core masks, Re-ID ratio guard, MJPEG body deadline (2026-11-21, `fix/audit-p2-tails`, issue #117)
+
+- **Item 0, `cmp_max` before / after Stage D** (posted on #117 before the PR):
+  - Builds: `b5dce21` (before D) and `59fda9a`, Release, each in its own worktree under `build/`. Four runs of 80 s, interleaved: base1, head1, base2, head2.
+  - Scene: USB 1280x960 + phone 720x1280 + an absent third source (2x2 with a NO SIGNAL tile), `--pool 3 --net --net-h264 --net-fps 0`, an ffmpeg TCP viewer from 6 s for 70 s.
+  - Each run gives 14 `[perf] enc` windows with the viewer attached.
+
+| run | `cmp_max` min / median / max (ms) | windows > 5 ms | `h264_max` min / median / max | `sync_max` min / median / max | FPS |
+|---|---|---|---|---|---|
+| base1 | 1.4 / 6.0 / 9.2 | 7 | 8.6 / 11.3 / 16.0 | 2.1 / 9.6 / 16.3 | 54.214 |
+| head1 | 2.3 / 8.2 / 8.7 | 10 | 10.4 / 13.8 / 21.7 | 7.2 / 10.2 / 14.2 | 54.351 |
+| base2 | 2.7 / 8.3 / 9.8 | 13 | 9.9 / 12.1 / 18.3 | 6.3 / 9.4 / 15.8 | 54.408 |
+| head2 | 1.3 / 8.4 / 9.1 | 11 | 8.1 / 11.3 / 18.3 | 7.9 / 10.3 / 15.7 | 54.501 |
+
+  - **Result:** `cmp_max` is bimodal in both binaries: a window reads either about 1.3-4.2 ms or about 7.7-9.8 ms.
+    - The two base runs differ more than base and head do (7 vs 13 high windows).
+    - `build/run_110_base_mv.log` (#111) already had 8.4 / 8.5 / 7.3 ms windows.
+    - So the 7.4 / 7.7 ms single values were noise, not Stage D. No bisect and no fix; the cause of the two modes was not investigated.
+  - Logs: `build/run_117_{base1,head1,base2,head2}.log`.
+- **Item 1, bounded hostname lookup (`3875594`):**
+  - `BufferedSocket::connect`: a numeric host keeps `AI_NUMERICHOST`, with no DNS.
+  - A hostname goes through `getaddrinfo_a` + `gai_suspend` in `kConnectSliceMs` (100 ms) steps, bounded by `kConnectMs` and watching `cancelled()`.
+  - Results:
+    - `Timeout` "addr resolution: timeout" / "addr resolution: cancelled";
+    - `Absent` "addr resolution failed".
+  - On timeout or cancel it calls `gai_cancel`. When that returns `EAI_NOTCANCELED`, the request (`gaicb`, hints, both strings) stays in `BufferedSocket::lookup_`. The next `connect()` waits for it first, under the same bound; the destructor waits for it with no bound. Link `anl`.
+  - Trade-offs:
+    - Process exit can wait for such a lookup up to the resolver's own timeout (`resolv.conf` `timeout` x `attempts`). Freeing memory that glibc still writes is undefined behaviour.
+    - One attach of a hostname source can hold the prober up to `5 s` for the lookup plus `5 s` for the connect.
+  - Host tests: with the stop flag (or the prober's quit flag) already set, a hostname returns `Timeout` at once; `localhost` (`/etc/hosts`) resolves through `getaddrinfo_a` and connects.
+  - Not covered by host tests (needs a controlled DNS): a cancel during a running lookup, the kept request, the destructor wait.
+  - Live, `--net-src http://nonexistent.invalid:8080/video` + USB with SIGINT at 15 s (`build/run_117_dns.log`):
+    - `addr resolution failed` every 2 s, with s1 absent;
+    - USB at `19.175` FPS; exit on the timer (`Processed 279 frames in 14.550 s`, rc 124).
+- **Item 2, a source back at another size (`f7c8f3b`):**
+  - `SourceChannel::prepare_decode` (`include/source/source_channel.hpp:280`) on a geometry change:
+    1. logs one info line;
+    2. drops `geom_.aux_fd`;
+    3. clears `dec_ready_`, then takes the normal init path, which recomputes the geometry, the band and the aux need.
+  - The size locks of `NetMjpegSource::prime_first_frame` and `CameraV4L2::negotiate_format` are gone. The camera still requests the last mode but accepts the negotiated one.
+  - Nothing holds an old-decoder buffer at that point:
+    - attach runs only while the channel is not Live (thread rule, `source_channel.hpp:9-16`; Live is stored last, `:123`);
+    - the frame thread gave the channel up in `handle_source_failure` (`pool_.discard`, `detach()`, `reset_source_analytics`, `src/app/pipeline.cpp:394-397`);
+    - `frame_dispatch` uses the decoded fd synchronously (`pipeline.cpp:285`, `319`, `566`; the RGA `improcess` call of `RgaResizer::resize` is synchronous);
+    - `MppDecoder::init` tears the old decoder down first (`src/media/mpp_decoder.cpp:66`), aux included (`:231`).
+  - The analytics reset follows the new `attach_seq`: `update_auto_orient` (`pipeline.cpp:518-524`) calls `AutoOrient::reset` with `raw_h > raw_w` of the new geometry, and `reset_source_analytics` resets the tracker, smoother, global tracks and sink (`:375`).
+  - Every frame carries its own `src_w/h` and band.
+  - Single view: the stream layout stays at its startup size, and a new aspect is letterboxed into it.
+  - Side effect: a USB camera in another mode is no longer refused by `trial()`, so a re-attach can adopt any free MJPEG camera. That only matters with an extra camera that is not configured.
+  - Host tests:
+    - `test_source_channel`: attach at 640x480, detach, attach at 1280x720 gives Live, a second `init`, the new `raw_w/h`, `w/h` and band, and `attach_seq` + 1. With a 64 px model the aux is requested again at the new size, and a failed re-init retries.
+    - `test_net_mjpeg_source`: a 32x16 reconnect after 16x16 is adopted.
+  - Live (`build/run_117_resize.log`): USB + `tools/mjpeg_replay.py` serving a 640x480 clip, then the server is stopped and a 1280x720 clip is served on the same port (ffmpeg's `-listen 1` mpjpeg output sends no boundary by default and uses chunked encoding).
+    - Log sequence: `geometry 640x480` -> `detached` -> 3 x `Connection refused` -> `connected (1280x720)` -> `geometry changed 640x480 -> 1280x720, re-initializing the decoder` -> `re-attached - geometry 1280x720` -> `warm-up done`.
+    - s1 frames per window: `100` before, `8 / 28` around the change, `100` after.
+    - Frame: `build/shots/pr117_resize.png` (the 16:9 tile letterboxed in its 4:3 cell, detections on it).
+- **Item 3, `sdk-include` (`b1e8265`, `b2005a8`):**
+  - `rules_lint.sh` flags `<rga/...>` and a bare MPP header (`rk_*.h`, `vpu.h`, `vpu_api.h`, `mpp_*.h`). Review widened the list from the issue's five names to every distro header in `/usr/include/rockchip`.
+  - Probe `tests/tidy_probe/lint/src/sdk.cpp`; CONTRIBUTING line. Tree: 0 findings.
+- **Item 4, `set_core_mask` (`7a7fd06`):**
+  - The case labels are the `rknn_core_mask` enumerators, with an explicit `RKNN_NPU_CORE_AUTO` case.
+  - The one cast stays at the `rknn_set_core_mask` call, after the value is known to be an enumerator. Casting an arbitrary `unsigned` to the unscoped enum first could leave its value range.
+  - The comments state the contract. No behaviour change.
+- **Item 5, Re-ID ratio guard (`aaa581a`, `9a9d427`):**
+  - `rga_limits::reid_crop_needs_aux` is host-tested: the OSNet pair, exactly 8x, over 8x per axis.
+  - `Pipeline::start_reid` releases the worker with one error line naming both sizes and the 8x limit; recognition runs on.
+  - The M-9 known leftover ("Re-ID crops get no RGA3 aux pass") is closed by this guard.
+- **Item 6, MJPEG part deadline (`5ba412d`, `daacffc`):**
+  - `PartDeadline` arms:
+    - the header lines: `kPollMs` from their first byte;
+    - between the end of the headers and the first body byte: a plain `kPollMs` watchdog;
+    - the body: `kPartMs` from its first byte.
+  - `MultipartReader::body_bytes()` is host-tested.
+  - `test_net_mjpeg_source`:
+    - header right after a frame, body after a 1.5 s gap in 5 pieces 1 s apart -> Part;
+    - a dripping body -> Lost at ~6.5 s;
+    - dripping header lines -> Lost at ~3.5 s.
+- **Known leftovers closed:** the three of the Audit P2 PR 3 section (M-9 Re-ID aux pass, the blocking `getaddrinfo()`, the part deadline during the idle gap); that line is removed.
+- **Size:** `sizeof(Pipeline)` `2,061,640 -> 2,062,344` B (`+704` = 4 sources x 176 B of `BufferedSocket::Lookup`: `gaicb`, `addrinfo`, two strings).
+- **Verification:**
+  - Full gate rc=0: `65` unit suites / `9,357` checks, `6` TSan suites / `23` checks, 2-pass tidy `0` findings, rules-lint `0` findings / `7` allowed.
+  - Layer A pool 1 and pool 3 `cmp`-identical to `reference/ref_evening.csv` (`1063` frames); Layer B `reference_chain` max `|d|` 0.
+  - Live with the viewer (`build/run_117_*.log`), with no warn / error line in a, b and c:
+
+| run | FPS |
+|---|---|
+| a) USB single view | `24.6` (camera-paced) |
+| b) USB + phone (2x1) | `51.0` |
+| c) USB + phone + absent (2x2) | `49.4` |
+| d) item 1, unresolvable host | see item 1 |
+| e) item 2, size change | see item 2 |
+| f) USB `light-usb-replug off` / `on` with the phone | `44.736` |
+
+  - Run f: `detached`, NO SIGNAL publishing (`idle_a` 122 per window), `re-attached - geometry 1280x960`.
