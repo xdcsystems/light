@@ -60,9 +60,11 @@ public:
     void sync_output( size_t i ) const noexcept;
     Status run() const;
 
-    // Pin inference to NPU core(s) via rknn_set_core_mask.
-    // mask: 0 = AUTO (do not call), 1/2/4 = core 0/1/2 (the per-core
-    // flags of rknn_api.h, used by the pool), 3 = cores 0+1, 7 = 0+1+2.
+    // Pin inference to NPU core(s) via rknn_set_core_mask. mask: an rknn_core_mask
+    // value -- RKNN_NPU_CORE_AUTO (0) keeps the runtime default (no call, ok);
+    // RKNN_NPU_CORE_0 / _1 / _2 (1/2/4, the pool's per-core pins), _0_1 (3) and
+    // _0_1_2 (7) are passed on (Failed with the SDK code if the call fails);
+    // any other value: Invalid "invalid core mask", no call.
     Status set_core_mask( unsigned mask ) const;
 
     void* input_data() const { return ( !in_mems_.empty() && in_mems_[0] ) ? in_mems_[0]->virt_addr : nullptr; }
