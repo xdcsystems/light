@@ -79,7 +79,9 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   `fix/audit-p0` reached `master` through PR #5, a direct merge `64f71cb` and finally PR #73; `fix/audit-p1` through
   PR #81; `fix/audit-p2` through PR #114 (`9d63d8d`).
 - Never push to `master` (or to an audit's integration branch while one runs) directly, never force-push, never
-  rewrite pushed history.
+  rewrite pushed history. Work branches are `fix/*`, `feat/*`, `refactor/*` or `docs/*`: the push rules of
+  `.claude/settings.json` allow exactly these. When an audit starts, its integration branch matches `fix/*`, so narrow
+  that rule to `fix/audit-pN-*` for the audit's duration (as #106 did for `fix/audit-p2-*`).
 - Before a PR, the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
   (CMake build + 65 unit suites + 6 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
