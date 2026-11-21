@@ -175,6 +175,43 @@ namespace
         CHECK( t, r == Fill::Interrupted && el < 1000 );
         ::close( srv );
     }
+
+    void hostname_lookup( TestRun& t )
+    {
+        // Stop already set: a hostname returns Timeout at once, no lookup started.
+        std::atomic<bool> stop { true };
+        BufferedSocket s;
+        s.set_cancel( &stop );
+        const auto t0 = std::chrono::steady_clock::now();
+        const Status cst = s.connect( "nonexistent.invalid", 8080 );
+        const auto el = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - t0 ).count();
+        CHECK( t, cst.code() == Errc::Timeout && !s.is_open() && el < 100 );
+        // The prober's quit flag alone cancels too.
+        std::atomic<bool> quit { true };
+        stop.store( false );
+        s.set_cancel( &stop, &quit );
+        CHECK( t, s.connect( "nonexistent.invalid", 8080 ).code() == Errc::Timeout );
+        // A hostname from /etc/hosts goes through getaddrinfo_a (no DNS) and connects;
+        // the numeric host still takes the AI_NUMERICHOST path.
+        quit.store( false );
+        Listener l;
+        CHECK( t, s.connect( "localhost", l.port() ).ok() && s.is_open() );
+        const int srv = l.accept();
+        CHECK( t, srv >= 0 );
+        ::close( srv );
+        CHECK( t, s.connect( "127.0.0.1", l.port() ).ok() && s.is_open() );
+        const int srv2 = l.accept();
+        CHECK( t, srv2 >= 0 );
+        ::close( srv2 );
+        // Refused after a hostname lookup: the connect error, not a lookup error.
+        int port = 0;
+        {
+            Listener gone;
+            port = gone.port();
+        }
+        const Status refused = s.connect( "localhost", port );
+        CHECK( t, refused.code() == Errc::Absent && refused.sys() == ECONNREFUSED );
+    }
 }  // namespace
 
 void test_buffered_socket( TestRun& t )
@@ -184,4 +221,5 @@ void test_buffered_socket( TestRun& t )
     connect_failures( t );
     interrupted( t );
     cancel_flag( t );
+    hostname_lookup( t );
 }

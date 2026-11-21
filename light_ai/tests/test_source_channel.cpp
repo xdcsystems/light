@@ -1,8 +1,10 @@
+#include <array>
 #include <cerrno>
 #include <sstream>
 #include <string>
 
 #include "check.hpp"
+#include "core/auto_orient.hpp"
 #include "core/geometry.hpp"
 #include "core/log.hpp"
 #include "source/source_channel.hpp"
@@ -53,6 +55,125 @@ namespace
         Channel ch;
         std::string last_why;
     };
+
+    void aux_stride_sizing( TestRun& t )
+    {
+        // Stride forwarding and 16-aligned aux_fd stride sizing.
+        {
+            Rig r( SourceKind::V4L2, 64 );
+            r.dev.w = 854;
+            r.dev.h = 480;
+            r.dec.hor_stride = 864;
+            r.dec.ver_stride = 480;
+            CHECK( t, r.attach( false ) == Attach::Live );
+            CHECK( t, r.ch.hor_stride() == 864 && r.ch.ver_stride() == 480 );
+            // 854 / 2 = 427 -> w_aux=428 -> 16-aligned stride 432; h_aux=240 -> 432 * 240 * 2 = 207360.
+            CHECK( t, r.dec.last_aux_bytes == static_cast<size_t>( 432 ) * 240 * 2 );
+        }
+        {
+            Rig r( SourceKind::V4L2, 64 );
+            r.dev.w = 720;
+            r.dev.h = 1280;
+            r.dec.hor_stride = 720;
+            r.dec.ver_stride = 1280;
+            CHECK( t, r.attach( false ) == Attach::Live );
+            // 720 / 2 = 360 -> 16-aligned stride 368; 1280 / 2 = 640 -> 368 * 640 * 2 = 471040.
+            CHECK( t, r.dec.last_aux_bytes == static_cast<size_t>( 368 ) * 640 * 2 );
+        }
+        {
+            Rig r( SourceKind::V4L2, 64 );
+            r.dev.w = 1920;
+            r.dev.h = 1080;
+            r.dec.hor_stride = 1920;
+            r.dec.ver_stride = 1088;
+            CHECK( t, r.attach( false ) == Attach::Live );
+            // 1920 / 2 = 960; 1080 / 2 = 540 -> 16-aligned stride 544 -> 960 * 544 * 2 = 1044480.
+            CHECK( t, r.dec.last_aux_bytes == static_cast<size_t>( 960 ) * 544 * 2 );
+        }
+    }
+
+    // A Live source's band is band_geom of its oriented size at its own
+    // rotation: Pipeline::resize_into_slot computes the band as
+    // band_geom( oriented_dims( raw, rot ) ) for every rot and relies on it
+    // being SourceGeom::lb at rot == rot_deg (#110). Landscape, portrait, a
+    // two-pass size (aux) and an odd one, at every rotation.
+    void band_is_oriented_band_geom( TestRun& t )
+    {
+        constexpr std::array<std::array<int, 2>, 5> sizes { { { 640, 480 }, { 1920, 1080 }, { 1080, 1920 }, { 5120, 2880 },
+                                                              { 1279, 719 } } };
+        constexpr std::array<int, 4> rots { 0, 90, 180, 270 };
+        for ( const std::array<int, 2>& sz : sizes )
+        {
+            for ( const int rot : rots )
+            {
+                Rig r;
+                r.ch.configure( 1, { SourceKind::V4L2, "/dev/video20", rot, false }, 640, 640 );
+                r.dev.w = sz[0];
+                r.dev.h = sz[1];
+                CHECK( t, r.attach( false ) == Attach::Live );
+                const SourceGeom& g = r.ch.geom();
+                CHECK( t, g.raw_w == sz[0] && g.raw_h == sz[1] && g.rot_deg == rot );
+                int ow = 0;
+                int oh = 0;
+                auto_orient::oriented_dims( g.raw_w, g.raw_h, rot, ow, oh );
+                CHECK( t, g.w == ow && g.h == oh );
+                const LbGeom want = band_geom( ow, oh, 640, 640 );
+                CHECK_EQ( t, g.lb.left, want.left );
+                CHECK_EQ( t, g.lb.top, want.top );
+                CHECK_EQ( t, g.lb.w, want.w );
+                CHECK_EQ( t, g.lb.h, want.h );
+            }
+        }
+    }
+
+    // A re-attach at another size re-initializes the decoder and recomputes
+    // the geometry, the band and the aux need (#117).
+    void reattach_new_geometry( TestRun& t )
+    {
+        {
+            Rig r;
+            r.dev.w = 640;
+            r.dev.h = 480;
+            CHECK( t, r.attach( false ) == Attach::Live && r.dec.inits == 1 && r.ch.geom().aux_fd == -1 );
+            const uint32_t seq = r.ch.attach_seq();
+            r.ch.detach();
+            r.dev.w = 1280;
+            r.dev.h = 720;
+            CHECK( t, r.attach( true ) == Attach::Live && r.ch.state() == State::Live && r.dec.inits == 2 );
+            CHECK( t, r.out.str().find( "source s1: geometry changed 640x480 -> 1280x720, re-initializing the decoder\n" )
+                          != std::string::npos );
+            const SourceGeom& g = r.ch.geom();
+            CHECK( t, g.raw_w == 1280 && g.raw_h == 720 && g.w == 1280 && g.h == 720 && g.aux_fd == -1 );
+            const LbGeom lb = band_geom( 1280, 720, 640, 640 );
+            CHECK( t, g.lb.left == lb.left && g.lb.top == lb.top && g.lb.w == lb.w && g.lb.h == lb.h );
+            CHECK( t, r.ch.attach_seq() == seq + 1u );  // the frame thread resets orientation and tracks
+            // The same size again: the decoder stays.
+            r.ch.detach();
+            CHECK( t, r.attach( true ) == Attach::Live && r.dec.inits == 2 );
+        }
+        // The aux buffer of the old size is dropped and requested again for the new one.
+        {
+            Rig r( SourceKind::NetMjpeg, 64 );
+            r.dev.w = 640;
+            r.dev.h = 480;
+            CHECK( t, r.attach( false ) == Attach::Live && r.ch.geom().aux_fd == 9 && r.dec.aux_calls == 1 );
+            CHECK( t, r.dec.last_aux_bytes == rga_limits::aux_bytes( 640, 480 ) );
+            r.ch.detach();
+            r.dev.w = 1280;
+            r.dev.h = 720;
+            CHECK( t, r.attach( true ) == Attach::Live && r.dec.inits == 2 && r.dec.aux_calls == 2 );
+            CHECK( t, r.ch.geom().aux_fd == 9 && r.dec.last_aux_bytes == rga_limits::aux_bytes( 1280, 720 ) );
+            // A failed re-init stays absent and tries again on the next attach.
+            r.ch.detach();
+            r.dev.w = 800;
+            r.dev.h = 600;
+            r.dec.init_rc = 1;
+            CHECK( t, r.attach( true ) == Attach::DecoderFailed && r.ch.state() == State::Detached && r.dec.inits == 3 );
+            r.dec.init_rc = 0;
+            CHECK( t, r.attach( true ) == Attach::Live && r.dec.inits == 4 && r.ch.geom().raw_w == 800 );
+            CHECK( t, r.dec.last_aux_bytes == rga_limits::aux_bytes( 800, 600 ) );
+        }
+    }
 }  // namespace
 
 void test_source_channel( TestRun& t )
@@ -129,18 +250,6 @@ void test_source_channel( TestRun& t )
         CHECK( t, r.frame() == 7 );
         CHECK( t, r.dev.requeues == 6 );  // every dequeued buffer goes back
     }
-    // Geometry guard: a re-attach with another size than the decoder's stays out.
-    {
-        Rig r;
-        CHECK( t, r.attach( false ) == Attach::Live );
-        r.ch.detach();
-        r.dev.w = 640;
-        r.dev.h = 480;
-        CHECK( t, r.attach( true ) == Attach::DecoderFailed && r.ch.state() == State::Detached );
-        CHECK( t, r.err.str().find( "source s1: geometry changed 1280x960 -> 640x480 - decoder stays at 1280x960, not attaching\n" )
-                          != std::string::npos );
-        CHECK( t, r.dec.inits == 1 && r.ch.geom().w == 1280 );
-    }
     // Empty packet: never decoded, requeued, logged; the warm-up is not consumed.
     {
         Rig r;
@@ -196,10 +305,16 @@ void test_source_channel( TestRun& t )
         CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Frame );
         CHECK( t, r.ch.decode( f, &err ) == -1 && err.code() == Errc::Lost );
 
-        // NoMemory triggers Lost immediately.
+        // NoMemory triggers Lost immediately and resets dec_ready_ for clean re-init.
         r.dec.decode_rc = 2;
         err = {};
         CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Frame );
         CHECK( t, r.ch.decode( f, &err ) == -1 && err.code() == Errc::Lost );
+        r.ch.detach();
+        r.dec.decode_rc = 0;
+        CHECK( t, r.attach( true ) == Attach::Live && r.dec.inits == 2 );
     }
+    aux_stride_sizing( t );
+    band_is_oriented_band_geom( t );
+    reattach_new_geometry( t );
 }

@@ -11,10 +11,32 @@
 namespace
 {
     constexpr int kMarginPx = 2;
-    constexpr int kPadX = 4;
+    constexpr int kPadX = 4;  // label rect padding around the text, per layout unit
     constexpr int kPadY = 2;
-    constexpr int kPillH = CalloutItem::kGlyphH + 2 * kPadY;  // 16 px (12 px AA glyph + 2 px padding)
     constexpr int kMaxTracks = TrajList::cap;
+
+    // A usable glyph scale: finite and positive, else the 11 px default; clamped
+    // to [0.05, 8] (1.1..176 px text) so the integer label rects never overflow.
+    float clean_scale( float scale ) noexcept
+    {
+        return std::isfinite( scale ) && scale > 0.0f ? std::clamp( scale, 0.05f, 8.0f ) : 0.5f;
+    }
+
+    // The layout unit: 1 px at the 11 px default (scale 0.5), growing with the
+    // text -- the gaps and paddings scale with it. An integer, so the label rects
+    // stay on the pixel grid; the outline is not drawn from it: it is baked into the
+    // atlas (kOutlinePx = 2 atlas px), so it is the float 2 * scale and its width on
+    // the output tile is the same on every tile (#97, #108).
+    int layout_unit( float scale ) noexcept
+    {
+        return std::max( 1, static_cast<int>( std::lround( 2.0f * clean_scale( scale ) ) ) );
+    }
+
+    int label_h( float scale ) noexcept
+    {
+        const float sc = clean_scale( scale );
+        return static_cast<int>( std::ceil( static_cast<float>( glyph_font::kLineH ) * sc ) ) + 2 * kPadY * layout_unit( sc );
+    }
 
     struct TrackCand
     {
@@ -31,22 +53,33 @@ namespace
         return { l, t, l + w, t + h };
     }
 
-    bool map_track_box( const TrackState& tr, const CalloutRect& crop, float sx, float sy, CalloutRect& out ) noexcept
+    bool map_track_box( const TrackState& tr,
+                        const LbGeom& lb,
+                        const CalloutRect& crop,
+                        float sx,
+                        float sy,
+                        CalloutRect& out ) noexcept
     {
-        const float x0f = ( tr.cx - tr.bw * 0.5f ) * sx + static_cast<float>( crop.x0 );
-        const float y0f = ( tr.cy - tr.bh * 0.5f ) * sy + static_cast<float>( crop.y0 );
-        const float x1f = ( tr.cx + tr.bw * 0.5f ) * sx + static_cast<float>( crop.x0 );
-        const float y1f = ( tr.cy + tr.bh * 0.5f ) * sy + static_cast<float>( crop.y0 );
-        const float cl = static_cast<float>( crop.x0 );
-        const float ct = static_cast<float>( crop.y0 );
-        const float cr = static_cast<float>( crop.x1 );
-        const float cb = static_cast<float>( crop.y1 );
-        if ( x1f <= cl || y1f <= ct || x0f >= cr || y0f >= cb )
+        if ( !std::isfinite( tr.cx ) || !std::isfinite( tr.cy ) ||
+             !std::isfinite( tr.bw ) || !std::isfinite( tr.bh ) ||
+             !std::isfinite( sx ) || !std::isfinite( sy ) ||
+             tr.bw <= 0.0f || tr.bh <= 0.0f || sx <= 0.0f || sy <= 0.0f )
             return false;
-        const int x0 = std::clamp( static_cast<int>( std::floor( x0f ) ), crop.x0, crop.x1 );
-        const int y0 = std::clamp( static_cast<int>( std::floor( y0f ) ), crop.y0, crop.y1 );
-        const int x1 = std::clamp( static_cast<int>( std::ceil( x1f ) ), crop.x0, crop.x1 );
-        const int y1 = std::clamp( static_cast<int>( std::ceil( y1f ) ), crop.y0, crop.y1 );
+        const float x0f = ( tr.cx - tr.bw * 0.5f ) * sx + static_cast<float>( lb.left );
+        const float y0f = ( tr.cy - tr.bh * 0.5f ) * sy + static_cast<float>( lb.top );
+        const float x1f = ( tr.cx + tr.bw * 0.5f ) * sx + static_cast<float>( lb.left );
+        const float y1f = ( tr.cy + tr.bh * 0.5f ) * sy + static_cast<float>( lb.top );
+        if ( x1f <= static_cast<float>( crop.x0 ) || y1f <= static_cast<float>( crop.y0 ) ||
+             x0f >= static_cast<float>( crop.x1 ) || y0f >= static_cast<float>( crop.y1 ) )
+            return false;
+        const int x0 = static_cast<int>(
+            std::clamp( std::floor( x0f ), static_cast<float>( crop.x0 ), static_cast<float>( crop.x1 ) ) );
+        const int y0 = static_cast<int>(
+            std::clamp( std::floor( y0f ), static_cast<float>( crop.y0 ), static_cast<float>( crop.y1 ) ) );
+        const int x1 = static_cast<int>(
+            std::clamp( std::ceil( x1f ), static_cast<float>( crop.x0 ), static_cast<float>( crop.x1 ) ) );
+        const int y1 = static_cast<int>(
+            std::clamp( std::ceil( y1f ), static_cast<float>( crop.y0 ), static_cast<float>( crop.y1 ) ) );
         if ( x1 - x0 < 2 || y1 - y0 < 2 )
             return false;
         out = { x0, y0, x1, y1 };
@@ -71,11 +104,11 @@ namespace
         int idx = 0;
     };
 
-    int find_prev_slot( const CalloutHistory& hist, int disp_id ) noexcept
+    int find_prev_slot( const CalloutHistory& hist, int id, uint32_t gen ) noexcept
     {
         const auto* const end = hist.entries.d.begin() + hist.entries.n;
-        const auto* const it = std::find_if( hist.entries.d.begin(), end, [disp_id]( const CalloutPrevSlot& s ) {
-            return s.id == disp_id;
+        const auto* const it = std::find_if( hist.entries.d.begin(), end, [id, gen]( const CalloutPrevSlot& s ) {
+            return s.id == id && s.gen == gen;
         } );
         return it != end ? it->slot : -1;
     }
@@ -95,9 +128,9 @@ namespace
         const int y0 = std::clamp( prop[1], work.y0, work.y1 - ph );
         const CalloutRect cand { x0, y0, x0 + pw, y0 + ph };
 
-        const int64_t pill_ov = std::accumulate(
+        const int64_t label_ov = std::accumulate(
             placed.d.begin(), placed.d.begin() + placed.n, int64_t { 0 },
-            [&cand]( int64_t acc, const CalloutItem& p ) { return acc + rect_overlap( cand, p.pill ); } );
+            [&cand]( int64_t acc, const CalloutItem& p ) { return acc + rect_overlap( cand, p.label ); } );
 
         int64_t other_ov = 0;
         for ( int i = 0; i < n_boxes; ++i )
@@ -107,7 +140,7 @@ namespace
         }
 
         const int64_t own_ov = rect_overlap( cand, own );
-        const int64_t ov_cost = pill_ov * 10000 + other_ov * 1000 + own_ov * 100;
+        const int64_t ov_cost = label_ov * 10000 + other_ov * 1000 + own_ov * 100;
         const int clamp_shift = std::abs( x0 - prop[0] ) + std::abs( y0 - prop[1] );
         // Use doubled integer coordinates so integer /2 rounding never breaks symmetry between left and right.
         const int64_t dx2 = std::abs( ( cand.x0 + cand.x1 ) - ( own.x0 + own.x1 ) );
@@ -116,34 +149,37 @@ namespace
         return CandEval { cand, ov_cost, clamp_shift, total, idx };
     }
 
-    CandEval pick_best_pill( int self_idx,
-                             int prev_slot,
-                             int pw,
-                             int ph,
-                             const CalloutRect& work,
-                             const CalloutList& placed,
-                             const TrackCand* all_boxes,
-                             int n_boxes ) noexcept
+    CandEval pick_best_label( int self_idx,
+                              int prev_slot,
+                              int pw,
+                              int ph,
+                              int sk,
+                              const CalloutRect& work,
+                              const CalloutList& placed,
+                              const TrackCand* all_boxes,
+                              int n_boxes ) noexcept
     {
         const CalloutRect& b = all_boxes[self_idx].box;
         const int cx = ( b.x0 + b.x1 - pw ) / 2;
-        const int row2_off = 10 + ph;
-        const int side2_off = ph + 2;
+        const int gap = 8 * sk;
+        const int top = 10 * sk;
+        const int row2_off = top + ph;
+        const int side2_off = ph + 2 * sk;
         const int proposals[14][2] = {
-            { b.x0, b.y0 - 10 - ph },
-            { cx, b.y0 - 10 - ph },
-            { b.x1 - pw, b.y0 - 10 - ph },
+            { b.x0, b.y0 - top - ph },
+            { cx, b.y0 - top - ph },
+            { b.x1 - pw, b.y0 - top - ph },
             { b.x0, b.y0 - row2_off - ph },
             { cx, b.y0 - row2_off - ph },
             { b.x1 - pw, b.y0 - row2_off - ph },
-            { b.x1 + 8, b.y0 },
-            { b.x0 - 8 - pw, b.y0 },
-            { b.x1 + 8, b.y0 + side2_off },
-            { b.x0 - 8 - pw, b.y0 + side2_off },
-            { b.x0, b.y1 + 8 },
-            { cx, b.y1 + 8 },
-            { b.x1 - pw, b.y1 + 8 },
-            { b.x0 + 2, b.y0 + 2 },
+            { b.x1 + gap, b.y0 },
+            { b.x0 - gap - pw, b.y0 },
+            { b.x1 + gap, b.y0 + side2_off },
+            { b.x0 - gap - pw, b.y0 + side2_off },
+            { b.x0, b.y1 + gap },
+            { cx, b.y1 + gap },
+            { b.x1 - pw, b.y1 + gap },
+            { b.x0 + 2 * sk, b.y0 + 2 * sk },
         };
 
         CandEval best {};
@@ -162,7 +198,7 @@ namespace
         {
             const bool prev_clean = ( prev_eval.ov_cost == 0 && prev_eval.clamp_shift <= 4 );
             const bool promote_top = ( prev_slot >= 6 && best.idx <= 2 && best.ov_cost == 0 &&
-                                       best.clamp_shift == 0 && b.y0 - 14 - ph >= work.y0 );
+                                       best.clamp_shift == 0 && b.y0 - top - 4 * sk - ph >= work.y0 );
             if ( prev_clean && !promote_top )
                 return prev_eval;
         }
@@ -175,13 +211,37 @@ namespace
             item.segs[item.n_segs++] = { x0, y0, x1, y1 };
     }
 
+    // The vertical leg of the L-bend: column lx from the label row ly to the box (none when ly crosses the box).
+    void push_leg_y( CalloutItem& item, int lx, int ly, const CalloutRect& b ) noexcept
+    {
+        if ( ly < b.y0 )
+        {
+            push_seg( item, lx, ly, lx + 1, b.y0 );
+            return;
+        }
+        if ( ly >= b.y1 )
+            push_seg( item, lx, b.y1, lx + 1, ly + 1 );
+    }
+
+    // The horizontal leg of the L-bend: row ly from the label to column lx (none when lx is inside the label).
+    void push_leg_x( CalloutItem& item, int lx, int ly, const CalloutRect& p ) noexcept
+    {
+        if ( p.x1 <= lx )
+        {
+            push_seg( item, p.x1, ly, lx, ly + 1 );
+            return;
+        }
+        if ( p.x0 > lx )
+            push_seg( item, lx + 1, ly, p.x0, ly + 1 );
+    }
+
     void build_connector( CalloutItem& item ) noexcept
     {
         item.n_segs = 0;
-        if ( rect_overlap( item.pill, item.box ) > 0 )
+        if ( rect_overlap( item.label, item.box ) > 0 )
             return;
 
-        const CalloutRect& p = item.pill;
+        const CalloutRect& p = item.label;
         const CalloutRect& b = item.box;
         const int ox0 = std::max( p.x0, b.x0 );
         const int ox1 = std::min( p.x1, b.x1 );
@@ -190,8 +250,11 @@ namespace
             const int pcx = ( p.x0 + p.x1 ) / 2;
             const int vx = std::clamp( pcx, ox0, ox1 - 1 );
             if ( p.y1 <= b.y0 )
+            {
                 push_seg( item, vx, p.y1, vx + 1, b.y0 );
-            else if ( b.y1 <= p.y0 )
+                return;
+            }
+            if ( b.y1 <= p.y0 )
                 push_seg( item, vx, b.y1, vx + 1, p.y0 );
             return;
         }
@@ -203,8 +266,11 @@ namespace
             const int pcy = ( p.y0 + p.y1 ) / 2;
             const int hy = std::clamp( pcy, oy0, oy1 - 1 );
             if ( p.x1 <= b.x0 )
+            {
                 push_seg( item, p.x1, hy, b.x0, hy + 1 );
-            else if ( b.x1 <= p.x0 )
+                return;
+            }
+            if ( b.x1 <= p.x0 )
                 push_seg( item, b.x1, hy, p.x0, hy + 1 );
             return;
         }
@@ -212,15 +278,8 @@ namespace
         // Disjoint in both axes: 2-segment orthogonal L-bend without corner overlap.
         const int lx = std::clamp( ( b.x0 + b.x1 ) / 2, b.x0, b.x1 - 1 );
         const int ly = std::clamp( ( p.y0 + p.y1 ) / 2, p.y0, p.y1 - 1 );
-        if ( ly < b.y0 )
-            push_seg( item, lx, ly, lx + 1, b.y0 );
-        else if ( ly >= b.y1 )
-            push_seg( item, lx, b.y1, lx + 1, ly + 1 );
-
-        if ( p.x1 <= lx )
-            push_seg( item, p.x1, ly, lx, ly + 1 );
-        else if ( p.x0 > lx )
-            push_seg( item, lx + 1, ly, p.x0, ly + 1 );
+        push_leg_y( item, lx, ly, b );
+        push_leg_x( item, lx, ly, p );
     }
 
     void assign_accent( int id, CalloutItem& item ) noexcept
@@ -235,6 +294,7 @@ namespace
     }
 
     int collect_track_cands( const TrajList& trajs,
+                             const LbGeom& lb,
                              const CalloutRect& crop,
                              float sx,
                              float sy,
@@ -247,14 +307,14 @@ namespace
             if ( tr.state != TRACK_TENT && tr.state != TRACK_CONF )
                 continue;
             CalloutRect box {};
-            if ( map_track_box( tr, crop, sx, sy, box ) )
+            if ( map_track_box( tr, lb, crop, sx, sy, box ) )
                 cands[nc++] = { k, box };
         }
         return nc;
     }
 
     void append_callout_for_track( int i,
-                                   int disp_id,
+                                   const TrackState& tr,
                                    const CalloutConfig& cfg,
                                    const CalloutRect& work,
                                    const CalloutHistory& hist,
@@ -263,25 +323,39 @@ namespace
                                    CalloutList& out,
                                    CalloutHistory& next_hist ) noexcept
     {
+        const int disp_id = tr.display_id();
         CalloutItem item {};
         item.box = cands[i].box;
         item.text_bytes = glyph_font::format_person( item.text, glyph_font::kLabelCap, disp_id, cfg.lang_ru );
-        const int ng = glyph_font::text_len( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
-        const int pw = ng * CalloutItem::kGlyphW + 2 * kPadX;
+        const float sc = clean_scale( cfg.scale );
+        const int sk = layout_unit( sc );
+        const int tw_atlas = glyph_font::text_width( std::string_view( item.text, static_cast<std::size_t>( item.text_bytes ) ) );
+        const int tw = static_cast<int>( std::ceil( static_cast<float>( tw_atlas ) * sc ) );
+        const int pw = tw + 2 * kPadX * sk;
+        const int ph = label_h( sc );
         // Guard before std::clamp: degenerate narrow crops must never trigger lo > hi UB.
-        if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < kPillH )
+        if ( work.x1 - work.x0 < pw || work.y1 - work.y0 < ph )
             return;
-        const CandEval best = pick_best_pill( i, find_prev_slot( hist, disp_id ), pw, kPillH, work, out, cands, nc );
-        item.pill = best.rect;
-        item.text_x = item.pill.x0 + kPadX;
-        item.text_y = item.pill.y0 + kPadY;
+        const CandEval best =
+            pick_best_label( i, find_prev_slot( hist, tr.id, tr.gen ), pw, ph, sk, work, out, cands, nc );
+        item.label = best.rect;
+        item.scale = sc;
+        item.text_x = item.label.x0 + kPadX * sk;
+        item.text_y = item.label.y0 + kPadY * sk;
         assign_accent( disp_id, item );
         build_connector( item );
         out.push( item );
-        next_hist.entries.push( { disp_id, best.idx } );
+        next_hist.entries.push( { tr.id, tr.gen, best.idx } );
     }
 
 }  // namespace
+
+float callout_text_scale( int label_scale, float tile_scale ) noexcept
+{
+    const float ts = std::isfinite( tile_scale ) && tile_scale > 0.0f ? tile_scale : 1.0f;
+    const float k = static_cast<float>( std::clamp( label_scale, 1, 4 ) );
+    return k * static_cast<float>( CalloutConfig::kLabelPx ) / static_cast<float>( glyph_font::kAtlasPx ) / ts;
+}
 
 void compute_callouts( const TrajList& trajs,
                        const LbGeom& lb,
@@ -294,17 +368,17 @@ void compute_callouts( const TrajList& trajs,
     out.clear();
     const CalloutRect crop = make_even_bounds( lb );
     const CalloutRect work { crop.x0 + kMarginPx, crop.y0 + kMarginPx, crop.x1 - kMarginPx, crop.y1 - kMarginPx };
-    if ( work.x1 - work.x0 <= 0 || work.y1 - work.y0 < kPillH )
+    if ( work.x1 - work.x0 <= 0 || work.y1 - work.y0 < label_h( cfg.scale ) )
     {
         hist.entries.clear();
         return;
     }
 
     std::array<TrackCand, kMaxTracks> cands {};
-    const int nc = collect_track_cands( trajs, crop, sx, sy, cands );
+    const int nc = collect_track_cands( trajs, lb, crop, sx, sy, cands );
     CalloutHistory next_hist {};
     for ( int i = 0; i < nc && out.n < CalloutList::cap; ++i )
-        append_callout_for_track( i, trajs.d[cands[i].track_idx].display_id(), cfg, work, hist, cands.data(), nc, out, next_hist );
+        append_callout_for_track( i, trajs.d[cands[i].track_idx], cfg, work, hist, cands.data(), nc, out, next_hist );
     hist = next_hist;
 }
 

@@ -9,7 +9,7 @@
 #include "core/log.hpp"
 #include "core/status.hpp"
 #include "suites.hpp"
-#include "tcp_pull_server.hpp"
+#include "net/tcp_pull_server.hpp"
 
 void test_tcp_retry( TestRun& t )
 {
@@ -18,7 +18,7 @@ void test_tcp_retry( TestRun& t )
         std::ostringstream out;
         std::ostringstream err;
         const Log log( out, err );
-        std::atomic<bool> quit { false };
+        const std::atomic<bool> quit { false };
         int calls = 0;
         const Status st = retry_listen( [&] { ++calls; return Status {}; }, quit, log, "enc", 1234 );
         CHECK( t, st.ok() );
@@ -32,7 +32,7 @@ void test_tcp_retry( TestRun& t )
         std::ostringstream out;
         std::ostringstream err;
         const Log log( out, err );
-        std::atomic<bool> quit { false };
+        const std::atomic<bool> quit { false };
         int calls = 0;
         const Status st = retry_listen(
             [&] {
@@ -50,7 +50,7 @@ void test_tcp_retry( TestRun& t )
         std::ostringstream out;
         std::ostringstream err;
         const Log log( out, err );
-        std::atomic<bool> quit { false };
+        const std::atomic<bool> quit { false };
         int calls = 0;
         const Status st = retry_listen(
             [&] {
@@ -95,7 +95,7 @@ void test_tcp_retry( TestRun& t )
         std::ostringstream out;
         std::ostringstream err;
         const Log log( out, err );
-        std::atomic<bool> quit { true };
+        const std::atomic<bool> quit { true };
         int calls = 0;
         const Status st = retry_listen(
             [&] {

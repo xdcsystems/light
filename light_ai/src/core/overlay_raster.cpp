@@ -1,0 +1,125 @@
+// The CPU overlay raster (core/overlay_raster.hpp): boxes and callouts into an
+// RGB888 image, the CPU twin of GpuBoxDrawer (gpu_box_drawer.cpp).
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+
+#include "core/callout.hpp"
+#include "core/glyph_font.hpp"
+#include "core/gpu_box.hpp"
+#include "core/overlay_raster.hpp"
+
+namespace
+{
+    void blend_px( uint8_t* px, uint8_t r, uint8_t g, uint8_t b, unsigned a ) noexcept
+    {
+        if ( a >= 255u )
+        {
+            px[0] = r;
+            px[1] = g;
+            px[2] = b;
+            return;
+        }
+        px[0] = static_cast<uint8_t>( ( r * a + px[0] * ( 255u - a ) + 127u ) / 255u );
+        px[1] = static_cast<uint8_t>( ( g * a + px[1] * ( 255u - a ) + 127u ) / 255u );
+        px[2] = static_cast<uint8_t>( ( b * a + px[2] * ( 255u - a ) + 127u ) / 255u );
+    }
+
+    void fill_rect_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutRect& rect,
+                        uint8_t r, uint8_t g, uint8_t b, unsigned a ) noexcept
+    {
+        const int x0 = std::max( rect.x0, 0 );
+        const int y0 = std::max( rect.y0, 0 );
+        const int x1 = std::min( rect.x1, w );
+        const int y1 = std::min( rect.y1, h );
+        for ( int y = y0; y < y1; ++y )
+        {
+            uint8_t* row = rgb + static_cast<size_t>( y ) * stride;
+            for ( int x = x0; x < x1; ++x )
+                blend_px( row + static_cast<std::ptrdiff_t>( x ) * 3, r, g, b, a );
+        }
+    }
+
+    // One text pass of a callout (the CPU twin of append_text_pass in gpu_box_drawer.cpp):
+    // every covered pixel blends gray at the coverage of one atlas plane (the fill or
+    // the baked outline, #108), unrounded until the pixel is written.
+    void draw_text_pass_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutItem& c, bool outline, uint8_t gray ) noexcept
+    {
+        const auto visit = [rgb, stride, outline, gray]( int px, int py, const glyph_font::Texel2& t ) {
+            const float cov = ( outline ? t.outline : t.fill ) / 255.0f;
+            if ( cov <= 0.0f )
+                return;
+            uint8_t* p = rgb + static_cast<size_t>( py ) * stride + static_cast<std::ptrdiff_t>( px ) * 3;
+            for ( int k = 0; k < 3; ++k )
+            {
+                const float v = static_cast<float>( gray ) * cov + static_cast<float>( p[k] ) * ( 1.0f - cov );
+                p[k] = static_cast<uint8_t>( std::lround( std::clamp( v, 0.0f, 255.0f ) ) );
+            }
+        };
+        glyph_font::raster_text( c.text, c.text_bytes, static_cast<float>( c.text_x ), static_cast<float>( c.text_y ), c.scale, w, h,
+                                 visit );
+    }
+
+}  // namespace
+
+void draw_boxes_cpu( uint8_t* rgb, int w, int h, int stride, const GpuBox* boxes, int n ) noexcept
+{
+    for ( int i = 0; i < n; ++i )
+    {
+        const GpuBox& b = boxes[i];
+        if ( b.x1 <= 0.0f || b.x0 >= static_cast<float>( w ) || b.y1 <= 0.0f
+             || b.y0 >= static_cast<float>( h ) )
+            continue;
+        if ( b.x1 - b.x0 < 1.0f || b.y1 - b.y0 < 1.0f )
+            continue;
+        const int x0 = std::clamp( static_cast<int>( std::floor( b.x0 ) ), 0, w - 1 );
+        const int y0 = std::clamp( static_cast<int>( std::floor( b.y0 ) ), 0, h - 1 );
+        const int x1 = std::max( x0, std::clamp( static_cast<int>( std::ceil( b.x1 ) ) - 1, 0, w - 1 ) );
+        const int y1 = std::max( y0, std::clamp( static_cast<int>( std::ceil( b.y1 ) ) - 1, 0, h - 1 ) );
+        const auto put = [&]( int x, int y ) {
+            uint8_t* px = rgb + static_cast<size_t>( y ) * stride + static_cast<std::ptrdiff_t>( x ) * 3;
+            const unsigned a = b.a;
+            if ( a >= 255 )
+            {
+                px[0] = b.r;
+                px[1] = b.g;
+                px[2] = b.b;
+                return;
+            }
+            px[0] = static_cast<uint8_t>( ( b.r * a + px[0] * ( 255 - a ) + 127 ) / 255 );
+            px[1] = static_cast<uint8_t>( ( b.g * a + px[1] * ( 255 - a ) + 127 ) / 255 );
+            px[2] = static_cast<uint8_t>( ( b.b * a + px[2] * ( 255 - a ) + 127 ) / 255 );
+        };
+        // Each boundary pixel is painted exactly once: Porter-Duff
+        // over is not idempotent for a < 255, a double write makes
+        // the corner pixels brighter than the edges (trail dots).
+        for ( int x = x0; x <= x1; ++x )
+        {
+            put( x, y0 );
+            if ( y1 > y0 )
+                put( x, y1 );
+        }
+        for ( int y = y0 + 1; y < y1; ++y )
+        {
+            put( x0, y );
+            if ( x1 > x0 )
+                put( x1, y );
+        }
+    }
+}
+
+// Connector, the baked dark outline of the whole label, then its white fill: the GPU
+// path's order and colors (all outlines under all fills).
+void draw_callouts_cpu( uint8_t* rgb, int w, int h, int stride, const CalloutList& list ) noexcept
+{
+    for ( int i = 0; i < list.n; ++i )
+    {
+        const CalloutItem& c = list.d[i];
+        for ( int s = 0; s < c.n_segs; ++s )
+            fill_rect_cpu( rgb, w, h, stride, c.segs[s], c.r, c.g, c.b, 255u );
+        draw_text_pass_cpu( rgb, w, h, stride, c, true, CalloutConfig::kOutlineGray );
+        draw_text_pass_cpu( rgb, w, h, stride, c, false, 255 );
+    }
+}

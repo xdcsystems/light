@@ -1,0 +1,196 @@
+# tidy_rules.yaml: the config of the second pass of the clang-tidy gate, "rules" (scripts/tidy_run.sh; #43, #93).
+# The main pass is the system clang-tidy 11 with the .clang-tidy files of the tree. This pass runs the pinned PyPI
+# clang-tidy in light_ai/venv (README, Build) with --config-file and --experimental-custom-checks, and only:
+#   readability-function-cognitive-complexity  LLVM 12+, not in clang-tidy 11 (#43);
+#   misc-const-correctness                     LLVM 15+, not in clang-tidy 11 (#94): "const by default" (CONTRIBUTING,
+#                                              Coding Rules) for the locals and the parameters of free functions;
+#   custom-*                                   the project rules of CONTRIBUTING.md (Coding Rules, Error Model)
+#                                              as clang-query matchers (#93): LLVM 21+ query-based custom checks.
+# Every other check runs in the main pass (clang-tidy 11). LLVM 23 can parse the root .clang-tidy since #93 (its
+# AnalyzeTemporaryDtors key is gone), but this pass keeps its own file.
+# Option keys: every option of a check here is written out, defaults included, and tidy_run.sh runs
+# --verify-config on this file before the self-test: a mistyped key is silently ignored by clang-tidy, and the
+# self-test cannot see a typo whose default equals the intended value.
+# Self-test: a matcher with a typo matches nothing and the gate stays green, so tidy_run.sh first runs this config
+# on tests/tidy_probe/ (the hits of each rule, the near misses that must stay silent, the exempt files) and fails
+# unless the hit sites ("<fixture>:<line> <check>") are exactly tests/tidy_probe/expected_rules.txt. A change of a
+# check here goes with a change of the probe.
+# Suppression: NOLINT(custom-...) and NOLINT(misc-const-correctness) only with a reason and only at the sites of
+# scripts/rules_allow.txt (scripts/rules_lint.sh fails on any other), never a NOLINTBEGIN / NOLINTEND range.
+# Scopes: every check covers src/, include/ and tests/ (the header filter), except:
+#   custom-no-printf, custom-no-std-stream  not in the test harness (a file directly in tests/: check.hpp,
+#                                           test_main.cpp, ... print with them); custom-no-std-stream also not in
+#                                           src/main.cpp, the one owner of std::cout / std::cerr.
+#   (clang-query takes a regex string as written: "[.]" for a dot, never "\\.")
+Checks: '-*,readability-function-cognitive-complexity,misc-const-correctness,custom-*'
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/light_ai/(src|include|tests)/.*'
+CheckOptions:
+  - { key: readability-function-cognitive-complexity.Threshold,    value: '20' }  # flag functions above this
+  - { key: readability-function-cognitive-complexity.IgnoreMacros, value: true }  # code expanded from a macro is not counted
+  # misc-const-correctness (#94): a local that is never changed is const, so is the pointee of a local pointer and the
+  # referent of a reference; the reference and pointer parameters of a free function too. Not seen by the check (so
+  # (review), CONTRIBUTING): a local of a dependent type in a template, the parameters of member functions,
+  # constructors and lambdas, value parameters, #else branches of another arch. A top-level "* const" is not asked
+  # for (WarnPointersAsValues): on a parameter it is not part of the signature and protects no data. The gate never
+  # runs -fix: the Transform* keys only shape the fix-it text of a finding.
+  - { key: misc-const-correctness.AnalyzeValues,               value: true }   # T x -> const T x
+  - { key: misc-const-correctness.AnalyzeReferences,           value: true }   # T& r -> const T& r
+  - { key: misc-const-correctness.AnalyzePointers,             value: true }   # pointers (the Warn* keys say which const)
+  - { key: misc-const-correctness.AnalyzeParameters,           value: true }   # reference / pointer parameters
+  - { key: misc-const-correctness.AnalyzeLambdas,              value: true }   # auto f = [..] -> const auto f
+  - { key: misc-const-correctness.AnalyzeAutoVariables,        value: true }   # auto x = ... -> const auto x
+  - { key: misc-const-correctness.WarnPointersAsPointers,      value: true }   # T* p -> const T* p
+  - { key: misc-const-correctness.WarnPointersAsValues,        value: false }  # T* p -> T* const p: not asked for
+  - { key: misc-const-correctness.TransformValues,             value: true }
+  - { key: misc-const-correctness.TransformReferences,         value: true }
+  - { key: misc-const-correctness.TransformPointersAsPointers, value: true }
+  - { key: misc-const-correctness.TransformPointersAsValues,   value: false }
+  - { key: misc-const-correctness.AllowedTypes,                value: '' }     # no type is exempt
+CustomChecks:
+  # No statics (Coding Rules: no static data members, no static member functions, no function-local statics;
+  # file-local helpers go in an anonymous namespace; no globals).
+  - Name: no-static-local
+    Query: |
+      match varDecl(isStaticLocal()).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "function-local static: keep the state in a member of the owning layer (CONTRIBUTING, No statics)"
+        Level: Warning
+  - Name: no-static-member
+    # without implicit decls: the static __invoke of a capture-less lambda is the compiler's, not ours
+    Query: |
+      match decl(unless(isImplicit()), anyOf(varDecl(isStaticStorageClass(), hasParent(cxxRecordDecl())), cxxMethodDecl(isStaticStorageClass(), unless(ofClass(cxxRecordDecl(isLambda())))))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "static member: use a regular member, an unscoped enum constant or a free function (CONTRIBUTING, No statics)"
+        Level: Warning
+  - Name: no-file-static
+    Query: |
+      match decl(anyOf(varDecl(isStaticStorageClass(), unless(isStaticLocal()), unless(hasParent(cxxRecordDecl()))), functionDecl(isStaticStorageClass(), unless(cxxMethodDecl())))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "namespace-scope static: put a file-local helper in an anonymous namespace (CONTRIBUTING, No statics)"
+        Level: Warning
+  - Name: no-global-var
+    Query: |
+      match varDecl(hasGlobalStorage(), unless(isStaticLocal()), unless(hasType(isConstQualified())), unless(isConstexpr()), unless(hasParent(cxxRecordDecl()))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "mutable global: shared state belongs to the owning layer as a member (CONTRIBUTING, No statics)"
+        Level: Warning
+  - Name: no-thread-local
+    Query: |
+      match varDecl(hasThreadStorageDuration()).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "thread_local: no statics of any kind (CONTRIBUTING, No statics)"
+        Level: Warning
+  # No virtuals or inheritance.
+  - Name: no-virtual
+    Query: |
+      match cxxMethodDecl(isVirtual()).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "virtual function: use composition or templates (CONTRIBUTING, No virtuals or inheritance)"
+        Level: Warning
+  - Name: no-inheritance
+    Query: |
+      match cxxRecordDecl(isDefinition(), anyOf(hasDirectBase(cxxBaseSpecifier()), isDerivedFrom(anything()))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "class with a base: use composition of concrete members (CONTRIBUTING, No virtuals or inheritance)"
+        Level: Warning
+  # No manual heap allocation. C library names (here and in no-printf) count only for an extern "C" function or one
+  # declared in a system header: hasAnyName("::x") also matches an x of an anonymous namespace (http_head.cpp has its
+  # own error()), and a project redeclaration (extern "C" int fputs(...);) is the callee of a call after it, outside
+  # a system header but still extern "C". operator new / delete are implicitly declared, so they have no such filter.
+  - Name: no-new-delete
+    Query: |
+      match stmt(anyOf(cxxNewExpr(), cxxDeleteExpr(), callExpr(callee(functionDecl(anyOf(isExternC(), isExpansionInSystemHeader()), hasAnyName("::malloc", "::calloc", "::realloc", "::free", "::aligned_alloc", "::posix_memalign", "::valloc", "::strdup", "::strndup", "::reallocarray", "::memalign", "::pvalloc", "::asprintf", "::vasprintf", "::getline", "::getdelim")))), callExpr(callee(functionDecl(hasAnyName("::operator new", "::operator new[]", "::operator delete", "::operator delete[]")))))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "new / delete (placement new too), operator new / delete or the malloc family: use fixed-size members (CONTRIBUTING, No manual heap allocation)"
+        Level: Warning
+  - Name: no-smart-ptr
+    # by type: a declaration of that type (variable, field, parameter, return; through a typedef, reference or
+    # pointer), any written type (also a template argument: std::vector<std::unique_ptr<T>>, sizeof, an alias
+    # template), and the make_unique / make_shared / allocate_shared calls (a discarded temporary, a deduced type).
+    # namedDecl, not cxxRecordDecl: a dependent std::shared_ptr<T> of a template that is never instantiated names the
+    # class template, and its make_unique<T>() call is an unresolved lookup.
+    Query: |
+      let SP namedDecl(hasAnyName("::std::unique_ptr", "::std::shared_ptr", "::std::weak_ptr"))
+      let T qualType(hasCanonicalType(anyOf(hasDeclaration(SP), references(hasDeclaration(SP)), pointsTo(hasDeclaration(SP)))))
+      match decl(anyOf(declaratorDecl(hasType(T)), functionDecl(returns(T)))).bind("d")
+      match typeLoc(loc(qualType(hasCanonicalType(hasDeclaration(SP))))).bind("d")
+      match callExpr(callee(functionDecl(hasAnyName("::std::make_unique", "::std::make_shared", "::std::allocate_shared")))).bind("d")
+      match unresolvedLookupExpr(hasAnyDeclaration(namedDecl(hasAnyName("::std::make_unique", "::std::make_shared", "::std::allocate_shared")))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "std::unique_ptr / shared_ptr / weak_ptr: use fixed-size members (CONTRIBUTING, No manual heap allocation)"
+        Level: Warning
+  # No const_cast (docs/state.md, stage 6: banned by the gate).
+  - Name: no-const-cast
+    Query: |
+      match cxxConstCastExpr().bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "const_cast: fix the constness at the source (an SDK signature: NOLINT with the reason, scripts/rules_allow.txt)"
+        Level: Warning
+  # I/O and logging: iostream only, diagnostics through Log, only src/main.cpp owns std::cout / std::cerr.
+  - Name: no-printf
+    # the C library filter: see no-new-delete
+    Query: |
+      match callExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), callee(functionDecl(anyOf(isExternC(), isExpansionInSystemHeader()), hasAnyName("::printf", "::fprintf", "::sprintf", "::snprintf", "::vprintf", "::vfprintf", "::vsprintf", "::vsnprintf", "::dprintf", "::vdprintf", "::asprintf", "::vasprintf", "::puts", "::fputs", "::putchar", "::fputc", "::putc", "::fwrite", "::perror", "::fputs_unlocked", "::fputc_unlocked", "::putc_unlocked", "::putchar_unlocked", "::fwrite_unlocked", "::wprintf", "::fwprintf", "::swprintf", "::vwprintf", "::vfwprintf", "::vswprintf", "::fputws", "::fputwc", "::putwc", "::putwchar", "::err", "::errx", "::warn", "::warnx", "::verr", "::verrx", "::vwarn", "::vwarnx", "::error", "::error_at_line")))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "C stdio output (printf family, puts, fwrite, perror, ...): use iostream through Log (CONTRIBUTING, I/O & logging)"
+        Level: Warning
+  - Name: no-std-stream
+    Query: |
+      match declRefExpr(unless(isExpansionInFileMatching("/tests/[^/]+[.](cpp|hpp)$")), unless(isExpansionInFileMatching("/src/main[.]cpp$")), to(varDecl(hasAnyName("::std::cout", "::std::cerr", "::std::clog", "::std::wcout", "::std::wcerr", "::std::wclog")))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "std::cout / cerr / clog (and the w- forms) outside src/main.cpp: use the injected const Log& (CONTRIBUTING, I/O & logging)"
+        Level: Warning
+  # Control flow (PR #95 comment 7025795592): no if / else-if ladders, no loop with an empty body, no loop with an
+  # empty or always-true condition. Each loop states its real exit condition; the body does the work.
+  - Name: no-else-if
+    # the hit is the else-if itself (one per rung); if constexpr too (no exception), and an else whose only
+    # statement is an if (else { if ... }: the same ladder in braces)
+    Query: |
+      match ifStmt(hasElse(stmt(anyOf(ifStmt(), compoundStmt(statementCountIs(1), has(ifStmt())))).bind("d")))
+    Diagnostic:
+      - BindName: d
+        Message: "else-if: use a switch, a table, early returns or independent ifs (CONTRIBUTING, Control flow)"
+        Level: Warning
+  - Name: no-empty-loop
+    # a body of ';', '{}' or '{ ; }' (comments and null statements do not count), also with one empty block nested
+    # ('{ {} }'; deeper nesting is review): the condition does the work, out of sight. A declaration or a label is
+    # a statement: not empty.
+    Query: |
+      let INNER compoundStmt(unless(has(stmt(unless(nullStmt())))))
+      let EMPTY stmt(anyOf(nullStmt(), compoundStmt(unless(has(stmt(unless(anyOf(nullStmt(), INNER))))))))
+      match stmt(anyOf(forStmt(hasBody(EMPTY)), whileStmt(hasBody(EMPTY)), doStmt(hasBody(EMPTY)), cxxForRangeStmt(hasBody(EMPTY)))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "loop with an empty body: move the step into the body (CONTRIBUTING, Control flow)"
+        Level: Warning
+  - Name: no-infinite-loop
+    # for (;;) or a literal condition: true or a non-zero integer (through parens and implicit or explicit casts);
+    # a named constant is not caught (the matcher sees literals only)
+    Query: |
+      let TRUE expr(ignoringParenCasts(anyOf(cxxBoolLiteral(equals(true)), integerLiteral(unless(equals(0))))))
+      match stmt(anyOf(forStmt(unless(hasCondition(expr()))), forStmt(hasCondition(TRUE)), whileStmt(hasCondition(TRUE)), doStmt(hasCondition(TRUE)))).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "loop without a real exit condition (for (;;), while (true)): loop on the condition that ends it (CONTRIBUTING, Control flow)"
+        Level: Warning
+  # Error model: no catch (...) except the documented startup sites (CONTRIBUTING, scripts/rules_allow.txt).
+  - Name: no-catch-all
+    Query: |
+      match cxxCatchStmt(isCatchAll()).bind("d")
+    Diagnostic:
+      - BindName: d
+        Message: "catch (...): only the documented startup sites (CONTRIBUTING, Error & Exception Model)"
+        Level: Warning

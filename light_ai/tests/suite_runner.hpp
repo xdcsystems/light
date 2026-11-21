@@ -95,13 +95,21 @@ RunPlan<N> plan_runs( const Suite ( &suites )[N], int argc, const char* const* a
     {
         const std::string_view arg = argv[i];
         if ( arg == "--repeat" || arg.substr( 0, 9 ) == "--repeat=" )
+        {
             plan.error = suite_runner_detail::take_repeat( argc, argv, i, plan.repeat );
-        else if ( arg.substr( 0, 1 ) == "-" )
+            continue;
+        }
+        if ( arg.substr( 0, 1 ) == "-" )
+        {
             plan.error = "unknown option '" + std::string( arg ) + "'";
-        else if ( !suite_runner_detail::select( suites, arg, plan ) )
+            continue;
+        }
+        if ( !suite_runner_detail::select( suites, arg, plan ) )
+        {
             plan.error = "no suite matches '" + std::string( arg ) + "'";
-        else
-            filtered = true;
+            continue;
+        }
+        filtered = true;
     }
     if ( !filtered )
         plan.selected.fill( true );

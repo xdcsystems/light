@@ -6,7 +6,7 @@
 
 #include "core/status.hpp"
 #include "source/mjpeg_slot_pool.hpp"
-#include "throw_on.hpp"
+#include "core/throw_on.hpp"
 
 namespace
 {

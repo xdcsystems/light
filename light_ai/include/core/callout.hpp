@@ -8,7 +8,7 @@
 #include "core/geometry.hpp"    // LbGeom
 #include "core/glyph_font.hpp"  // glyph_font::kLabelCap
 #include "core/track.hpp"       // TrajList
-#include "pod_list.hpp"         // PodList
+#include "core/pod_list.hpp"    // PodList
 
 // Half-open integer tensor-pixel rectangle [x0, x1) x [y0, y1).
 struct CalloutRect
@@ -19,21 +19,21 @@ struct CalloutRect
     int y1 = 0;
 };
 
+// One track label: the box it belongs to, the label rect (layout only: nothing is
+// drawn there but the text -- no plate), the L-connector and the text. The text
+// is drawn at `scale` (atlas px -> tensor px) from the pen (text_x, text_y) =
+// the line top-left: white glyphs over the dark outline baked into the atlas
+// (glyph_font::kOutlinePx = 2 atlas px, so 2 * scale tensor px: the same width
+// on every output tile).
 struct CalloutItem
 {
-    enum
-    {
-        kGlyphScale = 1,
-        kGlyphW = glyph_font::kGlyphW * kGlyphScale,
-        kGlyphH = glyph_font::kGlyphH * kGlyphScale,
-    };
-
     CalloutRect box {};
-    CalloutRect pill {};
+    CalloutRect label {};
     CalloutRect segs[2] {};
     int n_segs = 0;
     int text_x = 0;
     int text_y = 0;
+    float scale = 0.5f;
     uint8_t r = 255;
     uint8_t g = 255;
     uint8_t b = 255;
@@ -41,17 +41,45 @@ struct CalloutItem
     int text_bytes = 0;
 };
 
-using CalloutList = PodList<CalloutItem, 8>;
+using CalloutList = PodList<CalloutItem, TrajList::cap>;  // one per track of a frame
 
 struct CalloutConfig
 {
+    enum
+    {
+        // Text size (font px) per --label-scale step on the output tile: 11 px DejaVu
+        // has ~8 px capitals, the size of the former 1-px-stroke bitmap font.
+        kLabelPx = 11,
+        // The gray of the dark outline around the white text (#91 item 5), shared by
+        // the GPU and the CPU renderers. Its shape and alpha are baked into the A plane
+        // of the atlas (glyph_font::kOutlinePx, kOutlineAlpha; #108).
+        kOutlineGray = 16
+    };
+
+public:
     bool lang_ru = false;
+    float scale = 0.5f;  // atlas px -> tensor px: callout_text_scale()
 };
+
+// The 0.5f default scales (CalloutItem, CalloutConfig, callout.cpp clean_scale) and
+// the layout unit (2 * scale, 1 px at the default) assume the atlas is baked at
+// 2x the default text size: rebaking at another ATLAS_PX must revisit them.
+static_assert( glyph_font::kAtlasPx == 2 * CalloutConfig::kLabelPx, "callout defaults assume a 2x atlas" );
+
+// The glyph scale that gives every source the same letter size on the output
+// tile (#91 item 5): CalloutConfig::kLabelPx px per --label-scale step, measured in the stream,
+// divided by tile_scale (output tile px per tensor px: place_tile dst.h / src.h,
+// 1 when there is no tiled stream). label_scale is clamped to 1..4; a
+// non-positive or non-finite tile_scale counts as 1.
+//   USB 4:3 band 640x480 -> 640x480 tile: 1.0  -> 0.5 (11 px text in the tensor)
+//   phone 360x640 band   -> 270x480 tile: 0.75 -> 0.667 (14.7 px in the tensor, 11 px on the tile)
+float callout_text_scale( int label_scale, float tile_scale ) noexcept;
 
 struct CalloutPrevSlot
 {
-    int id = 0;    // TrackState::display_id()
-    int slot = -1; // last winning proposal index [0..13]
+    int id = 0;        // local TrackState::id
+    uint32_t gen = 0;  // monotonic TrackState::gen
+    int slot = -1;     // last winning proposal index [0..13]
 };
 
 struct CalloutHistory
@@ -59,7 +87,7 @@ struct CalloutHistory
     PodList<CalloutPrevSlot, TrajList::cap> entries {};
 };
 
-// Computes non-overlapping callout pills and L-connectors for active tracks
+// Computes non-overlapping callout labels and L-connectors for active tracks
 // inside lb_even (even crop matching FrameComposer::compose) minus 2 px margin.
 // When hist is provided, keeps each track's prior slot across frames unless an overlap
 // or edge clamp forces a move (prevents left/right flip-flop on 1-px box jitter).

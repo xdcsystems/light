@@ -1,0 +1,6 @@
+# verify_typo.yaml: the --verify-config self-test of scripts/tidy_run.sh (#94). One mistyped option key (the "s" of
+# WarnPointersAsValues is missing): clang-tidy must report it as an unknown check option, or the --verify-config
+# step of the gate can no longer catch a typo in scripts/tidy_rules.yaml.
+Checks: '-*,misc-const-correctness'
+CheckOptions:
+  - { key: misc-const-correctness.WarnPointersAsValue, value: false }

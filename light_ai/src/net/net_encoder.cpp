@@ -1,0 +1,244 @@
+#include <chrono>
+#include <cstdint>
+
+#include "core/encode_pacer.hpp"
+#include "core/encoder_config.hpp"
+#include "core/log.hpp"
+#include "core/perf_clock.hpp"
+#include "core/session_warmup.hpp"
+#include "net/net_encoder.hpp"
+
+namespace
+{
+    // The publish clock: one read per publish, used by the session warmup,
+    // the pacer and as the VFR pts of a timestamped frame. The frame's
+    // ts_us (its dequeue time, may be -1) is only checked for >= 0.
+    int64_t steady_now_us()
+    {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch() ).count();
+    }
+}  // namespace
+
+// Members in declaration order (net_encoder.hpp): the network layer, the
+// frame ring, the composer (logs the stream layout), the codec (opens and
+// logs), the queue, the gate, the serve session. The body starts the serve
+// thread last, once everything it reaches is built; a throw anywhere
+// before unwinds the members that exist, in reverse order.
+NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
+  : cfg_( cfg )
+  , ring_( cfg.layout )
+  , composer_( cfg, log )
+  , codec_( cfg, log )
+  , pacer_( cfg.layout.nsrc, cfg.fps )
+  , warmup_( cfg.layout.nsrc )
+  , session_( cfg, queue_, gate_, log )
+{
+    session_.start();
+}
+
+// Batch C: the pipeline gates GPU box drawing on this (one call site:
+// pipeline.cpp).
+bool NetEncoder::viewer_active() const
+{
+    return gate_.active();
+}
+
+uint32_t NetEncoder::session_epoch() const noexcept
+{
+    return gate_.epoch();
+}
+
+// The first publish of a new session (any of the three publishers): the
+// canvas starts gray, and a deferred multi-view frame of the previous
+// session is dropped. True when this call started the session.
+bool NetEncoder::enter_session( uint32_t epoch, int64_t now_us ) noexcept
+{
+    if ( !warmup_.enter( epoch, now_us ) )
+        return false;
+    composer_.reset_canvas();
+    canvas_dirty_ = false;
+    return true;
+}
+
+// compose() is one composer pass; its time goes into the cmp_max window.
+template <typename Compose>
+Status NetEncoder::timed_compose( Compose&& compose ) noexcept
+{
+    const auto t0 = PerfClock::now();
+    const Status st = compose();
+    const double cmp_ms = ms_since( t0 );
+    if ( cmp_ms > perf_.compose_ms_max )
+        perf_.compose_ms_max = cmp_ms;
+    return st;
+}
+
+// The encoded tail of every publisher, in this order: the canvas is no
+// longer dirty, the codec timestamp (the publish time, or -1 for the 25 fps
+// grid), the next ring slot, the timed compose( slot, out ) into it, then a
+// failed compose ends THIS session only (serve() reopens the stream path),
+// and a good one is encoded.
+template <typename Compose>
+void NetEncoder::compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose ) noexcept
+{
+    canvas_dirty_ = false;
+    ts_us_ = ( ts_flag >= 0 ) ? now_us : -1;
+    const int slot = ring_.advance();
+    if ( !timed_compose( [&] { return compose( slot, ring_.buf( slot ) ); } ).ok() )
+    {
+        queue_.fail( epoch );
+        return;
+    }
+    run_encoded( epoch, PerfClock::now() );
+}
+
+void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int src_idx, bool defer_encode ) noexcept
+{
+    if ( !gate_.active() )
+    {
+        canvas_dirty_ = false;
+        return;
+    }
+    // The session this publish belongs to: loaded after active(), so a
+    // session seen live is seen with its own epoch (SessionGate::open
+    // stores the epoch first). The pacer and a fail() use it.
+    const uint32_t epoch = gate_.epoch();
+    const int64_t now_us = steady_now_us();
+    // A new session starts on a gray canvas and holds its first encode
+    // until every source cell has a picture of this session, or 200 ms
+    // (core/session_warmup.hpp). The cell is the one place_tile writes.
+    enter_session( epoch, now_us );
+    const TilePlacement tp = place_tile( cfg_.layout, band, src_idx );
+    warmup_.refreshed( tp.cell );
+    // Multi-view: frames closer than the pacing step (or deferred because the
+    // next completed NPU slot is already waiting in the FIFO) update their
+    // tile in the canvas and arm canvas_dirty_ for flush_dirty().
+    const bool warm_ready = warmup_.ready( now_us );
+    const bool hold_for_peer = defer_encode && cfg_.layout.nsrc > 1;
+    const bool do_enc = warm_ready && !hold_for_peer && pacer_.admit( now_us, queue_.depth(), epoch );
+    if ( warm_ready )
+        do_enc ? ++perf_.enc_admit : ++perf_.enc_skip;
+
+    // Fence wait + RGA crop run OUTSIDE the lock: the critical section
+    // covers only encode + mux. In multi-view mode when two cameras finish
+    // within a few ms of each other, or while the session is held, !do_enc
+    // still updates the source's tile in the persistent composite canvas
+    // (out = nullptr, the current slot) without emitting an H.264 frame.
+    if ( do_enc )
+    {
+        compose_and_encode( epoch, now_us, ts_us, [&]( int slot, MppBuffer out ) {
+            return composer_.compose( tensor_fd, tp, slot, out );
+        } );
+        return;
+    }
+    if ( warm_ready && cfg_.layout.nsrc > 1 )
+    {
+        canvas_dirty_ = true;
+        dirty_ts_us_ = ts_us;
+    }
+    if ( !timed_compose( [&] { return composer_.compose( tensor_fd, tp, ring_.current(), nullptr ); } ).ok() )
+    {
+        canvas_dirty_ = false;
+        queue_.fail( epoch );  // see compose_and_encode()
+    }
+}
+
+void NetEncoder::flush_dirty() noexcept
+{
+    if ( !canvas_dirty_ || cfg_.layout.nsrc <= 1 )
+        return;
+    if ( !gate_.active() )
+    {
+        canvas_dirty_ = false;
+        return;
+    }
+    const uint32_t epoch = gate_.epoch();
+    const int64_t now_us = steady_now_us();
+    if ( enter_session( epoch, now_us ) )
+        return;
+    if ( !warmup_.ready( now_us ) || !pacer_.admit( now_us, queue_.depth(), epoch ) )
+        return;
+    ++perf_.enc_admit;
+    compose_and_encode( epoch, now_us, dirty_ts_us_, [this]( int /*slot*/, MppBuffer out ) {
+        return composer_.flush_canvas( out );
+    } );
+}
+
+// NO SIGNAL publish (idle): mirrors publish() -- encode under the gate,
+// RGA outside it, error path wakes serve(). The caller paces idle
+// encodes at a fixed fps; the pacer stamps them in the same budget as
+// live ones: a live frame right after an idle one sees a fresh stamp and
+// skips the duplicate encode (multi-view window).
+// Session warmup as in publish(): the plate refreshes the absent cells;
+// while the session is held (or the queue is busy) the tick updates the
+// canvas only (multi-view), and the pacer is consulted only once the
+// session is released. An idle tick can release the session.
+// The frame counter and the timing stats never see idle frames.
+// Unlike publish() and flush_dirty(), no session leaves canvas_dirty_ as
+// it is: harmless, a new session clears it in enter_session() first.
+void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept
+{
+    const StreamLayout& lay = cfg_.layout;
+    if ( !gate_.active() )
+        return;
+    const uint32_t epoch = gate_.epoch();  // see publish()
+    const int64_t now_us = steady_now_us();
+    enter_session( epoch, now_us );
+    bool any = false;
+    for ( int s = 0; s < lay.nsrc; ++s )
+    {
+        if ( !tile_absent( absent, nabs, s ) )
+            continue;
+        any = true;
+        warmup_.refreshed( s );  // the cell compose_idle() plates below
+    }
+    if ( !any )
+        return;  // every tile went live since the tick was scheduled
+    const bool warm_ready = warmup_.ready( now_us );
+    const bool do_enc = warm_ready && pacer_.admit_idle( now_us, queue_.depth(), epoch );
+    if ( warm_ready )
+        do_enc ? ++perf_.idle_admit : ++perf_.idle_skip;
+    if ( !do_enc )
+    {
+        // Held or the encode queue busy: no encode this tick. Multi-view
+        // still plates the absent cells that lack it (none after the
+        // first such tick: compose_idle skips plated cells). Untimed.
+        if ( lay.nsrc > 1 && !composer_.compose_idle( absent, nabs, ring_.current(), nullptr ).ok() )
+            queue_.fail( epoch );
+        return;
+    }
+    compose_and_encode( epoch, now_us, ts_us, [&]( int slot, MppBuffer out ) {
+        return composer_.compose_idle( absent, nabs, slot, out );
+    } );
+}
+
+void NetEncoder::run_encoded( uint32_t epoch, std::chrono::steady_clock::time_point now ) noexcept
+{
+    if ( epoch != perf_epoch_ )
+        enc_lap_.reset();  // no interval across sessions
+    perf_epoch_ = epoch;
+    double dt_ms = 0.0;
+    if ( enc_lap_.lap( now, dt_ms ) )
+        perf_.add_dt_enc( dt_ms );
+
+    const auto enc_t0 = PerfClock::now();
+    // No session or epoch changed while cropping: drop the stale frame.
+    gate_.run( epoch, [this]( const SessionGate::Session& s ) {
+        if ( const Status est = codec_.encode( ring_.frame( ring_.current() ), ts_us_, s, queue_ ); !est.ok() )
+            queue_.fail( s.epoch );
+    } );
+    const double h264_ms = ms_since( enc_t0 );
+    if ( h264_ms > perf_.h264_ms_max )
+        perf_.h264_ms_max = h264_ms;
+}
+
+EncPerfWindow NetEncoder::take_perf() noexcept
+{
+    perf_.eagain_cnt = eagain_.take( codec_.eagain_cnt() );
+    perf_.pts_clamp_cnt = pts_clamp_.take( codec_.pts_clamp_cnt() );
+    perf_.q_flush_cnt = q_flush_.take( codec_.q_flush_cnt() );
+    const EncPerfWindow out = perf_;
+    perf_.reset();
+    return out;
+}
+

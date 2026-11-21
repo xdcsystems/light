@@ -24,6 +24,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -96,6 +97,7 @@ public:
         prober_quit_ = prober_quit;
         apply_cancel();
     }
+    const std::atomic<bool>* prober_quit() const noexcept { return prober_quit_; }
 
     int size() const { return n_; }
     Chan& operator[]( int s ) { return ch_[static_cast<std::size_t>( s )]; }
@@ -111,7 +113,7 @@ public:
     // and moves the cursor. A NotReady channel without a frame for 2 s is
     // reported as Detached with out.st = dequeue_status( EIO ) (a stall: the source still
     // streams nothing). NotReady when the whole round had nothing.
-    FrameStatus next( int wait_ms, EncodedFrame& out )
+    FrameStatus next( int wait_ms, EncodedFrame& out ) noexcept
     {
         for ( int k = 0; k < n_; ++k )
         {
@@ -125,6 +127,7 @@ public:
                 cursor_ = s;
                 return st;
             }
+            ++eagain_cnt_[static_cast<std::size_t>( s )];
             if ( clk::now() - c.last_ok() >= std::chrono::milliseconds( kStallMs ) )
             {
                 log_.warn() << "source s" << s << ": no frame in " << static_cast<int>( kStallMs )
@@ -140,12 +143,23 @@ public:
     // One source and an empty pool: the blocking dequeue on channel 0 (the
     // camera's own 2 s watchdog reports EIO; no stall detector here).
     // NotReady when channel 0 is not Live, or on EAGAIN / EINTR.
-    FrameStatus next_blocking( EncodedFrame& out )
+    FrameStatus next_blocking( EncodedFrame& out ) noexcept
     {
         cursor_ = 0;
         if ( n_ == 0 || !ch_[0].live() )
             return FrameStatus::NotReady;
-        return ch_[0].poll( -1, out );
+        const FrameStatus st = ch_[0].poll( -1, out );
+        if ( st == FrameStatus::NotReady )
+            ++eagain_cnt_[0];
+        return st;
+    }
+
+    uint32_t take_eagain_cnt( int s ) noexcept
+    {
+        const auto idx = static_cast<std::size_t>( s );
+        const uint32_t v = eagain_cnt_[idx];
+        eagain_cnt_[idx] = 0;
+        return v;
     }
 
     // Restarts the stall clocks: the start of run(), and after a failure was
@@ -199,6 +213,7 @@ private:
 private:
     const Log& log_;
     std::array<Chan, N> ch_;
+    std::array<uint32_t, N> eagain_cnt_ {};
     const std::atomic<bool>* stop_ = nullptr;
     const std::atomic<bool>* prober_quit_ = nullptr;
     int n_ = 0;       // configured channels (<= N), fixed after configure()

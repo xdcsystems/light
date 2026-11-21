@@ -1,10 +1,11 @@
 // PtsClock: the presentation timestamps of the encoded stream.
 //   CFR (--net-fps N): a per-session frame counter in the codec time base
 //     (1/N); every encoded or dropped frame advances it.
-//   VFR (--net-fps 0): the dequeue timestamp (us) rescaled to 1/90000
-//     against the session base (the first timestamped frame), clamped to
-//     stay strictly increasing; without a timestamp, a 25 fps grid over the
-//     frames encoded so far.
+//   VFR (--net-fps 0): the publish time (steady clock, us, read once per
+//     NetEncoder::publish* / flush_dirty) rescaled to 1/90000 against the
+//     session base (the first timestamped frame), clamped to stay strictly
+//     increasing; without a timestamp, a 25 fps grid over the frames
+//     encoded so far.
 // packet_ts() converts a codec pts to the muxer time base (frame_step
 // ticks per frame, set per session from the stream time base).
 //
@@ -25,7 +26,8 @@ public:
     // frame_step < 1 is taken as 1.
     void restart( int64_t frame_step ) noexcept;
 
-    // Codec pts of the frame about to be encoded. ts_us < 0 = no timestamp.
+    // Codec pts of the frame about to be encoded. ts_us: its publish time
+    // (VFR), < 0 = no timestamp.
     // frames_sent: frames encoded so far (the VFR fallback grid).
     int64_t next( int64_t ts_us, uint64_t frames_sent ) noexcept;
 
@@ -35,12 +37,15 @@ public:
     // One frame consumed a CFR slot (encoded, or dropped on a full input queue).
     void advance() noexcept { ++counter_; }
 
+    uint64_t clamp_cnt() const noexcept { return clamp_cnt_; }
+
 private:
     bool vfr_;
     uint64_t counter_ = 0;    // CFR pts
     int64_t base_us_ = -1;    // VFR: session base
     int64_t last_pts_ = -1;   // VFR: last pts handed out
     int64_t frame_step_ = 1;  // muxer ticks per codec pts
+    uint64_t clamp_cnt_ = 0;  // VFR non-monotonic clamp counter
 };
 
 // Session-aware codec->muxer PTS filter for persistent encoders: shifts each
@@ -67,6 +72,8 @@ public:
     // (caller must av_packet_unref and discard).
     bool stamp_packet( bool has_pts, int64_t raw_pkt_pts, bool is_key, int64_t session_fpts,
                        int64_t& mux_pts_out ) noexcept;
+
+    uint64_t clamp_cnt() const noexcept { return pts_.clamp_cnt(); }
 
 private:
     PtsClock pts_;

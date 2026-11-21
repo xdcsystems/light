@@ -158,6 +158,7 @@ namespace
         {
             Prober p( r.ch, r.loc, r.log );  // production cadence: 2 s
             p.start();
+            CHECK( t, r.ch.prober_quit() != nullptr );
             p.start();  // already started: no second thread
             const auto deadline = clk::now() + std::chrono::milliseconds( 1000 );
             while ( !r.all_live( kChannels ) && clk::now() < deadline )
@@ -168,6 +169,7 @@ namespace
             const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>( clk::now() - t0 ).count();
             CHECK( t, ms < kStopBudgetMs );  // between rounds: stop() wakes the wait at once
             CHECK( t, p.rounds() == 1 );
+            CHECK( t, r.ch.prober_quit() == nullptr );  // no pointer into the prober outlives stop()
             p.stop();  // idempotent; the destructor stops again
         }
         Rig z;
@@ -217,7 +219,7 @@ void test_source_prober_threads( TestRun& t )
                 const FrameStatus st = c.poll( 0, f );
                 if ( st == FrameStatus::Frame )
                     static_cast<void>( c.decode( f ) );
-                else if ( st == FrameStatus::Detached )
+                if ( st == FrameStatus::Detached )
                 {
                     c.detach();
                     ++detaches;

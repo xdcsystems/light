@@ -26,10 +26,15 @@ namespace
         CHECK( t, same( l.band, 0, 640, 80, 480 ) );
         // nsrc <= 0 is single view too.
         CHECK( t, size_is( make_stream_layout( 640, 640, kBand43, 0 ), 640, 480, 640, 480, 1, 512 ) );
-        // Portrait band: the width is 16-aligned, the height is taken as is,
-        // the vertical stride is 64-aligned.
+        // Portrait band: the width is 16-aligned, the height is rounded up to even (>= 2),
+        // the vertical stride is 64-aligned, and l.band keeps the original odd height.
         const StreamLayout p = make_stream_layout( 640, 640, LbGeom { 140, 360, 0, 639 }, 1 );
-        CHECK( t, size_is( p, 368, 639, 368, 639, 1, 640 ) );
+        CHECK( t, size_is( p, 368, 640, 368, 640, 1, 640 ) );
+        CHECK( t, p.band.h == 639 );
+        // Edge cases: odd 1 -> 2, zero -> 2, already-even 480 -> 480.
+        CHECK( t, make_stream_layout( 640, 640, LbGeom { 0, 320, 0, 1 }, 1 ).h == 2 );
+        CHECK( t, make_stream_layout( 640, 640, LbGeom { 0, 320, 0, 0 }, 1 ).h == 2 );
+        CHECK( t, make_stream_layout( 640, 640, LbGeom { 0, 320, 0, 480 }, 1 ).h == 480 );
         // A band outside the tensor is clamped into it (the stream size is not).
         const StreamLayout c = make_stream_layout( 640, 640, LbGeom { -4, 700, -2, 650 }, 1 );
         CHECK( t, same( c.band, 0, 640, 0, 640 ) );
@@ -77,6 +82,10 @@ namespace
         CHECK( t, same( p.src, 140, 358, 2, 640 ) );
         const LbGeom g = band_geom( 359, 641, 640, 480 );
         CHECK( t, same( p.dst, g.left & ~1, g.w & ~1, g.top & ~1, g.h & ~1 ) );
+        // Odd single-view layout rounds h to 640 while place_tile produces even dst.h <= p.h.
+        const StreamLayout odd_l = make_stream_layout( 640, 640, LbGeom { 140, 360, 0, 639 }, 1 );
+        const TilePlacement odd_tp = place_tile( odd_l, LbGeom { 140, 360, 0, 639 }, 0 );
+        CHECK( t, ( odd_tp.dst.h & 1 ) == 0 && odd_tp.dst.h <= odd_l.h );
     }
 
     void placement_multi( TestRun& t )
@@ -92,6 +101,11 @@ namespace
         const LbGeom g = band_geom( 360, 640, 640, 480 );
         CHECK( t, p.cell == 2 );
         CHECK( t, same( p.dst, g.left & ~1, g.w & ~1, ( 480 + g.top ) & ~1, g.h & ~1 ) );
+        // The tile scale the callout font compensates (#91 item 5): the phone
+        // portrait band 360x640 lands as 270x480 (0.75), a 4:3 USB band 1:1.
+        const TilePlacement usb = place_tile( l, kBand43, 0 );
+        CHECK( t, usb.dst.h == usb.src.h && usb.dst.w == usb.src.w );                    // 1.0
+        CHECK( t, p.src.h == 640 && p.dst.h == 480 && p.dst.w == 270 );                    // 0.75
         // Cell 3 of a 3-source layout does not exist: out-of-range indices fall back to cell 0.
         CHECK( t, place_tile( l, kBand43, 3 ).cell == 0 );
         CHECK( t, place_tile( l, kBand43, -1 ).cell == 0 );

@@ -33,7 +33,7 @@
 #include <mutex>
 #include <stdexcept>
 
-#include "pod_ring.hpp"
+#include "core/pod_ring.hpp"
 
 template <class Pkt, class Ops, int N>
 class BasicPacketQueue
@@ -89,7 +89,7 @@ public:
     // caller forces an IDR on the next frame. A closed queue drops the packet.
     Pushed push( Pkt& src )
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         if ( !open_ )
         {
             ops_.unref( src );
@@ -104,20 +104,30 @@ public:
             ++drops_;
         }
         ops_.move( ring_.push_slot(), src );  // !full() guaranteed above
+        if ( ring_.n > max_depth_ )
+            max_depth_ = ring_.n;
         cv_.notify_one();
         return Pushed { flushed, drops_ };
     }
 
     int depth() const
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         return ring_.n;
+    }
+
+    int take_max_depth() noexcept
+    {
+        const std::lock_guard<std::mutex> lk( mx_ );
+        const int m = max_depth_;
+        max_depth_ = ring_.n;
+        return m;
     }
 
     // Producer: an encode-side error in session `epoch`.
     void fail( uint32_t epoch )
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         if ( !open_ || epoch != epoch_ )
             return;
         failed_ = true;
@@ -127,7 +137,7 @@ public:
     // Consumer: session `epoch` starts.
     void open( uint32_t epoch )
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         clear_locked();
         wait_key_ = true;
         failed_ = false;
@@ -138,7 +148,7 @@ public:
     // Consumer: the session ended; leftover packets are dead weight.
     void close()
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         open_ = false;
         clear_locked();
     }
@@ -172,7 +182,7 @@ public:
     // Owner: wakes the consumer for good.
     void stop()
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         stopped_ = true;
         cv_.notify_all();
     }
@@ -193,6 +203,7 @@ private:
     std::condition_variable cv_;
     PodRing<Pkt, N> ring_ {};
     int drops_ = 0;
+    int max_depth_ = 0;
     uint32_t epoch_ = 0;
     bool open_ = false;
     bool wait_key_ = true;

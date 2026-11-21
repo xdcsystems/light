@@ -33,7 +33,10 @@ int64_t PtsClock::next( int64_t ts_us, uint64_t frames_sent ) noexcept
         p = us_to_90k( ts_us - base_us_ );
     }
     if ( last_pts_ >= 0 && p <= last_pts_ )
+    {
         p = last_pts_ + 1;
+        ++clamp_cnt_;
+    }
     last_pts_ = p;
     return p;
 }
@@ -67,10 +70,6 @@ bool SessionPtsFilter::stamp_packet( bool has_pts, int64_t raw_pkt_pts, bool is_
         const int64_t candidate = raw_pkt_pts - epoch_base_pts_;
         if ( candidate >= 0 && candidate <= session_fpts )
             rel_pts = candidate;
-    }
-    else if ( awaiting_key_ && !is_key )
-    {
-        return false;
     }
 
     if ( awaiting_key_ )

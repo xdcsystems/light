@@ -17,6 +17,50 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   `build.sh` / `tidy_run.sh` warn when their output is on eMMC (`scripts/storage_guard.sh`).
 - Models (`*.rknn`) are not in git: they live in `light_ai/misc/` (default: `./misc/yolov5s_relu_int8_mmse_v5.rknn`).
 
+## Board SDK (self-built libraries, forks)
+Checked 2026-11-20. Sources: `/mnt/nvme_data/work` (`~/work` links there): user-owned, read only -- never build,
+install, rebase, push or clean there without the user's decision (a new `/usr/local` install changes every later gate
+and FPS figure). The distro packages stay installed: `librockchip-mpp1` 1.5.0 and `librga2` 2.2.0 (dpkg versions;
+their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
+- FFmpeg `ffmpeg-rockchip/`: our fork (`myfork` = `xdcsystems/ffmpeg-rockchip`, `origin` =
+  `nyanmisaka/ffmpeg-rockchip`). Installed build `129a3cf0d7` (`ffmpeg -version`) = `origin/8.1` (`b187bf5276`, FFmpeg
+  8.1.3) + 2 own `h264_rkmpp` EOS fixes (`f5f6da6337`, `129a3cf0d7`); `master` = `myfork/master` = `10b361b5d4`, which
+  only adds `STATE-NOTES.md`. `/usr/local`, `libavcodec` 62.28.103, configured with `--prefix=/usr/local --enable-gpl
+  --enable-version3 --enable-rkmpp --enable-rkrga --enable-libdrm --enable-libx264 --enable-libx265 --enable-libvpx
+  --enable-pic --enable-shared --disable-static`. Upstream PR nyanmisaka/ffmpeg-rockchip#273 (open): head
+  `xdcsystems:xdc-upstream-sync` = `a9f8736d02` = local `xdc-rkmpp-eos-fixes-v2` (upstream `master` + the 2 fixes;
+  that local branch tracks `origin/master`, not the fork); built in-tree only, never installed. The fork's
+  `STATE-NOTES.md` is its log but is stale: its "~592 local commits" count against `origin/master`
+  (`origin/8.1..master` is 3), `myfork/master` = `129a3cf0d7`, and that the `.102` libs were removed (7 `*.so.*.102`
+  are still in `/usr/local/lib`). CMake pins `libav*` via `FFMPEG_PKGCONF_DIR` (`/usr/local/lib/pkgconfig`) so the
+  distro FFmpeg cannot leak in.
+- MPP `mpp/`: `HermanChen/mpp` `develop` @ `20959ec3`, no local commits; Release, shared, prefix `/usr/local` (headers
+  in `/usr/local/include/rockchip/`, `rockchip_mpp.pc` 1.3.10, installed 2026-11-03; file list in
+  `mpp/install_manifest.txt`). `CMakeLists.txt` also adds `-I/usr/include/rockchip` (the distro 1.5.0 headers):
+  harmless while every include is `<rockchip/...>` (resolved in `/usr/local/include`), but a bare
+  `#include <rk_mpi.h>` would pick the distro header.
+- RGA `librga/`: `airockchip/librga` 1.10.6_[3] (`2b32edc`). The vendor's prebuilt `libs/Linux/gcc-aarch64/librga.so`
+  is copied to `/usr/local/lib` (`librga.so.2` links to it; hand-written `librga.pc`, `-I/usr/local/include`), and its
+  headers are installed flat in `/usr/local/include/` (`im2d*.h`, `rga.h`, `drmrga.h`, `RgaApi.h`, ...; identical to
+  `librga/include`, no `rga/` subdir). Headers and library match (1.10.6). The distro `/usr/include/rga/` (2.2.0,
+  different `im2d_version.h` / `rga.h`) is reachable through the default `/usr/include`: harmless while RGA is
+  included as `<im2d.h>` / `<rga.h>` (resolved in `/usr/local/include`, searched first; today only
+  `src/media/rga_resizer.cpp` and `src/net/frame_composer.cpp`), but `#include <rga/im2d.h>` would pick the 2.2.0 headers
+  against the 1.10.6 library.
+- Include paths: of the pkg-config `MPP` / `RGA` / `AV` sets, only `AV_INCLUDE_DIRS` reaches
+  `target_include_directories` (`CMakeLists.txt`; `MPP_INCLUDE_DIRS` / `RGA_INCLUDE_DIRS` are not passed, only their
+  libraries are linked). The `/usr/local` headers come from `AV_INCLUDE_DIRS` or the default `/usr/local/include`, so
+  the `-I` of the hand-written `librga.pc` plays no part.
+- RKNN `rknn_model_zoo/`: V2.5.0 (`837db8e`); `/usr/lib/librknnrt.so` (2.5.0) is a copy of its
+  `3rdparty/rknpu2/Linux/aarch64/librknnrt.so`. `rknn_api.h` exists only in that checkout: `CMakeLists.txt` finds it
+  through the `HINTS` path `/mnt/nvme_data/work/rknn_model_zoo/3rdparty/rknpu2/include`, so the checkout is a build
+  dependency (`-DRKNN_ROOT=` overrides).
+- Which MPP/RGA a process loads depends on the loader: `ld.so.conf.d` lists `/lib/aarch64-linux-gnu` before
+  `/usr/local/lib`. `light_ai` has `RUNPATH /usr/local/lib`, loads the `/usr/local` copies, and `libavcodec` (no
+  RPATH) reuses them. The `/usr/local/bin/ffmpeg` CLI has no RPATH and runs on the distro MPP 1.5.0 / librga 2.2.0: a
+  CLI test of the fork needs `LD_LIBRARY_PATH=/usr/local/lib`.
+  Check: `ldd build/light_ai | grep -E 'av|mpp|rga|rknn'`.
+
 ## Workflow
 - Tasks arrive as GitHub issues ("Выполни issue #N"): read the issue, post the plan as a comment
   on it (`gh issue comment N --body-file ...`), wait for the user's OK there, then code.
@@ -25,18 +69,43 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   and if git refuses the checkout because of them, ask. Never stash, reset or discard.
 - Stage explicit paths inside `light_ai/` (paths relative to this directory: `git add src/x.cpp`),
   never `git add -A` / `git add .` from the git root / `git commit -a`.
-- Base branch: `master` (`fix/audit-p0` merged in PR #73, `fix/audit-p1` merged in PR #81). One branch per task/stage; PR into `master`
-  with `gh pr create --base master`. The user reviews and merges.
-- Never push to `master` directly, never force-push, never rewrite pushed history.
+- Base branch: `master`. While an audit runs, its integration branch is the base (now `fix/audit-p2`): one branch per
+  task/stage, created from it, PR back into it with `gh pr create --base fix/audit-p2`. The user reviews and merges.
+  GitHub reads `Closes #N` in a PR only when the PR targets the default branch (`master`), so the main session closes
+  the issue (`gh issue close N`) after the user confirms the merge. `master` gets the whole audit through one PR
+  `fix/audit-p2` -> `master`, which the user merges; after it, the base is `master` again (`gh pr create --base master`).
+  Update this bullet and the next one when an audit branch is merged or a new one starts. Earlier audit branches:
+  `fix/audit-p0` reached `master` through PR #5, a direct merge `64f71cb` and finally PR #73; `fix/audit-p1` through
+  PR #81.
+- Never push to `master` or the audit's integration branch (now `fix/audit-p2`) directly, never force-push, never rewrite
+  pushed history.
 - Before a PR, the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
-  (CMake build + 54 unit suites + 5 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
+  (CMake build + 65 unit suites + 6 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
   `SKIP_TSAN=1` / `SKIP_TIDY=1` to narrow intermediate iterations).
-  Two-pass tidy gate: `main` = system `clang-tidy-11` (`.clang-tidy`, `tests/.clang-tidy`),
-  `cognitive` = pinned `clang-tidy==23.1.4` in `venv/` (`scripts/tidy_cognitive.yaml`, Threshold 20).
-  Per-file logs: `build/tidy/{src,tests}/<path>.log` and `build/tidy/cognitive/{src,tests}/<path>.log`.
+  Two-pass tidy gate: self-test + `scripts/rules_lint.sh` first, then `main` = system `clang-tidy-11`
+  (`.clang-tidy`, `tests/.clang-tidy`) and `rules` = pinned `clang-tidy==23.1.4` in `venv/`
+  (`scripts/tidy_rules.yaml`: cognitive complexity 20 + `misc-const-correctness` (#94) + the `custom-*` project
+  rules; `cognitive` before #93).
+  Per-file logs: `build/tidy/{src,tests}/<path>.log` and `build/tidy/rules/{src,tests}/<path>.log`;
+  self-test and lint: `build/tidy/selftest/`.
   Result cache: `build/tidy-cache` (`TIDY_NO_CACHE=1` disables it). See [README.md](README.md#build--static-analysis).
-- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 54 suites / 7,503 checks + 5 TSan suites / 22 checks).
+- Quick tidy on changed files (#93): the main session may run it itself on 1-3 changed TUs and print only
+  the findings, never the full output:
+      TIDY_FILES="src/a.cpp tests/b.cpp" bash scripts/tidy_run.sh > build/tidy-files.log 2>&1; echo rc=$?
+      grep -E ': error: |^tidy: (PASS|FAIL|bad)' build/tidy-files.log
+  Self-test, lint, both passes, the same cache and logs, only those TUs (`.cpp` only; a header -> a TU that includes it;
+  exit 2 on a bad entry). It is not the gate: the full gate and live runs stay with `board-check` before
+  every push, and the per-commit `commit-reviewer` review does not change.
+- Editor diagnostics: `clangd 22.1.1` in `venv/` with the tracked `.clangd` (both compile DBs, cognitive
+  complexity 20, no background index). The `clangd-lsp` plugin starts `clangd` from `PATH`, so a user-level
+  link points at the venv: `~/.local/bin/clangd -> /mnt/nvme_data/linaro/Projects/light/light_ai/venv/bin/clangd`
+  (remove: `rm ~/.local/bin/clangd`, then clangd 11 from `/usr/bin` is used again; a rebuilt venv without
+  `clangd` leaves the link dangling -> reinstall: `venv/bin/pip install --no-cache-dir clangd==22.1.1`).
+  CLI check of one file: `venv/bin/clangd --check=src/a.cpp 2>&1 | grep -E '^E\[[^]]*\] \['` (diagnostics only;
+  the exit code is not a verdict: `--check` also fails on refactoring tweaks it cannot apply).
+  The diagnostics are hints only; the gate stays the authority.
+- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 65 suites / 9,357 checks + 6 TSan suites / 23 checks).
   Single suite / flake hunt: `./build/tests/light_ai_tests [substr...] [--repeat N]` (also `light_ai_tests_tsan`;
   exit 2 on bad args).
 - Live run:
@@ -73,24 +142,39 @@ rules see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   keep baseline logs (`build/run_*.log`) to avoid re-measuring.
 
 ## Project rules (full text: [CONTRIBUTING.md](CONTRIBUTING.md))
-- C++17. No virtuals or inheritance hierarchies; templates for static polymorphism.
-- No manual heap (`new`/`delete`, `unique_ptr`/`shared_ptr`), no statics of any kind, no globals.
-  Frame path: no allocation; preallocated members cleared at entry by the callee.
-- Pixels exist only as `dma-buf`s: no CPU pixel copies.
-- Dependencies injected by reference to a concrete class (`StopFlag&`, `const Log&`).
-- Diagnostics through `Log` (`include/core/log.hpp`); only `main.cpp` owns `std::cout`/`std::cerr`.
-- Header layout: in each visibility section, functions first, then a fresh label for data.
-- Header extensions: new headers use `.hpp`; nine legacy `.h` headers stay as-is unless refactored.
-- `core/` includes only the C++17 standard library and `pod_list.hpp`/`pod_ring.hpp` (keeps tests SDK-free).
-- Exception: header-only libraries in `externals/` (`stb_easy_font.h`, `font8x8_basic.h`) may keep file
-  statics; include them only from `.cpp` files, never from a project header.
+(gate) = enforced by `scripts/tidy_run.sh` (`custom-*` checks and `misc-const-correctness` of the `rules` pass,
+`scripts/rules_lint.sh`, both self-tested on `tests/tidy_probe/`): nobody re-checks it by hand. Fix a (gate) finding
+like any other gate finding; a NOLINT that switches a `custom-*` check or `misc-const-correctness` off (by name or
+glob: `*`, `cust*`, `misc-*`; every NOLINT of a line counts) only
+with `: <reason>` and a line in `scripts/rules_allow.txt` (a CONTRIBUTING-listed site), decided by the main session;
+only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
+(review) = only `commit-reviewer` can judge it.
+- C++17 (review). No virtuals or inheritance hierarchies (gate); templates for static polymorphism.
+- No manual heap (`new`/`delete`, `malloc` family, `unique_ptr`/`shared_ptr`/`weak_ptr`), no statics of any
+  kind, no globals, no `const_cast` (gate). Frame path: no allocation; preallocated members cleared at entry
+  by the callee (review).
+- Pixels exist only as `dma-buf`s: no CPU pixel copies (review).
+- Dependencies injected by reference to a concrete class (`StopFlag&`, `const Log&`) (review).
+- `const` by default: unchanged locals, read-only pointees and read-only reference / pointer parameters of free
+  functions (gate: `misc-const-correctness`); member function / constructor / lambda parameters, dependent locals
+  in templates, `const` methods (review). A false positive is worked around in code or NOLINTed with a reason.
+- Diagnostics through `Log` (`include/core/log.hpp`); only `main.cpp` owns `std::cout`/`std::cerr`/`std::clog`;
+  no C stdio output (gate).
+- Header layout: in each visibility section, functions first, then a fresh label for data (review).
+- Header extensions: headers use `.hpp`, no `.h` (gate).
+- `core/` includes only the C++17 standard library and `core/*` (keeps tests SDK-free)
+  (gate); include order: system and SDK headers first (gate); no GStreamer / OpenCV (gate).
+- Exception (review): header-only libraries in `externals/` may keep file statics; include them
+  only from `.cpp` files, never from a project header.
 - Errors (`Status` / `noexcept`): recoverable failures return `Status` (`include/core/status.hpp`);
   exceptions (`std::runtime_error` via `throw_on`) are startup-only; frame path and thread bodies are
-  `noexcept` (no `throw`, no `catch (...)`). Exit codes: `0` clean, `1` runtime fatal, `2` bad CLI/config,
-  `3` startup failure.
-- Output side vs recognition: no viewer -> output side sleeps completely (`enc=0.0`); recognition never
+  `noexcept` (no `throw`: review; no `catch (...)` outside the two allowlisted sites of CONTRIBUTING: gate).
+  Exit codes (review): `0` clean, `1` runtime fatal, `2` bad CLI/config, `3` startup failure.
+- Output side vs recognition (review): no viewer -> output side sleeps completely (`enc=0.0`); recognition never
   sleeps; with viewer, online sources run full path and absent sources show `NO SIGNAL`.
-- Comments match the code and docs; max line length `140` (`.clang-format`).
+- Control flow (gate): no `if` / `else if` ladders (`if constexpr` too; `switch`, tables, early returns,
+  independent `if`s), no loop with an empty body, no `for (;;)` / `while (true)`: every loop states its exit condition.
+- Comments match the code and docs (review); max line length `140` (`.clang-format`; gate).
 
 ## Completed refactoring stages (0–7, `fix/audit-p0` @ `3ccd8ae`, merged in PR #73)
 Full milestone history and A/B records live in [docs/roadmap.md](docs/roadmap.md) and [docs/state.md](docs/state.md).

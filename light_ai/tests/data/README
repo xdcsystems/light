@@ -31,7 +31,7 @@ ref_evening_golden.txt -- the output of test_reference_chain.cpp: the clip segme
     cmake -S tests -B build/tests && cmake --build build/tests --target light_ai_tests
     cd build/tests && LIGHT_AI_WRITE_GOLDEN=1 ./light_ai_tests
     Rewrite it only for a deliberate behavior change of BoxSmoother, Tracker or the
-    box mapper -- never in a refactoring (re-baselined in Stage 4 for `BoxSmoother` skipping `cls == 0`, `Tracker` `kMaxMiss=6` / `P2-9`, and `YoloDecoder` `stable_sort` NMS; re-baselined on `feat/callout-2x-box-stabilize` for `BoxSmoother` interval-envelope locking, confirmed coasting, and weak-flash hysteresis).
+    box mapper -- never in a refactoring (re-baselined in Stage 4 for `BoxSmoother` skipping `cls == 0`, `Tracker` `kMaxMiss=6` / `P2-9`, and `YoloDecoder` `stable_sort` NMS; re-baselined on `feat/callout-2x-box-stabilize` for `BoxSmoother` interval-envelope locking, confirmed coasting, and weak-flash hysteresis; re-baselined on `fix/audit-p2-pr3` (#91 item 4) for the `BoxFilter` display filter in `BoxSmoother`: only the non-person `s` and `b` lines changed, every `t` line, person box and trail dot stayed byte-identical).
     Tolerances (test_reference_chain.cpp): 1e-2 px for positions / sizes, 1e-1 px/s
     for velocities, 1e-4 for confidences; ids, states, counts, classes, colors, alpha
     exact. Measured (2026-11-15): the same code built with -ffp-contract=off (no fused

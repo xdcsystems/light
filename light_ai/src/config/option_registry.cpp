@@ -17,7 +17,7 @@
 #include <string>
 #include <string_view>
 
-#include "config/option_registry.h"
+#include "config/option_registry.hpp"
 #include "config/config.hpp"
 
 namespace
@@ -105,9 +105,10 @@ namespace
         return true;
     }
 
-    bool apply_config( Config& c, const char* )
+    // --config is read by CliOptions::prepass before any option; its table entry only accepts the key. The
+    // parameters stay unnamed: the Entry::apply signature is fixed and this one reads neither.
+    bool apply_config( Config&, const char* )
     {
-        ( void ) c;
         return true;
     }
 
@@ -178,12 +179,15 @@ namespace
         return true;
     }
 
+    bool parse_src_rot( const char* v, int& deg )
+    {
+        return set_int( v, 0, 270, deg ) && ( deg == 0 || deg == 90 || deg == 180 || deg == 270 );
+    }
+
     bool apply_src_rot( Config& c, const char* v )
     {
         int deg = -1;
-        if ( !set_int( v, 0, 270, deg ) )
-            return false;
-        if ( deg != 0 && deg != 90 && deg != 180 && deg != 270 )
+        if ( !parse_src_rot( v, deg ) )
             return false;
         if ( c.sources.empty() )
             return false;
@@ -236,6 +240,8 @@ OptionRegistry::OptionRegistry( const Log& log )
                               +[]( Config& c, const char* v ) { return set_float_01( v, c.infer.iou_thr ); } } },
         { "--label-lang",   { true, "callout label language (en|ru; default en)", "en|ru",
                               &apply_label_lang } },
+        { "--label-scale",  { true, "callout text size 1..4, 11 px steps on the output tile (default 1)", "1..4",
+                              +[]( Config& c, const char* v ) { return set_int( v, 1, 4, c.stream.label_scale ); } } },
         { "--log-level",    { true, "diagnostic verbosity: debug|info|warn|error|off (default info)",
                               "debug|info|warn|error|off", &apply_log_level } },
         { "--model",        { true, "RKNN model path", nullptr,
@@ -244,7 +250,7 @@ OptionRegistry::OptionRegistry( const Log& log )
                               +[]( Config& c, const char* ) { return set_flag( c.stream.enabled ); } } },
         { "--net-bitrate",  { true, "preview bitrate 1000..100000 kbps", "1000..100000 kbps",
                               +[]( Config& c, const char* v ) { return set_int( v, 1000, 100000, c.stream.bitrate_kbps ); } } },
-        { "--net-fps",      { true, "preview stream fps 1..120, 0 = follow the source (VFR pts from dequeue times)", "0..120",
+        { "--net-fps",      { true, "preview stream fps 1..120, 0 = follow the source (VFR pts from publish times)", "0..120",
                               +[]( Config& c, const char* v ) { return set_int( v, 0, 120, c.stream.fps ); } } },
         { "--net-h264",     { false, "H.264/MPEG-TS preview instead of raw rgb24", nullptr,
                               +[]( Config& c, const char* ) { return set_flag( c.stream.h264 ); } } },
@@ -280,6 +286,12 @@ bool OptionRegistry::apply( const Entry& e, Config& cfg, const char* val ) const
 {
     if ( e.opt.apply( cfg, val ) )
         return true;
+    int deg = -1;
+    if ( std::strcmp( e.name, "--src-rot" ) == 0 && cfg.sources.empty() && parse_src_rot( val, deg ) )
+    {
+        log_.error() << "--src-rot requires a preceding --device or --net-src (or --config source)\n";
+        return false;
+    }
     Log::Line line = log_.error();
     line << "invalid value for " << e.name << ": '" << ( val ? val : "" ) << '\'';
     if ( e.opt.expected )

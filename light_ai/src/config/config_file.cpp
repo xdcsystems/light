@@ -12,8 +12,8 @@
 #include <ini.h>
 
 #include "config/cli.hpp"
-#include "config/config_file.h"
-#include "config/option_registry.h"
+#include "config/config_file.hpp"
+#include "config/option_registry.hpp"
 #include "core/log.hpp"
 
 namespace
@@ -56,10 +56,11 @@ namespace
     // Standard inih handler signature (no line-number parameter):
     // ini_parse() returns the FIRST-error line (it keeps parsing past
     // errors), reported once by ConfigFileLoader::load.
+    // NOLINTNEXTLINE(misc-const-correctness): ini_handler fixes the callback type, user is void*
     int cfg_file_handler( void* user, const char* section, const char* key,
             const char* value )
     {
-        CfgFileCtx* cx = static_cast<CfgFileCtx*>( user );
+        const CfgFileCtx* cx = static_cast<const CfgFileCtx*>( user );
         // inih passes section = "" (NOT nullptr) for entries parsed
         // before any [section] header -- the empty name is the normal
         // flat case, only a real named section is an error.
@@ -124,12 +125,12 @@ bool ConfigFileLoader::load( const char* path, Config& cfg ) const
         // ini.h: -1 = file open error, -2 = memory allocation error
         // (only with INI_USE_STACK=0 -- unreachable in this build, kept
         // for completeness); any other nonzero = the first error line.
-        if ( rc == -1 )
-            log_->error() << "config: cannot open file: " << path << '\n';
-        else if ( rc == -2 )
-            log_->error() << "config: out of memory while parsing: " << path << '\n';
-        else
-            log_->error() << "config: rejected: " << path << " (line " << rc << ")\n";
+        switch ( rc )
+        {
+            case -1: log_->error() << "config: cannot open file: " << path << '\n'; break;
+            case -2: log_->error() << "config: out of memory while parsing: " << path << '\n'; break;
+            default: log_->error() << "config: rejected: " << path << " (line " << rc << ")\n"; break;
+        }
         return false;
     }
     log_->info() << "config: loaded " << path << '\n';

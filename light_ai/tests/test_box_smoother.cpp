@@ -1,6 +1,7 @@
+#include <cmath>
 #include <sstream>
 
-#include "box_smoother.h"
+#include "render/box_smoother.hpp"
 #include "check.hpp"
 #include "suites.hpp"
 
@@ -17,42 +18,38 @@ namespace
         l.push( d );
         return l;
     }
-    void test_envelope_and_coast( TestRun& t )
+    // A filtered value: from the track's previous box `from` toward the new raw
+    // box `to`, but not all the way (the dead zone may keep it at from). A
+    // pass-through would be exactly `to`.
+    bool toward( float v, float from, float to )
     {
-        // Stationary jittering box calibrates [lo, hi] over window, locks onto mean (0 px delta),
-        // and breaks out immediately when detections move outside the bounds.
+        return ( v >= from && v < to ) || ( v <= from && v > to );
+    }
+
+    void test_filter_and_coast( TestRun& t )
+    {
+        // A standing jittering box (+-3 px) settles and then stays exactly still
+        // (BoxFilter's dead zone); a real move makes it follow at once.
         {
             BoxSmoother sm;
             DetList out;
             const float dx[8] = { -2.0f, 3.0f, -1.0f, 2.0f, -3.0f, 1.0f, 2.0f, -2.0f };
-            for ( const float off : dx )
-                sm.update( one( det( 200.0f + off, 150.0f - off, 80.0f, 120.0f, 56 ) ), out );
+            for ( int k = 0; k < 40; ++k )
+                sm.update( one( det( 200.0f + dx[k % 8], 150.0f - dx[k % 8], 80.0f, 120.0f, 56 ) ), out );
             CHECK( t, out.n == 1 );
-            const float locked_x = out.d[0].x;
-            const float locked_y = out.d[0].y;
-            CHECK_NEAR( t, locked_x, 200.0f, 1e-4f );
-            CHECK_NEAR( t, locked_y, 150.0f, 1e-4f );
-
-            // Subsequent jitter inside [lo - pad, hi + pad] holds the locked mean identically.
-            sm.update( one( det( 203.0f, 148.0f, 80.0f, 120.0f, 56 ) ), out );
-            CHECK_NEAR( t, out.d[0].x, locked_x, 1e-6f );
-            CHECK_NEAR( t, out.d[0].y, locked_y, 1e-6f );
-            sm.update( one( det( 197.0f, 152.0f, 80.0f, 120.0f, 56 ) ), out );
-            CHECK_NEAR( t, out.d[0].x, locked_x, 1e-6f );
-            CHECK_NEAR( t, out.d[0].y, locked_y, 1e-6f );
-
-            // Moving outside bounds unlocks right away without lag.
+            const float held_x = out.d[0].x;
+            const float held_y = out.d[0].y;
+            CHECK_NEAR( t, held_x, 200.0f, 3.0f );
+            CHECK_NEAR( t, held_y, 150.0f, 3.0f );
+            for ( int k = 0; k < 40; ++k )
+            {
+                sm.update( one( det( 200.0f + dx[k % 8], 150.0f - dx[k % 8], 80.0f, 120.0f, 56 ) ), out );
+                CHECK( t, out.d[0].x == held_x && out.d[0].y == held_y );
+            }
             sm.update( one( det( 230.0f, 150.0f, 80.0f, 120.0f, 56 ) ), out );
-            CHECK( t, out.d[0].x > 210.0f );
-
-            // Steady frames at the new position re-lock cleanly on the new center.
-            for ( int k = 0; k < BoxEnvelope::kWindowFrames; ++k )
-                sm.update( one( det( 230.0f + ( k & 1 ? 1.0f : -1.0f ), 150.0f, 80.0f, 120.0f, 56 ) ), out );
-            const float relocked_x = out.d[0].x;
-            sm.update( one( det( 231.0f, 150.0f, 80.0f, 120.0f, 56 ) ), out );
-            CHECK_NEAR( t, out.d[0].x, relocked_x, 1e-6f );
+            CHECK( t, out.d[0].x > held_x );
         }
-        // Continuously moving box exceeds stationary span and never freezes.
+        // A continuously moving box never freezes.
         {
             BoxSmoother sm;
             DetList out;
@@ -65,7 +62,7 @@ namespace
                 prev_x = out.d[0].x;
             }
         }
-        // Confirmed track (hits >= 2) coasts smoothly across 6 missed frames and expires on the 7th.
+        // Confirmed track (hits >= 2) coasts unchanged across 6 missed frames and expires on the 7th.
         {
             BoxSmoother sm;
             DetList out;
@@ -77,7 +74,7 @@ namespace
             {
                 sm.update( DetList {}, out );
                 CHECK( t, out.n == 1 && out.d[0].cls == 58 );
-                CHECK_NEAR( t, out.d[0].x, held_x, 1e-4f );
+                CHECK( t, out.d[0].x == held_x );
             }
             sm.update( DetList {}, out );
             CHECK( t, out.n == 0 );
@@ -88,85 +85,65 @@ namespace
             DetList out;
             sm.update( one( Detection { 300, 200, 40, 80, 75, 0.28f } ), out );
             CHECK( t, out.n == 0 );
-            sm.update( one( Detection { 302, 200, 40, 80, 75, 0.29f } ), out );
+            sm.update( one( Detection { 310, 200, 40, 80, 75, 0.29f } ), out );
             CHECK( t, out.n == 1 );
-            CHECK_NEAR( t, out.d[0].x, 301.0f, 1e-4f );
+            CHECK( t, toward( out.d[0].x, 300.0f, 310.0f ) );
+            const float shown = out.d[0].x;
             sm.update( DetList {}, out );
-            CHECK( t, out.n == 1 );
-            CHECK_NEAR( t, out.d[0].x, 301.0f, 1e-4f );
+            CHECK( t, out.n == 1 && out.d[0].x == shown );
         }
     }
 
-    void check_slow_ramp_walk( TestRun& t, float spd )
+    // A slow walk (spd px/frame) from a standing start: the box never moves
+    // backwards, never faster than 1.15x the walk once it moves, and keeps up.
+    void check_slow_ramp( TestRun& t, float spd )
     {
         BoxSmoother sm;
         DetList out;
-        float prev_x = 0.0f;
-        for ( int k = 0; k < 30; ++k )
+        for ( int k = 0; k < 20; ++k )
+            sm.update( one( det( 100.0f, 150.0f, 80.0f, 120.0f, 56 ) ), out );
+        float prev_x = out.d[0].x;
+        float x = 100.0f;
+        for ( int k = 1; k <= 60; ++k )
         {
-            sm.update( one( det( 100.0f + static_cast<float>( k ) * spd, 150.0f, 80.0f, 120.0f, 56 ) ), out );
-            if ( k > 0 )
-            {
-                const float dx = out.d[0].x - prev_x;
-                CHECK( t, dx > 0.0f && dx <= 1.5f * spd + 1e-3f );
-            }
+            x = 100.0f + static_cast<float>( k ) * spd;
+            sm.update( one( det( x, 150.0f, 80.0f, 120.0f, 56 ) ), out );
+            const float dx = out.d[0].x - prev_x;
+            CHECK( t, dx >= 0.0f && dx <= 1.15f * spd + 1e-3f );
             prev_x = out.d[0].x;
         }
-
-        // Direct OverlaySink path (move_alpha = 0): steady slow walk from start never freezes or jerks.
-        BoxEnvelope walk;
-        float prev_wx = 0.0f;
-        for ( int k = 0; k < 30; ++k )
-        {
-            const float shift = static_cast<float>( k ) * spd;
-            walk.step( 100.0f + shift, 100.0f, 180.0f + shift, 220.0f, 0.0f );
-            if ( k > 0 )
-            {
-                const float dx = walk.cx() - prev_wx;
-                CHECK( t, dx > 0.0f && dx <= 1.5f * spd + 1e-3f );
-            }
-            prev_wx = walk.cx();
-        }
-    }
-
-    void check_slow_ramp_breakout( TestRun& t, float spd )
-    {
-        // Stationary lock -> slow ramp breaks out cleanly and stays smooth thereafter.
-        BoxEnvelope env;
-        for ( int k = 0; k < BoxEnvelope::kWindowFrames; ++k )
-            env.step( 100.0f, 100.0f, 180.0f, 220.0f, 0.0f );
-        float prev_cx = env.cx();
-        int frozen = 0;
-        for ( int k = 1; k <= 40; ++k )
-        {
-            const float shift = static_cast<float>( k ) * spd;
-            env.step( 100.0f + shift, 100.0f, 180.0f + shift, 220.0f, 0.0f );
-            const float cx = env.cx();
-            const float dx = cx - prev_cx;
-            if ( k >= 14 )
-            {
-                frozen += ( dx <= 1e-5f ) ? 1 : 0;
-                CHECK( t, dx <= 1.5f * spd + 1e-3f );
-            }
-            prev_cx = cx;
-        }
-        CHECK( t, frozen == 0 );
+        CHECK( t, x - out.d[0].x < 10.0f );
     }
 
     void test_slow_ramp( TestRun& t )
     {
         const float speeds[4] = { 0.5f, 1.0f, 2.0f, 3.0f };
-        for ( float spd : speeds )
-        {
-            check_slow_ramp_walk( t, spd );
-            check_slow_ramp_breakout( t, spd );
-        }
+        for ( const float spd : speeds )
+            check_slow_ramp( t, spd );
     }
 }  // namespace
 
 void test_box_smoother( TestRun& t )
 {
-    // First sighting of non-person passes through unsmoothed; next match is EMA (alpha 0.5).
+    // M-14: a NaN or empty non-person det is dropped -- not spawned, not
+    // emitted -- and does not disturb a live smoothed box.
+    {
+        BoxSmoother sm;
+        DetList out;
+        sm.update( one( det( std::nanf( "" ), 10.0f, 80.0f, 120.0f, 56 ) ), out );
+        CHECK( t, out.n == 0 );
+        sm.update( one( det( 10.0f, 10.0f, 0.0f, 120.0f, 56 ) ), out );
+        CHECK( t, out.n == 0 );
+        for ( int i = 0; i < 3; ++i )
+            sm.update( one( det( 200.0f, 150.0f, 80.0f, 120.0f, 56 ) ), out );
+        DetList mixed;
+        mixed.push( det( 200.0f, 150.0f, 80.0f, 120.0f, 56 ) );
+        mixed.push( det( 200.0f, std::nanf( "" ), 80.0f, 120.0f, 56 ) );
+        sm.update( mixed, out );
+        CHECK( t, out.n == 1 && std::isfinite( out.d[0].y ) );
+        CHECK_NEAR( t, out.d[0].x, 200.0f, 1e-3f );
+    }
+    // First sighting of non-person passes through unsmoothed; the next match is filtered.
     {
         BoxSmoother sm;
         DetList out;
@@ -175,10 +152,10 @@ void test_box_smoother( TestRun& t )
         CHECK_NEAR( t, out.d[0].x, 100.0f, 1e-4f );
         sm.update( one( det( 110, 104, 54, 84, 2 ) ), out );
         CHECK( t, out.n == 1 );
-        CHECK_NEAR( t, out.d[0].x, 105.0f, 1e-4f );
-        CHECK_NEAR( t, out.d[0].y, 102.0f, 1e-4f );
-        CHECK_NEAR( t, out.d[0].w, 52.0f, 1e-4f );
-        CHECK_NEAR( t, out.d[0].h, 82.0f, 1e-4f );
+        CHECK( t, toward( out.d[0].x, 100.0f, 110.0f ) );
+        CHECK( t, toward( out.d[0].y, 100.0f, 104.0f ) );
+        CHECK( t, toward( out.d[0].w, 50.0f, 54.0f ) );
+        CHECK( t, toward( out.d[0].h, 80.0f, 84.0f ) );
         CHECK( t, out.d[0].cls == 2 );
         CHECK_NEAR( t, out.d[0].conf, 0.9f, 1e-6f );  // only the box is filtered
     }
@@ -198,7 +175,7 @@ void test_box_smoother( TestRun& t )
         sm.update( next, out );
         CHECK( t, out.n == 2 );
         CHECK_NEAR( t, out.d[0].x, 14.0f, 1e-4f );   // cls == 0 unsmoothed pass-through
-        CHECK_NEAR( t, out.d[1].x, 104.0f, 1e-4f );  // cls == 56 got a slot despite 40 people
+        CHECK( t, toward( out.d[1].x, 100.0f, 108.0f ) );  // cls == 56 got a slot despite 40 people
     }
     // Preallocated buffer contract: out is cleared at entry, never accumulated.
     {
@@ -236,7 +213,7 @@ void test_box_smoother( TestRun& t )
         sm.update( DetList {}, out );
         sm.update( DetList {}, out );
         sm.update( one( det( 110, 100, 50, 80, 2 ) ), out );
-        CHECK_NEAR( t, out.d[0].x, 105.0f, 1e-4f );  // still tracked: smoothed
+        CHECK( t, toward( out.d[0].x, 100.0f, 110.0f ) );  // still tracked: smoothed
 
         BoxSmoother gone;
         gone.update( one( det( 100, 100, 50, 80, 2 ) ), out );
@@ -257,7 +234,7 @@ void test_box_smoother( TestRun& t )
         sm.update( two, out );
         CHECK( t, out.n == 2 );
         CHECK_NEAR( t, out.d[0].x, 130.0f, 1e-4f );  // lost the track: passes through
-        CHECK_NEAR( t, out.d[1].x, 102.0f, 1e-4f );  // matched: smoothed
+        CHECK( t, toward( out.d[1].x, 100.0f, 104.0f ) );  // matched: smoothed
     }
     // set_log: an empty path is silent; an unopenable one is reported through
     // the Log (warn) and the CSV stays off.
@@ -270,10 +247,10 @@ void test_box_smoother( TestRun& t )
         CHECK( t, lerr.str().empty() );
         sm.set_log( "/nonexistent-dir/box.csv", log );
         CHECK( t, lerr.str() == "smoother: box-log open failed for '/nonexistent-dir/box.csv' - A/B logging disabled\n" );
-        DetList out;
+        const DetList out;
         sm.log_frame( 0, one( det( 1, 1, 1, 1, 0 ) ), out );  // no CSV open: a no-op
         CHECK( t, lout.str().empty() );
     }
-    test_envelope_and_coast( t );
+    test_filter_and_coast( t );
     test_slow_ramp( t );
 }

@@ -3,7 +3,7 @@
 #include <string>
 
 #include "check.hpp"
-#include "console_reporter.h"
+#include "app/console_reporter.hpp"
 #include "core/log.hpp"
 #include "suites.hpp"
 

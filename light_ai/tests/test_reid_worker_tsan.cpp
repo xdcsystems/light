@@ -50,7 +50,7 @@ void test_reid_worker_tsan( TestRun& t )
             if ( slot >= 0 )
             {
                 const ReidJob job { slot, iter % 2, ( iter % 5 ) + 1, static_cast<uint32_t>( iter + 1 ),
-                                    static_cast<int64_t>( iter ) * 1000, false, false };
+                                    static_cast<int64_t>( iter ) * 1000 };
                 if ( q.submit( job ) )
                     ++submitted;
             }

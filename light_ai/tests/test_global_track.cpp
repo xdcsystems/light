@@ -23,10 +23,133 @@ namespace
         return r;
     }
 
+    void check_ch9_reid_gating( TestRun& t )
+    {
+        // Clipped / occluded tracks never reach the Re-ID queue: select_crops() refuses them up
+        // front. Refused tracks come first, the clean one last, so the crop cap cannot hide a
+        // refusal; the clean one is the positive control (same size, unbound, retry interval due).
+        GlobalTrackTable tab( 0.62f );
+        {
+            TrajList gate {};
+            // Touches the left band edge.
+            gate.push( TrackState { 11, TRACK_CONF, 30.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 11, 180.0f } );
+            // Squeezed below its height prior (120 < 0.85 * 180).
+            gate.push( TrackState { 12, TRACK_CONF, 500.0f, 360.0f, 0.0f, 0.0f, 80.0f, 120.0f, 3, 0, 12, 180.0f } );
+            // An overlapping pair (IoU 0.6 >= 0.30): both refused.
+            gate.push( TrackState { 13, TRACK_CONF, 800.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 13, 180.0f } );
+            gate.push( TrackState { 14, TRACK_CONF, 820.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 14, 180.0f } );
+            // Clean.
+            gate.push( TrackState { 15, TRACK_CONF, 300.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 15, 180.0f } );
+            tab.sync_cam( 2, gate, 100000 );
+            ReidCropReq reqs[2] {};
+            CHECK( t, tab.select_crops( 2, gate, { 0, 640, 80, 480 }, 1280, 720, 128, 256, reqs, 2 ) == 1 );
+            CHECK( t, reqs[0].local_id == 15 && reqs[0].gen == 15 );
+            TrajList none {};
+            tab.sync_cam( 2, none, 110000 );
+            CHECK( t, tab.active_global_count() == 0 );
+        }
+
+        // Populate gallery with 3 clean tracks: G1=[1,0,0], G2=[0,1,0], G3=[0,0,1].
+        TrajList cam0 {};
+        cam0.push( TrackState { 1, TRACK_CONF, 200.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 1, 180.0f } );
+        cam0.push( TrackState { 2, TRACK_CONF, 600.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 2, 180.0f } );
+        tab.sync_cam( 0, cam0, 120000 );
+        tab.apply_result( make_res( 0, 1, 1, 130000, 1.0f, 0.0f, 0.0f ) );
+        tab.apply_result( make_res( 0, 2, 2, 130000, 0.0f, 1.0f, 0.0f ) );
+        TrajList empty0 {};
+        tab.sync_cam( 0, empty0, 140000 );
+        TrajList cam1 {};
+        cam1.push( TrackState { 3, TRACK_CONF, 400.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 3, 180.0f } );
+        tab.sync_cam( 1, cam1, 150000 );
+        tab.apply_result( make_res( 1, 3, 3, 150000, 0.0f, 0.0f, 1.0f ) );
+        TrajList empty1 {};
+        tab.sync_cam( 1, empty1, 160000 );
+
+        // Bind cam1 track 4 to G1.
+        TrajList cam1b {};
+        cam1b.push( TrackState { 4, TRACK_CONF, 400.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 4, 180.0f } );
+        tab.sync_cam( 1, cam1b, 200000 );
+        tab.apply_result( make_res( 1, 4, 4, 200000, 1.0f, 0.0f, 0.0f ) );
+        tab.sync_cam( 1, cam1b, 210000 );
+        CHECK( t, cam1b.d[0].global_id == 1 );
+
+        // Ambiguous bound switch (G2 vs G3 within kReidMargin=0.06) is blocked even after 2 hits.
+        tab.apply_result( make_res( 1, 4, 4, 250000, 0.0f, 0.72f, 0.69f ) );
+        tab.apply_result( make_res( 1, 4, 4, 260000, 0.0f, 0.72f, 0.69f ) );
+        tab.sync_cam( 1, cam1b, 270000 );
+        CHECK( t, cam1b.d[0].global_id == 1 );
+    }
+
+    // Low §3: the 32-slot gallery saturates without overflow -- the 33rd
+    // identity evicts the oldest inactive one (count stays 32); the evicted
+    // appearance comes back as a new id, a kept one re-identifies.
+    void check_saturation( TestRun& t )
+    {
+        constexpr int dim = 64;
+        const auto one_hot = []( int lid, int64_t ts, int axis ) {
+            ReidResult r {};
+            r.src_idx = 0;
+            r.local_id = lid;
+            r.gen = static_cast<uint32_t>( lid );
+            r.ts_us = ts;
+            r.dim = dim;
+            r.ok = true;
+            r.feat[static_cast<size_t>( axis )] = 1.0f;
+            return r;
+        };
+        const auto person = []( int lid ) {
+            return TrackState { lid, TRACK_CONF, 300.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, static_cast<uint32_t>( lid ), 180.0f };
+        };
+        GlobalTrackTable tab( 0.62f );
+        const TrajList empty {};
+        // One identity at a time: bind, then leave (inactive, kept for the 45 s TTL).
+        const auto show = [&]( int lid, int axis, int64_t ts ) {
+            TrajList cam {};
+            cam.push( person( lid ) );
+            tab.sync_cam( 0, cam, ts );
+            tab.apply_result( one_hot( lid, ts, axis ) );
+            tab.sync_cam( 0, cam, ts + 1000 );
+            const int gid = cam.d[0].global_id;
+            TrajList gone = empty;
+            tab.sync_cam( 0, gone, ts + 2000 );
+            return gid;
+        };
+        int64_t ts = 1000000;
+        bool ids_ok = true;
+        for ( int i = 0; i < reid_cfg::kMaxGlobalTracks; ++i, ts += 100000 )
+            ids_ok = ids_ok && show( i + 1, i, ts ) == i + 1;
+        CHECK( t, ids_ok );
+        CHECK( t, tab.active_global_count() == reid_cfg::kMaxGlobalTracks );
+
+        CHECK( t, show( 100, 40, ts ) == reid_cfg::kMaxGlobalTracks + 1 );  // the 33rd evicts the oldest (id 1)
+        CHECK( t, tab.active_global_count() == reid_cfg::kMaxGlobalTracks );
+        ts += 100000;
+        CHECK( t, show( 101, 5, ts ) == 6 );                                  // axis 5 is still in the gallery
+        ts += 100000;
+        CHECK( t, show( 102, 0, ts ) == reid_cfg::kMaxGlobalTracks + 2 );   // axis 0 was evicted: a new id
+        CHECK( t, tab.active_global_count() == reid_cfg::kMaxGlobalTracks );
+    }
+
+    void check_m2_disconnect_cleanup( TestRun& t )
+    {
+        GlobalTrackTable tab( 0.62f );
+        TrajList cam0 {};
+        cam0.push( TrackState { 1, TRACK_CONF, 300.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 1, 180.0f } );
+        tab.sync_cam( 0, cam0, 100000 );
+        tab.apply_result( make_res( 0, 1, 1, 100000, 1.0f, 0.0f ) );
+        CHECK( t, tab.active_global_count() == 1 );
+
+        TrajList empty {};
+        tab.sync_cam( 0, empty, 200000 );
+        tab.sync_cam( 0, empty, 200000 + 46LL * 1000 * 1000 );
+        CHECK( t, tab.active_global_count() == 0 );
+    }
+
 }  // namespace
 
 void test_global_track( TestRun& t )
 {
+    check_saturation( t );
     // 1. Person seen on cam 0, then matched across to cam 1 -> shared global_id.
     {
         GlobalTrackTable tab( 0.62f );
@@ -132,4 +255,6 @@ void test_global_track( TestRun& t )
         ReidCropReq reqs[2] {};
         CHECK( t, tab.select_crops( 0, tiny, { 0, 640, 80, 480 }, 1280, 720, 128, 256, reqs, 2 ) == 0 );
     }
+    check_ch9_reid_gating( t );
+    check_m2_disconnect_cleanup( t );
 }

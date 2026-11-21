@@ -12,9 +12,9 @@ extern "C"
 #include <libavutil/pixfmt.h>
 }
 
-#include "av_common.hpp"  // av_noop_free
+#include "net/av_common.hpp"  // av_noop_free
 #include "net/encoder_frame_pool.hpp"
-#include "throw_on.hpp"
+#include "core/throw_on.hpp"
 EncoderFramePool::EncoderFramePool( const StreamLayout& layout )
 {
     // A failed alloc throws via throw_on (fail loud, RknnEngine pattern); the

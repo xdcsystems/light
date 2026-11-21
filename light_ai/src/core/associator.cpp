@@ -7,7 +7,7 @@ int Associator::match( int round, const DetList& dets, const TrackBoxes& tracks,
     for ( int k = 0; k < nd; ++k )
     {
         const Detection& d = dets.d[k];
-        if ( det_trk[k] >= 0 || d.cls != 0 )
+        if ( det_trk[k] >= 0 || d.cls != 0 || !det_usable( d ) )
             continue;
         for ( int i = 0; i < kMaxTracks; ++i )
         {

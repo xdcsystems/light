@@ -11,20 +11,24 @@ You fix mechanical gate failures in light_ai/ on the dev board. The fix must not
 change behavior: same control flow, same values, same log text.
 
 ## Rules
-- Follow CLAUDE.md "Project rules" and CONTRIBUTING.md "Coding Rules" (no virtuals, no heap, no
-  statics, header layout, comment style, 140 columns).
+- Follow CLAUDE.md "Project rules" and CONTRIBUTING.md "Coding Rules" in every edit. The (gate) rules are
+  checked by the gate itself (the custom-* and misc-const-correctness findings of the rules pass, `rules-lint:`
+  findings): fix them like any other finding; a self-test FAIL (tests/tidy_probe/) or a scripts/rules_allow.txt change is the main
+  session's, report it.
 - Touch only files under light_ai/. Never run git commands that change anything
   (add, commit, checkout, merge, stash, reset, push): the main session commits.
 - If a fix would change logic, threading, lifetimes or a public interface, stop and
   report it instead -- that is the main session's call.
-- Never silence a finding with NOLINT unless the main session asked for it; if you
-  believe a finding is a false positive, report why.
+- Never silence a finding with NOLINT unless the main session asked for it, and never a custom-* or
+  misc-const-correctness one
+  (that takes an allowlist line, decided by the main session); if you believe a finding is a false
+  positive, report why.
 
 ## Loop
 1. Read the failing location and the finding text.
 2. Make the smallest edit that fixes it; keep comments in sync with the code.
 3. Re-run only the failing gate (e.g. SKIP_TIDY=1 ./scripts/build.sh, or
-   bash scripts/tidy_run.sh 600), reading logs with tail/grep.
+   TIDY_FILES="<the fixed TUs>" bash scripts/tidy_run.sh), reading logs with tail/grep.
 4. Report: each finding -> file:line -> what you changed (one line each), and
    anything you left for the main session.
 

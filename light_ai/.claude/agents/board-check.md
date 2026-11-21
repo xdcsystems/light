@@ -44,10 +44,15 @@ anything (checkout, merge, commit, push, stash, reset).
 Logs are long: use tail and grep, never read a whole log.
 - Build/gate: `tail -n 40 build/gate.log`; on failure grep for `error:` / `FAILED`
   and show the FIRST error with \~15 lines of context.
-- Tidy: two passes (main = clang-tidy 11, cognitive = clang-tidy 23 with cognitive complexity
-  only), each with its block "---- <pass>: findings by check ----" in build/gate.log; per-file
-  details in build/tidy/{src,tests}/<path>.log (main) and build/tidy/cognitive/{src,tests}/<path>.log, e.g.
-  build/tidy/src/net/h264_encoder.log; the line `tidy: wall ... (main ..., cognitive ...) ...
+- Tidy: first the lines `tidy self-test: rules|lint PASS|FAIL` and `rules-lint: PASS|FAIL` (a FAIL prints
+  the diff against tests/tidy_probe/expected_*.txt or the lint findings: report them verbatim). A self-test
+  FAIL stops the run there (`tidy: FAIL -- the rules self-test failed`): no passes run, and the per-TU logs
+  under build/tidy/ are from an earlier run, so do not read them. Otherwise two
+  passes (main = clang-tidy 11, rules = clang-tidy 23 with cognitive complexity, misc-const-correctness and
+  the custom-* project rules), each with its block "---- <pass>: findings by check ----" in build/gate.log; per-file
+  details in build/tidy/{src,tests}/<path>.log (main) and build/tidy/rules/{src,tests}/<path>.log, e.g.
+  build/tidy/src/net/h264_encoder.log; self-test and lint logs in build/tidy/selftest/; the line
+  `tidy: wall ... (main ..., rules ...) ...
   cache: N hits / M runs` gives the times and the cache use. A FAIL before any pass that names
   venv/bin/clang-tidy = the pinned tool is missing: report the printed install command, do not install it.
 - Run: the TOTAL / FPS summary lines at the end, plus every line with

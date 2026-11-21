@@ -29,8 +29,9 @@
 #include "config/config.hpp"  // SourceKind, SourceEndpoint
 #include "core/geometry.hpp"
 #include "core/log.hpp"
+#include "core/rga_limits.hpp"  // needs_two_pass, aux_bytes: shared with RgaResizer
 #include "core/status.hpp"
-#include "jpeg_probe.hpp"
+#include "core/jpeg_probe.hpp"
 #include "source/source_types.hpp"
 
 template <class Src, class Dec>
@@ -41,7 +42,6 @@ class BasicSourceChannel
     enum
     {
         kWarmupFrames = 3,  // valid decodes discarded after a hot attach (mid-stream start)
-        kAuxRatio = 8,      // over 8x the model input: the two-pass RGA path needs the aux buffer
         kDecErrMax = 4,     // consecutive decoder failures before detaching
     };
 
@@ -57,7 +57,7 @@ public:
     {
         Live,
         Absent,         // device not there / not streaming: the prober retries
-        DecoderFailed,  // decoder init failed, or the geometry differs from the decoder's
+        DecoderFailed,  // decoder init failed
         AuxFailed       // two-pass aux buffer allocation failed
     };
 
@@ -130,7 +130,7 @@ public:
     }
 
     // Frame thread, after a Detached/Fatal poll: closes the source and hands back to prober.
-    void detach()
+    void detach() noexcept
     {
         warmup_left_ = 0;
         dec_err_streak_ = 0;
@@ -141,7 +141,7 @@ public:
 
     // Frame thread, Live only. wait_ms < 0: the blocking single-source dequeue
     // (the camera's own 2 s watchdog reports EIO).
-    FrameStatus poll( int wait_ms, EncodedFrame& out )
+    FrameStatus poll( int wait_ms, EncodedFrame& out ) noexcept
     {
         out.src = idx_;
         out.buf = -1;
@@ -151,6 +151,7 @@ public:
         {
             case Errc::Ok:
                 last_ok_.store( clk::now() );
+                skip_parts_ = src_.skip_parts_cnt();
                 return FrameStatus::Frame;
             case Errc::Timeout:
                 return FrameStatus::NotReady;
@@ -185,6 +186,11 @@ public:
         if ( !st.ok() )
         {
             ++dec_err_streak_;
+            if ( st.code() == Errc::NoMemory )
+            {
+                dec_ready_ = false;
+                geom_.aux_fd = -1;
+            }
             if ( err != nullptr && ( st.code() == Errc::NoMemory || dec_err_streak_ >= kDecErrMax ) )
                 *err = Status( Errc::Lost, st.what(), st.kind(), st.sys() );
             return -1;
@@ -213,11 +219,14 @@ public:
     bool rot_auto() const noexcept { return rot_auto_; }
     int rot_deg() const noexcept { return rot_deg_; }
     auto out_fmt() const { return dec_.out_fmt(); }
+    int hor_stride() const noexcept { return dec_.hor_stride(); }
+    int ver_stride() const noexcept { return dec_.ver_stride(); }
     // Attaching thread only.
     const std::string& node() const { return node_; }
 
     clk::time_point last_ok() const { return last_ok_.load(); }
     void stamp_ok( clk::time_point tp ) { last_ok_.store( tp ); }
+    uint64_t skip_parts_cnt() const noexcept { return skip_parts_; }
 
 private:
     // Camera node lookup with the startup / hot-attach / re-attach log texts.
@@ -234,9 +243,9 @@ private:
             return {};
         if ( !hot )
             log_.info() << "camera: discovery adopted " << found << '\n';
-        else if ( first )
+        if ( hot && first )
             log_.info() << "camera: hot-attach adopted " << node_ << " -> " << found << '\n';
-        else
+        if ( hot && !first )
             log_.info() << "source s" << idx_ << ": identity adopted: " << node_ << " -> " << found << '\n';
         node_ = found;
         return {};
@@ -258,26 +267,28 @@ private:
 
     bool needs_aux( int w, int h ) const noexcept
     {
-        if ( w > kAuxRatio * model_w_ || h > kAuxRatio * model_h_ )
+        if ( rga_limits::needs_two_pass( w, h, model_w_, model_h_, false ) )
             return true;
-        return ( rot_auto_ || quarter_turn() ) && ( h > kAuxRatio * model_w_ || w > kAuxRatio * model_h_ );
+        return ( rot_auto_ || quarter_turn() ) && rga_limits::needs_two_pass( w, h, model_w_, model_h_, true );
     }
 
-    // Decoder (first attach only), geometry guard, aux buffer, letterbox.
+    // Decoder (first attach, or a re-attach at another size), aux buffer, letterbox.
+    // A geometry change re-initializes the decoder like the NoMemory path:
+    // attach runs only while the channel is not Live, so the frame thread holds
+    // no decoded buffer of the old decoder (frame_dispatch uses the decoded fd
+    // synchronously), and MppDecoder::init tears the old decoder down first.
     Attach prepare_decode( int w, int h, bool hot, Status& why )
     {
         if ( dec_ready_ && ( w != dec_w_ || h != dec_h_ ) )
         {
-            // The decoder's buffers are sized for the first geometry; feeding it
-            // another size is not supported yet -- stay absent and say why.
-            log_.warn() << "source s" << idx_ << ": geometry changed " << dec_w_ << 'x' << dec_h_ << " -> " << w << 'x' << h
-                        << " - decoder stays at " << dec_w_ << 'x' << dec_h_ << ", not attaching\n";
-            why = make_status( Errc::Unsupported, "geometry changed" );
-            return Attach::DecoderFailed;
+            log_.info() << "source s" << idx_ << ": geometry changed " << dec_w_ << 'x' << dec_h_ << " -> " << w << 'x' << h
+                        << ", re-initializing the decoder\n";
+            geom_.aux_fd = -1;  // sized for the old geometry; the decoder owns it and drops it on init
+            dec_ready_ = false;
         }
         if ( !dec_ready_ )
         {
-            if ( Status st = dec_.init( w, h ); !st.ok() )
+            if ( const Status st = dec_.init( w, h ); !st.ok() )
             {
                 if ( hot )
                     log_.warn() << "probe s" << idx_ << ": mpp decoder init failed - staying absent\n";
@@ -290,7 +301,7 @@ private:
         }
         if ( needs_aux( w, h ) && geom_.aux_fd < 0 )
         {
-            geom_.aux_fd = dec_.aux_fd( static_cast<size_t>( w / 2 ) * static_cast<size_t>( h / 2 ) * 2 );
+            geom_.aux_fd = dec_.aux_fd( rga_limits::aux_bytes( w, h ) );
             if ( geom_.aux_fd < 0 )
             {
                 if ( hot )
@@ -331,4 +342,5 @@ private:
     bool dec_ready_ = false;  // decoder initialized (replaces the old w = h = 0 rollbacks)
     int dec_w_ = 0;
     int dec_h_ = 0;  // the geometry the decoder was initialized for
+    uint64_t skip_parts_ = 0;
 };

@@ -42,7 +42,7 @@ public:
     // Serve thread.
     void open( const Session& s )
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         session_ = s;
         epoch_.store( s.epoch );
         active_.store( true );
@@ -50,7 +50,7 @@ public:
 
     void close()
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         active_.store( false );
     }
 
@@ -63,7 +63,7 @@ public:
     template <class F>
     bool run( F&& f )
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         if ( !active_.load() )
             return false;
         std::forward<F>( f )( static_cast<const Session&>( session_ ) );
@@ -74,7 +74,7 @@ public:
     template <class F>
     bool run( uint32_t expected_epoch, F&& f )
     {
-        std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<std::mutex> lk( mx_ );
         if ( !active_.load() || session_.epoch != expected_epoch )
             return false;
         std::forward<F>( f )( static_cast<const Session&>( session_ ) );

@@ -9,11 +9,13 @@
 #include "suite_runner.hpp"
 #include "suites.hpp"
 
+// NOLINTNEXTLINE(misc-const-correctness): the standard fixes the type of main's argv as char**
 int main( int argc, char** argv )
 {
     const Suite suites[] = {
         { "source_threads", &test_source_threads },
         { "source_prober_threads", &test_source_prober_threads },
+        { "preview_ring_threads", &test_preview_ring_threads },
         { "packet_queue_threads", &test_packet_queue_threads },
         { "session_gate_threads", &test_session_gate_threads },
         { "reid_worker_tsan", &test_reid_worker_tsan },

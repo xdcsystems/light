@@ -52,9 +52,13 @@ public:
     H264Encoder& operator=( const H264Encoder& ) = delete;
 
     // One frame of session `s` (call under SessionGate::run()). ts_us: the
-    // dequeue time (VFR pts), < 0 = none. false = a codec error: the caller
+    // publish time (VFR pts), < 0 = none. false = a codec error: the caller
     // fails the session.
     Status encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session& s, PacketQueue& queue );
+
+    uint64_t eagain_cnt() const noexcept { return eagain_cnt_; }
+    uint64_t q_flush_cnt() const noexcept { return q_flush_cnt_; }
+    uint64_t pts_clamp_cnt() const noexcept { return pts_.clamp_cnt(); }
 
 private:
     void enqueue( int stream_index, int64_t fpts, PacketQueue& queue );  // pkt_ -> the queue
@@ -69,8 +73,12 @@ private:
     AvPacket pkt_;                   // the packet being received
     SessionPtsFilter pts_;           // rebased per session epoch, filters stale packets
     bool force_idr_ = false;         // the next encode becomes an IDR
+    bool has_prev_fpts_ = false;     // true once at least one frame submitted in this epoch
+    int64_t prev_fpts_ = 0;          // session-relative fpts of previously submitted frame
     uint32_t seen_epoch_ = 0;        // the session the state above belongs to
     // Frames encoded; gates the destructor drain in both modes (the CFR
     // counter alone would be 0 in VFR and skip the flush).
     uint64_t frames_sent_ = 0;
+    uint64_t eagain_cnt_ = 0;
+    uint64_t q_flush_cnt_ = 0;
 };

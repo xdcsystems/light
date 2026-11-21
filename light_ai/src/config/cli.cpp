@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "config/cli.hpp"
-#include "config/config_file.h"
+#include "config/config_file.hpp"
 
 namespace
 {
@@ -29,7 +29,7 @@ namespace
         const std::string probe = dir + "/.light_ai_write_test";
         bool ok = false;
         {
-            std::ofstream f( probe );
+            const std::ofstream f( probe );
             ok = f.good();
         }
         std::filesystem::remove( probe, ec );
@@ -41,13 +41,6 @@ namespace
         return true;
     }
 
-    void finalize_sources( std::vector<SourceEndpoint>& ini_srcs, Config& cfg )
-    {
-        if ( cfg.sources.empty() )
-            cfg.sources = std::move( ini_srcs );
-        if ( cfg.sources.empty() )
-            cfg.sources.push_back( { SourceKind::V4L2, "/dev/video20" } );
-    }
 }  // namespace
 
 // ---- CliOptions implementation ----
@@ -117,8 +110,9 @@ CliOptions::ParseStatus CliOptions::prepass( int argc, char** argv, std::string&
                 return ParseStatus::Error;
             }
             config_path = argv[++i];
+            continue;
         }
-        else if ( !std::strcmp( argv[i], "-h" ) || !std::strcmp( argv[i], "--help" ) )
+        if ( !std::strcmp( argv[i], "-h" ) || !std::strcmp( argv[i], "--help" ) )
             want_help = true;
     }
     return want_help ? ParseStatus::Help : ParseStatus::Run;
@@ -126,6 +120,7 @@ CliOptions::ParseStatus CliOptions::prepass( int argc, char** argv, std::string&
 
 bool CliOptions::apply_argv( int argc, char** argv )
 {
+    bool saw_cli_src = false;
     for ( int i = 1; i < argc; ++i )
     {
         const char* opt = argv[i];
@@ -145,6 +140,11 @@ bool CliOptions::apply_argv( int argc, char** argv )
             }
             val = argv[++i];
         }
+        if ( !saw_cli_src && ( std::strcmp( opt, "--device" ) == 0 || std::strcmp( opt, "--net-src" ) == 0 ) )
+        {
+            cfg_.sources.clear();
+            saw_cli_src = true;
+        }
         if ( !reg_.apply( *e, cfg_, val ) )
             return false;
     }
@@ -163,10 +163,9 @@ CliOptions::ParseStatus CliOptions::parse( int argc, char** argv )
         if ( !loader.load( config_path.c_str(), cfg_ ) )
             return ParseStatus::Error;
     }
-    std::vector<SourceEndpoint> ini_srcs = std::move( cfg_.sources );
-    cfg_.sources.clear();
     if ( !apply_argv( argc, argv ) )
         return ParseStatus::Error;
-    finalize_sources( ini_srcs, cfg_ );
+    if ( cfg_.sources.empty() )
+        cfg_.sources.push_back( { SourceKind::V4L2, "/dev/video20" } );
     return validate() == 0 ? ParseStatus::Run : ParseStatus::Error;
 }

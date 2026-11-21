@@ -30,7 +30,7 @@
 
 #include "core/encoder_config.hpp"
 #include "core/geometry.hpp"
-#include "rkmpp_drm_pool.hpp"
+#include "media/rkmpp_drm_pool.hpp"
 #include "core/status.hpp"
 
 class Log;
@@ -56,6 +56,9 @@ public:
     // imStrError detail is logged before the return).
     Status compose( int tensor_fd, const TilePlacement& tp, int slot, MppBuffer out );
 
+    // Multi-view deferred flush: copies the composite canvas into `out`.
+    Status flush_canvas( MppBuffer out );
+
     // NO SIGNAL frame: tile_absent( absent, nabs, s ) selects the cells that
     // get the plate. Multi-view: out == nullptr updates the canvas only.
     // Single view: out is required (the idle canvas is the frame).
@@ -72,6 +75,7 @@ private:
     const StreamLayout lay_;
     const int model_w_;  // NPU tensor geometry (RGB888)
     const int model_h_;
+    const int model_stride_px_;  // tensor row stride (EncoderConfig::model_stride_px, resolved)
     RkmppDrmPool<1> canvas_;  // persistent composite canvas (multi-view)
     RkmppDrmPool<1> idle_;    // NO SIGNAL canvas: gray + plate, stamped once at init
     std::array<LbGeom, kBands> bands_ {};

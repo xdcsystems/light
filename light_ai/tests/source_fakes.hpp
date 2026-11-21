@@ -74,6 +74,7 @@ public:
     void* buffer( int ) const { return bytes_.data(); }
     int width() const { return d_.w; }
     int height() const { return d_.h; }
+    uint64_t skip_parts_cnt() const noexcept { return 0; }
     void teardown() { ++d_.teardowns; }
 
 private:
@@ -87,6 +88,9 @@ struct FakeDecoderCtl
     int decode_rc = 0;  // 0: Ok, 1: Timeout, 2: NoMemory
     int decode_fd = 7;  // < 0: decode error
     int aux_rc = 9;     // aux fd, -1 = alloc failure
+    int hor_stride = 0;
+    int ver_stride = 0;
+    size_t last_aux_bytes = 0;
     int inits = 0;
     int decodes = 0;
     int aux_calls = 0;
@@ -111,12 +115,15 @@ public:
         fd = c_.decode_fd;
         return {};
     }
-    int aux_fd( size_t )
+    int aux_fd( size_t bytes )
     {
         ++c_.aux_calls;
+        c_.last_aux_bytes = bytes;
         return c_.aux_rc;
     }
     int out_fmt() const { return 0; }
+    int hor_stride() const noexcept { return c_.hor_stride; }
+    int ver_stride() const noexcept { return c_.ver_stride; }
 
 private:
     FakeDecoderCtl& c_;
@@ -137,7 +144,7 @@ struct FakeHost
     int usb_capture_nodes( std::array<int, kMaxCandidates>& out ) const
     {
         int n = 0;
-        for ( int v : usb )
+        for ( const int v : usb )
             out[static_cast<size_t>( n++ )] = v;
         return n;
     }

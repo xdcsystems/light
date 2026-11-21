@@ -76,7 +76,7 @@ struct StreamConfig
     bool enabled = false;  // --net: preview server (raw rgb24 NUT, or h264 with --net-h264)
     int port = 1234;       // --net-port
     // Pacing of the preview stream, FPS (--net-fps). 0 = follow the source:
-    // the encoder stamps pts from the dequeue times (VFR), night ~25, day
+    // the encoder stamps pts from the publish times (VFR), night ~25, day
     // up to 30 -- no ctx rebuild, no fixed 25 ceiling.
     int fps = 25;
     bool h264 = false;         // --net-h264: h264_rkmpp + MPEG-TS instead of raw NUT
@@ -84,6 +84,7 @@ struct StreamConfig
     std::string host;          // --net-host: UDP push destination; empty = TCP pull on port
     bool cpu_draw = false;                // --cpu-draw: force the CPU box-drawing path (A/B vs the GPU drawer)
     LabelLang label_lang = LabelLang::En; // --label-lang: callout text language (en | ru)
+    int label_scale = 1;                  // --label-scale: callout text size 1..4 (11 px steps on the output tile)
 };
 
 struct Config

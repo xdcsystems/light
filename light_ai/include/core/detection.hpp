@@ -5,9 +5,10 @@
 
 #pragma once
 
+#include <cmath>
 #include <ostream>
 
-#include "pod_list.hpp"
+#include "core/pod_list.hpp"
 
 struct Detection
 {
@@ -15,6 +16,16 @@ struct Detection
     int cls;           // COCO class id
     float conf;        // obj * best-class probability
 };
+
+// A box every consumer can use: finite geometry and score, a positive
+// extent (M-14). YoloDecoder::emit already drops non-positive sizes; the
+// tracker, associator, smoother and mapper re-check so a direct core/ API
+// caller (or a future decoder) cannot feed NaN into Kalman / IoU math.
+inline bool det_usable( const Detection& d ) noexcept
+{
+    return std::isfinite( d.x ) && std::isfinite( d.y ) && std::isfinite( d.w ) && std::isfinite( d.h ) &&
+           std::isfinite( d.conf ) && d.w > 0.0f && d.h > 0.0f;
+}
 
 // Writes the Detection fields in the CSV order used by the box
 // smoother log: cls,conf,x,y,w,h (comma-separated, no prefix and

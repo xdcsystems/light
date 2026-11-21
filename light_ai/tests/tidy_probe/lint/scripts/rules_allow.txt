@@ -1,0 +1,8 @@
+# The allowlist of the rules_lint.sh self-test tree (#93): two allowed NOLINTs (a custom-* one, misc-const-correctness:
+# #94), one allowed legacy .h, one stale line, and a range and a blanket NOLINT that no line can allow.
+src/ok.cpp nolint custom-no-virtual
+src/ok.cpp nolint misc-const-correctness
+include/old.h header-ext
+src/gone.cpp nolint custom-no-catch-all
+src/x.cpp nolint-range custom-no-catch-all
+src/x.cpp nolint-blanket

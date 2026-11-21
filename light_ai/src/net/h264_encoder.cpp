@@ -11,7 +11,7 @@ extern "C"
 #include <libavutil/pixfmt.h>
 }
 
-#include "av_common.hpp"  // av_err_str
+#include "net/av_common.hpp"  // av_err_str
 #include "core/log.hpp"
 #include "net/h264_encoder.hpp"
 
@@ -49,7 +49,7 @@ H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log
     ctx->pix_fmt = AV_PIX_FMT_DRM_PRIME;
     ctx->sw_pix_fmt = AV_PIX_FMT_NV12;
     // net-fps 0 = follow the source. The codec gets the native
-    // MPEG-TS time base (1/90000) and stamps pts from the real dequeue
+    // MPEG-TS time base (1/90000) and stamps pts from the real publish
     // times (VFR): night ~25, day up to 30 — no fixed ceiling. The GOP
     // stays 25 so a late joiner still waits at most about one second.
     // CFR keeps the legacy 1/fps setup verbatim.
@@ -57,7 +57,7 @@ H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log
     // VFR: rc still needs a numeric fps — 0/1 reaches MPP as the auto
     // marker (65535) and the CBR per-frame budget collapses (stream
     // dries to ~83 kbps). EncoderConfig::nominal_fps(): 25, 25 per source
-    // in multi-view, for rate control only; pts stay VFR from dequeue times.
+    // in multi-view, for rate control only; pts stay VFR from publish times.
     ctx->framerate = AVRational { cfg.nominal_fps(), 1 };
     ctx->bit_rate = cfg.bit_rate();
     // gop_size reaches MPP as rc:gop (rkmpp_set_enc_cfg):
@@ -83,7 +83,7 @@ H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log
     log_.info() << "enc: h264_rkmpp open: " << cfg.layout.w << 'x' << cfg.layout.h << ", " << cfg.kbps() << " kbps, gop "
                 << ctx->gop_size << '\n';
     if ( cfg.vfr() )
-        log_.info() << "enc: VFR follow-source mode: time_base 1/90000, pts from dequeue times\n";
+        log_.info() << "enc: VFR follow-source mode: time_base 1/90000, pts from publish times\n";
 }
 
 H264Encoder::~H264Encoder()
@@ -193,6 +193,8 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Sessi
         seen_epoch_ = s.epoch;
         pts_.on_epoch( s.frame_step );
         force_idr_ = true;
+        prev_fpts_ = 0;
+        has_prev_fpts_ = false;
     }
     int64_t fpts = 0;
     fr->pts = pts_.next_frame_pts( ts_us, frames_sent_, fpts );
@@ -227,9 +229,10 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Sessi
         }
         if ( ret != AVERROR( EAGAIN ) )
             break;
+        ++eagain_cnt_;
         if ( avcodec_receive_packet( ctx_, pkt ) < 0 )
             break;  // nothing ready to drain: bounded retries exhausted
-        enqueue( s.stream_index, fpts, queue );
+        enqueue( s.stream_index, has_prev_fpts_ ? prev_fpts_ : fpts, queue );
     }
     if ( ret < 0 && ret != AVERROR( EAGAIN ) )
     {
@@ -259,6 +262,8 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Sessi
         log_.error() << "enc: receive_packet: " << av_err_str( ret ) << '\n';
         return sdk_status( Errc::Failed, "receive_packet", ret );
     }
+    prev_fpts_ = fpts;
+    has_prev_fpts_ = true;
     pts_.advance();
     ++frames_sent_;
     return {};
@@ -287,6 +292,7 @@ void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
     const PacketQueue::Pushed pu = queue.push( pkt_.slot() );
     if ( pu.flushed > 0 )
     {
+        ++q_flush_cnt_;
         force_idr_ = true;
         log_.warn() << "enc: packet queue overflow: flushed " << pu.flushed << " pkts (drop " << pu.drops
                     << "), IDR next frame\n";

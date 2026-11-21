@@ -13,7 +13,7 @@
 #include <utility>
 
 #include "core/global_track.hpp"
-#include "pod_ring.hpp"
+#include "core/pod_ring.hpp"
 
 enum class ReidSlotState : uint8_t
 {
@@ -22,11 +22,18 @@ enum class ReidSlotState : uint8_t
     Busy
 };
 
-template <class Runner>
+struct ReidNoopStart
+{
+    void operator()() const noexcept {}
+};
+
+template <class Runner, class OnStart = ReidNoopStart>
 class BasicReidQueue
 {
 public:
-    explicit BasicReidQueue( Runner runner ) : runner_( std::move( runner ) )
+    explicit BasicReidQueue( Runner runner, OnStart on_start = OnStart {} )
+      : runner_( std::move( runner ) )
+      , on_start_( std::move( on_start ) )
     {
         for ( auto& s : states_ )
             s.store( ReidSlotState::Free, std::memory_order_relaxed );
@@ -87,28 +94,30 @@ public:
     }
 
 private:
+    // Blocks for the next job; false once stop is requested and the queue is drained.
+    bool next_job( ReidJob& job ) noexcept
+    {
+        std::unique_lock<std::mutex> lk( mx_ );
+        cv_.wait( lk, [this]() { return stop_ || !jobs_.empty(); } );
+        if ( stop_ && jobs_.empty() )
+            return false;
+        job = jobs_.front();
+        jobs_.pop();
+        return true;
+    }
+
     void worker_loop() noexcept
     {
-        while ( true )
+        on_start_();
+        ReidJob job {};
+        while ( next_job( job ) )
         {
-            ReidJob job {};
-            {
-                std::unique_lock<std::mutex> lk( mx_ );
-                cv_.wait( lk, [this]() { return stop_ || !jobs_.empty(); } );
-                if ( stop_ && jobs_.empty() )
-                    return;
-                job = jobs_.front();
-                jobs_.pop();
-            }
-
             states_[job.slot].store( ReidSlotState::Busy, std::memory_order_release );
             ReidResult res {};
             res.src_idx = job.src_idx;
             res.local_id = job.local_id;
             res.gen = job.gen;
             res.ts_us = job.ts_us;
-            res.clipped = job.clipped;
-            res.occluded = job.occluded;
             res.ok = runner_( job, res );
             // Publish Free BEFORE enqueueing result so producer sees the freed slot immediately.
             states_[job.slot].store( ReidSlotState::Free, std::memory_order_release );
@@ -122,6 +131,7 @@ private:
 
 private:
     Runner runner_;
+    OnStart on_start_;
     std::array<std::atomic<ReidSlotState>, reid_cfg::kReidSlots> states_ {};
     PodRing<ReidJob, reid_cfg::kReidQueueCap> jobs_ {};
     PodRing<ReidResult, reid_cfg::kReidQueueCap> results_ {};

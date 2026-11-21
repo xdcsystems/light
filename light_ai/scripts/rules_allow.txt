@@ -1,0 +1,15 @@
+# rules_allow.txt: the allowed exceptions of the rules gate (#93), read by scripts/rules_lint.sh.
+# One line per allowed finding: <path> <rule> [<detail>]. A finding not listed fails the gate, and so does a
+# line that matches no finding (stale). Every site here is documented in CONTRIBUTING.md.
+
+# NOLINT(custom-...) sites (CONTRIBUTING, Error & Exception Model; No const_cast). The reason sits in the NOLINT.
+include/npu/inference_pool.hpp nolint custom-no-catch-all
+src/net/net_preview.cpp nolint custom-no-catch-all
+src/npu/rknn_engine.cpp nolint custom-no-const-cast
+
+# NOLINT(misc-const-correctness) sites (#94; CONTRIBUTING, const by default): a type fixed by the C or C++ API, not
+# by us. The reason sits in the NOLINT.
+src/config/config_file.cpp nolint misc-const-correctness
+src/net/tcp_pull_server.cpp nolint misc-const-correctness
+tests/test_main.cpp nolint misc-const-correctness
+tests/tsan_main.cpp nolint misc-const-correctness

@@ -1,8 +1,38 @@
 #include <cmath>
+#include <limits>
 
 #include "check.hpp"
 #include "core/auto_orient.hpp"
 #include "suites.hpp"
+
+namespace
+{
+    void check_m8_nan_and_exif( TestRun& t )
+    {
+        const float qnan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+
+        DetList mixed {};
+        mixed.push( Detection { 100.0f, 50.0f, 120.0f, 340.0f, 0, 0.85f } );
+        mixed.push( Detection { 10.0f, 10.0f, 100.0f, 200.0f, 0, qnan } );
+        mixed.push( Detection { 10.0f, 10.0f, inf, 200.0f, 0, 0.90f } );
+        CHECK( t, auto_orient::score_detections( mixed ) > 0.8f );
+
+        AutoOrient ao;
+        ao.reset( true, 0, false );
+        CHECK( t, !ao.observe_single( 90, qnan ) );
+        ao.set_exif_hint( 90 );
+        const float zeros[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        const AutoOrient::Result r_zero = ao.commit_all4( zeros );
+        CHECK( t, !r_zero.changed && r_zero.best_score == 0.0f );
+
+        const float with_nan[4] = { qnan, 0.51f, 0.50f, 0.0f };
+        const AutoOrient::Result r_tie1 = ao.commit_all4( with_nan );
+        const AutoOrient::Result r_tie2 = ao.commit_all4( with_nan );
+        CHECK( t, r_tie1.rot_deg == 90 && r_tie1.best_score > 0.85f );
+        CHECK( t, r_tie2.locked && r_tie2.rot_deg == 90 );
+    }
+}  // namespace
 
 void test_auto_orient( TestRun& t )
 {
@@ -78,4 +108,5 @@ void test_auto_orient( TestRun& t )
         auto_orient::oriented_dims( 1280, 720, 180, w, h );
         CHECK( t, w == 1280 && h == 720 );
     }
+    check_m8_nan_and_exif( t );
 }

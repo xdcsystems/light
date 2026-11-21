@@ -22,6 +22,9 @@ add_executable(light_ai_tests
     test_pod_containers.cpp
     test_box_math.cpp
     test_fp16.cpp
+    test_rga_limits.cpp
+    test_fixed_fmt.cpp
+    test_line_scan.cpp
     test_yolo_decoder.cpp
     test_geometry.cpp
     test_jpeg_probe.cpp
@@ -29,6 +32,7 @@ add_executable(light_ai_tests
     test_status.cpp
     test_stop_flag.cpp
     test_tcp_retry.cpp
+    test_tcp_send.cpp
     test_yolo_head_shape.cpp
     test_http_url.cpp
     test_http_head.cpp
@@ -37,6 +41,7 @@ add_executable(light_ai_tests
     test_mjpeg_slot_pool.cpp
     test_net_mjpeg_source.cpp
     test_box_smoother.cpp
+    test_box_filter.cpp
     test_kalman_axis.cpp
     test_associator.cpp
     test_auto_orient.cpp
@@ -47,8 +52,11 @@ add_executable(light_ai_tests
     test_config.cpp
     test_signals.cpp
     test_log.cpp
+    test_cpu_affinity.cpp
     test_inference_pool.cpp
     test_timings.cpp
+    test_perf_clock.cpp
+    test_perf_reporter.cpp
     test_console_reporter.cpp
     test_cal_dumper.cpp
     test_usb_node_locator.cpp
@@ -64,8 +72,10 @@ add_executable(light_ai_tests
     test_idle_plate.cpp
     test_glyph_font.cpp
     test_callout_layout.cpp
+    test_overlay_raster.cpp
     test_global_track.cpp
     test_reid_worker_tsan.cpp
+    test_preview_ring.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
     test_infer_slot_threads.cpp
@@ -76,10 +86,11 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/pts_clock.cpp
     ${LIGHT_AI_ROOT}/src/core/encode_pacer.cpp
     ${LIGHT_AI_ROOT}/src/core/session_warmup.cpp
-    ${LIGHT_AI_ROOT}/src/core/bitmap_font.cpp
     ${LIGHT_AI_ROOT}/src/core/glyph_font.cpp
     ${LIGHT_AI_ROOT}/src/core/callout.cpp
+    ${LIGHT_AI_ROOT}/src/core/overlay_raster.cpp
     ${LIGHT_AI_ROOT}/src/core/idle_plate.cpp
+    ${LIGHT_AI_ROOT}/src/core/perf_reporter.cpp
     ${LIGHT_AI_ROOT}/src/core/status.cpp
     ${LIGHT_AI_ROOT}/src/core/http_url.cpp
     ${LIGHT_AI_ROOT}/src/core/http_head.cpp
@@ -91,19 +102,20 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/trail_window.cpp
     ${LIGHT_AI_ROOT}/src/source/buffered_socket.cpp
     ${LIGHT_AI_ROOT}/src/source/mjpeg_slot_pool.cpp
-    ${LIGHT_AI_ROOT}/src/net_mjpeg_source.cpp
-    ${LIGHT_AI_ROOT}/src/box_smoother.cpp
-    ${LIGHT_AI_ROOT}/src/tracker.cpp
-    ${LIGHT_AI_ROOT}/src/box_mapper.cpp
+    ${LIGHT_AI_ROOT}/src/source/net_mjpeg_source.cpp
+    ${LIGHT_AI_ROOT}/src/render/box_smoother.cpp
+    ${LIGHT_AI_ROOT}/src/core/tracker.cpp
+    ${LIGHT_AI_ROOT}/src/render/box_mapper.cpp
     ${LIGHT_AI_ROOT}/src/config/cli.cpp
     ${LIGHT_AI_ROOT}/src/config/option_registry.cpp
     ${LIGHT_AI_ROOT}/src/config/config_file.cpp
-    ${LIGHT_AI_ROOT}/src/process_env.cpp
-    ${LIGHT_AI_ROOT}/src/signal_waiter.cpp
-    ${LIGHT_AI_ROOT}/src/cpu_affinity.cpp
-    ${LIGHT_AI_ROOT}/src/timings.cpp
-    ${LIGHT_AI_ROOT}/src/console_reporter.cpp
-    ${LIGHT_AI_ROOT}/src/cal_dumper.cpp
+    ${LIGHT_AI_ROOT}/src/sys/process_env.cpp
+    ${LIGHT_AI_ROOT}/src/sys/signal_waiter.cpp
+    ${LIGHT_AI_ROOT}/src/sys/cpu_affinity.cpp
+    ${LIGHT_AI_ROOT}/src/core/timings.cpp
+    ${LIGHT_AI_ROOT}/src/app/console_reporter.cpp
+    ${LIGHT_AI_ROOT}/src/npu/cal_dumper.cpp
+    ${LIGHT_AI_ROOT}/src/net/tcp_send.cpp
     ${LIGHT_AI_ROOT}/externals/inih/ini.c
 )
 # Same inih switch as the main target: the config-file handler relies on it.
@@ -115,13 +127,12 @@ target_include_directories(light_ai_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${LIGHT_AI_ROOT}/include
     ${LIGHT_AI_ROOT}/externals/inih
-    ${LIGHT_AI_ROOT}/externals/fonts  # stb_easy_font (header-only), for src/core/bitmap_font.cpp
 )
 
 target_compile_options(light_ai_tests PRIVATE -Wall -Wextra)
 
 find_package(Threads REQUIRED)
-target_link_libraries(light_ai_tests PRIVATE Threads::Threads)
+target_link_libraries(light_ai_tests PRIVATE Threads::Threads anl)  # anl: BufferedSocket's getaddrinfo_a
 
 # Threaded suites under ThreadSanitizer (the SourceChannel hand-over, the
 # SourceProber thread against a detaching frame thread): a data
@@ -131,6 +142,7 @@ add_executable(light_ai_tests_tsan EXCLUDE_FROM_ALL
     tsan_main.cpp
     test_source_threads.cpp
     test_source_prober.cpp
+    test_preview_ring.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
     test_reid_worker_tsan.cpp

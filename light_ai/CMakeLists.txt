@@ -72,26 +72,27 @@ set(CMAKE_INSTALL_RPATH "/usr/local/lib")
 
 add_executable(light_ai
     src/main.cpp
-    src/camera_v4l2.cpp
-    src/mpp_decoder.cpp
-    src/rga_resizer.cpp
-    src/reid_worker.cpp
-    src/rknn_engine.cpp
-    src/yolo_postprocess.cpp
-    src/pipeline.cpp
-    src/sources.cpp
-    src/overlay_sink.cpp
-    src/tcp_pull_server.cpp
-    src/net_preview.cpp
-    src/net_encoder.cpp
-    src/tracker.cpp
-    src/gpu_box_drawer.cpp
-    src/net_mjpeg_source.cpp
-    src/box_mapper.cpp
-    src/box_smoother.cpp
-    src/timings.cpp
-    src/console_reporter.cpp
-    src/cal_dumper.cpp
+    src/source/camera_v4l2.cpp
+    src/media/mpp_decoder.cpp
+    src/media/rga_resizer.cpp
+    src/npu/reid_worker.cpp
+    src/npu/rknn_engine.cpp
+    src/npu/yolo_postprocess.cpp
+    src/app/pipeline.cpp
+    src/source/sources.cpp
+    src/render/overlay_sink.cpp
+    src/net/tcp_pull_server.cpp
+    src/net/tcp_send.cpp
+    src/net/net_preview.cpp
+    src/net/net_encoder.cpp
+    src/core/tracker.cpp
+    src/render/gpu_box_drawer.cpp
+    src/source/net_mjpeg_source.cpp
+    src/render/box_mapper.cpp
+    src/render/box_smoother.cpp
+    src/core/timings.cpp
+    src/app/console_reporter.cpp
+    src/npu/cal_dumper.cpp
     src/config/cli.cpp
     src/config/option_registry.cpp
     src/config/config_file.cpp
@@ -101,10 +102,11 @@ add_executable(light_ai
     src/core/pts_clock.cpp
     src/core/encode_pacer.cpp
     src/core/session_warmup.cpp
-    src/core/bitmap_font.cpp
     src/core/glyph_font.cpp
     src/core/callout.cpp
+    src/core/overlay_raster.cpp
     src/core/idle_plate.cpp
+    src/core/perf_reporter.cpp
     src/core/status.cpp
     src/core/http_url.cpp
     src/core/http_head.cpp
@@ -123,9 +125,9 @@ add_executable(light_ai
     src/net/mux_session.cpp
     src/net/h264_encoder.cpp
     src/net/network_init.cpp
-    src/process_env.cpp
-    src/signal_waiter.cpp
-    src/cpu_affinity.cpp
+    src/sys/process_env.cpp
+    src/sys/signal_waiter.cpp
+    src/sys/cpu_affinity.cpp
     externals/inih/ini.c
 )
 target_compile_definitions(light_ai PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)
@@ -133,7 +135,6 @@ target_compile_definitions(light_ai PRIVATE INI_CALL_HANDLER_ON_NEW_SECTION=1)
 target_include_directories(light_ai PRIVATE
     include
     externals/inih
-    externals/fonts
     /usr/include/rockchip
     ${RKNN_API_INCLUDE_DIR}
     ${AV_INCLUDE_DIRS}
@@ -146,6 +147,7 @@ target_link_libraries(light_ai PRIVATE
     ${AV_LIBRARIES}
     ${RKNN_RT_LIBRARY}
     pthread
+    anl   # getaddrinfo_a / gai_suspend / gai_cancel (BufferedSocket hostname lookup)
     ${EGL_LIBRARIES}
     dl
 )

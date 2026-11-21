@@ -18,9 +18,11 @@
 //
 // Desync is the caller's window: while searching for a delimiter or a
 // header end feed() consumes nothing, so a full window without one is a
-// desynced stream (NetMjpegSource). feed() reports Desync itself only for
-// a body above body_cap. After Desync -- or an abandoned read -- resync(),
-// then drop or keep the window.
+// desynced stream (NetMjpegSource). For a body above body_cap, feed()
+// drains and discards the oversized part across NeedMore chunks, then
+// reports Desync once at the end of the part (next delimiter intact).
+// After Desync -- or an abandoned read -- resync(), then drop or keep
+// the window.
 //
 // part_buffered() runs the same grammar on a state copy without copying:
 // true iff feed() on the same bytes would end in Part or Desync.
@@ -70,6 +72,15 @@ public:
     bool part_buffered( const uint8_t* data, size_t n ) const;
 
     const char* boundary() const { return boundary_; }
+    // A part's delimiter and headers are parsed: its body is arriving.
+    bool in_body() const noexcept { return cur_.phase == Phase::Body; }
+    // Past a delimiter line, reading the part's header lines.
+    bool in_header() const noexcept { return cur_.phase == Phase::Header; }
+    // Body bytes of the current part delivered to dst so far (an oversized
+    // part with a Content-Length: skipped so far); 0 outside the body. A body
+    // without Content-Length may still hold bytes back in the window (a
+    // delimiter split across refills), and its skipped bytes do not count.
+    size_t body_bytes() const noexcept { return cur_.phase == Phase::Body ? cur_.got : 0; }
 
 private:
     enum class Phase : uint8_t
@@ -88,8 +99,9 @@ private:
     {
         Phase phase = Phase::Delimiter;
         Form form = Form::Open;
-        long need = -1;  // Content-Length of the current part, -1 = none
-        size_t got = 0;  // body bytes delivered so far
+        long need = -1;     // Content-Length of the current part, -1 = none
+        size_t got = 0;     // body bytes delivered so far (skipped too with a Content-Length, not when scanned)
+        bool skip = false;  // true while draining an oversized (> body_cap) part
     };
 
 private:

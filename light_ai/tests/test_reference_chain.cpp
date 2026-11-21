@@ -53,13 +53,13 @@
 #include <string>
 #include <vector>
 
-#include "box_mapper.h"
+#include "render/box_mapper.hpp"
 #include "core/box_math.hpp"
-#include "box_smoother.h"
+#include "render/box_smoother.hpp"
 #include "check.hpp"
 #include "core/geometry.hpp"
 #include "suites.hpp"
-#include "tracker.hpp"
+#include "core/tracker.hpp"
 
 #ifndef LIGHT_AI_TEST_DATA_DIR
 #error "LIGHT_AI_TEST_DATA_DIR is set by tests/CMakeLists.txt"
@@ -230,7 +230,7 @@ namespace
         {
             smoother_.update( raw, sm_ );
             tracker_.update( raw, ts, tracks_ );
-            mapper_.fill( sm_, tracks_, tracker_, boxes_, lb_, sx_, sy_, ts );
+            mapper_.fill( sm_, tracks_, tracks_, tracker_, boxes_, lb_, sx_, sy_, ts );
             if ( frames_ > 0 )
                 cover( prev_, tracks_, ts - prev_ts_, cov_ );
             prev_ = tracks_;
@@ -556,20 +556,19 @@ void test_reference_chain( TestRun& t )
     Deviation dev;
     int line = 0;
     int bad = 0;
-    while ( true )
+    bool ga = static_cast<bool>( std::getline( got, a ) );
+    bool gb = static_cast<bool>( std::getline( golden, b ) );
+    while ( ga || gb )
     {
-        const bool ga = static_cast<bool>( std::getline( got, a ) );
-        const bool gb = static_cast<bool>( std::getline( golden, b ) );
-        if ( !ga && !gb )
-            break;
         ++line;
-        if ( ga && gb && same_line( a, b, dev ) )
-            continue;
-        if ( ++bad <= kMaxReport )
+        const bool same = ga && gb && same_line( a, b, dev );
+        if ( !same && ++bad <= kMaxReport )
             std::cerr << "reference_chain: golden line " << line << ":\n  got:  " << ( ga ? a : "<end>" )
                       << "\n  want: " << ( gb ? b : "<end>" ) << '\n';
-        if ( ga != gb || ( a[0] == 'f' ) != ( b[0] == 'f' ) )
+        if ( !same && ( ga != gb || ( a[0] == 'f' ) != ( b[0] == 'f' ) ) )
             break;  // the structure diverged: the rest would only repeat it
+        ga = static_cast<bool>( std::getline( got, a ) );
+        gb = static_cast<bool>( std::getline( golden, b ) );
     }
     CHECK( t, bad == 0 );
     std::cout << "reference_chain: " << frames << " clip frames, " << line << " lines, max |d| " << dev.px << " px, "

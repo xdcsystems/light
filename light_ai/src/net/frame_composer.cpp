@@ -9,10 +9,10 @@
 
 #include "core/idle_plate.hpp"
 #include "core/log.hpp"
-#include "dma_sync.hpp"
+#include "media/dma_sync.hpp"
 #include "net/encoder_frame_pool.hpp"
 #include "net/frame_composer.hpp"
-#include "throw_on.hpp"
+#include "core/throw_on.hpp"
 namespace
 {
     // Explicit strides: the VU plane lands at w * vstride -- exactly where
@@ -53,21 +53,24 @@ namespace
     {
         if ( void* p = mpp_buffer_get_ptr( mb ) )
         {
+            const size_t sz = mpp_buffer_get_size( mb );
             uint8_t* py = static_cast<uint8_t*>( p );
             const size_t ysz = static_cast<size_t>( stride ) * static_cast<size_t>( vstride );
-            dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
+            const dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
+            dma::cache_drop( p, sz );
             for ( int r = 0; r < rc.h; ++r )
                 std::memset( py + static_cast<size_t>( rc.top + r ) * stride + rc.left, 128, static_cast<size_t>( rc.w ) );
             uint8_t* puv = py + ysz;
             for ( int r = 0; r < rc.h / 2; ++r )
                 std::memset( puv + static_cast<size_t>( rc.top / 2 + r ) * stride + static_cast<std::ptrdiff_t>( rc.left / 2 ) * 2, 128,
                              static_cast<size_t>( rc.w / 2 ) * 2 );
-            dma::cache_clean( p, mpp_buffer_get_size( mb ) );
+            dma::cache_clean( p, sz );
         }
     }
 
-    // NO SIGNAL plate (idle canvas): IdlePlate rasterizes the label into
-    // the Y plane once at init (core/idle_plate.hpp); the DMA sync is here.
+    // NO SIGNAL plate (idle canvas): IdlePlate blends the label into the gray
+    // Y plane (read-modify-write) once at init (core/idle_plate.hpp); the DMA
+    // sync is here (DmaSync RW: the pixels are read too).
     void draw_no_signal( MppBuffer mb, const StreamLayout& lay )
     {
         if ( !mb )
@@ -75,8 +78,8 @@ namespace
         uint8_t* py = static_cast<uint8_t*>( mpp_buffer_get_ptr( mb ) );
         if ( !py )
             return;
-        dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
-        IdlePlate plate;
+        const dma::DmaSync wr( mpp_buffer_get_fd( mb ), true );
+        const IdlePlate plate {};
         plate.draw( Plane8 { py, lay.w, lay.vstride }, lay );
         dma::cache_clean( py, mpp_buffer_get_size( mb ) );
     }
@@ -95,6 +98,7 @@ FrameComposer::FrameComposer( const EncoderConfig& cfg, const Log& log )
   , lay_( cfg.layout )
   , model_w_( cfg.model_w )
   , model_h_( cfg.model_h )
+  , model_stride_px_( cfg.model_stride_px > 0 ? cfg.model_stride_px : cfg.model_w )
 {
     static_assert( static_cast<int>( EncoderFramePool::kSlots ) <= static_cast<int>( kBands ), "one band per ring slot" );
     static_assert( static_cast<int>( StreamLayout::kMaxTiles ) <= static_cast<int>( kBands ), "one band per grid cell" );
@@ -138,8 +142,8 @@ Status FrameComposer::compose( int tensor_fd, const TilePlacement& tp, int slot,
     }
     prev = tp.dst;
 
-    rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888 );
-    rga_buffer_t dst = nv12( target, lay_ );
+    const rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888, model_stride_px_, model_h_ );
+    const rga_buffer_t dst = nv12( target, lay_ );
     if ( Status rst = rga_ok( improcess( src, dst, {}, rect( tp.src ), rect( tp.dst ), {}, 0 ), log_, "RGA convert" ); !rst.ok() )
         return rst;
     if ( multi && out != nullptr )
@@ -147,9 +151,17 @@ Status FrameComposer::compose( int tensor_fd, const TilePlacement& tp, int slot,
     return {};
 }
 
+Status FrameComposer::flush_canvas( MppBuffer out )
+{
+    if ( lay_.nsrc <= 1 || out == nullptr )
+        return {};
+    const rga_buffer_t cvs = nv12( canvas_.buf[0], lay_ );
+    return rga_ok( imcopy( cvs, nv12( out, lay_ ) ), log_, "RGA composite flush" );
+}
+
 Status FrameComposer::compose_idle( const bool* absent, int nabs, int slot, MppBuffer out )
 {
-    rga_buffer_t idl = nv12( idle_.buf[0], lay_ );
+    const rga_buffer_t idl = nv12( idle_.buf[0], lay_ );
     if ( lay_.nsrc <= 1 )
     {
         // Single view: the idle canvas IS the frame.
@@ -162,7 +174,7 @@ Status FrameComposer::compose_idle( const bool* absent, int nabs, int slot, MppB
     // canvas that does not hold it already (only compose() and
     // reset_canvas() write a cell besides this copy); live cells keep
     // their last picture.
-    rga_buffer_t cvs = nv12( canvas_.buf[0], lay_ );
+    const rga_buffer_t cvs = nv12( canvas_.buf[0], lay_ );
     for ( int s = 0; s < lay_.nsrc; ++s )
     {
         if ( !tile_absent( absent, nabs, s ) || same( bands_[s], plate_band() ) )

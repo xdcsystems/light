@@ -1,0 +1,143 @@
+// Hardware-encoded preview (h264_rkmpp) in MPEG-TS.
+// Default transport is TCP pull: the board listens on net_port,
+// the viewer connects when it wants (ffplay tcp://<board-ip>:1234).
+// The legacy UDP push to net_host (--net-host) remains available:
+// UDP has no "connect", the viewer joins whenever it wants,
+// and a lost packet glitches briefly until the next IDR
+// instead of stalling the whole flow like TCP over Wi-Fi.
+
+#pragma once
+
+#include <chrono>
+#include <cstdint>
+
+#include "core/encode_pacer.hpp"       // EncodePacer: which publishes are encoded
+#include "core/encoder_config.hpp"     // EncoderConfig, StreamLayout
+#include "core/geometry.hpp"           // LbGeom: band geometry arrives as one object
+#include "core/net_perf.hpp"           // EncPerfWindow: zero-heap telemetry
+#include "core/perf_clock.hpp"         // Lap, CounterDelta: the encode interval, the codec counter deltas
+#include "core/session_gate.hpp"       // SessionGate: the session hand-over
+#include "core/session_warmup.hpp"     // SessionWarmup: when a session's first frame is encoded
+#include "core/status.hpp"             // Status: a compose result
+#include "net/av_packet_queue.hpp"     // PacketQueue: encoder -> serve thread
+#include "net/encoder_frame_pool.hpp"  // EncoderFramePool: the encoder input ring
+#include "net/frame_composer.hpp"      // FrameComposer: the picture the encoder reads
+#include "net/h264_encoder.hpp"        // H264Encoder: the codec
+#include "net/mux_session.hpp"         // MuxSession: the serve thread
+#include "net/network_init.hpp"        // NetworkInit: avformat_network_init RAII
+
+class Log;
+
+class NetEncoder
+{
+public:
+    // log: the process diagnostics, owned by main(); outlives the encoder
+    // (the serve thread logs through it too: Log is thread-safe).
+    // cfg: the stream geometry, rate and endpoint (core/encoder_config.hpp).
+    NetEncoder( const EncoderConfig& cfg, const Log& log );
+
+    // Trivial: every member releases its own resources, in reverse
+    // declaration order (see the member block below).
+    ~NetEncoder() = default;
+    NetEncoder( const NetEncoder& ) = delete;
+    NetEncoder& operator=( const NetEncoder& ) = delete;
+
+    // Called once per frame from the pipeline loop. tensor_fd is the
+    // dma-buf of the NPU input tensor (RGB888, w x h); boxes are drawn.
+    // ts_us (the frame's dequeue time) is only a flag in follow-source
+    // mode (--net-fps 0, VFR): >= 0 = the frame has a timestamp, and its
+    // pts is the publish time read here (a deferred multi-view frame: the
+    // flush_dirty() time); < 0 = none, the 25 fps grid.
+    // Ignored in the fixed-fps mode.
+    // No session: returns at once (no viewer, no output work). The first
+    // publish of a session resets the multi-view canvas gray; the session's
+    // first frame is encoded once every source cell has a picture of this
+    // session, or 200 ms after its start (core/session_warmup.hpp).
+    void publish( int tensor_fd, const LbGeom& band, int64_t ts_us = -1, int src_idx = 0, bool defer_encode = false ) noexcept;
+
+    // NO SIGNAL publish (idle): RGA-copies the pre-rendered idle canvas
+    // (gray + the plate) into the ring slot / composite canvas cells of
+    // every absent source, then encodes one frame (while a session is
+    // held: canvas only, no encode). Called by Pipeline::idle_tick while
+    // at least one configured tile has no live source; returns at once
+    // without a session. Idle encodes share the pacer budget with live
+    // ones and are NOT counted in --frames or the timing stats. ts_us:
+    // the same has-a-timestamp flag as in publish().
+    void publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept;
+    void flush_dirty() noexcept;
+
+    // True while the stream path is live (viewer connected in PULL
+    // mode / UDP path open). The pipeline gates GPU box drawing on it:
+    // recognition never sleeps, the output side sleeps without a viewer
+    // (README, "Output side and recognition").
+    bool viewer_active() const;
+    uint32_t session_epoch() const noexcept;
+    EncPerfWindow take_perf() noexcept;
+
+private:
+    // The shared steps of publish(), flush_dirty() and publish_idle()
+    // (net_encoder.cpp): a new session's canvas reset, the timed compose,
+    // and the encoded tail. The templates are defined and used only there.
+    bool enter_session( uint32_t epoch, int64_t now_us ) noexcept;
+    template <typename Compose>
+    Status timed_compose( Compose&& compose ) noexcept;
+    template <typename Compose>
+    void compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose ) noexcept;
+    void run_encoded( uint32_t epoch, std::chrono::steady_clock::time_point now ) noexcept;
+
+private:
+    // Declaration order IS the shutdown order, read bottom-up (destruction
+    // runs in reverse):
+    //   1. session_  -- the serve thread: quit, queue stop, join. Nothing
+    //                   touches gate_ / queue_ from the network side after.
+    //   2. gate_, then queue_ -- the queued packets are unref'd while the
+    //                   codec is still alive (they reference its buffers).
+    //   3. codec_    -- the EOF drain, then the codec is freed: MPP lets go
+    //                   of the dma-bufs before they go.
+    //   4. composer_, ring_ -- the canvases, the input ring and its frames.
+    //   5. net_      -- avformat_network_deinit, after everything above.
+    // Construction runs top-down: net_ first, session_ last (its thread is
+    // started by the ctor body once every member exists).
+    const EncoderConfig cfg_;
+    NetworkInit net_;
+    // The encoder's input ring: 4 NV12 dma-bufs pre-bound to DRM_PRIME
+    // AVFrames (net/encoder_frame_pool.hpp).
+    EncoderFramePool ring_;
+    // The picture: tensor band -> ring slot / canvas cell, the NO SIGNAL
+    // canvas (net/frame_composer.hpp). Logs the stream layout.
+    FrameComposer composer_;
+    // The h264_rkmpp codec with the per-session encoder state: pts clock,
+    // forced IDR, frames sent (net/h264_encoder.hpp).
+    H264Encoder codec_;
+    // Pipeline-thread state of publish(), flush_dirty() and publish_idle():
+    // which publishes are encoded (core/encode_pacer.hpp), when a new session
+    // may encode its first frame (core/session_warmup.hpp) and the publish /
+    // flush_dirty time handed to the codec (-1 = no timestamp).
+    // Draw -> RGA ordering note: sync_cpu() in OverlaySink::draw_and_publish
+    // runs before publish() on the same pipeline thread -- no fence fd
+    // crosses this boundary (retired, see docs/state.md).
+    EncodePacer pacer_;
+    SessionWarmup warmup_;
+    int64_t ts_us_ = -1;
+    bool canvas_dirty_ = false;
+    int64_t dirty_ts_us_ = -1;  // the ts_us flag of the deferred canvas (flush_dirty)
+    // The [perf] enc window (take_perf): the interval between encodes of one
+    // session (enc_lap_ restarts on a new epoch) and the codec counter deltas.
+    EncPerfWindow perf_ {};
+    uint32_t perf_epoch_ = 0;
+    Lap enc_lap_;
+    CounterDelta eagain_;
+    CounterDelta pts_clamp_;
+    CounterDelta q_flush_;
+    // Encoder -> serve thread packet queue (net/av_packet_queue.hpp): its
+    // own mutex, separate from the gate's: network-side wakeups never touch
+    // the encode critical section. Overflow flush, key gate, fail( epoch ).
+    PacketQueue queue_;
+    // The session hand-over (core/session_gate.hpp): the serve thread opens
+    // and closes it, every encode runs under it. With queue_ the only state
+    // the two threads share.
+    SessionGate gate_;
+    // The serve thread: viewer sessions, the transport, the muxer
+    // (net/mux_session.hpp). Last: it holds references to queue_ and gate_.
+    MuxSession session_;
+};

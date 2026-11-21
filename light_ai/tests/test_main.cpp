@@ -7,6 +7,7 @@
 #include "suite_runner.hpp"
 #include "suites.hpp"
 
+// NOLINTNEXTLINE(misc-const-correctness): the standard fixes the type of main's argv as char**
 int main( int argc, char** argv )
 {
     const Suite suites[] = {
@@ -14,6 +15,9 @@ int main( int argc, char** argv )
         { "pod_containers", &test_pod_containers },
         { "box_math", &test_box_math },
         { "fp16", &test_fp16 },
+        { "rga_limits", &test_rga_limits },
+        { "fixed_fmt", &test_fixed_fmt },
+        { "line_scan", &test_line_scan },
         { "yolo_decoder", &test_yolo_decoder },
         { "geometry", &test_geometry },
         { "jpeg_probe", &test_jpeg_probe },
@@ -21,6 +25,7 @@ int main( int argc, char** argv )
         { "status", &test_status },
         { "stop_flag", &test_stop_flag },
         { "tcp_retry", &test_tcp_retry },
+        { "tcp_send", &test_tcp_send },
         { "yolo_head_shape", &test_yolo_head_shape },
         { "http_url", &test_http_url },
         { "http_head", &test_http_head },
@@ -28,6 +33,7 @@ int main( int argc, char** argv )
         { "buffered_socket", &test_buffered_socket },
         { "mjpeg_slot_pool", &test_mjpeg_slot_pool },
         { "net_mjpeg_source", &test_net_mjpeg_source },
+        { "box_filter", &test_box_filter },
         { "box_smoother", &test_box_smoother },
         { "kalman_axis", &test_kalman_axis },
         { "associator", &test_associator },
@@ -36,13 +42,17 @@ int main( int argc, char** argv )
         { "tracker", &test_tracker },
         { "glyph_font", &test_glyph_font },
         { "callout_layout", &test_callout_layout },
+        { "overlay_raster", &test_overlay_raster },
         { "box_mapper", &test_box_mapper },
         { "reference_chain", &test_reference_chain },
         { "config", &test_config },
         { "signals", &test_signals },
         { "log", &test_log },
+        { "cpu_affinity", &test_cpu_affinity },
         { "inference_pool", &test_inference_pool },
         { "timings", &test_timings },
+        { "perf_clock", &test_perf_clock },
+        { "perf_reporter", &test_perf_reporter },
         { "console_reporter", &test_console_reporter },
         { "cal_dumper", &test_cal_dumper },
         { "usb_node_locator", &test_usb_node_locator },
@@ -57,6 +67,8 @@ int main( int argc, char** argv )
         { "encode_pacer", &test_encode_pacer },
         { "session_warmup", &test_session_warmup },
         { "idle_plate", &test_idle_plate },
+        { "preview_ring", &test_preview_ring },
+        { "preview_ring_threads", &test_preview_ring_threads },
         { "packet_queue", &test_packet_queue },
         { "packet_queue_threads", &test_packet_queue_threads },
         { "session_gate", &test_session_gate },

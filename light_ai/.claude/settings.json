@@ -6,6 +6,7 @@
       "Bash(./scripts/build.sh *)",
       "Bash(bash scripts/test.sh)",
       "Bash(bash scripts/tidy_run.sh *)",
+      "Bash(TIDY_FILES=* bash scripts/tidy_run.sh *)",
       "Bash(sudo -n ./build/light_ai *)",
       "Bash(sudo -n timeout -s INT *)",
       "Bash(sudo -n /usr/local/sbin/light-usb-replug *)",
@@ -21,6 +22,7 @@
       "Bash(git checkout *)",
       "Bash(git merge *)",
       "Bash(git push -u origin refactor/*)",
+      "Bash(git push -u origin fix/audit-p2-*)",
       "Bash(gh pr *)",
       "Bash(gh issue close *)",
       "Bash(gh issue comment *)"
