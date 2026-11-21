@@ -4,6 +4,7 @@ set -e
 PROJ_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd -P)"
 BIN="$PROJ_ROOT/build/light_ai"
 DEFAULT_CFG="$PROJ_ROOT/build/light_ai.ini"
+ISOLATE_SCRIPT="$PROJ_ROOT/scripts/isolate_rt.sh"
 
 cd "$PROJ_ROOT"
 
@@ -59,6 +60,50 @@ if [ "$has_config" -eq 0 ]; then
         exit 2
     fi
     CFG_ARGS=(--config "$CFG")
+fi
+
+# Изоляция A55 (ОС + фоновые потоки) / A76 (горячие потоки light_ai)
+if [ "${SKIP_ISOLATE:-0}" != "1" ] && [ -r "$ISOLATE_SCRIPT" ] && command -v systemd-run >/dev/null 2>&1; then
+    SUDO=()
+    RUN_AS=()
+    can_isolate=0
+    if [ "$(id -u)" -eq 0 ]; then
+        can_isolate=1
+    elif command -v sudo >/dev/null 2>&1; then
+        SUDO=(sudo -n)
+        RUN_AS=(-p "User=$(id -un)")
+        can_isolate=1
+    fi
+
+    if [ "$can_isolate" -eq 1 ] && "${SUDO[@]}" bash "$ISOLATE_SCRIPT" on >/dev/null 2>&1; then
+        cleanup_isolate() {
+            "${SUDO[@]}" bash "$ISOLATE_SCRIPT" off >/dev/null 2>&1 || true
+        }
+        trap cleanup_isolate EXIT
+
+        IO_MODE="--pipe"
+        if [ -t 0 ] && [ -t 1 ]; then
+            IO_MODE="--pty"
+        fi
+
+        ENV_ARGS=()
+        while IFS= read -r kv; do
+            [ -n "$kv" ] && ENV_ARGS+=(--setenv="$kv")
+        done < <(env | grep '^LIGHT_AI_' || true)
+
+        rc=0
+        "${SUDO[@]}" systemd-run "$IO_MODE" --wait --collect \
+            --slice=light_ai.slice \
+            -p AllowedCPUs=0-7 \
+            -p WorkingDirectory="$PROJ_ROOT" \
+            "${RUN_AS[@]}" \
+            "${ENV_ARGS[@]}" \
+            /usr/bin/taskset -c 0-3 \
+            "$BIN" "${CFG_ARGS[@]}" "$@" || rc=$?
+        exit "$rc"
+    else
+        echo "run.sh: warning: failed to enable RT isolation (continuing without isolation)" >&2
+    fi
 fi
 
 exec "$BIN" "${CFG_ARGS[@]}" "$@"
