@@ -28,12 +28,21 @@
 
 #pragma once
 
+#include <array>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <stdexcept>
 
 #include "core/pod_ring.hpp"
+
+inline int64_t packet_queue_now_us() noexcept
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               std::chrono::steady_clock::now().time_since_epoch() )
+        .count();
+}
 
 template <class Pkt, class Ops, int N>
 class BasicPacketQueue
@@ -59,9 +68,16 @@ public:
     };
 
 public:
+    enum
+    {
+        kDefaultMaxAgeUs = 300000  // 300 ms max packet age in queue
+    };
+
+public:
     // Allocates the N slots through ops.init(); throws std::runtime_error
     // (after releasing what was allocated) if one fails.
-    explicit BasicPacketQueue( Ops ops = Ops() ) : ops_( ops )
+    explicit BasicPacketQueue( Ops ops = Ops(), int64_t max_age_us = kDefaultMaxAgeUs )
+      : ops_( ops ), max_age_us_( max_age_us )
     {
         for ( int i = 0; i < N; ++i )
         {
@@ -85,9 +101,9 @@ public:
     BasicPacketQueue& operator=( const BasicPacketQueue& ) = delete;
 
     // Producer: moves src's payload into the queue (src is left empty).
-    // An overflow flushes the queue first (Pushed::flushed > 0): the
-    // caller forces an IDR on the next frame. A closed queue drops the packet.
-    Pushed push( Pkt& src )
+    // An overflow or age-limit breach flushes the queue first (Pushed::flushed > 0):
+    // the caller forces an IDR on the next frame. A closed queue drops the packet.
+    Pushed push( Pkt& src, int64_t now_us = packet_queue_now_us() )
     {
         const std::lock_guard<std::mutex> lk( mx_ );
         if ( !open_ )
@@ -96,13 +112,15 @@ public:
             return Pushed { 0, drops_ };
         }
         int flushed = 0;
-        if ( ring_.full() )
+        const bool aged = !ring_.empty() && max_age_us_ > 0 && ( now_us - push_us_[ring_.head] ) > max_age_us_;
+        if ( ring_.full() || aged )
         {
             flushed = ring_.n;
             clear_locked();
             wait_key_ = true;
             ++drops_;
         }
+        push_us_[( ring_.head + ring_.n ) % N] = now_us;
         ops_.move( ring_.push_slot(), src );  // !full() guaranteed above
         if ( ring_.n > max_depth_ )
             max_depth_ = ring_.n;
@@ -202,6 +220,8 @@ private:
     mutable std::mutex mx_;
     std::condition_variable cv_;
     PodRing<Pkt, N> ring_ {};
+    std::array<int64_t, N> push_us_ {};
+    int64_t max_age_us_ = kDefaultMaxAgeUs;
     int drops_ = 0;
     int max_depth_ = 0;
     uint32_t epoch_ = 0;

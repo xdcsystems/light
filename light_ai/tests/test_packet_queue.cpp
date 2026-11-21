@@ -182,6 +182,39 @@ namespace
         q.stop();
         CHECK( t, q.pop( out ).what == Pop::Stopped );
     }
+
+    void age_limit( TestRun& t )
+    {
+        Stats st;
+        Queue q( FakeOps { &st }, 100000 );  // 100 ms age limit
+        q.open( 1 );
+        FakePkt p1 = pkt( 1, true );
+        FakePkt p2 = pkt( 2, false );
+        FakePkt p3 = pkt( 3, false );
+        FakePkt p4 = pkt( 4, true );
+
+        CHECK( t, q.push( p1, 1000 ).flushed == 0 );
+        CHECK( t, q.push( p2, 50000 ).flushed == 0 );  // age 49 ms <= 100 ms
+        // Age 101 ms > 100 ms: flushes p1+p2, re-arms key gate, keeps p3.
+        const Queue::Pushed pu = q.push( p3, 102000 );
+        CHECK( t, pu.flushed == 2 && pu.drops == 1 && st.unrefs == 2 );
+        CHECK( t, q.depth() == 1 );
+        // p3 is non-key and dropped by re-armed key gate; p4 (key) is popped.
+        CHECK( t, q.push( p4, 110000 ).flushed == 0 );
+        FakePkt out;
+        const Queue::Popped pop = q.pop( out );
+        CHECK( t, pop.what == Pop::Packet && out.seq == 4 && pop.left == 0 );
+        CHECK( t, st.unrefs == 3 );
+
+        // max_age_us <= 0 disables age-based flush.
+        Queue q_no_age( FakeOps { &st }, 0 );
+        q_no_age.open( 1 );
+        FakePkt a = pkt( 10, true );
+        FakePkt b = pkt( 11, false );
+        CHECK( t, q_no_age.push( a, 0 ).flushed == 0 );
+        CHECK( t, q_no_age.push( b, 10000000 ).flushed == 0 );
+        CHECK( t, q_no_age.depth() == 2 );
+    }
 }  // namespace
 
 void test_packet_queue( TestRun& t )
@@ -190,6 +223,7 @@ void test_packet_queue( TestRun& t )
     push_pop( t );
     overflow( t );
     failures( t );
+    age_limit( t );
 }
 
 namespace
