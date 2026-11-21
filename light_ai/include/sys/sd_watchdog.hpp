@@ -24,7 +24,7 @@ public:
 public:
     explicit SdWatchdog( const char* socket_path = std::getenv( "NOTIFY_SOCKET" ) ) noexcept
     {
-        if ( socket_path == nullptr || socket_path[0] == '\0' )
+        if ( socket_path == nullptr || ( socket_path[0] != '/' && socket_path[0] != '@' ) || socket_path[1] == '\0' )
             return;
         const std::size_t len = std::strlen( socket_path );
         if ( len >= sizeof( addr_.sun_path ) )

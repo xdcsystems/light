@@ -28,7 +28,11 @@ case "$MODE" in
             {
                 [ -r /proc/sys/vm/swappiness ]    && echo "SWAPPINESS=$(cat /proc/sys/vm/swappiness)"
                 [ -r /proc/sys/vm/stat_interval ] && echo "STAT_INTERVAL=$(cat /proc/sys/vm/stat_interval)"
-                [ -r /proc/sys/kernel/sched_rt_runtime_us ] && echo "SCHED_RT_RUNTIME_US=$(cat /proc/sys/kernel/sched_rt_runtime_us)"
+                if [ -r /proc/sys/kernel/sched_rt_runtime_us ]; then
+                    rt_cur="$(cat /proc/sys/kernel/sched_rt_runtime_us)"
+                    [ "${rt_cur:-0}" -le 0 ] 2>/dev/null && rt_cur=950000
+                    echo "SCHED_RT_RUNTIME_US=$rt_cur"
+                fi
                 if [ -r "$THP_FILE" ]; then
                     thp_cur="$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$THP_FILE")"
                     [ -n "$thp_cur" ] && echo "THP=$thp_cur"

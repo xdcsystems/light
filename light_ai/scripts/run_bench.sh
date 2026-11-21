@@ -18,13 +18,14 @@ if ! command -v cyclictest >/dev/null 2>&1; then
 fi
 
 echo "run_bench.sh: starting light_ai load on $DEVICE (port $PORT)..."
-( sleep 2; ffmpeg -hide_banner -loglevel error -i "tcp://127.0.0.1:$PORT" -f null - ) >/dev/null 2>&1 &
+( sleep 2; exec ffmpeg -hide_banner -loglevel error -i "tcp://127.0.0.1:$PORT" -f null - ) >/dev/null 2>&1 &
 FF_PID=$!
 
 ./scripts/run.sh --device "$DEVICE" --net --net-h264 --net-port "$PORT" > "$LOG_AI" 2>&1 &
 AI_PID=$!
 
 cleanup() {
+    sudo -n pkill -INT -x light_ai 2>/dev/null || true
     kill "$AI_PID" "$FF_PID" 2>/dev/null || true
     wait "$AI_PID" "$FF_PID" 2>/dev/null || true
 }
@@ -32,6 +33,10 @@ trap cleanup EXIT
 
 # Wait for warmup (first [perf] rt window)
 sleep 7
+if ! pgrep -x light_ai >/dev/null 2>&1; then
+    echo "FAIL: light_ai not running" >&2
+    exit 1
+fi
 
 echo "run_bench.sh: running cyclictest -t4 -a 4-7 -p 80 -m -i 1000 -l $LOOPS..."
 sudo -n cyclictest -t4 -a 4-7 -p 80 -m -i 1000 -l "$LOOPS" -q | tee "$LOG_CYC"

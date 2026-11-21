@@ -55,12 +55,12 @@ int main( int argc, char** argv )
             break;
     }
 
+    const ProcessEnv env;
     light_ai::platform::AsyncLogSink async_sink( std::cout, std::cerr );
     const Log log( async_sink.sink_fn(), cli.config().log_level );
 
     try
     {
-        const ProcessEnv env;
         StopFlag stop;
         SignalWaiter waiter( env, stop );
         Pipeline p( cli.config(), stop, log );

@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -56,4 +57,28 @@ void test_sd_watchdog( TestRun& t )
 
     ::close( srv );
     ::unlink( sock_path.c_str() );
+
+    // Abstract UNIX DGRAM socket (@name) receives WATCHDOG=1.
+    {
+        const std::string abs_name = "@light_ai_wd_abs_" + std::to_string( ::getpid() );
+        const int abs_srv = ::socket( AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK, 0 );
+        CHECK( t, abs_srv >= 0 );
+        sockaddr_un abs_addr {};
+        abs_addr.sun_family = AF_UNIX;
+        std::memcpy( abs_addr.sun_path, abs_name.data(), abs_name.size() );
+        abs_addr.sun_path[0] = '\0';
+        const socklen_t abs_len = static_cast<socklen_t>( offsetof( sockaddr_un, sun_path ) + abs_name.size() );
+        CHECK_EQ( t, ::bind( abs_srv, reinterpret_cast<const sockaddr*>( &abs_addr ), abs_len ), 0 );
+
+        SdWatchdog wd( abs_name.c_str() );
+        CHECK( t, wd.active() );
+        wd.ping_now( PerfClock::now() );
+
+        char buf[32] {};
+        const ssize_t n = ::recv( abs_srv, buf, sizeof( buf ) - 1, 0 );
+        CHECK_EQ( t, n, static_cast<ssize_t>( 10 ) );
+        CHECK_STR_EQ( t, std::string( buf ), "WATCHDOG=1" );
+        ::close( abs_srv );
+    }
 }
+

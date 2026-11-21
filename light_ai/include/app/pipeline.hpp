@@ -10,13 +10,13 @@
 #include "config/config.hpp"
 #include "core/log.hpp"
 #include "core/perf_reporter.hpp"
-#include "sys/sd_watchdog.hpp"
 #include "core/status.hpp"
 #include "core/stop_flag.hpp"
 #include "core/timings.hpp"
 #include "npu/inference_pool.hpp"
 #include "npu/rknn_engine.hpp"
 #include "npu/yolo_postprocess.hpp"
+#include "sys/sd_watchdog.hpp"
 
 class Pipeline
 {

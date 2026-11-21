@@ -77,7 +77,9 @@ if [ "${SKIP_ISOLATE:-0}" != "1" ] && [ -r "$ISOLATE_SCRIPT" ] && command -v sys
 
     if [ "$can_isolate" -eq 1 ] && \
        "${SUDO[@]}" env "SKIP_DMA_LATENCY=${SKIP_DMA_LATENCY:-0}" "ENABLE_RT_UNLIMITED=1" bash "$ISOLATE_SCRIPT" on >/dev/null 2>&1; then
+        UNIT_NAME="light_ai-$$.service"
         cleanup_isolate() {
+            "${SUDO[@]}" systemctl stop "$UNIT_NAME" >/dev/null 2>&1 || true
             "${SUDO[@]}" bash "$ISOLATE_SCRIPT" off >/dev/null 2>&1 || true
         }
         trap cleanup_isolate EXIT
@@ -95,7 +97,7 @@ if [ "${SKIP_ISOLATE:-0}" != "1" ] && [ -r "$ISOLATE_SCRIPT" ] && command -v sys
         done < <(env | grep '^LIGHT_AI_' || true)
 
         rc=0
-        "${SUDO[@]}" systemd-run "$IO_MODE" --wait --collect \
+        "${SUDO[@]}" systemd-run "$IO_MODE" --unit="$UNIT_NAME" --wait --collect \
             --slice=light_ai.slice \
             -p AllowedCPUs=0-7 \
             -p LimitRTPRIO=90 \
@@ -103,6 +105,7 @@ if [ "${SKIP_ISOLATE:-0}" != "1" ] && [ -r "$ISOLATE_SCRIPT" ] && command -v sys
             -p NotifyAccess=main \
             -p WatchdogSec=5s \
             -p Restart=on-failure \
+            -p RestartPreventExitStatus="1 2 3" \
             -p WorkingDirectory="$PROJ_ROOT" \
             "${RUN_AS[@]}" \
             "${ENV_ARGS[@]}" \
