@@ -10,6 +10,10 @@
 #   banned-include   GStreamer or OpenCV (<gst/...>, <gstreamer...>, <opencv...>)
 #   core-include     include/core/ and src/core/ include only the C++17 standard library headers (the C++ names:
 #                    <cstdint>, not <stdint.h>) and core/* (SDK-free core: host tests)
+#   sdk-include      an SDK header outside the vendor include paths: <rga/...> (the distro librga 2.2.0 headers,
+#                    against the vendor 1.10.6 library: <im2d.h>, <rga.h>) or a bare MPP header (<rk_mpi.h>,
+#                    <rk_type.h>, <rk_mpi_cmd.h>, <vpu_api.h>, <mpp_*.h>: the distro 1.5.0 headers through
+#                    -I/usr/include/rockchip; <rockchip/...> resolves in /usr/local/include)
 #   nolint           a NOLINT / NOLINTNEXTLINE whose check list switches a project rule off: an entry matching a
 #                    custom-* name of scripts/tidy_rules.yaml or misc-const-correctness (#94; it must be enabled in
 #                    the Checks of that file) as clang-tidy globs it ('*' the only wildcard: '*', 'cust*',
@@ -73,6 +77,7 @@ INC = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]')
 NOLINT = re.compile(r'NOLINT(NEXTLINE|BEGIN|END)?')
 PAREN = re.compile(r'\(([^)]*)\)')
 BANNED = ("gst/", "gstreamer", "opencv")
+MPP_BARE = re.compile(r'(rk_mpi|rk_type|rk_mpi_cmd|vpu_api|mpp_[^/]*)\.h')
 
 findings = []  # (path, line, rule, detail, message)
 NEVER = ("nolint-range", "nolint-blanket")  # rules no allowlist line can allow
@@ -131,6 +136,10 @@ def check_file(rel, path):
                 kind, target = m.group(1), m.group(2)
                 if target.startswith(BANNED):
                     add(rel, n, "banned-include", target, "no GStreamer, no OpenCV")
+                if target.startswith("rga/"):
+                    add(rel, n, "sdk-include", target, "use the vendor librga headers (<im2d.h>, <rga.h>), not the distro rga/")
+                if MPP_BARE.fullmatch(target):
+                    add(rel, n, "sdk-include", target, "use <rockchip/...>")
                 if kind == '"':
                     seen_quote = True
                 elif seen_quote:

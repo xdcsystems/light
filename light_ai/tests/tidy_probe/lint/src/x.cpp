@@ -1,4 +1,4 @@
-// rules_lint.sh self-test (#93): the violations of each kind except those in include/.
+// rules_lint.sh self-test (#93): the violations of each kind except those in include/ and src/sdk.cpp.
 #include "x.hpp"
 #include <gst/gst.h>
 // xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
