@@ -1,5 +1,6 @@
-// Single-viewer TCP pull transport for libavformat muxers (NetEncoder, NetPreview).
-// Owns the listening socket, the accepted client socket, and the custom AVIOContext.
+// Single-viewer POSIX TCP pull listener and accepted client socket.
+// Owns the listening socket and accepted client socket; FFmpeg AVIO binding
+// lives in net/tcp_avio.hpp so platform/ stays SDK-free.
 #pragma once
 
 #include <atomic>
@@ -9,9 +10,6 @@
 #include "core/log.hpp"
 #include "core/status.hpp"
 #include "core/stop_flag.hpp"
-
-struct AVFormatContext;
-struct AVIOContext;
 
 class TcpPullServer
 {
@@ -41,14 +39,8 @@ public:
     // Failed (poll/accept errno), Invalid (no listening socket).
     Status accept_client( const std::atomic<bool>& quit );
 
-    // Allocates a 32 KiB custom AVIOContext over the accepted client
-    // socket and attaches it to fc->pb (sets AVFMT_FLAG_CUSTOM_IO).
-    // Status: Invalid (no client / no fc), NoMemory (av_malloc /
-    // avio_alloc_context).
-    Status attach_avio( AVFormatContext* fc );
-
-    // Tears down the current viewer AVIOContext and client socket;
-    // keeps the listening socket open for the next viewer session.
+    // Closes the accepted client socket; keeps the listening socket open
+    // for the next viewer session.
     void close_client() noexcept;
 
     // Shuts down any active client socket to unblock a stalled send() on stop.
@@ -56,6 +48,10 @@ public:
 
     // Closes both the client session and the listening socket.
     void close_all() noexcept;
+
+    bool has_client() const noexcept { return write_ctx_.cfd.load( std::memory_order_acquire ) >= 0; }
+    WriteCtx& write_ctx() noexcept { return write_ctx_; }
+    const WriteCtx& write_ctx() const noexcept { return write_ctx_; }
 
     uint64_t wait_writable_cnt() const noexcept
     {
@@ -73,12 +69,10 @@ private:
     std::mutex cfd_mx_;
     bool aborted_ = false;
     WriteCtx write_ctx_;
-    uint8_t* iobuf_ = nullptr;
-    AVIOContext* pb_ = nullptr;
 };
 
-// One AVIO chunk onto the client socket of ctx, all of it or an error
-// (src/net/tcp_send.cpp: POSIX only, no FFmpeg -- host-tested). Returns
+// One chunk onto the client socket of ctx, all of it or an error
+// (src/platform/tcp_send.cpp: POSIX only, no FFmpeg -- host-tested). Returns
 // buf_size, or a negative code: -EPIPE (no client, peer gone, shut down by
 // abort_client), -ETIMEDOUT (the chunk missed its sndtimeo_sec deadline),
 // -EIO (any other errno), kTcpSendEof (send returned 0).

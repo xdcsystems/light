@@ -1,4 +1,4 @@
-// tcp_send_chunk (src/net/tcp_send.cpp): TcpPullServer's AVIO write loop over a
+// tcp_send_chunk (src/platform/tcp_send.cpp): TcpPullServer's AVIO write loop over a
 // real socket pair -- a whole chunk delivered, the peer gone, abort_client's
 // shutdown, no client, and the chunk-wide sndtimeo deadline (Low §3).
 
@@ -14,7 +14,7 @@
 
 #include "check.hpp"
 #include "suites.hpp"
-#include "net/tcp_pull_server.hpp"
+#include "platform/tcp_pull_server.hpp"
 
 namespace
 {
@@ -43,6 +43,22 @@ namespace
         for ( size_t i = 0; i < n; ++i )
             v[i] = static_cast<uint8_t>( i * 13 + 7 );
         return v;
+    }
+
+    void check_tcp_pull_server_lifecycle( TestRun& t )
+    {
+        TcpPullServer srv( 0, 65536, 1 );
+        const std::atomic<bool> quit_now { true };
+        CHECK( t, !srv.has_client() );
+        const Status no_lfd = srv.accept_client( quit_now );
+        CHECK( t, !no_lfd.ok() && no_lfd.code() == Errc::Invalid );
+        CHECK( t, srv.listen().ok() );
+        const Status cancelled = srv.accept_client( quit_now );
+        CHECK( t, !cancelled.ok() && cancelled.code() == Errc::Timeout );
+        CHECK( t, !srv.has_client() );
+        srv.abort_client();
+        srv.close_all();
+        CHECK( t, !srv.has_client() );
     }
 }  // namespace
 
@@ -112,4 +128,5 @@ void test_tcp_send( TestRun& t )
         CHECK( t, r == -ETIMEDOUT );
         CHECK( t, el >= 900 && el < 3000 );
     }
+    check_tcp_pull_server_lifecycle( t );
 }

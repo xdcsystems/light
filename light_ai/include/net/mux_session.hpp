@@ -28,7 +28,6 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
-#include <thread>
 
 #include "core/encoder_config.hpp"
 #include "core/net_perf.hpp"
@@ -37,6 +36,8 @@
 #include "core/status.hpp"
 #include "net/av_packet.hpp"
 #include "net/av_packet_queue.hpp"
+#include "net/tcp_avio.hpp"
+#include "platform/joining_thread.hpp"
 
 class Log;
 class TcpPullServer;
@@ -57,6 +58,7 @@ class MuxSession
 
     public:
         TcpPullServer* tcp = nullptr;
+        TcpAvio avio;
         AVIOContext* udp_pb = nullptr;
         bool tcp_pull = false;
     };
@@ -128,5 +130,5 @@ private:
     std::atomic<bool> quit_ { false };  // stop() -> the accept poll and the session loop
     std::mutex tcp_mx_;
     TcpPullServer* active_tcp_ = nullptr;
-    std::thread thread_;                // last: started by start(), after every member above
+    JoiningThread thread_;              // last: started by start(), after every member above
 };

@@ -31,6 +31,7 @@ add_executable(light_ai_tests
     test_byte_window.cpp
     test_status.cpp
     test_stop_flag.cpp
+    test_joining_thread.cpp
     test_tcp_retry.cpp
     test_tcp_send.cpp
     test_yolo_head_shape.cpp
@@ -100,7 +101,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/auto_orient.cpp
     ${LIGHT_AI_ROOT}/src/core/global_track.cpp
     ${LIGHT_AI_ROOT}/src/core/trail_window.cpp
-    ${LIGHT_AI_ROOT}/src/source/buffered_socket.cpp
+    ${LIGHT_AI_ROOT}/src/platform/buffered_socket.cpp
     ${LIGHT_AI_ROOT}/src/source/mjpeg_slot_pool.cpp
     ${LIGHT_AI_ROOT}/src/source/net_mjpeg_source.cpp
     ${LIGHT_AI_ROOT}/src/render/box_smoother.cpp
@@ -115,7 +116,8 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/timings.cpp
     ${LIGHT_AI_ROOT}/src/app/console_reporter.cpp
     ${LIGHT_AI_ROOT}/src/npu/cal_dumper.cpp
-    ${LIGHT_AI_ROOT}/src/net/tcp_send.cpp
+    ${LIGHT_AI_ROOT}/src/platform/tcp_pull_server.cpp
+    ${LIGHT_AI_ROOT}/src/platform/tcp_send.cpp
     ${LIGHT_AI_ROOT}/externals/inih/ini.c
 )
 # Same inih switch as the main target: the config-file handler relies on it.

@@ -9,11 +9,11 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
-#include <thread>
 #include <utility>
 
 #include "core/global_track.hpp"
 #include "core/pod_ring.hpp"
+#include "platform/joining_thread.hpp"
 
 enum class ReidSlotState : uint8_t
 {
@@ -37,7 +37,7 @@ public:
     {
         for ( auto& s : states_ )
             s.store( ReidSlotState::Free, std::memory_order_relaxed );
-        worker_ = std::thread( [this]() noexcept { worker_loop(); } );
+        worker_.start( [this]() noexcept { worker_loop(); } );
     }
 
     ~BasicReidQueue()
@@ -47,8 +47,7 @@ public:
             stop_ = true;
         }
         cv_.notify_all();
-        if ( worker_.joinable() )
-            worker_.join();
+        worker_.join();
     }
 
     BasicReidQueue( const BasicReidQueue& ) = delete;
@@ -138,5 +137,5 @@ private:
     std::mutex mx_;
     std::condition_variable cv_;
     bool stop_ = false;
-    std::thread worker_;
+    JoiningThread worker_;
 };

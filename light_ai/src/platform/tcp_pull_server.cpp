@@ -1,6 +1,5 @@
 #include <arpa/inet.h>
 #include <cerrno>
-#include <chrono>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -8,36 +7,14 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-extern "C"
-{
-#include <libavformat/avformat.h>
-#include <libavformat/avio.h>
-#include <libavutil/error.h>
-#include <libavutil/mem.h>
-}
-
-#include "net/tcp_pull_server.hpp"
+#include "platform/tcp_pull_server.hpp"
 
 namespace
 {
     enum
     {
-        kIoBufBytes = 32768,
         kPollMs = 200
     };
-
-    // The AVIO write callback: the POSIX drain loop is tcp_send_chunk()
-    // (src/net/tcp_send.cpp, host-tested); its negative codes are -errno, which
-    // is exactly FFmpeg's AVERROR() on POSIX, except the peer-EOF marker.
-    // NOLINTNEXTLINE(misc-redundant-expression): intentional drift guard - AVERROR(e) expands to -(e) on POSIX
-    static_assert( AVERROR( EPIPE ) == -EPIPE && AVERROR( ETIMEDOUT ) == -ETIMEDOUT && AVERROR( EIO ) == -EIO,
-                   "AVERROR is not -errno on this platform" );
-    // NOLINTNEXTLINE(misc-const-correctness): avio_alloc_context fixes the callback type, opaque is void*
-    int write_packet( void* opaque, const uint8_t* buf, int buf_size )
-    {
-        const int r = tcp_send_chunk( *static_cast<const TcpPullServer::WriteCtx*>( opaque ), buf, buf_size );
-        return r == kTcpSendEof ? AVERROR_EOF : r;
-    }
 
     void configure_client_socket( int cfd, int sndbuf_bytes, int sndtimeo_sec ) noexcept
     {
@@ -142,34 +119,8 @@ bool TcpPullServer::adopt_client( int cfd ) noexcept
     return true;
 }
 
-Status TcpPullServer::attach_avio( AVFormatContext* fc )
-{
-    if ( write_ctx_.cfd.load( std::memory_order_acquire ) < 0 || !fc )
-        return make_status( Errc::Invalid, "no client" );
-    iobuf_ = static_cast<uint8_t*>( av_malloc( kIoBufBytes ) );
-    if ( !iobuf_ )
-        return make_status( Errc::NoMemory, "avio buffer alloc failed" );
-    pb_ = avio_alloc_context( iobuf_, kIoBufBytes, 1, &write_ctx_, nullptr, write_packet, nullptr );
-    if ( !pb_ )
-    {
-        av_freep( &iobuf_ );
-        return make_status( Errc::NoMemory, "avio_alloc_context failed" );
-    }
-    fc->pb = pb_;
-    fc->flags |= AVFMT_FLAG_CUSTOM_IO;
-    return {};
-}
-
 void TcpPullServer::close_client() noexcept
 {
-    if ( pb_ )
-    {
-        av_freep( &pb_->buffer );
-        avio_context_free( &pb_ );
-        iobuf_ = nullptr;  // the context owned it (or its replacement): freed above
-    }
-    if ( iobuf_ )  // allocated, but no context took it over
-        av_freep( &iobuf_ );
     int fd = -1;
     {
         const std::lock_guard<std::mutex> lk( cfd_mx_ );

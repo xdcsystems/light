@@ -8,6 +8,7 @@ class TestRun;
 void test_check_harness( TestRun& t );
 void test_status( TestRun& t );
 void test_stop_flag( TestRun& t );
+void test_joining_thread( TestRun& t );
 void test_tcp_retry( TestRun& t );
 void test_yolo_head_shape( TestRun& t );
 void test_pod_containers( TestRun& t );

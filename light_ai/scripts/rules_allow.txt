@@ -10,6 +10,6 @@ src/npu/rknn_engine.cpp nolint custom-no-const-cast
 # NOLINT(misc-const-correctness) sites (#94; CONTRIBUTING, const by default): a type fixed by the C or C++ API, not
 # by us. The reason sits in the NOLINT.
 src/config/config_file.cpp nolint misc-const-correctness
-src/net/tcp_pull_server.cpp nolint misc-const-correctness
+src/net/tcp_avio.cpp nolint misc-const-correctness
 tests/test_main.cpp nolint misc-const-correctness
 tests/tsan_main.cpp nolint misc-const-correctness

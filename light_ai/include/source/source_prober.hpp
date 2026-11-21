@@ -18,10 +18,10 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
-#include <thread>
 
 #include "core/log.hpp"
 #include "core/status.hpp"
+#include "platform/joining_thread.hpp"
 
 
 template <class Set, class Locator>
@@ -54,7 +54,7 @@ public:
             return;
         stop_req_.store( false, std::memory_order_release );
         set_.set_prober_quit( &stop_req_ );
-        th_ = std::thread( [this] { loop(); } );
+        th_.start( [this] { loop(); } );
     }
 
     // Wakes the prober (and aborts any in-flight connect/read) and joins it.
@@ -67,8 +67,7 @@ public:
             quit_ = true;
         }
         cv_.notify_all();
-        if ( th_.joinable() )
-            th_.join();
+        th_.join();
         // The channels must not keep a pointer to stop_req_: it dies with this
         // prober (a local of Pipeline::run()) while the set outlives it (Low §2).
         // After the join no prober thread reads it; the caller's thread owns the set.
@@ -128,5 +127,5 @@ private:
     std::condition_variable cv_;
     std::atomic<bool> stop_req_ { false };
     bool quit_ = false;
-    std::thread th_;
+    JoiningThread th_;
 };

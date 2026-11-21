@@ -33,7 +33,6 @@
 #include <cstdint>
 #include <ios>
 #include <stdexcept>
-#include <thread>
 #include <vector>
 
 #include "core/throw_on.hpp"
@@ -44,6 +43,7 @@
 #include "npu/infer_slot.hpp"
 #include "core/pod_ring.hpp"
 #include "core/timings.hpp"  // Timings::clk, ms()
+#include "platform/joining_thread.hpp"
 
 struct PoolOptions
 {
@@ -216,7 +216,7 @@ private:
         try
         {
             for ( int k = 0; k < n_; ++k )
-                workers_[static_cast<size_t>( k )] = std::thread( &InferencePool::worker_loop, this, k );
+                workers_[static_cast<size_t>( k )].start( &InferencePool::worker_loop, this, k );
         }
         catch ( ... )  // NOLINT(custom-no-catch-all): startup, a failed std::thread start; cleans up, then rethrows
         {
@@ -232,10 +232,7 @@ private:
         for ( auto& slot : slots_ )
             slot.close();
         for ( auto& w : workers_ )
-        {
-            if ( w.joinable() )
-                w.join();
-        }
+            w.join();
     }
 
     void worker_loop( int k ) noexcept
@@ -279,5 +276,5 @@ private:
     std::vector<Engine> engines_;
     std::array<InferSlot, kMaxSlots> slots_ {};
     PodRing<int, kMaxSlots> fifo_ {};  // slot indices in submit order; pipeline thread only
-    std::array<std::thread, kMaxSlots> workers_ {};  // last: joined before everything above dies
+    std::array<JoiningThread, kMaxSlots> workers_ {};  // last: joined before everything above dies
 };

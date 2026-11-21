@@ -7,7 +7,7 @@
 
 #include "core/multipart_reader.hpp"
 #include "core/status.hpp"
-#include "source/buffered_socket.hpp"
+#include "platform/buffered_socket.hpp"
 #include "source/mjpeg_slot_pool.hpp"
 
 class Log;
@@ -18,7 +18,7 @@ class Log;
 // per frame (socket -> slot); V4L2 gives zero-copy via dma-buf.
 //
 // Built from independent parts: the TCP client + receive window
-// (source/buffered_socket.hpp), the HTTP head and multipart framing as pure
+// (platform/buffered_socket.hpp), the HTTP head and multipart framing as pure
 // parsers (core/http_head.hpp, core/multipart_reader.hpp), the frame slots
 // (source/mjpeg_slot_pool.hpp). This class keeps the MediaSource contract:
 // connect + prime, the start() drain, latest-frame skip, jpeg_frame_check,

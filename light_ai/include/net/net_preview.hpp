@@ -2,11 +2,11 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
-#include <thread>
 #include <vector>
 
 #include "core/preview_ring.hpp"
 #include "core/status.hpp"
+#include "platform/joining_thread.hpp"
 
 // Opaque ffmpeg types, forward-declared: the header compiles without
 // the libav* include paths; the real includes stay in the .cpp.
@@ -14,6 +14,7 @@ struct AVFormatContext;
 struct AVPacket;
 struct AVStream;
 class Log;
+class TcpAvio;
 class TcpPullServer;
 
 // Raw preview over TCP, non-blocking producer path.
@@ -50,7 +51,7 @@ private:
     void serve() noexcept;
     // One session, in serve()'s order (preview thread). fc: the session's
     // muxer context, owned by serve()'s guard.
-    Status open_session( TcpPullServer& tcp, AVFormatContext*& fc, AVStream*& st );
+    Status open_session( TcpPullServer& tcp, TcpAvio& avio, AVFormatContext*& fc, AVStream*& st );
     uint64_t compute_frame_step( const AVStream* st ) const noexcept;
     void go_live() noexcept;
     bool drain_session( AVFormatContext* fc, AVStream* st, uint64_t frame_step ) noexcept;
@@ -62,7 +63,6 @@ private:
     const size_t src_stride_;  // tensor row stride in bytes (>= w_ * 3); the ring holds packed rows
     PreviewRing ring_;
     std::vector<uint8_t> send_buf_;
-    std::thread thread_;
     std::atomic<bool> quit_ { false };
     std::atomic<bool> connected_ { false };
     std::atomic<uint32_t> session_epoch_ { 0 };
@@ -71,4 +71,5 @@ private:
     std::mutex tcp_mx_;
     TcpPullServer* active_tcp_ = nullptr;
     AVPacket* pkt_ = nullptr;  // allocated once, used only on serve() thread
+    JoiningThread thread_;     // last: joined before members above die
 };

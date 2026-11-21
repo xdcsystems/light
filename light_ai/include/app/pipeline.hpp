@@ -1,40 +1,25 @@
 #pragma once
-#include <array>
+
 #include <chrono>
 #include <cstdint>
-#include <optional>
-#include <string>
 
-#include "render/box_smoother.hpp"
-#include "npu/cal_dumper.hpp"
-#include "core/status.hpp"
+#include "app/analytics_stage.hpp"
+#include "app/preprocessor.hpp"
+#include "app/source_supervisor.hpp"
+#include "app/stream_output.hpp"
 #include "config/config.hpp"
-#include "app/console_reporter.hpp"
-#include "core/auto_orient.hpp"
 #include "core/log.hpp"
 #include "core/perf_reporter.hpp"
+#include "core/status.hpp"
 #include "core/stop_flag.hpp"
-#include "core/frame_trace.hpp"
-#include "core/global_track.hpp"
-#include "npu/inference_pool.hpp"
-#include "render/overlay_sink.hpp"
-#include "npu/reid_worker.hpp"
-#include "media/rga_resizer.hpp"
-#include "npu/rknn_engine.hpp"
-#include "source/source_prober.hpp"
-#include "source/source_set.hpp"
-#include "source/source_types.hpp"
-#include "source/sources.hpp"
 #include "core/timings.hpp"
-#include "core/tracker.hpp"
+#include "npu/inference_pool.hpp"
+#include "npu/rknn_engine.hpp"
 #include "npu/yolo_postprocess.hpp"
 
 class Pipeline
 {
-    enum { kMaxSources = reid_cfg::kMaxSources };
     using NpuPool = InferencePool<RknnEngine, YoloDecode>;
-    using SourceSet = BasicSourceSet<SourceChannel, kMaxSources>;
-    using SourceProber = BasicSourceProber<SourceSet, UsbNodeLocator>;
 
     // Outcome of one frame-loop step (step()).
     enum class Step : uint8_t
@@ -43,28 +28,6 @@ class Pipeline
         Skipped,     // nothing to count: empty packet, decode error, warm-up, a handled detach
         Stop,        // stop requested: leave through the drain/summary path
         Fatal        // unrecoverable source error: the reason travels in the Status out-param; run() returns it (exit code 1)
-    };
-
-    // Per-source analytics, frame thread only (publish_oldest): the
-    // source itself -- device, decoder, geometry, state -- is SourceChannel.
-    struct SourceAnalytics
-    {
-        BoxSmoother smoother {};
-        Tracker tracker {};
-        AutoOrient orient {};
-        uint32_t seen_attach_seq = 0;
-        int cur_rot = 0;
-        int frames = 0;  // frames dispatched from this source (the cal/box-log frame index)
-    };
-
-    // One RGA write into a pool tensor (resize_into_slot): the oriented
-    // source size, the band it fills in the tensor, the band RGA reported.
-    struct SlotResize
-    {
-        int w = 0;
-        int h = 0;
-        LbGeom band {};
-        LbGeom rga {};
     };
 
 public:
@@ -84,83 +47,29 @@ public:
     Status run();
 
 private:
-    void start_reid();      // ctor: the Re-ID worker, off when its crops would need the RGA aux pass
-    void attach_sources();  // ctor, last: the first attach of every channel (STREAMON)
-
-    // One frame: next_frame -> decode -> dispatch -> publish (pool 1).
+    // One frame: next_frame -> decode -> orient -> dispatch -> publish (pool 1).
     // st: the fatal reason, filled only on Step::Fatal (cleared at entry).
     Step step( int& ok, Status& st ) noexcept;
-    // The next encoded frame or a failure; parks (NO SIGNAL, 40 ms quanta)
-    // while no source is Live. Stopped once the stop flag is set.
-    FrameStatus next_frame( EncodedFrame& f, int& ok ) noexcept;
+    void sync_and_orient( int src, int fd_src, int& ok ) noexcept;
     void drain_done_slots( int& ok ) noexcept;
-    int publish_oldest() noexcept;       // collect -> analytics -> output; 1 if the frame was valid
-    void run_reid_stage( const FrameView& view ) noexcept;
-
-    // NO SIGNAL idle publish: gray plate tiles for absent sources at a
-    // fixed pace; not counted in --frames or the timing stats.
-    void idle_tick() noexcept;
-    void reset_source_analytics( int src ) noexcept;
-    Status handle_source_failure( const EncodedFrame& f ) noexcept;  // the fatal reason; Ok = recovered
-    int acquire_slot( int& ok ) noexcept;      // claim-or-drain; idx or -1 on stop
-
-    void prepare_tensor_band( int slot, const LbGeom& eff_lb ) noexcept;
-    // The frame fd_src of source src, rotated by rot, into slot's tensor: the
-    // bars re-grayed on a band change, the RGA resize, and on success the
-    // slot's band. out: the oriented size and the expected band on every
-    // path; out.rga is set only on success.
-    Status resize_into_slot( int slot, int src, int fd_src, int rot, SlotResize& out ) noexcept;
-    bool submit_orient_probe( int src, int fd_src, int rot, int job_idx, int& ok ) noexcept;
-    bool probe_rot_batch( int src, int fd_src, const int* rots, int n_rots, float* scores, int& ok ) noexcept;
-    void update_auto_orient( int src, int fd_src, int& ok ) noexcept;
-    // RGA into the slot's tensor, then submit to the pool.
-    void frame_dispatch( int slot, int src, int frame_idx, int fd_src, int64_t ts_us, double cam_ms, double dec_ms ) noexcept;
+    int publish_oldest() noexcept;  // collect -> analytics -> output; 1 if valid
+    int acquire_slot( int& ok ) noexcept;
+    void reset_source( int src ) noexcept;
+    int64_t now_us() const noexcept;
 
 private:
     Config cfg_;
-    UsbHost usb_host_;
-    UsbNodeLocator locator_;  // attaching thread only: the ctor, then the SourceProber of run()
-    SourceSet srcs_;  // the channels and the round-robin cursor
-    std::array<SourceAnalytics, kMaxSources> an_ {};
-
-    RgaResizer rga_;  // shared, stateless: writes any source into any slot tensor
-    // NPU stage: the engines (one, or three with --pool 3), their slots,
-    // worker threads and the in-order result FIFO. Declared before sink_:
-    // the GPU drawer imports the pool's tensors and must die first.
+    SourceSupervisor sources_;
+    // NPU stage: declared before output_ so OverlaySink's GPU drawer (which
+    // imports pool_'s tensors) is destroyed before the pool's engines die.
     NpuPool pool_;
-    // Band last written into each pool tensor: a band change (another
-    // source, another geometry) re-grays the bars before the RGA write.
-    std::array<LbGeom, NpuPool::kMaxSlots> tensor_band_ {};
-    int model_w_ = 0;
-    int model_h_ = 0;  // taken from the model, not from flags
-    
-    // M5: per-source letterbox geometry lives in SourceChannel::geom().lb; the
-    // RGA per-frame LbGeom is cross-checked against the band_geom of the
-    // oriented size (the same band at the source's own rotation) in
-    // frame_dispatch (one-time warn).
-    bool lb_warned_ = false;
-    CalDumper cal_dumper_;
-    int reconnects_ = 0;   // source disconnects recovered this run
-    Timings t_;            // avg/60 + whole-run TOTAL; logs through log_
-
-    OverlaySink sink_;
-    ConsoleReporter rep_;  // throttled reports + final summary
-    TrajList trajs_;
-    std::optional<ReidWorker> reid_worker_ {};
-    GlobalTrackTable global_tracks_ {};
-
-    // Per-frame buffers: preallocated members, reused each frame --
-    // zero heap traffic in the steady-state path.
-    DetList dets_;       // smoothed detections of the frame being published
-    InferResult res_;    // the pool result being published
-
-    const StopFlag& stop_;  // set by SignalWaiter (SIGINT/SIGTERM), read only here
-    const Log& log_;        // diagnostics sink (main.cpp); safe from the worker and prober threads
-    std::chrono::steady_clock::time_point t0_ {};  // run() start: the pts base of live frames and NO SIGNAL
-    int64_t last_idle_us_ = -1;  // last NO SIGNAL publish stamp (us since t0_)
-    uint64_t reid_crop_fail_ = 0;  // failed Re-ID crops (rate-limited warn in run_reid_stage)
-    // The source-side [perf] window and both 5 s [perf] lines (--net only;
-    // core/perf_reporter.hpp): fed by step(), probe_rot_batch() and
-    // reset_source_analytics(), logged from step() and idle_tick().
+    Preprocessor pre_;
+    AnalyticsStage analytics_;
+    StreamOutput output_;
+    Timings t_;        // avg/60 + whole-run TOTAL; logs through log_
+    InferResult res_;  // preallocated per-frame result buffer
+    const StopFlag& stop_;
+    const Log& log_;
+    std::chrono::steady_clock::time_point t0_ {};  // run() start: pts base
     PerfReporter perf_;
 };
