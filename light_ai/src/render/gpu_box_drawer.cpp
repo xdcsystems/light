@@ -714,6 +714,13 @@ void GpuBoxDrawer::release_slot( int slot )
     si = {};
 }
 
+void GpuBoxDrawer::release_context() const noexcept
+{
+    if ( st_.dpy != EGL_NO_DISPLAY )
+        eglMakeCurrent( st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );
+    eglReleaseThread();
+}
+
 void GpuBoxDrawer::done()
 {
     if ( st_.dpy != EGL_NO_DISPLAY )

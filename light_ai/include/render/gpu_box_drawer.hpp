@@ -154,6 +154,7 @@ public:
     // The fence wait is bounded (100 ms cap) with a glFinish() fallback --
     // a wedged GPU must not hang the pipeline.
     void sync_cpu() noexcept;
+    void release_context() const noexcept;
     // Draw -> RGA/CPU ordering is sync_cpu() only: this RGA driver
     // ignores acquire fences, so a fence fd handoff is not a valid
     // mechanism on this board (retired, see docs/state.md).

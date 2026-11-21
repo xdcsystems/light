@@ -38,34 +38,30 @@ public:
 public:
     explicit StreamOutput( const Log& log );
     ~StreamOutput();
+
     StreamOutput( const StreamOutput& ) = delete;
     StreamOutput& operator=( const StreamOutput& ) = delete;
-    StreamOutput( StreamOutput&& ) = delete;
-    StreamOutput& operator=( StreamOutput&& ) = delete;
 
-    void init( const StreamConfig& stream, const TensorSet& tensors, int model_w, int model_h, const LbGeom& enc_lb,
-               int nsrc );
+    void init( const StreamConfig& stream, const TensorSet& tensors, int model_w, int model_h,
+               const LbGeom& enc_lb, int nsrc = 1 );
 
-    bool enabled() const noexcept { return sink_.enabled(); }
-    void flush_dirty() noexcept;
     void reset_source( int src ) noexcept;
+    void flush_dirty() noexcept;
     void wait_slot_free( int slot ) noexcept;
+    uint32_t busy_slot_mask() const noexcept;
     void drain() noexcept;
 
     double publish_frame( int frame, const FrameView& view, const DetList& dets, const TrajList& trajs,
                           const Tracker& tracker, int nsrc, bool defer_enc ) noexcept;
 
-    // NO SIGNAL idle publish: gray plate tiles for absent sources at a fixed
-    // pace; not counted in --frames or the timing stats.
     template <class Srcs>
-    void idle_tick( std::chrono::steady_clock::time_point t0, Srcs& srcs, PerfReporter& perf ) noexcept
+    void idle_tick( PerfClock::time_point t0, const Srcs& srcs ) noexcept
     {
-        if ( !sink_.enabled() )
-            return;
         flush_dirty();
-        perf.tick( PerfClock::now(), srcs, *this );
+        if ( !sink_.enabled() || !sink_.viewer_live() )
+            return;
         const int64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                   std::chrono::steady_clock::now() - t0 )
+                                   PerfClock::now() - t0 )
                                    .count();
         const int64_t step_us = fps_ > 0 ? 1000000LL / fps_ : 40000;
         if ( last_idle_us_ >= 0 && now_us - last_idle_us_ < step_us )
@@ -105,6 +101,8 @@ private:
     void post_idle( int64_t ts_us, const std::array<bool, kMaxSources>& absent, int nabs ) noexcept;
     void worker_loop() noexcept;
     void consume_controls() noexcept;
+    bool any_pending_locked() const noexcept;
+    bool slot_pending_locked( int slot ) const noexcept;
     bool take_work( PublishJob& pjob, bool& has_pub, IdleJob& ijob, bool& has_idle ) noexcept;
 
 private:
@@ -114,13 +112,13 @@ private:
     int fps_ = 0;
     int64_t last_idle_us_ = -1;
 
-    std::mutex mx_;
+    mutable std::mutex mx_;
     std::condition_variable cv_;
     bool stop_ = false;
     bool flush_req_ = false;
-    uint32_t reset_mask_ = 0;
-    bool has_pending_ = false;
-    PublishJob pending_ {};
+    std::array<bool, kMaxSources> has_pending_ {};
+    std::array<PublishJob, kMaxSources> pending_ {};
+    int next_src_ = 0;
     bool has_idle_ = false;
     IdleJob idle_ {};
     int active_slot_ = -1;

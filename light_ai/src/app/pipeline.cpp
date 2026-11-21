@@ -112,7 +112,7 @@ void Pipeline::drain_done_slots( int& ok ) noexcept
 int Pipeline::acquire_slot( int& ok ) noexcept
 {
     bool starved_warned = false;
-    int k = pool_.try_acquire();
+    int k = pool_.try_acquire( output_.busy_slot_mask() );
     while ( k < 0 && !stop_.requested() )
     {
         if ( !starved_warned )
@@ -125,7 +125,7 @@ int Pipeline::acquire_slot( int& ok ) noexcept
             ok += publish_oldest();
         else
             std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
-        k = pool_.try_acquire();
+        k = pool_.try_acquire( output_.busy_slot_mask() );
     }
     output_.wait_slot_free( k );
     return k;
@@ -152,7 +152,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
     const auto t0 = clk::now();
     EncodedFrame f {};
     const auto drain_fn = [this, &ok]() noexcept { drain_done_slots( ok ); };
-    const auto idle_fn = [this]() noexcept { output_.idle_tick( t0_, sources_.sources(), perf_ ); };
+    const auto idle_fn = [this]() noexcept { output_.idle_tick( t0_, sources_.sources() ); };
     const auto reset_fn = [this]( int s ) noexcept { reset_source( s ); };
 
     const FrameStatus fs = sources_.next_frame( f, pool_, drain_fn, idle_fn );

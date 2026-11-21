@@ -117,13 +117,19 @@ public:
     // A Free slot whose tensor the caller may fill, or -1. A slot can be
     // missing although the FIFO is not full: an abandoned one stays in
     // flight until its own worker finishes (InferSlot).
-    int try_acquire() const
+    int try_acquire( uint32_t avoid_mask = 0 ) const
     {
-        const auto end = slots_.begin() + n_;
-        const auto it = std::find_if( slots_.begin(), end, []( const InferSlot& s ) {
-            return s.state() == InferSlot::State::Free;
-        } );
-        return it != end ? static_cast<int>( it - slots_.begin() ) : -1;
+        int fallback = -1;
+        for ( int i = 0; i < n_; ++i )
+        {
+            if ( slots_[static_cast<size_t>( i )].state() != InferSlot::State::Free )
+                continue;
+            if ( ( avoid_mask & ( 1u << static_cast<unsigned>( i ) ) ) == 0 )
+                return i;
+            if ( fallback < 0 )
+                fallback = i;
+        }
+        return fallback;
     }
 
     // Queues the frame whose pixels are already in tensor(k). false: the

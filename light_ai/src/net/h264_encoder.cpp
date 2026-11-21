@@ -294,7 +294,7 @@ void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
     {
         ++q_flush_cnt_;
         force_idr_ = true;
-        log_.warn() << "enc: packet queue overflow: flushed " << pu.flushed << " pkts (drop " << pu.drops
+        log_.warn() << "enc: packet queue flushed " << pu.flushed << " pkts (drop " << pu.drops
                     << "), IDR next frame\n";
     }
 }

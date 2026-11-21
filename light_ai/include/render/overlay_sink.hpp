@@ -8,6 +8,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <optional>
 
@@ -46,6 +47,8 @@ public:
                int nsrc = 1 );
 
     bool enabled() const { return preview_.has_value() || enc_.has_value(); }
+    bool viewer_live() const noexcept;
+    void release_worker_context() noexcept;
 
     // Draws the overlay into the frame's tensor and publishes it; returns
     // the publish time, ms (0 when no viewer is connected).
@@ -109,4 +112,6 @@ private:
     bool was_viewer_live_ = false;
     uint32_t last_enc_epoch_ = 0;
     uint32_t last_prev_epoch_ = 0;
+    std::atomic<uint32_t> session_reset_gen_ { 0 };
+    uint32_t applied_reset_gen_ = 0;
 };

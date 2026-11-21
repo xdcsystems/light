@@ -118,7 +118,7 @@ void OverlaySink::sync_viewer_session() noexcept
     {
         if ( was_viewer_live_ )
         {
-            reset_all_sources();
+            session_reset_gen_.fetch_add( 1, std::memory_order_release );
             was_viewer_live_ = false;
         }
         return;
@@ -127,13 +127,24 @@ void OverlaySink::sync_viewer_session() noexcept
     const bool ep_changed = ( enc_open && enc_ep != last_enc_epoch_ ) ||
                             ( prev_open && prev_ep != last_prev_epoch_ );
     if ( !was_viewer_live_ || ep_changed )
-        reset_all_sources();
+        session_reset_gen_.fetch_add( 1, std::memory_order_release );
 
     was_viewer_live_ = true;
     if ( enc_open )
         last_enc_epoch_ = enc_ep;
     if ( prev_open )
         last_prev_epoch_ = prev_ep;
+}
+
+bool OverlaySink::viewer_live() const noexcept
+{
+    return ( enc_ && enc_->viewer_active() ) || ( preview_ && preview_->viewer_connected() );
+}
+
+void OverlaySink::release_worker_context() noexcept
+{
+    if ( drawer_ )
+        drawer_->release_context();
 }
 
 void OverlaySink::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept
@@ -192,6 +203,12 @@ void OverlaySink::prepare_overlay( const FrameView& frame,
                                    GpuBoxList& boxes_out,
                                    CalloutList& callouts_out ) noexcept
 {
+    const uint32_t gen = session_reset_gen_.load( std::memory_order_acquire );
+    if ( gen != applied_reset_gen_ )
+    {
+        applied_reset_gen_ = gen;
+        reset_all_sources();
+    }
     const float sx = frame.lb.w / static_cast<float>( frame.src_w );
     const float sy = frame.lb.h / static_cast<float>( frame.src_h );
     TrajList disp = trajs;
