@@ -64,3 +64,5 @@ This runs:
    - While editing: `clangd` diagnostics ([`.clangd`](.clangd)) and `TIDY_FILES="src/a.cpp" bash scripts/tidy_run.sh` on the changed TUs are hints; only the full gate above decides.
 
 For pure-logic or multi-threaded changes, also verify Layer A reference parity (`bash tools/ref_replay.sh misc/ref_evening.mjpeg build/ref_p3.csv 3 reference/ref_evening.csv`) and live hardware execution on the board.
+
+For structural changes that add, move, or remove a folder or a pipeline stage, update [`docs/images/architecture.svg`](docs/images/architecture.svg) by hand and check it with `xmllint --noout docs/images/architecture.svg`.
