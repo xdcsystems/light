@@ -65,30 +65,9 @@ ffplay -fflags nobuffer tcp://<board-ip>:1234
 
 ## Architecture & Pipeline
 
-```mermaid
-flowchart TB
-    subgraph S1["1. Capture & Hardware Decode"]
-        direction LR
-        S["V4L2 USB (/dev/videoN)<br/>HTTP MJPEG (--net-src)"] --> SC["SourceSet / SourceChannel<br/>+ SourceProber"]
-        SC --> DEC["MppDecoder<br/>YUV422SP / YUV420SP (dma-buf)"]
-    end
+![light_ai architecture: main composes Pipeline (app/), which owns four stages -- Capture (source/, media/), Inference (npu/), Analytics (core/, render/) and the viewer-gated Output (render/, net/) -- over the platform folders (media/, sys/, config/) and the SDK-free core/](docs/images/architecture.svg)
 
-    subgraph S2["2. NPU Inference, Tracking & Optional Re-ID"]
-        direction LR
-        RGA1["RgaResizer (RGA3)<br/>Letterbox + --src-rot (dma-buf)"] --> POOL["InferencePool (--pool 1 | 3)<br/>RknnEngine + YoloDecoder"]
-        POOL --> TRK["BoxSmoother + Tracker<br/>(KalmanAxis, Associator, TrailWindow)"]
-        TRK --> REID["Optional Re-ID (--reid-model)<br/>RGA2 crop_resize + ReidWorker + GlobalTrackTable"]
-    end
-
-    subgraph S3["3. Viewer-Gated Overlay, Compose & Stream"]
-        direction LR
-        OVL["OverlaySink (EN/RU Callouts)<br/>GpuBoxDrawer (Mali EGL) or CPU"] --> COMP["FrameComposer (RGA3)<br/>1x1 / 2x1 / 2x2 NV12 canvas"]
-        COMP --> ENC["H264Encoder (h264_rkmpp)<br/>PacketQueue + MuxSession (TS / UDP)"]
-    end
-
-    DEC --> RGA1
-    REID --> OVL
-```
+One frame's path: V4L2 or HTTP MJPEG → `MppDecoder` (dma-buf YUV) → `RgaResizer` letterbox into a pool tensor → `InferencePool` (`RknnEngine` + `YoloDecode`) → `BoxSmoother` + `Tracker` (+ optional Re-ID) → with a viewer: `OverlaySink` → `FrameComposer` → `H264Encoder` → `PacketQueue` → `MuxSession` (MPEG-TS over TCP pull or UDP).
 
 ### Key Architectural Invariants
 
