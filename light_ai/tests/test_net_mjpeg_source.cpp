@@ -541,13 +541,14 @@ namespace
         CHECK( t, el >= 1900 && el < 3500 );
     }
 
-    // M-15: a part that has started (headers or body) and then drips (a byte
-    // every 250 ms, each inside the 2 s per-fill watchdog) ends with Lost
-    // kPartMs (5 s) after its first header byte -- not never, and not from
-    // the entry: the next delimiter line arrives first and sits in the window
-    // through a 1.5 s idle gap, which must not count toward the part deadline.
-    // drip_headers: the part's header lines drip too (else they come in one
-    // burst with 8 body bytes and only the body drips).
+    // M-15 / #117: a part that has started and then drips (a byte every 250 ms,
+    // each inside the 2 s per-fill watchdog) ends with Lost -- not never, and
+    // not from the entry: the next delimiter line arrives first and sits in the
+    // window through a 1.5 s idle gap, which counts toward no deadline.
+    // drip_headers false: the headers come in one burst with 8 body bytes and
+    // the body drips -> Lost kPartMs (5 s) after the first body byte;
+    // drip_headers true: the header lines drip -> Lost kPollMs (2 s) after the
+    // first header byte.
     void slow_drip_part_times_out( TestRun& t, const Bytes& a, bool drip_headers )
     {
         Rig r;
@@ -578,7 +579,51 @@ namespace
         stop.store( true );
         drip.join();
         CHECK( t, !st.ok() && st.code() == Errc::Lost );
-        CHECK( t, el >= 6300 && el < 8000 );
+        if ( drip_headers )
+            CHECK( t, el >= 3300 && el < 4800 );
+        else
+            CHECK( t, el >= 6300 && el < 8000 );
+    }
+
+    // #117: the part deadline starts at the first body byte. The next part's
+    // header comes right after the frame; its body starts after a 1.5 s gap
+    // (under kPollMs) and arrives in 4 pieces 1.5 s apart: 6 s from the header,
+    // 4.5 s from the first body byte -> Part (it was Lost while kPartMs ran
+    // from the first header byte).
+    void body_deadline_from_first_byte( TestRun& t, const Bytes& a )
+    {
+        Rig r;
+        std::string why;
+        CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+        int idx = -1;
+        uint32_t sz = 0;
+        CHECK( t, r.src.dequeue( idx, sz, -1 ).ok() );  // the primed first frame
+        r.src.requeue( idx );
+
+        const Bytes v = variant( a, 0x66 );
+        const std::string next = parts( { v }, true );
+        const size_t body_at = next.find( "\r\n\r\n", next.find( "--frame" ) ) + 4;
+        std::thread feeder( [&r, &next, body_at] {
+            r.send( next.substr( 0, body_at ) );  // the delimiter and the whole header
+            const size_t piece = ( next.size() - body_at ) / 4;
+            for ( size_t i = 0; i < 4; ++i )
+            {
+                std::this_thread::sleep_for( std::chrono::milliseconds( 1500 ) );
+                const size_t from = body_at + i * piece;
+                r.send( i < 3 ? next.substr( from, piece ) : next.substr( from ) );
+            }
+        } );
+        const auto t0 = std::chrono::steady_clock::now();
+        const Status st = r.src.dequeue( idx, sz, -1 );
+        const auto el = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - t0 ).count();
+        feeder.join();
+        CHECK( t, st.ok() && el >= 5800 && el < 7500 );
+        if ( st.ok() )
+        {
+            const auto* p = static_cast<const uint8_t*>( r.src.buffer( idx ) );
+            CHECK( t, Bytes( p, p + sz ) == v );
+            r.src.requeue( idx );
+        }
     }
 }  // namespace
 
@@ -600,4 +645,5 @@ void test_net_mjpeg_source( TestRun& t )
     slow_drip_head_times_out( t );
     slow_drip_part_times_out( t, a, false );
     slow_drip_part_times_out( t, a, true );
+    body_deadline_from_first_byte( t, a );
 }

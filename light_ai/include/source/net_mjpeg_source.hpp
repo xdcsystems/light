@@ -49,7 +49,8 @@ class NetMjpegSource
     enum
     {
         kPollMs = 2000,     // per-fill watchdog, same window as the camera; also the whole-head deadline
-        kPartMs = 5000,     // one blocking part, from its first header byte: a 300 KB JPEG needs >= 0.48 Mbit/s
+                            // (response head; a part's header lines from their first byte)
+        kPartMs = 5000,     // one blocking part's body, from its first byte: a 300 KB JPEG needs >= 0.48 Mbit/s
         kErrStreakMax = 4,  // corrupt/short-frame streak tolerance
         kSkipMax = 4,       // read_latest_part: parts skipped per dequeue at most
         kDrainMax = 64,     // start(): parts drained at most
@@ -131,12 +132,12 @@ private:
     // retry, and every bad part (the retry too) counts toward kErrStreakMax.
     Read read_latest_part( int slot, uint32_t* size, int timeout_ms );
     // One part into slot (core/multipart_reader.hpp), refilling with the
-    // kPollMs watchdog; once the part's headers have started, under the kPartMs
-    // wall-clock deadline (blocking single-source mode and setup only: the
-    // non-blocking multi-source path is bounded by the SourceSet stall timer).
-    // Any result but
-    // Part resyncs the reader (the next read starts at a delimiter line); only
-    // the callers drop the window on Desync.
+    // kPollMs watchdog; the part's header lines are bounded to kPollMs from
+    // their first byte, its body to kPartMs from its first byte, and the wait
+    // between them is the plain watchdog (blocking single-source mode and
+    // setup only: the non-blocking multi-source path is bounded by the
+    // SourceSet stall timer). Any result but Part resyncs the reader (the next
+    // read starts at a delimiter line); only the callers drop the window on Desync.
     Read read_part( int slot, uint32_t* size );
     // fill_until( kPollMs ) cut to what is left before deadline: a server that
     // drips a byte per window no longer resets the watchdog forever (M-15).

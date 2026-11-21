@@ -76,6 +76,10 @@ public:
     bool in_body() const noexcept { return cur_.phase == Phase::Body; }
     // Past a delimiter line, reading the part's header lines.
     bool in_header() const noexcept { return cur_.phase == Phase::Header; }
+    // Body bytes of the current part delivered to dst (or skipped, oversized)
+    // so far; 0 outside the body. A body without Content-Length may still
+    // hold bytes back in the window (a delimiter split across refills).
+    size_t body_bytes() const noexcept { return cur_.phase == Phase::Body ? cur_.got : 0; }
 
 private:
     enum class Phase : uint8_t

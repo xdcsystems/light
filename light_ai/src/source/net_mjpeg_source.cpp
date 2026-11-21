@@ -180,13 +180,18 @@ public:
     int wait_ms = 0;
 };
 
-// read_part. The part deadline runs from the part's first header byte, not from
-// entry: the idle gap before a frame (the previous part's delimiter line
-// may already sit in the window) stays a plain kPollMs watchdog
-// (fill_until). Once the delimiter is consumed, any byte left in the
-// window is part header or body, and the part is bounded to kPartMs in
-// total. Accepted limit: junk dripped before a delimiter line is bounded
-// only by the window filling up (BufferedSocket Full -> Desync).
+// read_part. Three bounds, armed by what the reader has seen, never from entry:
+//  - no part started (looking for a delimiter line, or past it with no header
+//    byte yet) and between the end of the headers and the first body byte:
+//    a plain kPollMs watchdog per fill (fill_until), so the idle gap before a
+//    frame -- the previous part's delimiter line, or the next part's whole
+//    header, may already sit in the window -- is not part of any deadline;
+//  - the header lines: kPollMs in total from their first byte (a header
+//    byte stays in the window until the header end is parsed);
+//  - the body: kPartMs in total from its first byte (delivered to the slot,
+//    or held back in the window by a body without Content-Length).
+// Accepted limit: junk dripped before a delimiter line is bounded only by the
+// window filling up (BufferedSocket Full -> Desync).
 // No wait result is pending: every one but Data resyncs.
 struct NetMjpegSource::PartDeadline
 {
@@ -194,23 +199,31 @@ struct NetMjpegSource::PartDeadline
 
     void arm( const NetMjpegSource& src )
     {
-        if ( deadline == clk::time_point::max() && ( src.parts_.in_body() || ( src.parts_.in_header() && src.sock_.size() > 0 ) ) )
-            deadline = clk::now() + std::chrono::milliseconds( kPartMs );
+        const bool bytes = src.sock_.size() > 0;
+        if ( head == clk::time_point::max() && src.parts_.in_header() && bytes )
+            head = clk::now() + std::chrono::milliseconds( kPollMs );
+        if ( body == clk::time_point::max() && src.parts_.in_body() && ( bytes || src.parts_.body_bytes() > 0 ) )
+            body = clk::now() + std::chrono::milliseconds( kPartMs );
     }
 
     BufferedSocket::Fill next( NetMjpegSource& src ) const
     {
-        return deadline == clk::time_point::max() ? src.sock_.fill_until( kPollMs ) : src.fill_before( deadline );
+        if ( body != clk::time_point::max() )
+            return src.fill_before( body );
+        if ( head != clk::time_point::max() && src.parts_.in_header() )
+            return src.fill_before( head );
+        return src.sock_.fill_until( kPollMs );
     }
 
     bool pending( BufferedSocket::Fill /*r*/ ) const noexcept { return false; }
 
 public:
-    clk::time_point deadline = clk::time_point::max();
+    clk::time_point head = clk::time_point::max();
+    clk::time_point body = clk::time_point::max();
 };
 
 // wait.arm() runs right after each consume, before the events are read
-// (PartDeadline arms its deadline there).
+// (PartDeadline arms its deadlines there).
 template <typename Wait>
 NetMjpegSource::Read NetMjpegSource::feed_part( int slot, uint32_t* size, Wait& wait )
 {
