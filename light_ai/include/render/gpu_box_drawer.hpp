@@ -30,8 +30,9 @@
 
 class Log;
 
-// GPU-assisted box drawing straight into the NPU input tensor
-// (Mali G610 via EGL/GBM, zero CPU pixels per frame).
+// GPU-assisted box & callout drawing straight into an RGB888 dma-buf
+// (StreamLayout output canvas on the H.264 path, or NPU input tensor on
+// the raw NUT preview path; Mali G610 via EGL/GBM, zero CPU pixels per frame).
 // GpuBox / GpuBoxList live in core/gpu_box.hpp.
 
 class GpuBoxDrawer
@@ -54,7 +55,7 @@ class GpuBoxDrawer
     using P_GbmDestroyDevice = void ( * )( void * );
 
     // Batched VBO vertex layout: xy + uv + rgba (20 bytes, align 4).
-    // GL red lands in memory byte2 (BGR dma-buf), so tensor R goes in .b.
+    // GL red lands in memory byte2 (BGR dma-buf), so RGB888 R goes in .b.
 public:
     struct BatchVert
     {
@@ -73,8 +74,7 @@ public:
         // CalloutItem below.
         kVertsPerCallout = 6 * ( 2 + ( glyph_font::kLabelCap - 1 ) * kTextPasses ),
         // One draw is one source's frame: every box of it and one callout per
-        // track (CalloutList::cap == TrajList::cap), whichever source it is --
-        // the sources draw into their own tensors, they never share a batch.
+        // track (CalloutList::cap == TrajList::cap).
         kMaxVerts = GpuBoxList::cap * kVertsPerBox + CalloutList::cap * kVertsPerCallout
     };
 
@@ -96,8 +96,8 @@ private:
 
         // Per-slot import cache. Geometry (w/h/stride) is shared across
         // slots, only the dma-buf fd differs.
-        // Slot 0 serves attach_tensor()/draw() -- the single-context path;
-        // the pool uses attach_slot()/draw_slot().
+        // Slot 0 serves the single RGB888 output canvas (H.264 path) or
+        // attach_tensor()/draw(); the raw preview pool uses attach_slot()/draw_slot().
         enum { kSlots = 3 };
         struct SlotImg
         {
@@ -132,18 +132,17 @@ public:
     // On failure everything created so far is released (done()); the cause
     // is in the returned Status, the step details are in the log.
     Status init();
-    // Imports the NPU tensor dma-buf as an EGLImage-backed FBO,
-    // slot-keyed. attach_tensor()/draw() keep the single-context
-    // semantics (slot 0); the pool uses attach_slot()/draw_slot().
+    // Imports an RGB888 dma-buf as an EGLImage-backed FBO, slot-keyed.
+    // attach_tensor()/draw() keep the single-target semantics (slot 0);
+    // the raw preview pool uses attach_slot()/draw_slot().
     Status attach_slot( int slot, int tensor_dma_fd, int w, int h, uint32_t stride );
     Status attach_tensor( int tensor_dma_fd, int w, int h, uint32_t stride )
     {
         return attach_slot( 0, tensor_dma_fd, w, h, stride );
     }
-    // Async GPU draw: 1-px outlines for all boxes in ONE draw call
+    // Async GPU draw: 1-px pixel-snapped outlines for all boxes + callouts in ONE draw call
     // (batched VBO, per-vertex color), alpha-blended
     // (Porter-Duff over; the trail fade of BoxMapper is the alpha source).
-    // Switching FBOs between slots is the only added cost vs the single-tensor path.
     void draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept;
     void draw( const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept
     {

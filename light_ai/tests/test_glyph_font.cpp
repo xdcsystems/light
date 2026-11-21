@@ -227,6 +227,36 @@ namespace
             huge_out += px < 0 || py < 0 || px >= 8 || py >= 6 ? 1 : 0;
         } );
         CHECK_EQ( t, huge_out, 0 );
+
+    }
+
+    // snap_px: every glyph lands on an exact integer pixel while staying within 0.5 px of float layout.
+    void check_walk_snap( TestRun& t )
+    {
+        const std::string ru = "\xD0\xA7\xD0\xB5\xD0\xBB\xD0\xBE\xD0\xB2\xD0\xB5\xD0\xBA #12";
+        const int len = static_cast<int>( ru.size() );
+        float raw_x[16] {};
+        int raw_n = 0;
+        glyph_font::for_each_glyph( ru.data(), len, 10.0f, 20.0f, 0.5f, [&]( int, const glyph_font::GlyphMetric&, float gx, float ) {
+            if ( raw_n < 16 )
+                raw_x[raw_n++] = gx;
+        } );
+        bool all_int = true;
+        float max_diff = 0.0f;
+        int snap_n = 0;
+        glyph_font::for_each_glyph(
+            ru.data(), len, 10.0f, 20.0f, 0.5f,
+            [&]( int, const glyph_font::GlyphMetric&, float gx, float gy ) {
+                all_int = all_int && ( std::floor( gx ) == gx ) && ( std::floor( gy ) == gy );
+                if ( snap_n < raw_n )
+                {
+                    const float d = std::fabs( gx - raw_x[snap_n] );
+                    max_diff = d > max_diff ? d : max_diff;
+                }
+                ++snap_n;
+            },
+            true );
+        CHECK( t, raw_n == 10 && snap_n == 10 && all_int && max_diff <= 0.5001f );
     }
 }  // namespace
 
@@ -235,6 +265,7 @@ void test_glyph_font( TestRun& t )
     check_atlas( t );
     check_sample( t );
     check_walk( t );
+    check_walk_snap( t );
 
     // Every Cyrillic codepoint A..Ya, a..ya, Yo, yo maps to a real glyph
     // distinct from the '?' fallback; Yo and yo are distinct glyphs.

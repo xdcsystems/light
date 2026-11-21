@@ -61,15 +61,20 @@ bool NetEncoder::enter_session( uint32_t epoch, int64_t now_us ) noexcept
     return true;
 }
 
-// compose() is one composer pass; its time goes into the cmp_max window.
+// compose() is one composer pass; its time (plus any prior RGA pass of the
+// same frame, excluding GPU overlay draw) goes into the cmp_max window.
+void NetEncoder::record_compose_ms( double cmp_ms ) noexcept
+{
+    if ( cmp_ms > perf_.compose_ms_max )
+        perf_.compose_ms_max = cmp_ms;
+}
+
 template <typename Compose>
-Status NetEncoder::timed_compose( Compose&& compose ) noexcept
+Status NetEncoder::timed_compose( Compose&& compose, double base_ms ) noexcept
 {
     const auto t0 = PerfClock::now();
     const Status st = compose();
-    const double cmp_ms = ms_since( t0 );
-    if ( cmp_ms > perf_.compose_ms_max )
-        perf_.compose_ms_max = cmp_ms;
+    record_compose_ms( base_ms + ms_since( t0 ) );
     return st;
 }
 
@@ -79,12 +84,13 @@ Status NetEncoder::timed_compose( Compose&& compose ) noexcept
 // failed compose ends THIS session only (serve() reopens the stream path),
 // and a good one is encoded.
 template <typename Compose>
-void NetEncoder::compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose ) noexcept
+void NetEncoder::compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose,
+                                     double prior_cmp_ms ) noexcept
 {
     canvas_dirty_ = false;
     ts_us_ = ( ts_flag >= 0 ) ? now_us : -1;
     const int slot = ring_.advance();
-    if ( !timed_compose( [&] { return compose( slot, ring_.buf( slot ) ); } ).ok() )
+    if ( !timed_compose( [&] { return compose( slot, ring_.buf( slot ) ); }, prior_cmp_ms ).ok() )
     {
         queue_.fail( epoch );
         return;
@@ -92,7 +98,8 @@ void NetEncoder::compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_
     run_encoded( epoch, PerfClock::now() );
 }
 
-void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int src_idx, bool defer_encode ) noexcept
+void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int src_idx, bool defer_encode,
+                          OverlayDrawHook overlay ) noexcept
 {
     if ( !gate_.active() )
     {
@@ -114,33 +121,46 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     // Multi-view: frames closer than the pacing step (or deferred because the
     // next completed NPU slot is already waiting in the FIFO) update their
     // tile in the canvas and arm canvas_dirty_ for flush_dirty().
+    const bool multi = cfg_.layout.nsrc > 1;
     const bool warm_ready = warmup_.ready( now_us );
-    const bool hold_for_peer = defer_encode && cfg_.layout.nsrc > 1;
+    const bool hold_for_peer = defer_encode && multi;
     const bool do_enc = warm_ready && !hold_for_peer && pacer_.admit( now_us, queue_.depth(), epoch );
     if ( warm_ready )
         do_enc ? ++perf_.enc_admit : ++perf_.enc_skip;
+    // Single view skipped by the pacer: no persistent multi-view canvas to
+    // keep fresh, so skip both RGA passes and the GPU overlay draw.
+    if ( !do_enc && !multi )
+        return;
 
-    // Fence wait + RGA crop run OUTSIDE the lock: the critical section
-    // covers only encode + mux. In multi-view mode when two cameras finish
-    // within a few ms of each other, or while the session is held, !do_enc
-    // still updates the source's tile in the persistent composite canvas
-    // (out = nullptr, the current slot) without emitting an H.264 frame.
-    if ( do_enc )
+    // Step 1: RGA crops/scales the clean NPU tensor into the RGB888 output
+    // canvas tile. Step 2: overlay draws 1:1 onto the canvas tile (GPU +
+    // sync_cpu or CPU fallback). Step 3 (when do_enc): RGA converts canvas
+    // RGB888 -> NV12 ring slot and h264_rkmpp encodes under the session gate.
+    const auto t_tile = PerfClock::now();
+    const Status tile_st = composer_.compose_tile( tensor_fd, tp );
+    const double tile_ms = ms_since( t_tile );
+    if ( !tile_st.ok() )
     {
-        compose_and_encode( epoch, now_us, ts_us, [&]( int slot, MppBuffer out ) {
-            return composer_.compose( tensor_fd, tp, slot, out );
-        } );
+        record_compose_ms( tile_ms );
+        canvas_dirty_ = false;
+        queue_.fail( epoch );
         return;
     }
-    if ( warm_ready && cfg_.layout.nsrc > 1 )
+    if ( overlay.fn != nullptr )
+        overlay.fn( overlay.ctx, tp.dst );
+
+    if ( do_enc )
+    {
+        compose_and_encode(
+            epoch, now_us, ts_us, [this]( int /*slot*/, MppBuffer out ) { return composer_.flush_canvas( out ); },
+            tile_ms );
+        return;
+    }
+    record_compose_ms( tile_ms );
+    if ( warm_ready )
     {
         canvas_dirty_ = true;
         dirty_ts_us_ = ts_us;
-    }
-    if ( !timed_compose( [&] { return composer_.compose( tensor_fd, tp, ring_.current(), nullptr ); } ).ok() )
-    {
-        canvas_dirty_ = false;
-        queue_.fail( epoch );  // see compose_and_encode()
     }
 }
 
@@ -242,4 +262,3 @@ EncPerfWindow NetEncoder::take_perf() noexcept
     perf_.reset();
     return out;
 }
-

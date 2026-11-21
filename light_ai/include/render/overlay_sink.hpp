@@ -2,8 +2,10 @@
 // preview publishing (NetEncoder H.264 / NetPreview raw NUT).
 // Extracted from Pipeline to keep the composition root focused on
 // source capture, NPU scheduling and per-source state.
-// Works on the pool's model-input tensors through TensorSet / FrameView
-// (core/frame_view.hpp): it never sees the pool, its slots or its engines.
+// On the H.264 path, boxes, trails and labels are rendered 1:1 directly onto
+// NetEncoder's RGB888 output canvas (StreamLayout pixels, zero CPU copies on
+// the GPU path); on the raw NUT preview path, they render 1:1 into the NPU
+// input tensor.
 
 #pragma once
 
@@ -12,20 +14,20 @@
 #include <cstdint>
 #include <optional>
 
-#include "render/box_mapper.hpp"    // BoxMapper
 #include "config/config.hpp"        // LabelLang
 #include "core/box_filter.hpp"      // TrackBoxFilters
 #include "core/callout.hpp"         // CalloutHistory, CalloutList
 #include "core/detection.hpp"       // DetList
-#include "core/encoder_config.hpp"  // StreamLayout, place_tile
+#include "core/encoder_config.hpp"  // StreamLayout, make_overlay_target
 #include "core/frame_view.hpp"      // FrameView, TensorSet
 #include "core/global_track.hpp"    // reid_cfg::kMaxSources
 #include "core/net_perf.hpp"        // OverlayPerfWindow, EncPerfWindow
 #include "core/track.hpp"           // TrajList
-#include "render/gpu_box_drawer.hpp"
+#include "core/tracker.hpp"
 #include "net/net_encoder.hpp"
 #include "net/net_preview.hpp"
-#include "core/tracker.hpp"
+#include "render/box_mapper.hpp"    // BoxMapper
+#include "render/gpu_box_drawer.hpp"
 
 struct StreamConfig;
 struct LbGeom;
@@ -37,8 +39,8 @@ public:
     // log: the process diagnostics, owned by main(); outlives the sink.
     explicit OverlaySink( const Log& log ) : log_( log ) {}
 
-    // tensors: the pool's model-input tensors in slot order (the GPU
-    // drawer imports each one once).
+    // tensors: the pool's model-input tensors in slot order (imported by the
+    // GPU drawer only on the raw NUT preview path; H.264 imports the output canvas).
     void init( const StreamConfig& stream,
                const TensorSet& tensors,
                int model_w,
@@ -50,8 +52,8 @@ public:
     bool viewer_live() const noexcept;
     void release_worker_context() noexcept;
 
-    // Draws the overlay into the frame's tensor and publishes it; returns
-    // the publish time, ms (0 when no viewer is connected).
+    // Draws the overlay and publishes the frame; returns the publish time, ms
+    // (0 when no viewer is connected).
     double draw_and_publish( const FrameView& frame,
                              const DetList& dets,
                              const TrajList& trajs,
@@ -82,10 +84,14 @@ public:
     EncPerfWindow take_enc_perf() noexcept;
 
 private:
-    void init_gpu_drawer( bool cpu_draw, const TensorSet& tensors );
+    void init_gpu_drawer_canvas( bool cpu_draw, const CanvasBuffer& canvas );
+    void init_gpu_drawer_tensors( bool cpu_draw, const TensorSet& tensors );
     void reset_all_sources() noexcept;
     void sync_viewer_session() noexcept;
-    float tile_scale( const FrameView& frame ) const noexcept;
+    void draw_gpu_slot( int slot, const GpuBoxList& boxes, const CalloutList& callouts ) noexcept;
+    void draw_prepared_into_canvas( const LbGeom& dst_band,
+                                    const GpuBoxList& boxes,
+                                    const CalloutList& callouts ) noexcept;
     bool draw_prepared_into_tensor( const FrameView& frame,
                                     const GpuBoxList& boxes,
                                     const CalloutList& callouts ) noexcept;
@@ -93,6 +99,8 @@ private:
 private:
     const Log& log_;
     std::optional<NetPreview> preview_ {};
+    // Declaration order matters: drawer_ imports enc_'s RGB888 canvas dma-buf,
+    // so drawer_ must be declared AFTER enc_ to release its EGLImage/FBO first.
     std::optional<NetEncoder> enc_ {};
     std::optional<GpuBoxDrawer> drawer_ {};
     BoxMapper mapper_ {};
@@ -100,7 +108,7 @@ private:
     CalloutList callouts_ {};
     std::array<CalloutHistory, reid_cfg::kMaxSources> callout_hist_ {};
     std::array<TrackBoxFilters, reid_cfg::kMaxSources> track_filt_ {};
-    StreamLayout layout_ {};  // the h264 stream geometry (tiled_): the callout tile scale
+    StreamLayout layout_ {};  // h264 stream geometry (tiled_): 1:1 overlay target
     bool tiled_ = false;
     LabelLang label_lang_ = LabelLang::En;
     int label_scale_ = 1;

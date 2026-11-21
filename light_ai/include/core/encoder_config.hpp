@@ -53,6 +53,23 @@ struct TilePlacement
 // The band is scaled into its cell with band_geom() unless it already fits exactly.
 TilePlacement place_tile( const StreamLayout& layout, const LbGeom& band, int src_idx );
 
+// Scene -> overlay target projection for one frame:
+//   tiled == true  (H.264 stream): tp.dst inside the StreamLayout canvas (1:1 stream px);
+//   tiled == false (raw NUT preview): frame_lb inside the NPU tensor (1:1 tensor px).
+struct OverlayTarget
+{
+    LbGeom band {};
+    float sx = 0.0f;
+    float sy = 0.0f;
+};
+
+OverlayTarget make_overlay_target( const StreamLayout& layout,
+                                   bool tiled,
+                                   const LbGeom& frame_lb,
+                                   int src_idx,
+                                   int src_w,
+                                   int src_h ) noexcept;
+
 // The NO SIGNAL mask of an idle publish: tile s is absent when absent[s] is
 // set; absent == nullptr or s >= nabs counts as absent too.
 bool tile_absent( const bool* absent, int nabs, int s );
