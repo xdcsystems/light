@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <ctime>
 #include <string>
 #include <fcntl.h>
 #include <netdb.h>
@@ -25,18 +26,23 @@ namespace
         return errno_status( absent ? Errc::Absent : Errc::Failed, "connect", e );
     }
 
-    int resolve_ipv4( const std::string& host, const std::string& port_str, addrinfo*& res ) noexcept
+    // A numeric IPv4 host: resolved in place, no DNS. Not numeric: false.
+    bool resolve_numeric( const std::string& host, const std::string& port_str, addrinfo*& res ) noexcept
     {
         addrinfo hints {};
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_flags = AI_NUMERICHOST;
-        if ( ::getaddrinfo( host.c_str(), port_str.c_str(), &hints, &res ) == 0 && res != nullptr )
-            return 0;
-        hints.ai_flags = 0;
-        return ::getaddrinfo( host.c_str(), port_str.c_str(), &hints, &res );
+        return ::getaddrinfo( host.c_str(), port_str.c_str(), &hints, &res ) == 0 && res != nullptr;
     }
 }  // namespace
+
+BufferedSocket::~BufferedSocket()
+{
+    close();
+    if ( lookup_.pending && await_lookup( {}, false ) != EAI_INPROGRESS )
+        reap_lookup();
+}
 
 bool BufferedSocket::cancelled() const noexcept
 {
@@ -69,15 +75,92 @@ Status BufferedSocket::wait_connect() noexcept
     return make_status( Errc::Timeout, "connect: cancelled" );
 }
 
+int BufferedSocket::await_lookup( std::chrono::steady_clock::time_point deadline, bool bounded ) noexcept
+{
+    using clk = std::chrono::steady_clock;
+    const gaicb* const list[1] = { &lookup_.cb };
+    int e = ::gai_error( &lookup_.cb );
+    while ( e == EAI_INPROGRESS && ( !bounded || !cancelled() ) )
+    {
+        long long slice = kConnectSliceMs;
+        if ( bounded )
+        {
+            const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>( deadline - clk::now() ).count();
+            if ( rem <= 0 )
+                break;
+            slice = std::min<long long>( rem, kConnectSliceMs );
+        }
+        const timespec ts { static_cast<time_t>( slice / 1000 ), static_cast<long>( ( slice % 1000 ) * 1000000 ) };
+        ::gai_suspend( list, 1, &ts );  // 0, EAI_AGAIN (slice over), EAI_INTR: gai_error() decides
+        e = ::gai_error( &lookup_.cb );
+    }
+    return e;
+}
+
+void BufferedSocket::reap_lookup() noexcept
+{
+    if ( lookup_.cb.ar_result != nullptr )
+        freeaddrinfo( lookup_.cb.ar_result );
+    lookup_.cb.ar_result = nullptr;
+    lookup_.pending = false;
+}
+
+Status BufferedSocket::resolve( const std::string& host, const std::string& port_str, addrinfo*& res )
+{
+    if ( resolve_numeric( host, port_str, res ) )
+        return {};
+    if ( host.empty() )
+        return make_status( Errc::Absent, "addr resolution failed" );
+    using clk = std::chrono::steady_clock;
+    const auto deadline = clk::now() + std::chrono::milliseconds( kConnectMs );
+    // An earlier lookup glibc could not cancel still owns lookup_: wait for it
+    // first (same bound), never reuse the request while glibc writes to it.
+    if ( lookup_.pending )
+    {
+        if ( await_lookup( deadline, true ) == EAI_INPROGRESS )
+            return make_status( Errc::Timeout, cancelled() ? "addr resolution: cancelled" : "addr resolution: timeout" );
+        reap_lookup();
+    }
+    lookup_.name = host;
+    lookup_.service = port_str;
+    lookup_.hints = addrinfo {};
+    lookup_.hints.ai_family = AF_INET;
+    lookup_.hints.ai_socktype = SOCK_STREAM;
+    lookup_.cb = gaicb {};
+    lookup_.cb.ar_name = lookup_.name.c_str();
+    lookup_.cb.ar_service = lookup_.service.c_str();
+    lookup_.cb.ar_request = &lookup_.hints;
+    gaicb* list[1] = { &lookup_.cb };
+    if ( ::getaddrinfo_a( GAI_NOWAIT, list, 1, nullptr ) != 0 )
+        return make_status( Errc::Absent, "addr resolution failed" );
+    lookup_.pending = true;
+    const int e = await_lookup( deadline, true );
+    if ( e == EAI_INPROGRESS )
+    {
+        // EAI_CANCELED: dequeued before it ran; EAI_ALLDONE: finished meanwhile;
+        // EAI_NOTCANCELED: glibc still runs it -- lookup_ stays pending.
+        if ( ::gai_cancel( &lookup_.cb ) != EAI_NOTCANCELED )
+            reap_lookup();
+        return make_status( Errc::Timeout, cancelled() ? "addr resolution: cancelled" : "addr resolution: timeout" );
+    }
+    if ( e == 0 && lookup_.cb.ar_result != nullptr )
+    {
+        res = lookup_.cb.ar_result;  // the caller frees it
+        lookup_.cb.ar_result = nullptr;
+    }
+    reap_lookup();
+    return res != nullptr ? Status {} : make_status( Errc::Absent, "addr resolution failed" );
+}
+
 Status BufferedSocket::connect( const std::string& host, int port )
 {
     close();
     if ( cancelled() )
         return make_status( Errc::Timeout, "connect: cancelled" );
-    const std::string port_str = std::to_string( port );  // named: c_str() must outlive getaddrinfo
+    const std::string port_str = std::to_string( port );
     addrinfo* res = nullptr;
-    if ( resolve_ipv4( host, port_str, res ) != 0 || res == nullptr )
-        return make_status( Errc::Absent, "addr resolution failed" );
+    if ( Status rst = resolve( host, port_str, res ); !rst.ok() )
+        return rst;
     // SOCK_CLOEXEC: this fd must not leak into a fork()/exec() (this app
     // never forks, but a library or deploy wrapper might). The flag belongs
     // to the socket() type argument -- putting SOCK_CLOEXEC into

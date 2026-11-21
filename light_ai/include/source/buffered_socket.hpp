@@ -12,9 +12,11 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <netdb.h>
 
 #include "core/byte_window.hpp"
 #include "core/status.hpp"
@@ -39,16 +41,24 @@ public:
 
 public:
     BufferedSocket() = default;
-    ~BufferedSocket() { close(); }
+    // Closes the socket, then waits for a hostname lookup that glibc could not
+    // cancel (see connect()): its request lives in this object.
+    ~BufferedSocket();
     BufferedSocket( const BufferedSocket& ) = delete;
     BufferedSocket& operator=( const BufferedSocket& ) = delete;
     BufferedSocket( BufferedSocket&& ) = delete;
     BufferedSocket& operator=( BufferedSocket&& ) = delete;
 
-    // Closes what was open, then connects to host:port (IPv4). Not ok: the socket
-    // is closed and the Status says why:
+    // Closes what was open, then connects to host:port (IPv4). A numeric host
+    // resolves in place (AI_NUMERICHOST, no DNS); a hostname goes through
+    // getaddrinfo_a, bounded by kConnectMs and polled in kConnectSliceMs steps
+    // that observe cancelled(). A lookup given up while glibc still runs it
+    // (gai_cancel: EAI_NOTCANCELED) keeps its request in this object: the next
+    // connect() first waits for it (same bound), the destructor waits for it
+    // without one. Not ok: the socket is closed and the Status says why:
     //   Absent  -- "addr resolution failed"; "connect: <errno>" refused / unreachable;
-    //   Timeout -- "connect: timeout" (kConnectMs);
+    //   Timeout -- "connect: timeout" (kConnectMs); "connect: cancelled";
+    //              "addr resolution: timeout" / "addr resolution: cancelled";
     //   Failed  -- "socket: <errno>", "connect: fcntl: <errno>", any other "connect: <errno>".
     Status connect( const std::string& host, int port );
     // Sends every byte (EINTR retried). Not ok: Lost "send: <errno>" or
@@ -77,11 +87,32 @@ public:
     void clear() { win_.clear(); }
 
 private:
+    // A hostname lookup through getaddrinfo_a. The request (gaicb, hints and
+    // both strings) is read and written by glibc until gai_error() stops
+    // returning EAI_INPROGRESS; pending marks a request not yet reaped.
+    struct Lookup
+    {
+        gaicb cb {};
+        addrinfo hints {};
+        std::string name;
+        std::string service;
+        bool pending = false;
+    };
+
+private:
     Status wait_connect() noexcept;
+    Status resolve( const std::string& host, const std::string& port_str, addrinfo*& res );
+    // Waits for the pending lookup in kConnectSliceMs steps until deadline or
+    // cancelled(); bounded = false: no deadline and no cancel (the destructor).
+    // Returns its gai_error() result, EAI_INPROGRESS if it still runs.
+    int await_lookup( std::chrono::steady_clock::time_point deadline, bool bounded ) noexcept;
+    // Marks the finished lookup reaped and frees its result unless taken.
+    void reap_lookup() noexcept;
 
 private:
     int fd_ = -1;
     const std::atomic<bool>* stop_ = nullptr;
     const std::atomic<bool>* prober_quit_ = nullptr;
+    Lookup lookup_;
     ByteWindow<kWindow> win_;
 };
