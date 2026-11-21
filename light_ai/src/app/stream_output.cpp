@@ -20,7 +20,7 @@ void StreamOutput::init( const StreamConfig& stream, const TensorSet& tensors, i
 void StreamOutput::stop_worker() noexcept
 {
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
         stop_ = true;
     }
     cv_.notify_all();
@@ -53,7 +53,7 @@ void StreamOutput::flush_dirty() noexcept
     if ( !sink_.enabled() || !sink_.viewer_live() )
         return;
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
         flush_req_ = true;
     }
     cv_.notify_one();
@@ -68,7 +68,7 @@ void StreamOutput::wait_slot_free( int slot ) noexcept
 {
     if ( !sink_.enabled() || slot < 0 )
         return;
-    std::unique_lock<std::mutex> lk( mx_ );
+    std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
     cv_.wait( lk, [this, slot]() noexcept {
         return active_slot_ != slot && !slot_pending_locked( slot );
     } );
@@ -78,7 +78,7 @@ uint32_t StreamOutput::busy_slot_mask() const noexcept
 {
     if ( !sink_.enabled() )
         return 0;
-    const std::lock_guard<std::mutex> lk( mx_ );
+    const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
     uint32_t mask = 0;
     if ( active_slot_ >= 0 && active_slot_ < 32 )
         mask |= ( 1u << static_cast<unsigned>( active_slot_ ) );
@@ -95,7 +95,7 @@ void StreamOutput::drain() noexcept
 {
     if ( !sink_.enabled() )
         return;
-    std::unique_lock<std::mutex> lk( mx_ );
+    std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
     cv_.wait( lk, [this]() noexcept { return !any_pending_locked() && active_slot_ < 0; } );
 }
 
@@ -113,7 +113,7 @@ double StreamOutput::publish_frame( int frame, const FrameView& view, const DetL
     const int s = ( view.src_idx >= 0 && view.src_idx < kMaxSources ) ? view.src_idx : 0;
     const size_t idx = static_cast<size_t>( s );
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
         pending_[idx] = job;
         has_pending_[idx] = true;  // drop-oldest per source
     }
@@ -124,7 +124,7 @@ double StreamOutput::publish_frame( int frame, const FrameView& view, const DetL
 void StreamOutput::post_idle( int64_t ts_us, const std::array<bool, kMaxSources>& absent, int nabs ) noexcept
 {
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
         idle_.ts_us = ts_us;
         idle_.absent = absent;
         idle_.nabs = nabs;
@@ -137,7 +137,7 @@ void StreamOutput::consume_controls() noexcept
 {
     bool flush = false;
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
         flush = flush_req_;
         flush_req_ = false;
     }
@@ -147,7 +147,7 @@ void StreamOutput::consume_controls() noexcept
 
 bool StreamOutput::take_work( PublishJob& pjob, bool& has_pub, IdleJob& ijob, bool& has_idle ) noexcept
 {
-    std::unique_lock<std::mutex> lk( mx_ );
+    std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
     cv_.wait( lk, [this]() noexcept {
         return stop_ || any_pending_locked() || has_idle_ || flush_req_;
     } );
@@ -192,13 +192,13 @@ void StreamOutput::worker_loop() noexcept
         {
             static_cast<void>( sink_.render_and_publish( pjob.view, pjob.boxes, pjob.callouts, pjob.defer_enc ) );
             {
-                const std::lock_guard<std::mutex> plk( perf_mx_ );
+                const std::lock_guard<light_ai::platform::PiMutex> plk( perf_mx_ );
                 perf_snap_.merge( sink_.take_perf() );
                 if ( sink_.has_enc_perf() )
                     enc_perf_snap_.merge( sink_.take_enc_perf() );
             }
             {
-                const std::lock_guard<std::mutex> lk( mx_ );
+                const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
                 active_slot_ = -1;
             }
             cv_.notify_all();
@@ -207,7 +207,7 @@ void StreamOutput::worker_loop() noexcept
             sink_.publish_idle( ijob.ts_us, ijob.absent.data(), ijob.nabs );
         if ( !has_pub && sink_.has_enc_perf() )
         {
-            const std::lock_guard<std::mutex> plk( perf_mx_ );
+            const std::lock_guard<light_ai::platform::PiMutex> plk( perf_mx_ );
             enc_perf_snap_.merge( sink_.take_enc_perf() );
         }
     }
@@ -216,7 +216,7 @@ void StreamOutput::worker_loop() noexcept
 
 OverlayPerfWindow StreamOutput::take_perf() noexcept
 {
-    const std::lock_guard<std::mutex> lk( perf_mx_ );
+    const std::lock_guard<light_ai::platform::PiMutex> lk( perf_mx_ );
     const OverlayPerfWindow out = perf_snap_;
     perf_snap_.reset();
     return out;
@@ -224,7 +224,7 @@ OverlayPerfWindow StreamOutput::take_perf() noexcept
 
 EncPerfWindow StreamOutput::take_enc_perf() noexcept
 {
-    const std::lock_guard<std::mutex> lk( perf_mx_ );
+    const std::lock_guard<light_ai::platform::PiMutex> lk( perf_mx_ );
     const EncPerfWindow out = enc_perf_snap_;
     enc_perf_snap_.reset();
     return out;

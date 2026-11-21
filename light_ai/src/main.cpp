@@ -4,6 +4,7 @@
 
 #include "config/cli.hpp"  // CliOptions: argv + config-file reading/validation
 #include "core/log.hpp"
+#include "platform/log_sink.hpp"
 #include "core/stop_flag.hpp"
 #include "app/pipeline.hpp"
 #include "sys/process_env.hpp"
@@ -54,7 +55,8 @@ int main( int argc, char** argv )
             break;
     }
 
-    const Log log( std::cout, std::cerr, cli.config().log_level );
+    light_ai::platform::AsyncLogSink async_sink( std::cout, std::cerr );
+    const Log log( async_sink.sink_fn(), cli.config().log_level );
 
     try
     {

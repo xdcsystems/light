@@ -21,7 +21,7 @@ extern "C"
 #include "net/mux_session.hpp"
 #include "platform/tcp_pull_server.hpp"
 
-MuxSession::MuxSession( const EncoderConfig& cfg, PacketQueue& queue, SessionGate& gate, const Log& log )
+MuxSession::MuxSession( const EncoderConfig& cfg, PacketQueue& queue, NetSessionGate& gate, const Log& log )
   : log_( log )
   , cfg_( cfg )
   , queue_( queue )
@@ -367,7 +367,7 @@ void MuxSession::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
     // in the session; every session's first frame is an IDR (H264Encoder).
     const uint32_t epoch = ++sessions_;
     queue_.open( epoch );
-    SessionGate::Session session;
+    NetSessionGate::Session session;
     session.stream_index = st->index;
     session.frame_step = frame_step;
     session.epoch = epoch;

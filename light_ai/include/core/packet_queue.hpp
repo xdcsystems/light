@@ -44,7 +44,7 @@ inline int64_t packet_queue_now_us() noexcept
         .count();
 }
 
-template <class Pkt, class Ops, int N>
+template <class Pkt, class Ops, int N, class Mutex = std::mutex, class CondVar = std::condition_variable>
 class BasicPacketQueue
 {
 public:
@@ -105,7 +105,7 @@ public:
     // the caller forces an IDR on the next frame. A closed queue drops the packet.
     Pushed push( Pkt& src, int64_t now_us = packet_queue_now_us() )
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<Mutex> lk( mx_ );
         if ( !open_ )
         {
             ops_.unref( src );
@@ -130,13 +130,13 @@ public:
 
     int depth() const
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<Mutex> lk( mx_ );
         return ring_.n;
     }
 
     int take_max_depth() noexcept
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<Mutex> lk( mx_ );
         const int m = max_depth_;
         max_depth_ = ring_.n;
         return m;
@@ -145,7 +145,7 @@ public:
     // Producer: an encode-side error in session `epoch`.
     void fail( uint32_t epoch )
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<Mutex> lk( mx_ );
         if ( !open_ || epoch != epoch_ )
             return;
         failed_ = true;
@@ -155,7 +155,7 @@ public:
     // Consumer: session `epoch` starts.
     void open( uint32_t epoch )
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<Mutex> lk( mx_ );
         clear_locked();
         wait_key_ = true;
         failed_ = false;
@@ -166,7 +166,7 @@ public:
     // Consumer: the session ended; leftover packets are dead weight.
     void close()
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<Mutex> lk( mx_ );
         open_ = false;
         clear_locked();
     }
@@ -174,7 +174,7 @@ public:
     // Consumer: blocks for the next packet (key-gated), a failure or stop().
     Popped pop( Pkt& dst )
     {
-        std::unique_lock<std::mutex> lk( mx_ );
+        std::unique_lock<Mutex> lk( mx_ );
         // The predicate drains the key gate inline: after the wait, the
         // front is a key packet (or the queue is stopped/failed).
         cv_.wait( lk, [this] {
@@ -200,7 +200,7 @@ public:
     // Owner: wakes the consumer for good.
     void stop()
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<Mutex> lk( mx_ );
         stopped_ = true;
         cv_.notify_all();
     }
@@ -217,8 +217,8 @@ private:
 
 private:
     Ops ops_;
-    mutable std::mutex mx_;
-    std::condition_variable cv_;
+    mutable Mutex mx_;
+    CondVar cv_;
     PodRing<Pkt, N> ring_ {};
     std::array<int64_t, N> push_us_ {};
     int64_t max_age_us_ = kDefaultMaxAgeUs;

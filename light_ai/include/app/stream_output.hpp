@@ -25,6 +25,7 @@
 #include "core/track.hpp"
 #include "core/tracker.hpp"
 #include "platform/joining_thread.hpp"
+#include "platform/pi_mutex.hpp"
 #include "render/overlay_sink.hpp"
 
 class StreamOutput
@@ -112,8 +113,8 @@ private:
     int fps_ = 0;
     int64_t last_idle_us_ = -1;
 
-    mutable std::mutex mx_;
-    std::condition_variable cv_;
+    mutable light_ai::platform::PiMutex mx_;
+    light_ai::platform::PiCondVar cv_;
     bool stop_ = false;
     bool flush_req_ = false;
     std::array<bool, kMaxSources> has_pending_ {};
@@ -123,7 +124,7 @@ private:
     IdleJob idle_ {};
     int active_slot_ = -1;
 
-    std::mutex perf_mx_;
+    light_ai::platform::PiMutex perf_mx_;
     OverlayPerfWindow perf_snap_ {};
     EncPerfWindow enc_perf_snap_ {};
 

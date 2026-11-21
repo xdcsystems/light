@@ -16,7 +16,7 @@
 #include "core/geometry.hpp"           // LbGeom: band geometry arrives as one object
 #include "core/net_perf.hpp"           // EncPerfWindow: zero-heap telemetry
 #include "core/perf_clock.hpp"         // Lap, CounterDelta: the encode interval, the codec counter deltas
-#include "core/session_gate.hpp"       // SessionGate: the session hand-over
+#include "core/session_gate.hpp"       // NetSessionGate: the session hand-over
 #include "core/session_warmup.hpp"     // SessionWarmup: when a session's first frame is encoded
 #include "core/status.hpp"             // Status: a compose result
 #include "net/av_packet_queue.hpp"     // PacketQueue: encoder -> serve thread
@@ -151,7 +151,7 @@ private:
     // The session hand-over (core/session_gate.hpp): the serve thread opens
     // and closes it, every encode runs under it. With queue_ the only state
     // the two threads share.
-    SessionGate gate_;
+    NetSessionGate gate_;
     // The serve thread: viewer sessions, the transport, the muxer
     // (net/mux_session.hpp). Last: it holds references to queue_ and gate_.
     MuxSession session_;

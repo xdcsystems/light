@@ -182,7 +182,7 @@ H264Encoder::DrainTally H264Encoder::collect_pending()
     return tally;
 }
 
-Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session& s, PacketQueue& queue )
+Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const NetSessionGate::Session& s, PacketQueue& queue )
 {
     // A new session (its first encode): the pts restart from zero with
     // the session's step, and its first frame is an IDR -- a TCP viewer

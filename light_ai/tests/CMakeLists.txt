@@ -58,6 +58,7 @@ add_executable(light_ai_tests
     test_timings.cpp
     test_perf_clock.cpp
     test_perf_reporter.cpp
+    test_pi_mutex.cpp
     test_console_reporter.cpp
     test_cal_dumper.cpp
     test_usb_node_locator.cpp
@@ -76,6 +77,7 @@ add_executable(light_ai_tests
     test_overlay_raster.cpp
     test_global_track.cpp
     test_reid_worker_tsan.cpp
+    test_pi_mutex.cpp
     test_preview_ring.cpp
     test_packet_queue.cpp
     test_session_gate.cpp
@@ -148,6 +150,7 @@ add_executable(light_ai_tests_tsan EXCLUDE_FROM_ALL
     test_packet_queue.cpp
     test_session_gate.cpp
     test_reid_worker_tsan.cpp
+    test_pi_mutex.cpp
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
     ${LIGHT_AI_ROOT}/src/core/global_track.cpp
     ${LIGHT_AI_ROOT}/src/core/status.cpp

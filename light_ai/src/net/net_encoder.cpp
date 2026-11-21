@@ -107,7 +107,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
         return;
     }
     // The session this publish belongs to: loaded after active(), so a
-    // session seen live is seen with its own epoch (SessionGate::open
+    // session seen live is seen with its own epoch (NetSessionGate::open
     // stores the epoch first). The pacer and a fail() use it.
     const uint32_t epoch = gate_.epoch();
     const int64_t now_us = steady_now_us();
@@ -244,7 +244,7 @@ void NetEncoder::run_encoded( uint32_t epoch, std::chrono::steady_clock::time_po
 
     const auto enc_t0 = PerfClock::now();
     // No session or epoch changed while cropping: drop the stale frame.
-    gate_.run( epoch, [this]( const SessionGate::Session& s ) {
+    gate_.run( epoch, [this]( const NetSessionGate::Session& s ) {
         if ( const Status est = codec_.encode( ring_.frame( ring_.current() ), ts_us_, s, queue_ ); !est.ok() )
             queue_.fail( s.epoch );
     } );

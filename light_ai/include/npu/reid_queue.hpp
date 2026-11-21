@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "core/global_track.hpp"
+#include "platform/pi_mutex.hpp"
 #include "core/pod_ring.hpp"
 #include "platform/joining_thread.hpp"
 
@@ -43,7 +44,7 @@ public:
     ~BasicReidQueue()
     {
         {
-            const std::lock_guard<std::mutex> lk( mx_ );
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
             stop_ = true;
         }
         cv_.notify_all();
@@ -70,7 +71,7 @@ public:
             return false;
         states_[job.slot].store( ReidSlotState::Queued, std::memory_order_release );
         {
-            const std::lock_guard<std::mutex> lk( mx_ );
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
             if ( stop_ || jobs_.full() )
             {
                 states_[job.slot].store( ReidSlotState::Free, std::memory_order_release );
@@ -84,7 +85,7 @@ public:
 
     bool poll_result( ReidResult& out ) noexcept
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
         if ( results_.empty() )
             return false;
         out = results_.front();
@@ -96,7 +97,7 @@ private:
     // Blocks for the next job; false once stop is requested and the queue is drained.
     bool next_job( ReidJob& job ) noexcept
     {
-        std::unique_lock<std::mutex> lk( mx_ );
+        std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
         cv_.wait( lk, [this]() { return stop_ || !jobs_.empty(); } );
         if ( stop_ && jobs_.empty() )
             return false;
@@ -121,7 +122,7 @@ private:
             // Publish Free BEFORE enqueueing result so producer sees the freed slot immediately.
             states_[job.slot].store( ReidSlotState::Free, std::memory_order_release );
 
-            const std::lock_guard<std::mutex> lk( mx_ );
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
             if ( results_.full() )
                 results_.pop();
             results_.push( res );
@@ -134,8 +135,8 @@ private:
     std::array<std::atomic<ReidSlotState>, reid_cfg::kReidSlots> states_ {};
     PodRing<ReidJob, reid_cfg::kReidQueueCap> jobs_ {};
     PodRing<ReidResult, reid_cfg::kReidQueueCap> results_ {};
-    std::mutex mx_;
-    std::condition_variable cv_;
+    light_ai::platform::PiMutex mx_;
+    light_ai::platform::PiCondVar cv_;
     bool stop_ = false;
     JoiningThread worker_;
 };

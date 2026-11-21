@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <mutex>
 
+#include "platform/pi_mutex.hpp"
 #include "core/detection.hpp"  // DetList
 #include "core/geometry.hpp"   // LbGeom
 #include "core/frame_trace.hpp"
@@ -83,7 +84,7 @@ public:
 
     State state() const
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
         return st_;
     }
 
@@ -92,7 +93,7 @@ public:
     // Source of the job last submitted here (discard() picks frames by it).
     int src_idx() const
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
         return job_.src_idx;
     }
 
@@ -100,7 +101,7 @@ public:
     bool submit( const InferJob& job )
     {
         {
-            const std::lock_guard<std::mutex> lk( mx_ );
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
             if ( st_ != State::Free || closed_ )
                 return false;
             job_ = job;
@@ -117,7 +118,7 @@ public:
     // give-up (Queued) is returned.
     State take( std::chrono::milliseconds timeout, InferResult& out )
     {
-        std::unique_lock<std::mutex> lk( mx_ );
+        std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
         wait_settled( lk, timeout );
         out.job = job_;
         const State seen = st_;
@@ -138,7 +139,7 @@ public:
     // frees a Done slot (true), abandons a still-Queued one (false).
     bool reclaim( std::chrono::milliseconds timeout )
     {
-        std::unique_lock<std::mutex> lk( mx_ );
+        std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
         wait_settled( lk, timeout );
         if ( st_ == State::Done )
         {
@@ -153,7 +154,7 @@ public:
     void close()
     {
         {
-            const std::lock_guard<std::mutex> lk( mx_ );
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
             closed_ = true;
         }
         cv_.notify_all();
@@ -169,14 +170,14 @@ public:
     template <typename Work>
     void run( Work&& work )
     {
-        std::unique_lock<std::mutex> lk( mx_ );
+        std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
         while ( wait_for_job( lk ) )
             do_job( work, lk );
     }
 
 private:
     // Returns once the job left Queued, the slot is closed, or the timeout passed.
-    void wait_settled( std::unique_lock<std::mutex>& lk, std::chrono::milliseconds timeout )
+    void wait_settled( std::unique_lock<light_ai::platform::PiMutex>& lk, std::chrono::milliseconds timeout )
     {
         cv_.wait_for( lk, timeout, [this] { return closed_ || st_ != State::Queued; } );
     }
@@ -189,7 +190,7 @@ private:
     }
 
     // Worker: blocks until a job is queued. false: the slot is closed (shutdown).
-    bool wait_for_job( std::unique_lock<std::mutex>& lk )
+    bool wait_for_job( std::unique_lock<light_ai::platform::PiMutex>& lk )
     {
         cv_.wait( lk, [this] { return closed_ || st_ == State::Queued; } );
         return !closed_;
@@ -198,7 +199,7 @@ private:
     // Worker, with the lock held: runs the job without the lock (rknn_run may
     // take seconds), then publishes the result under the lock again.
     template <typename Work>
-    void do_job( Work& work, std::unique_lock<std::mutex>& lk )
+    void do_job( Work& work, std::unique_lock<light_ai::platform::PiMutex>& lk )
     {
         lk.unlock();
         work( static_cast<const InferJob&>( job_ ), out_ );
@@ -208,8 +209,8 @@ private:
     }
 
 private:
-    mutable std::mutex mx_;
-    std::condition_variable cv_;
+    mutable light_ai::platform::PiMutex mx_;
+    light_ai::platform::PiCondVar cv_;
     State st_ = State::Free;
     bool closed_ = false;
     InferJob job_ {};

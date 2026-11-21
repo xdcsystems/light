@@ -6,6 +6,8 @@
 #pragma once
 
 #include "core/packet_queue.hpp"
+#include "core/session_gate.hpp"
+#include "platform/pi_mutex.hpp"
 
 struct AVPacket;
 
@@ -18,4 +20,5 @@ struct AvPacketOps
     bool is_key( AVPacket* const& p ) const;
 };
 
-using PacketQueue = BasicPacketQueue<AVPacket*, AvPacketOps, 32>;
+using PacketQueue = BasicPacketQueue<AVPacket*, AvPacketOps, 32, light_ai::platform::PiMutex, light_ai::platform::PiCondVar>;
+using NetSessionGate = BasicSessionGate<light_ai::platform::PiMutex>;

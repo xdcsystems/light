@@ -8,7 +8,7 @@
 // Shared with the encoder (pipeline thread) -- and nothing else:
 //   PacketQueue& queue: the encoded packets (pop), the session frame
 //     (open / close);
-//   SessionGate& gate:  the session hand-over (open / close).
+//   NetSessionGate& gate:  the session hand-over (open / close).
 // Session order:
 //   open:  queue.open( epoch ), then gate.open( session );
 //   close: gate.close() (waits for an encode in progress), then
@@ -90,7 +90,7 @@ public:
     // log: the process diagnostics, owned by main(); outlives the session
     // (Log is thread-safe). queue / gate: owned by the encoder, declared
     // before this session.
-    MuxSession( const EncoderConfig& cfg, PacketQueue& queue, SessionGate& gate, const Log& log );
+    MuxSession( const EncoderConfig& cfg, PacketQueue& queue, NetSessionGate& gate, const Log& log );
     ~MuxSession();
     MuxSession( const MuxSession& ) = delete;
     MuxSession& operator=( const MuxSession& ) = delete;
@@ -121,7 +121,7 @@ private:
     const Log& log_;
     const EncoderConfig cfg_;
     PacketQueue& queue_;
-    SessionGate& gate_;
+    NetSessionGate& gate_;
     AvPacket mux_pkt_;  // the packet being written (moved out of the queue)
     AvPacket dup_pkt_;  // an IDR with the SPS/PPS prefix prepended (ParamSetCache buffer)
     // Late-joiner support: the SPS/PPS prefix of the first IDR, repeated on every later IDR.
