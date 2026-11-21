@@ -216,6 +216,7 @@ Status Pipeline::run()
     // exit. Spawned BEFORE the RT pin so it keeps the scheduler default.
     SourceSupervisor::SourceProber prober( sources_.sources(), sources_.locator(), log_ );
     prober.start();
+    lock_process_memory( log_ );
     pin_current_thread_rt( "pipeline main", 4, 80, log_ );
     analytics_.init_box_logs( cfg_.box_log, sources_.size() );
     sources_.reset_stall_clocks( t0_ );

@@ -34,7 +34,7 @@ public:
     Status listen();
 
     // Polls lfd_ until a viewer connects or quit is set; applies
-    // TCP_NODELAY, SO_SNDBUF and SO_SNDTIMEO on the accepted socket.
+    // TCP_NODELAY, SO_SNDBUF and TCP_NOTSENT_LOWAT on the accepted socket.
     // Status: Ok (client accepted), Timeout (quit / no viewer),
     // Failed (poll/accept errno), Invalid (no listening socket).
     Status accept_client( const std::atomic<bool>& quit );
@@ -64,7 +64,6 @@ private:
 private:
     const int port_;
     const int sndbuf_bytes_;
-    const int sndtimeo_sec_;
     int lfd_ = -1;
     std::mutex cfd_mx_;
     bool aborted_ = false;
@@ -73,9 +72,10 @@ private:
 
 // One chunk onto the client socket of ctx, all of it or an error
 // (src/platform/tcp_send.cpp: POSIX only, no FFmpeg -- host-tested). Returns
-// buf_size, or a negative code: -EPIPE (no client, peer gone, shut down by
-// abort_client), -ETIMEDOUT (the chunk missed its sndtimeo_sec deadline),
-// -EIO (any other errno), kTcpSendEof (send returned 0).
+// buf_size (or 0 when buf_size == 0), or a negative code: -EINVAL
+// (buf_size < 0), -EPIPE (no client, peer gone, shut down by abort_client),
+// -ETIMEDOUT (the chunk missed its sndtimeo_sec deadline), -EIO (any other
+// errno), kTcpSendEof (send returned 0).
 constexpr int kTcpSendEof = -0x10000;
 int tcp_send_chunk( const TcpPullServer::WriteCtx& ctx, const uint8_t* buf, int buf_size ) noexcept;
 

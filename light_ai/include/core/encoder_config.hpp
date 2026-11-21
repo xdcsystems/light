@@ -61,8 +61,8 @@ struct EncoderConfig
 {
     bool vfr() const { return fps <= 0; }  // --net-fps 0: follow the source, pts from publish times
     // Rate-control fps: VFR still needs a number (0/1 reaches MPP as the auto marker and the
-    // CBR per-frame budget collapses): nominal 25, 25 per source in multi-view.
-    int nominal_fps() const { return vfr() ? ( layout.nsrc > 1 ? 25 * layout.nsrc : 25 ) : fps; }
+    // CBR per-frame budget collapses): nominal 25 (multi-view paces to the slowest source, <= 30 fps).
+    int nominal_fps() const { return vfr() ? 25 : fps; }
     int gop() const { return vfr() ? nominal_fps() : fps; }  // 1 s: a late joiner waits at most one GOP
     // The bitrate the encoder and the stream header use: bitrate_kbps <= 0
     // (not validated by the caller) falls back to 12000 kbps, never 0 to MPP.

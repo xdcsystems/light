@@ -15,6 +15,7 @@ void YoloDecode::operator()( const RknnEngine& npu, const InferJob& job, DetList
     for ( size_t gi = 0; gi < n; ++gi )
     {
         const auto& attr = npu.output_attrs()[gi];
+        npu.sync_output( gi );
         const uint16_t* data = reinterpret_cast<const uint16_t*>( npu.output_data( gi ) );
         if ( !data || attr.n_dims != 4 )
             continue;

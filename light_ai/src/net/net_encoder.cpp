@@ -109,6 +109,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     // (core/session_warmup.hpp). The cell is the one place_tile writes.
     enter_session( epoch, now_us );
     const TilePlacement tp = place_tile( cfg_.layout, band, src_idx );
+    pacer_.observe_source( tp.cell, now_us );
     warmup_.refreshed( tp.cell );
     // Multi-view: frames closer than the pacing step (or deferred because the
     // next completed NPU slot is already waiting in the FIFO) update their

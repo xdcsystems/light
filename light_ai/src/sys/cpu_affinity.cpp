@@ -1,7 +1,10 @@
+#include <cerrno>
 #include <exception>
 #include <sched.h>
+#include <sys/mman.h>
 
 #include "core/log.hpp"
+#include "core/status.hpp"
 #include "sys/cpu_affinity.hpp"
 
 namespace
@@ -39,16 +42,19 @@ void pin_current_thread_rt( const char* who, int cpu, int rt_prio, const Log& lo
 {
     cpu_set_t cpuset;
     CPU_ZERO( &cpuset );
+    bool valid_cpu = true;
     if ( cpu >= 0 )
     {
-        CPU_SET( cpu, &cpuset );
+        valid_cpu = cpu < CPU_SETSIZE;
+        if ( valid_cpu )
+            CPU_SET( cpu, &cpuset );
     }
     else
     {
         for ( int c = kBigCpuFirst; c <= kBigCpuLast; ++c )
             CPU_SET( c, &cpuset );
     }
-    const bool pinned = sched_setaffinity( 0, sizeof( cpuset ), &cpuset ) == 0;
+    const bool pinned = valid_cpu && sched_setaffinity( 0, sizeof( cpuset ), &cpuset ) == 0;
 
     bool rt_ok = false;
     if ( rt_prio > 0 )
@@ -73,6 +79,24 @@ void pin_current_thread_rt( const char* who, int cpu, int rt_prio, const Log& lo
             }
             log.warn() << "rt: " << who << " -> SCHED_FIFO prio " << rt_prio << " failed, SCHED_OTHER fallback\n";
         }
+    }
+    catch ( const std::exception& )
+    {
+    }
+}
+
+void lock_process_memory( const Log& log ) noexcept
+{
+    const bool locked = ::mlockall( MCL_CURRENT | MCL_FUTURE ) == 0;
+    const int err = errno;
+    try
+    {
+        if ( locked )
+        {
+            log.info() << "rt: mlockall(MCL_CURRENT|MCL_FUTURE) OK\n";
+            return;
+        }
+        log.warn() << "rt: mlockall failed (" << ErrnoText { err } << "), continuing unlocked\n";
     }
     catch ( const std::exception& )
     {

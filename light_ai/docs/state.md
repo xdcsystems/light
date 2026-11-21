@@ -1693,3 +1693,9 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
 | f) USB `light-usb-replug off` / `on` with the phone | `44.736` |
 
   - Run f: `detached`, NO SIGNAL publishing (`idle_a` 122 per window), `re-attached - geometry 1280x960`.
+
+## `soft-rtos` — `platform/` extraction, `Pipeline` decomposition & soft-RT
+
+- **Architecture (`#119` item 4):** Extracted SDK-free POSIX/thread primitives into `include/platform/` + `src/platform/` (`JoiningThread`, `BufferedSocket`, `TcpPullServer`, `tcp_send_chunk`), separated FFmpeg AVIO binding into `include/net/tcp_avio.hpp`, moved `reid_queue.hpp` to `include/npu/`, and decomposed `Pipeline` into stage owners under `include/app/` + `src/app/` (`SourceSupervisor`, `Preprocessor`, `AnalyticsStage`, `StreamOutput`).
+- **Soft-RT (`#119` item 5, partial):** Added `scripts/isolate_rt.sh` (A55 `0-3` system/user/init slices, IRQ pinning for `eth0`, `xhci-hcd`, GPU, RGA2/RGA3, JPEGD, RKVENC, NPU cores 5-7, `vm` tuning, `/dev/cpu_dma_latency=0`), `scripts/run.sh` RT wrapper, `pin_current_thread_rt()` (`SCHED_FIFO` 80/70/50 on A76), and `lock_process_memory()` (`mlockall`). Stage F (`StreamOutput` dedicated thread + SPSC queue) remains open.
+- **Latency & correctness fixes (`#105`, review):** `EncodePacer` VFR cadence tracking with stale-source reset and out-of-order guard, `SO_SNDBUF=64 KiB` + `TCP_NOTSENT_LOWAT=16 KiB` + `SOCK_NONBLOCK`/`POLLOUT` send loop, `YoloDecode` `sync_output()`, `SourceSupervisor::next_frame()` non-spinning `NotReady` backoff, and `GpuBoxDrawer::init()` EGL context release.

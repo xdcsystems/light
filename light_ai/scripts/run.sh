@@ -81,8 +81,6 @@ if [ "${SKIP_ISOLATE:-0}" != "1" ] && [ -r "$ISOLATE_SCRIPT" ] && command -v sys
             "${SUDO[@]}" bash "$ISOLATE_SCRIPT" off >/dev/null 2>&1 || true
         }
         trap cleanup_isolate EXIT
-        trap 'exit 143' TERM
-        trap 'exit 129' HUP
 
         IO_MODE="--pipe"
         if [ -t 0 ] && [ -t 1 ]; then
@@ -99,6 +97,7 @@ if [ "${SKIP_ISOLATE:-0}" != "1" ] && [ -r "$ISOLATE_SCRIPT" ] && command -v sys
             --slice=light_ai.slice \
             -p AllowedCPUs=0-7 \
             -p LimitRTPRIO=90 \
+            -p LimitMEMLOCK=infinity \
             -p WorkingDirectory="$PROJ_ROOT" \
             "${RUN_AS[@]}" \
             "${ENV_ARGS[@]}" \

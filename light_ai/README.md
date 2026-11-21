@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](#requirements--platform-constraints)
 [![Standard: C++17](https://img.shields.io/badge/C%2B%2B-17-orange.svg)](CMakeLists.txt)
-[![Tests: 65 suites / 9357 checks](https://img.shields.io/badge/Unit%20Tests-65%20suites%20%2F%209357%20checks-brightgreen.svg)](#tests)
+[![Tests: 65 suites / 9410 checks](https://img.shields.io/badge/Unit%20Tests-65%20suites%20%2F%209410%20checks-brightgreen.svg)](#tests)
 
 Zero-copy hardware-accelerated object detection, Kalman tracking, optional OSNet cross-camera Re-ID, and multi-camera H.264 streaming pipeline for Rockchip RK3588 (`V4L2` / HTTP MJPEG → `MPP` decode → `RGA3` letterbox & rotation → `RKNN` NPU + async Re-ID → `Mali G610` EGL/GLES box, EN/RU callout & trail overlay → `MPP` H.264 / MPEG-TS). Built in C++17 with no GStreamer, no OpenCV, no CPU pixel copies, and no virtual dispatch on the frame path.
 
@@ -87,7 +87,7 @@ One frame's path: V4L2 or HTTP MJPEG → `MppDecoder` (dma-buf YUV) → `RgaResi
 
 ## Modules & Headers
 
-The codebase contains **95 headers** under [`include/`](include/) and **57 translation units** under [`src/`](src/) + [`externals/inih/ini.c`](externals/inih/ini.c).
+The codebase contains **101 headers** under [`include/`](include/) and **62 translation units** under [`src/`](src/) + [`externals/inih/ini.c`](externals/inih/ini.c).
 
 ### Pipeline & Hardware Modules (`include/<folder>/`, `src/<folder>/`)
 
@@ -101,7 +101,8 @@ core  <-  config, media, sys  <-  source, npu, net  <-  render  <-  app  <-  mai
 
 | Folder | Header | Responsibility |
 |---|---|---|
-| `app/` | `pipeline.hpp` | Top-level orchestration (`next_frame`, `step`, `publish_oldest`, A76 pinning) |
+| `app/` | `pipeline.hpp` | Top-level orchestration (`next_frame`, `step`, `publish_oldest`, A76 pinning, `mlockall`) |
+| `app/` | `source_supervisor.hpp`, `preprocessor.hpp`, `analytics_stage.hpp`, `stream_output.hpp` | Stage owners extracted from `Pipeline` (capture/prober, RGA+NPU dispatch, tracker/Re-ID, overlay/net publish) |
 | `app/` | `console_reporter.hpp` | Throttled detection/track reporter (`id=G(L...)` when Re-ID remaps) |
 | `source/` | `sources.hpp` | Umbrella convenience include for `source/` headers |
 | `source/` | `media_source.hpp` | Concrete `std::variant` owner of `CameraV4L2` and `NetMjpegSource` (static dispatch) |
@@ -111,14 +112,15 @@ core  <-  config, media, sys  <-  source, npu, net  <-  render  <-  app  <-  mai
 | `media/` | `rga_resizer.hpp`, `dma_sync.hpp` | RGA3 `im2d` letterbox/rotation (`--src-rot`), per-call RGA2 `crop_resize` (RGB888 Re-ID crops), and `DMA_BUF_IOCTL_SYNC` guard |
 | `npu/` | `rknn_engine.hpp` | RKNN zero-copy NPU engine (multi-slot `setup_io`, `bind_input_slot`, `sync_output`, native or INT8→FP16 outputs, move-only) |
 | `npu/` | `inference_pool.hpp`, `infer_slot.hpp` | Multi-core NPU worker pool (`--pool 1` / `3`), ordered FIFO, bounded `5 s` wait & `Abandoned` slot handoff |
-| `npu/` | `reid_worker.hpp` | Asynchronous Re-ID embedding runner (`RknnEngine` with 4 zero-copy slots + `BasicReidQueue` thread) |
+| `npu/` | `reid_worker.hpp`, `reid_queue.hpp` | Asynchronous Re-ID embedding runner (`RknnEngine` with 4 zero-copy slots + `BasicReidQueue` thread) |
 | `npu/` | `yolo_postprocess.hpp`, `coco_names.hpp` | Worker-local `YoloDecode` wrapper and 80-class COCO label lookup table |
 | `npu/` | `cal_dumper.hpp` | `--dump-cal` / `--cal` PPM writer |
 | `render/` | `box_smoother.hpp` | 32-slot matcher / coaster for non-person boxes (`cls != 0`, display-filtered by `BoxFilter`) |
 | `render/` | `box_mapper.hpp`, `overlay_sink.hpp` | Maps tracks, trails, EN/RU callouts, and non-person boxes; owns GPU/CPU draw parity + network output |
 | `render/` | `gpu_box_drawer.hpp` | Mali G610 EGL/GBM + GLES2/3 batched box, trail & `GL_LUMINANCE_ALPHA` callout label renderer (outline + fill pass; CPU fallback in `core/overlay_raster.hpp`) |
 | `net/` | `net_encoder.hpp`, `net_preview.hpp` | `h264_rkmpp` MPEG-TS encoder facade (`= default` dtor) and raw RGB24 NUT preview server |
-| `net/` | `tcp_pull_server.hpp`, `av_common.hpp`, `muxer_teardown.hpp` | Single-viewer TCP pull transport (`TCP_NODELAY`, `2 MiB` `SO_SNDBUF`, `15 s` `SO_SNDTIMEO`, `abort_client()`; send loop in `src/net/tcp_send.cpp`), FFmpeg helpers, RAII muxer teardown |
+| `net/` | `tcp_avio.hpp`, `av_common.hpp`, `muxer_teardown.hpp` | FFmpeg AVIO binding over `TcpPullServer`, FFmpeg helpers, RAII muxer teardown |
+| `platform/` | `joining_thread.hpp`, `buffered_socket.hpp`, `tcp_pull_server.hpp` | POSIX/C++17 OS helpers: RAII thread, non-blocking buffered socket, single-viewer TCP pull transport (`TCP_NODELAY`, `TCP_NOTSENT_LOWAT`, `SO_SNDBUF`, `POLLOUT` send loop in `src/platform/tcp_send.cpp`) |
 | `sys/` | `cpu_affinity.hpp`, `process_env.hpp`, `signal_waiter.hpp` | Cortex-A76 affinity pinning, signal mask + `SIGPIPE` setup, `sigtimedwait` → `StopFlag` bridge |
 
 ### SDK-Free Pure-Logic Core (`include/core/`, `src/core/`)
@@ -127,7 +129,7 @@ core  <-  config, media, sys  <-  source, npu, net  <-  render  <-  app  <-  mai
 
 - **Primitives & Errors:** `status.hpp` (`Status`, `Errc`, `Sys`, `ErrnoText`), `log.hpp` (`Log`, thread-safe RAII `Line`), `stop_flag.hpp` (`StopFlag`, `sleep_interruptible`), `fixed_fmt.hpp`, `line_scan.hpp`, `perf_clock.hpp` (`ms_between`, `MaxMs`, `CounterDelta`, `Lap`), `perf_reporter.hpp` (`PerfReporter`: the source-side window and the `[perf] src` / `[perf] enc` lines; byte-pinned format), `net_perf.hpp` (`SourcePerfWindow`, `EncPerfWindow`: the zero-heap 5 s windows behind those lines, `--net` only).
 - **Geometry & Detection:** `geometry.hpp` (`LbGeom`, `band_geom`), `rga_limits.hpp` (the RK3588 RGA limits as pure functions: 68 px minimum side, 8× per pass, 16-aligned RGB888 stride; `needs_two_pass` and the aux sizing shared by `RgaResizer`, `SourceChannel`, `Pipeline` and `RknnEngine`), `detection.hpp` (`Detection`, `DetList`), `frame_view.hpp` (`TensorRef` with `stride_bytes`, `TensorSet`, `FrameView`), `fp16.hpp` (`fp16_to_float`), `box_math.hpp` (`box_iou`, `box_iou_corners`, `greedy_iou_match`), `yolo_decoder.hpp` (`YoloDecoder`, `yolo_head_shape`, `Box::seq` NMS ordering).
-- **Tracking, Re-ID & Overlay:** `track.hpp` (`TrackLife`, `TrajPoint`, `TrackState`, `TrajList`), `kalman_axis.hpp`, `associator.hpp`, `trail_window.hpp`, `box_filter.hpp` (`BoxFilter` One-Euro + backlash dead zone, `TrackBoxFilters`: the one display filter of every drawn box), `gpu_box.hpp` (`GpuBox`, `GpuBoxList`), `glyph_font.hpp` (proportional DejaVu Sans, 147 glyphs: digits, Latin, Cyrillic, label punctuation; a `256×296` atlas of two 8-bit planes, fill and the baked 2 px dark outline (`151,552` bytes), baked at 22 px by `tools/gen_glyph_font.py`, sampled bilinearly; `for_each_glyph` / `raster_text`: the one glyph walk of every renderer; zero-heap UTF-8), `glyph_font_table.hpp` (the atlas and glyph table behind `glyph_font.hpp`, generated by `tools/gen_glyph_font.py`: do not edit), `callout.hpp` (`compute_callouts` with per-camera `CalloutHistory` hysteresis; plate-free white labels with a dark outline; `callout_text_scale` gives every source the same letter size on its output tile), `overlay_raster.hpp` (`draw_boxes_cpu`, `draw_callouts_cpu`: the CPU twin of `GpuBoxDrawer`, the `--cpu-draw` / no-GPU fallback), `auto_orient.hpp` (`AutoOrient` EXIF + 4-angle scoring), `global_track.hpp` (`GlobalTrackTable`, crop scheduler), `reid_queue.hpp` (`BasicReidQueue`).
+- **Tracking, Re-ID & Overlay:** `track.hpp` (`TrackLife`, `TrajPoint`, `TrackState`, `TrajList`), `kalman_axis.hpp`, `associator.hpp`, `trail_window.hpp`, `box_filter.hpp` (`BoxFilter` One-Euro + backlash dead zone, `TrackBoxFilters`: the one display filter of every drawn box), `gpu_box.hpp` (`GpuBox`, `GpuBoxList`), `glyph_font.hpp` (proportional DejaVu Sans, 147 glyphs: digits, Latin, Cyrillic, label punctuation; a `256×296` atlas of two 8-bit planes, fill and the baked 2 px dark outline (`151,552` bytes), baked at 22 px by `tools/gen_glyph_font.py`, sampled bilinearly; `for_each_glyph` / `raster_text`: the one glyph walk of every renderer; zero-heap UTF-8), `glyph_font_table.hpp` (the atlas and glyph table behind `glyph_font.hpp`, generated by `tools/gen_glyph_font.py`: do not edit), `callout.hpp` (`compute_callouts` with per-camera `CalloutHistory` hysteresis; plate-free white labels with a dark outline; `callout_text_scale` gives every source the same letter size on its output tile), `overlay_raster.hpp` (`draw_boxes_cpu`, `draw_callouts_cpu`: the CPU twin of `GpuBoxDrawer`, the `--cpu-draw` / no-GPU fallback), `auto_orient.hpp` (`AutoOrient` EXIF + 4-angle scoring), `global_track.hpp` (`GlobalTrackTable`, crop scheduler).
 - **Containers, Tracker & Timing:** `pod_list.hpp`, `pod_ring.hpp` (zero-heap fixed-capacity `PodList<T, N>`, `PodRing<T, N>`), `throw_on.hpp` (startup `Status` → exception bridge), `tracker.hpp` (8-slot Kalman + greedy IoU tracker: `kMaxMiss = 6`, `global_id`, `gen`), `timings.hpp`, `frame_trace.hpp` (per-stage `avg/60` + `TOTAL` timing accumulator).
 - **HTTP/MJPEG Parsing:** `byte_window.hpp`, `http_url.hpp`, `http_head.hpp`, `multipart_reader.hpp`, `jpeg_probe.hpp` (JPEG `SOFn` + EXIF `Orientation` probe).
 - **Encoder/Stream State:** `encoder_config.hpp`, `param_set_cache.hpp`, `pts_clock.hpp` (`PtsClock`, `SessionPtsFilter`), `encode_pacer.hpp`, `session_warmup.hpp`, `idle_plate.hpp`, `packet_queue.hpp`, `session_gate.hpp`, `preview_ring.hpp` (`PreviewRing`: the 2-slot drop-oldest hand-off from the pipeline thread to the preview serve thread, sized once at startup).
@@ -217,7 +219,7 @@ python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4 c
 
 [`tests/CMakeLists.txt`](tests/CMakeLists.txt) is an independent host CMake project requiring only a C++17 compiler and `pthread` (zero Rockchip/FFmpeg/EGL dependencies — runs identically on the board and on x86_64/arm64 hosts).
 
-- **Unit binary (`build/tests/light_ai_tests`):** **65 suites, 9,357 checks**.
+- **Unit binary (`build/tests/light_ai_tests`):** **65 suites, 9,410 checks**.
 - **ThreadSanitizer binary (`build/tests/light_ai_tests_tsan`, `-fsanitize=thread`):** **6 threaded suites, 23 checks** (`source_threads`, `source_prober_threads`, `preview_ring_threads`, `packet_queue_threads`, `session_gate_threads`, `reid_worker_tsan`).
 - **Custom runner options ([`tests/suite_runner.hpp`](tests/suite_runner.hpp)):**
   ```bash

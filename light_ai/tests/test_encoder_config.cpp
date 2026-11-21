@@ -130,7 +130,7 @@ namespace
         c.fps = 0;  // follow the source: nominal 25 for rate control, GOP 1 s of it
         CHECK( t, c.vfr() && c.nominal_fps() == 25 && c.gop() == 25 );
         c.layout = make_stream_layout( 640, 640, kBand43, 3 );
-        CHECK( t, c.nominal_fps() == 75 && c.gop() == 75 );
+        CHECK( t, c.nominal_fps() == 25 && c.gop() == 25 );
         c.fps = 25;
         CHECK( t, c.nominal_fps() == 25 && c.gop() == 25 );
         // Bitrate: as configured, and 12000 kbps for an unset / invalid value (never 0 to MPP).

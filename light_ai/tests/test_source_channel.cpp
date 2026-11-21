@@ -178,7 +178,8 @@ namespace
 
 void test_source_channel( TestRun& t )
 {
-    // Startup attach: Live last, geometry and letterbox set, decoder initialized once, no warm-up.
+    // Startup attach: Live last, geometry and letterbox set, decoder initialized once;
+    // V4L2 warms up on cold start (AE settling after STREAMON).
     {
         Rig r;
         CHECK( t, r.ch.state() == State::NeverAttached );
@@ -188,7 +189,9 @@ void test_source_channel( TestRun& t )
         CHECK( t, r.ch.geom().w == 1280 && r.ch.geom().h == 960 && r.ch.geom().aux_fd == -1 );
         CHECK( t, r.ch.geom().lb.top == lb.top && r.ch.geom().lb.h == lb.h && r.ch.geom().lb.w == lb.w );
         CHECK( t, r.out.str() == "source: geometry 1280x960\n" );
-        CHECK( t, r.frame() == 7 );  // no warm-up at startup
+        CHECK( t, r.frame() == -1 && r.frame() == -1 && r.frame() == -1 );  // V4L2 cold-start warm-up
+        CHECK( t, r.out.str().find( "source s1: warm-up done, publishing resumed\n" ) != std::string::npos );
+        CHECK( t, r.frame() == 7 );
     }
     // A failure at each step leaves the state as it was; the retry takes the same path.
     {
@@ -277,13 +280,14 @@ void test_source_channel( TestRun& t )
         r.dev.dq_err = EINVAL;
         CHECK( t, r.ch.poll( 0, f ) == FrameStatus::Fatal && f.st.sys() == EINVAL );
     }
-    // Net source: no node lookup (an empty /dev does not matter), the URL is opened as is.
+    // Net source: no node lookup (an empty /dev does not matter), URL opened as is, no cold warm-up.
     {
         Rig r( SourceKind::NetMjpeg );
         r.host.present.clear();
         r.host.usb.clear();
         CHECK( t, r.dev.net );
         CHECK( t, r.attach( false ) == Attach::Live && r.dev.opened == "http://cam:8080/video" && r.dev.trials.empty() );
+        CHECK( t, r.frame() == 7 );
     }
     // detach() tears down the source immediately; consecutive decoder errors surface Errc::Lost.
     {

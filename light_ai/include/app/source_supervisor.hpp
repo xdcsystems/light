@@ -78,6 +78,7 @@ public:
             st = srcs_.next( 1, f );
             if ( st != FrameStatus::NotReady )
                 return st;
+            std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
         }
         return FrameStatus::Stopped;
     }

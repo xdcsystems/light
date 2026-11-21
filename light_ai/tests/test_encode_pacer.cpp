@@ -35,17 +35,15 @@ namespace
 
     void multi_vfr( TestRun& t )
     {
-        // Follow the source: 4 ms, 20 ms while the queue holds kBusyDepth or more.
+        // Follow the source: 33.3 ms (~30 fps), 40 ms (25 fps) at kHeavyDepth or more.
         EncodePacer p( 3, 0 );
         CHECK( t, p.admit( 0, 0, 1 ) );
-        CHECK( t, !p.admit( 3999, 0, 1 ) );
-        CHECK( t, p.admit( 4000, 0, 1 ) );
-        CHECK( t, !p.admit( 10000, EncodePacer::kBusyDepth, 1 ) );
-        CHECK( t, p.admit( 10000, EncodePacer::kBusyDepth - 1, 1 ) );
-        CHECK( t, !p.admit( 29999, EncodePacer::kBusyDepth, 1 ) );
-        CHECK( t, p.admit( 30000, EncodePacer::kBusyDepth, 1 ) );
-        CHECK( t, !p.admit( 69999, EncodePacer::kHeavyDepth, 1 ) );
-        CHECK( t, p.admit( 70000, EncodePacer::kHeavyDepth, 1 ) );
+        CHECK( t, !p.admit( 33332, 0, 1 ) );
+        CHECK( t, p.admit( 33333, 0, 1 ) );
+        CHECK( t, !p.admit( 66665, EncodePacer::kBusyDepth, 1 ) );
+        CHECK( t, p.admit( 66666, EncodePacer::kBusyDepth, 1 ) );
+        CHECK( t, !p.admit( 106665, EncodePacer::kHeavyDepth, 1 ) );
+        CHECK( t, p.admit( 106666, EncodePacer::kHeavyDepth, 1 ) );
     }
 
     void epochs( TestRun& t )
@@ -94,6 +92,54 @@ namespace
 
     // The encoder's perf histograms (net_perf.hpp): an edge value opens the next bucket of the < table and closes
     // its bucket of the <= table; NaN lands in the last bucket of both.
+    void slowest_source_and_grid( TestRun& t )
+    {
+        // s0 at 25 fps (40 ms), s1 at ~30 fps (33.3 ms) with a 189 ms Wi-Fi spike:
+        // median rejects the spike and paces to s0 (40 ms = 25 fps).
+        EncodePacer p( 2, 0 );
+        for ( int k = 0; k < 6; ++k )
+            p.observe_source( 0, static_cast<int64_t>( k ) * 40000 );
+        const int64_t s1_ts[6] = { 0, 33333, 66666, 255666, 288999, 322332 };
+        for ( const int64_t ts : s1_ts )
+            p.observe_source( 1, ts );
+        CHECK_EQ( t, p.slowest_period_us( 322332 ), 40000 );
+        CHECK( t, p.admit( 322332, 0, 1 ) );
+        CHECK( t, !p.admit( 362331, 0, 1 ) );
+        // Late tick (+2 ms): grid stays phase-locked at 362332, so next tick is 402332 (38 ms later).
+        CHECK( t, p.admit( 364332, 0, 1 ) );
+        CHECK( t, !p.admit( 402331, 0, 1 ) );
+        CHECK( t, p.admit( 402332, 0, 1 ) );
+        // Stall (>1 full period late): resyncs grid without a catch-up burst.
+        CHECK( t, p.admit( 520000, 0, 1 ) );
+        CHECK( t, !p.admit( 559999, 0, 1 ) );
+        CHECK( t, p.admit( 560000, 0, 1 ) );
+        // Night-mode s0 slows to 20 fps (50 ms); pacer follows to 50 ms.
+        int64_t t0 = 600000;
+        for ( int k = 0; k < 5; ++k )
+        {
+            t0 += 50000;
+            p.observe_source( 0, t0 );
+        }
+        CHECK_EQ( t, p.slowest_period_us( t0 ), 50000 );
+        // Silent s0 (>1 s stale) no longer holds back live s1 (~33.3 ms).
+        int64_t t1 = t0 + 1100000;
+        for ( int k = 0; k < 4; ++k )
+        {
+            t1 += 33333;
+            p.observe_source( 1, t1 );
+        }
+        CHECK_EQ( t, p.slowest_period_us( t1 ), 33333 );
+        // Reconnecting s0 after >1 s stale pause resets its old 50 ms history.
+        t1 += 1500000;
+        p.observe_source( 0, t1 );
+        p.observe_source( 0, t1 + 33333 );
+        p.observe_source( 0, t1 + 66666 );
+        CHECK_EQ( t, p.slowest_period_us( t1 + 66666 ), 33333 );
+        // Out-of-order timestamp behind grid is rejected without advancing grid.
+        CHECK( t, p.admit( t1 + 100000, 0, 1 ) );
+        CHECK( t, !p.admit( t1 + 90000, 0, 1 ) );
+    }
+
     void perf_buckets( TestRun& t )
     {
         const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -122,5 +168,6 @@ void test_encode_pacer( TestRun& t )
     multi_vfr( t );
     epochs( t );
     idle( t );
+    slowest_source_and_grid( t );
     perf_buckets( t );
 }

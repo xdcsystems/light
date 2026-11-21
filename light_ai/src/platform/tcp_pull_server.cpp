@@ -4,7 +4,6 @@
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <unistd.h>
 
 #include "platform/tcp_pull_server.hpp"
@@ -16,22 +15,45 @@ namespace
         kPollMs = 200
     };
 
-    void configure_client_socket( int cfd, int sndbuf_bytes, int sndtimeo_sec ) noexcept
+    void configure_client_socket( int cfd, int sndbuf_bytes ) noexcept
     {
         int one = 1;
         ::setsockopt( cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );
         if ( sndbuf_bytes > 0 )
             ::setsockopt( cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf_bytes, sizeof( sndbuf_bytes ) );
-        if ( sndtimeo_sec > 0 )
+#ifdef TCP_NOTSENT_LOWAT
+        int lowat = 16384;
+        ::setsockopt( cfd, IPPROTO_TCP, TCP_NOTSENT_LOWAT, &lowat, sizeof( lowat ) );
+#endif
+    }
+
+    // Returns 1 if lfd is ready for accept(), 0 on poll timeout/EINTR, -1 on error (err set).
+    int poll_listener_ready( int lfd, Status& err )
+    {
+        pollfd pf {};
+        pf.fd = lfd;
+        pf.events = POLLIN;
+        const int pr = ::poll( &pf, 1, kPollMs );
+        if ( pr < 0 )
         {
-            const timeval tv { sndtimeo_sec, 0 };
-            ::setsockopt( cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
+            if ( errno == EINTR )
+                return 0;
+            err = errno_status( Errc::Failed, "poll", errno );
+            return -1;
         }
+        if ( pr == 0 )
+            return 0;
+        if ( ( pf.revents & ( POLLERR | POLLHUP | POLLNVAL ) ) != 0 )
+        {
+            err = make_status( Errc::Failed, "listener error (poll revents)" );
+            return -1;
+        }
+        return 1;
     }
 }  // namespace
 
 TcpPullServer::TcpPullServer( int port, int sndbuf_bytes, int sndtimeo_sec )
-  : port_( port ), sndbuf_bytes_( sndbuf_bytes ), sndtimeo_sec_( sndtimeo_sec ), write_ctx_( sndtimeo_sec )
+  : port_( port ), sndbuf_bytes_( sndbuf_bytes ), write_ctx_( sndtimeo_sec )
 {}
 
 TcpPullServer::~TcpPullServer()
@@ -73,23 +95,15 @@ Status TcpPullServer::accept_client( const std::atomic<bool>& quit )
     if ( lfd_ < 0 )
         return make_status( Errc::Invalid, "no listener" );
 
-    pollfd pf {};
-    pf.fd = lfd_;
-    pf.events = POLLIN;
     while ( !quit.load() )
     {
-        const int pr = ::poll( &pf, 1, kPollMs );
-        if ( pr < 0 )
-        {
-            if ( errno == EINTR )
-                continue;
-            return errno_status( Errc::Failed, "poll", errno );
-        }
-        if ( pr == 0 )
+        Status err;
+        const int ready = poll_listener_ready( lfd_, err );
+        if ( ready < 0 )
+            return err;
+        if ( ready == 0 )
             continue;
-        if ( ( pf.revents & ( POLLERR | POLLHUP | POLLNVAL ) ) != 0 )
-            return make_status( Errc::Failed, "listener error (poll revents)" );
-        const int cfd = ::accept4( lfd_, nullptr, nullptr, SOCK_CLOEXEC );
+        const int cfd = ::accept4( lfd_, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC );
         if ( cfd >= 0 )
         {
             if ( !adopt_client( cfd ) )
@@ -101,9 +115,12 @@ Status TcpPullServer::accept_client( const std::atomic<bool>& quit )
     }
     const int cfd = write_ctx_.cfd.load( std::memory_order_acquire );
     if ( quit.load() || cfd < 0 )
+    {
+        close_client();
         return make_status( Errc::Timeout, "no viewer" );
+    }
 
-    configure_client_socket( cfd, sndbuf_bytes_, sndtimeo_sec_ );
+    configure_client_socket( cfd, sndbuf_bytes_ );
     return {};
 }
 

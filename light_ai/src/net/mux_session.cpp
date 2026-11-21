@@ -59,7 +59,7 @@ void MuxSession::serve() noexcept
     const std::string url = tcp_pull ? std::string() 
                                      : ( "udp://" + cfg_.host + ':' + std::to_string( cfg_.port ) + "?pkt_size=1316" );
 
-    TcpPullServer tcp( cfg_.port, 256 * 1024, 5 );
+    TcpPullServer tcp( cfg_.port, 64 * 1024, 5 );
     struct TcpReg
     {
         std::mutex& mx;

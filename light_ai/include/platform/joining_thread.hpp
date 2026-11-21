@@ -26,7 +26,7 @@ public:
 
     JoiningThread( JoiningThread&& other ) noexcept : th_( std::move( other.th_ ) ) {}
 
-    JoiningThread& operator=( JoiningThread&& other )
+    JoiningThread& operator=( JoiningThread&& other ) noexcept
     {
         if ( this != &other )
         {

@@ -63,6 +63,7 @@ case "$MODE" in
         # Ускорители light_ai -> A76 (4-7)
         pin_irq 'fb000000\.gpu' '4'
         pin_irq 'rga3'          '4'
+        pin_irq 'rga2'          '4'
         pin_irq 'jpegd'         '4'
         pin_irq 'rkvenc-core'   '4'
 
@@ -84,8 +85,8 @@ case "$MODE" in
             while IFS='=' read -r k v; do
                 [ -z "$v" ] && continue
                 case "$k" in
-                    SWAPPINESS)    [ -w /proc/sys/vm/swappiness ]    && echo "$v" > /proc/sys/vm/swappiness ;;
-                    STAT_INTERVAL) [ -w /proc/sys/vm/stat_interval ] && echo "$v" > /proc/sys/vm/stat_interval ;;
+                    SWAPPINESS)    [ -w /proc/sys/vm/swappiness ]    && echo "$v" > /proc/sys/vm/swappiness 2>/dev/null || true ;;
+                    STAT_INTERVAL) [ -w /proc/sys/vm/stat_interval ] && echo "$v" > /proc/sys/vm/stat_interval 2>/dev/null || true ;;
                     THP)           [ -w "$THP_FILE" ]                && echo "$v" > "$THP_FILE" 2>/dev/null || true ;;
                 esac
             done < "$STATE_FILE"

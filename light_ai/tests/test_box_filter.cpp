@@ -236,7 +236,7 @@ void test_box_filter( TestRun& t )
     still_under_jitter( t, box_filter::kRawBoxParams, 200.0f, 300.0f, 1.0f );    // a chair: dz 4 / 6 px
     still_under_jitter( t, box_filter::kRawBoxParams, 200.0f, 300.0f, 3.0f );
     still_under_jitter( t, box_filter::kRawBoxParams, 40.0f, 60.0f, 1.5f );      // a bottle: dz 2 px (the floor)
-    still_under_jitter( t, box_filter::kTrackBoxParams, 330.0f, 600.0f, 1.0f );  // a person: dz 3.3 / 6 px
+    still_under_jitter( t, box_filter::kTrackBoxParams, 330.0f, 600.0f, 1.0f );  // a person: dz 2.64 / 4.8 px
     still_under_jitter( t, box_filter::kTrackBoxParams, 330.0f, 600.0f, 2.0f );
     step_response( t, box_filter::kRawBoxParams );
     step_response( t, box_filter::kTrackBoxParams );

@@ -32,6 +32,52 @@ namespace
         CHECK( t, r_tie1.rot_deg == 90 && r_tie1.best_score > 0.85f );
         CHECK( t, r_tie2.locked && r_tie2.rot_deg == 90 );
     }
+
+    void check_consecutive_votes_regression( TestRun& t )
+    {
+        // Weak phantoms separated by empty/noisy rounds (Probe4 -> Watch -> Probe4) must not lock.
+        {
+            AutoOrient ao;
+            ao.reset( true, 0, false );
+            const float phantom90[4] = { 0.0f, 0.633977f, 0.0f, 0.0f };
+            const float empty[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            const float noisy[4] = { 0.50f, 0.52f, 0.0f, 0.0f };
+
+            const AutoOrient::Result r1 = ao.commit_all4( phantom90 );
+            CHECK( t, r1.changed && !r1.locked && r1.rot_deg == 90 );
+            static_cast<void>( ao.commit_all4( empty ) );
+            static_cast<void>( ao.commit_all4( empty ) );
+            CHECK( t, !ao.locked() && ao.next_action( 16 ) == AutoOrient::Action::ProbeSingle );
+            CHECK( t, ao.observe_single( 90, 0.633977f ) );
+
+            const AutoOrient::Result r4 = ao.commit_all4( phantom90 );
+            CHECK( t, !r4.locked && r4.rot_deg == 90 );
+            static_cast<void>( ao.commit_all4( noisy ) );
+            CHECK( t, !ao.locked() && ao.next_action( 17 ) == AutoOrient::Action::None );
+            CHECK( t, ao.observe_single( 90, 0.633977f ) );
+
+            const AutoOrient::Result r6 = ao.commit_all4( phantom90 );
+            CHECK( t, !r6.locked && r6.rot_deg == 90 );
+            const AutoOrient::Result r7 = ao.commit_all4( phantom90 );
+            CHECK( t, r7.locked && r7.rot_deg == 90 );
+        }
+        // Alternating leaders reset other angles' votes and drop to Watch once the burst ends.
+        {
+            AutoOrient ao;
+            ao.reset( true, 0, false );
+            const float mod90[4] = { 0.0f, 0.65f, 0.0f, 0.0f };
+            const float mod270[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
+            CHECK( t, !ao.commit_all4( mod90 ).locked );
+            CHECK( t, !ao.commit_all4( mod270 ).locked );
+            CHECK( t, !ao.commit_all4( mod90 ).locked );
+            CHECK( t, !ao.locked() && ao.next_action( 3 ) == AutoOrient::Action::None );
+            CHECK( t, ao.next_action( 16 ) == AutoOrient::Action::ProbeSingle );
+            CHECK( t, ao.observe_single( ao.watch_angle(), 0.65f ) );
+            CHECK( t, !ao.commit_all4( mod270 ).locked );
+            const AutoOrient::Result r = ao.commit_all4( mod270 );
+            CHECK( t, r.locked && r.rot_deg == 270 );
+        }
+    }
 }  // namespace
 
 void test_auto_orient( TestRun& t )
@@ -109,4 +155,5 @@ void test_auto_orient( TestRun& t )
         CHECK( t, w == 1280 && h == 720 );
     }
     check_m8_nan_and_exif( t );
+    check_consecutive_votes_regression( t );
 }

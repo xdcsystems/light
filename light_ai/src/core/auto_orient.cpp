@@ -217,6 +217,17 @@ void AutoOrient::advance_watch_cursor() noexcept
         watch_cursor_ = ( watch_cursor_ + 1 ) & 3;
 }
 
+void AutoOrient::consume_burst_round() noexcept
+{
+    if ( burst_left_ > 0 )
+        --burst_left_;
+    if ( burst_left_ <= 0 )
+    {
+        std::fill( std::begin( votes_ ), std::end( votes_ ), 0 );
+        phase_ = Phase::Watch;
+    }
+}
+
 AutoOrient::Result AutoOrient::apply_choice( int best_idx, float best_sc, float second_sc, bool lock_now ) noexcept
 {
     Result out {};
@@ -261,17 +272,17 @@ AutoOrient::Result AutoOrient::commit_all4( const float scores[4] ) noexcept
     if ( clear_margin )
     {
         const bool strong = ( best_sc >= kStrongSignal ) && ( second_sc <= 0.08f || best_sc >= second_sc * 2.1f );
-        ++votes_[best_idx];
+        const int next_votes = votes_[best_idx] + 1;
+        std::fill( std::begin( votes_ ), std::end( votes_ ), 0 );
+        votes_[best_idx] = next_votes;
         const bool lock_now = strong || ( votes_[best_idx] >= kVotesToLock );
-        if ( !lock_now && burst_left_ > 0 )
-            --burst_left_;
+        if ( !lock_now )
+            consume_burst_round();
         return apply_choice( best_idx, best_sc, second_sc, lock_now );
     }
 
-    if ( burst_left_ > 0 )
-        --burst_left_;
-    if ( burst_left_ <= 0 )
-        phase_ = Phase::Watch;
+    std::fill( std::begin( votes_ ), std::end( votes_ ), 0 );
+    consume_burst_round();
     res.best_score = best_sc;
     res.second_score = second_sc;
     return res;

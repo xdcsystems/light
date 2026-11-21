@@ -325,6 +325,7 @@ Status GpuBoxDrawer::init()
     }
     create_atlas();
     create_buffers();
+    eglMakeCurrent( st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );
     ready_ = true;
     return {};
 }
@@ -596,6 +597,7 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     }
     log_.info() << "drawer: tensor attached (slot " << slot << ") " << w << 'x' << h << " stride=" << stride
               << " (native fence: " << ( st_.native_fence ? "yes" : "no" ) << ")\n";
+    eglMakeCurrent( st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );
     return {};
 }
 

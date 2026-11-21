@@ -21,3 +21,7 @@ void pin_current_thread_to_big_cores( const char* who, const Log& log ) noexcept
 // Pins the calling thread to a specific A76 core (`cpu >= 0`) or the full A76 cluster (`cpu < 0`) and optionally
 // switches it to SCHED_FIFO (`rt_prio > 0`). Best-effort and noexcept.
 void pin_current_thread_rt( const char* who, int cpu, int rt_prio, const Log& log ) noexcept;
+
+// Locks current and future process pages in RAM (mlockall) to prevent RT page faults.
+// Best-effort and noexcept (logs a warning on EPERM/ENOMEM).
+void lock_process_memory( const Log& log ) noexcept;
