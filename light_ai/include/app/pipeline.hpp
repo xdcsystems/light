@@ -10,6 +10,7 @@
 #include "config/config.hpp"
 #include "core/log.hpp"
 #include "core/perf_reporter.hpp"
+#include "sys/sd_watchdog.hpp"
 #include "core/status.hpp"
 #include "core/stop_flag.hpp"
 #include "core/timings.hpp"
@@ -75,4 +76,5 @@ private:
     std::chrono::steady_clock::time_point t0_ {};  // run() start: pts base
     int64_t t0_cap_us_ = 0;
     PerfReporter perf_;
+    SdWatchdog watchdog_;
 };

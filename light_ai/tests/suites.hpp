@@ -72,3 +72,4 @@ void test_infer_slot_threads( TestRun& t );
 void test_global_track( TestRun& t );
 void test_reid_worker_tsan( TestRun& t );
 void test_pi_mutex( TestRun& t );
+void test_sd_watchdog( TestRun& t );

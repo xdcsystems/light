@@ -28,6 +28,7 @@ case "$MODE" in
             {
                 [ -r /proc/sys/vm/swappiness ]    && echo "SWAPPINESS=$(cat /proc/sys/vm/swappiness)"
                 [ -r /proc/sys/vm/stat_interval ] && echo "STAT_INTERVAL=$(cat /proc/sys/vm/stat_interval)"
+                [ -r /proc/sys/kernel/sched_rt_runtime_us ] && echo "SCHED_RT_RUNTIME_US=$(cat /proc/sys/kernel/sched_rt_runtime_us)"
                 if [ -r "$THP_FILE" ]; then
                     thp_cur="$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$THP_FILE")"
                     [ -n "$thp_cur" ] && echo "THP=$thp_cur"
@@ -39,6 +40,11 @@ case "$MODE" in
         [ -w /proc/sys/vm/swappiness ]    && echo 1  > /proc/sys/vm/swappiness
         [ -w /proc/sys/vm/stat_interval ] && echo 60 > /proc/sys/vm/stat_interval
         [ -w "$THP_FILE" ]                && echo never > "$THP_FILE" 2>/dev/null || true
+
+        # Disable RT throttling strictly when watchdog is active
+        if [ "${ENABLE_RT_UNLIMITED:-0}" = "1" ] && [ -w /proc/sys/kernel/sched_rt_runtime_us ]; then
+            echo -1 > /proc/sys/kernel/sched_rt_runtime_us 2>/dev/null || true
+        fi
 
         # Запрещаем глубокие C-states на время RT-прогона (fd держится открытым в system.slice)
         if [ "${SKIP_DMA_LATENCY:-0}" != "1" ] && [ -w /dev/cpu_dma_latency ]; then
@@ -87,7 +93,8 @@ case "$MODE" in
                 case "$k" in
                     SWAPPINESS)    [ -w /proc/sys/vm/swappiness ]    && echo "$v" > /proc/sys/vm/swappiness 2>/dev/null || true ;;
                     STAT_INTERVAL) [ -w /proc/sys/vm/stat_interval ] && echo "$v" > /proc/sys/vm/stat_interval 2>/dev/null || true ;;
-                    THP)           [ -w "$THP_FILE" ]                && echo "$v" > "$THP_FILE" 2>/dev/null || true ;;
+                    THP)                 [ -w "$THP_FILE" ]                && echo "$v" > "$THP_FILE" 2>/dev/null || true ;;
+                    SCHED_RT_RUNTIME_US) [ -w /proc/sys/kernel/sched_rt_runtime_us ] && echo "$v" > /proc/sys/kernel/sched_rt_runtime_us 2>/dev/null || true ;;
                 esac
             done < "$STATE_FILE"
             rm -f "$STATE_FILE"
@@ -112,6 +119,7 @@ case "$MODE" in
         fi
         echo "vm.swappiness:    $(cat /proc/sys/vm/swappiness 2>/dev/null || echo n/a)"
         echo "vm.stat_interval: $(cat /proc/sys/vm/stat_interval 2>/dev/null || echo n/a)"
+        echo "sched_rt_runtime: $(cat /proc/sys/kernel/sched_rt_runtime_us 2>/dev/null || echo n/a)"
         [ -r "$THP_FILE" ] && echo "thp:              $(cat "$THP_FILE")"
         for irq in $(awk '/fdab0000\.npu|rga3|eth0-0 / {gsub(/:/, "", $1); print $1}' /proc/interrupts); do
             printf "IRQ %-4s -> CPU %s\n" "$irq" "$(cat "/proc/irq/$irq/smp_affinity_list" 2>/dev/null || echo n/a)"

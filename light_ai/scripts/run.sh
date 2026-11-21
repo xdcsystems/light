@@ -76,7 +76,7 @@ if [ "${SKIP_ISOLATE:-0}" != "1" ] && [ -r "$ISOLATE_SCRIPT" ] && command -v sys
     fi
 
     if [ "$can_isolate" -eq 1 ] && \
-       "${SUDO[@]}" env "SKIP_DMA_LATENCY=${SKIP_DMA_LATENCY:-0}" bash "$ISOLATE_SCRIPT" on >/dev/null 2>&1; then
+       "${SUDO[@]}" env "SKIP_DMA_LATENCY=${SKIP_DMA_LATENCY:-0}" "ENABLE_RT_UNLIMITED=1" bash "$ISOLATE_SCRIPT" on >/dev/null 2>&1; then
         cleanup_isolate() {
             "${SUDO[@]}" bash "$ISOLATE_SCRIPT" off >/dev/null 2>&1 || true
         }
@@ -100,6 +100,9 @@ if [ "${SKIP_ISOLATE:-0}" != "1" ] && [ -r "$ISOLATE_SCRIPT" ] && command -v sys
             -p AllowedCPUs=0-7 \
             -p LimitRTPRIO=90 \
             -p LimitMEMLOCK=infinity \
+            -p NotifyAccess=main \
+            -p WatchdogSec=5s \
+            -p Restart=on-failure \
             -p WorkingDirectory="$PROJ_ROOT" \
             "${RUN_AS[@]}" \
             "${ENV_ARGS[@]}" \

@@ -59,6 +59,7 @@ add_executable(light_ai_tests
     test_perf_clock.cpp
     test_perf_reporter.cpp
     test_pi_mutex.cpp
+    test_sd_watchdog.cpp
     test_console_reporter.cpp
     test_cal_dumper.cpp
     test_usb_node_locator.cpp

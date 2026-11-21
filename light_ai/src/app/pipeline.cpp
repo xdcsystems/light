@@ -164,6 +164,7 @@ void Pipeline::sync_and_orient( int src, int fd_src, int& ok ) noexcept
 void Pipeline::idle_perf() noexcept
 {
     const auto now = clk::now();
+    watchdog_.ping_if_due( now );
     sample_rt_faults_if_due( perf_, now );
     perf_.tick( now, sources_.sources(), output_ );
 }
@@ -171,6 +172,7 @@ void Pipeline::idle_perf() noexcept
 void Pipeline::step_done_perf( PerfClock::time_point t0 ) noexcept
 {
     const auto now = clk::now();
+    watchdog_.ping_if_due( now );
     sample_rt_faults_if_due( perf_, now );
     perf_.step_done( t0, now, sources_.sources(), output_ );
 }
@@ -265,6 +267,7 @@ Status Pipeline::run()
     }
     analytics_.init_box_logs( cfg_.box_log, sources_.size() );
     sources_.reset_stall_clocks( t0_ );
+    watchdog_.ping_now( clk::now() );
 
     for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.requested(); )
     {

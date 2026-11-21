@@ -78,6 +78,7 @@ int main( int argc, char** argv )
         { "global_track", &test_global_track },
         { "reid_worker_tsan", &test_reid_worker_tsan },
         { "pi_mutex", &test_pi_mutex },
+        { "sd_watchdog", &test_sd_watchdog },
     };
     return run_suites( "light_ai_tests", suites, argc, argv, std::cout, std::cerr );
 }
