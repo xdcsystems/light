@@ -54,6 +54,7 @@ struct EncodedFrame
     int src = -1;       // source index
     int buf = -1;       // the source's buffer index (requeued by SourceChannel::decode)
     uint32_t size = 0;  // payload bytes; 0 = an empty packet (skipped, never decoded)
+    int64_t cap_us = -1;  // monotonic capture timestamp (us), -1 if unavailable
     Status st {};       // Detached / Fatal: the failure (the failure log prints it)
 };
 

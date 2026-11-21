@@ -146,11 +146,13 @@ public:
         out.src = idx_;
         out.buf = -1;
         out.size = 0;
+        out.cap_us = -1;
         out.st = src_.dequeue( out.buf, out.size, wait_ms );
         switch ( out.st.code() )
         {
             case Errc::Ok:
                 last_ok_.store( clk::now() );
+                out.cap_us = src_.last_cap_us();
                 skip_parts_ = src_.skip_parts_cnt();
                 return FrameStatus::Frame;
             case Errc::Timeout:

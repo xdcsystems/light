@@ -382,6 +382,9 @@ Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms ) noe
         return dequeue_status( ( err_streak_ >= kErrStreakMax ) ? EIO : EAGAIN );
     }
     err_streak_ = 0;
+    last_cap_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch() )
+                       .count();
     pool_.mark( slot );
     size = n;
     index = slot;
@@ -391,6 +394,9 @@ Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms ) noe
 Status NetMjpegSource::take_primed( int& index, uint32_t& size )
 {
     pool_.mark( 0 );
+    last_cap_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch() )
+                       .count();
     size = primed_len_;
     index = 0;
     primed_len_ = 0;

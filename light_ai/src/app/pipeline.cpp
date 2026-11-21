@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -126,6 +127,7 @@ int Pipeline::acquire_slot( int& ok ) noexcept
             std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
         k = pool_.try_acquire();
     }
+    output_.wait_slot_free( k );
     return k;
 }
 
@@ -163,7 +165,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
             st = hst;
             return Step::Fatal;
         }
-        perf_.step_done( t0, clk::now(), sources_.sources(), output_.sink() );
+        perf_.step_done( t0, clk::now(), sources_.sources(), output_ );
         return Step::Skipped;
     }
 
@@ -185,7 +187,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
                 return Step::Fatal;
             }
         }
-        perf_.step_done( t0, clk::now(), sources_.sources(), output_.sink() );
+        perf_.step_done( t0, clk::now(), sources_.sources(), output_ );
         return Step::Skipped;
     }
 
@@ -198,12 +200,14 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
     const int slot = acquire_slot( ok );
     if ( slot < 0 )
         return Step::Stop;
-    const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>( t1 - t0_ ).count();
+    const int64_t ts_us = f.cap_us >= 0
+                              ? std::max<int64_t>( 0, f.cap_us - t0_cap_us_ )
+                              : std::chrono::duration_cast<std::chrono::microseconds>( t1 - t0_ ).count();
     pre_.frame_dispatch( pool_, slot, f.src, sources_[f.src], analytics_.next_frame_index( f.src ), fd_src, ts_us,
                          ms( t0, t1 ), ms( t1, t2 ) );
     if ( pool_.size() == 1 )
         ok += publish_oldest();
-    perf_.step_done( t0, clk::now(), sources_.sources(), output_.sink() );
+    perf_.step_done( t0, clk::now(), sources_.sources(), output_ );
     return Step::Dispatched;
 }
 
@@ -211,6 +215,7 @@ Status Pipeline::run()
 {
     int ok = 0;
     t0_ = clk::now();
+    t0_cap_us_ = std::chrono::duration_cast<std::chrono::microseconds>( t0_.time_since_epoch() ).count();
     perf_.start( t0_ );
     // Hot-attach prober: local so its destructor stops and joins it on any
     // exit. Spawned BEFORE the RT pin so it keeps the scheduler default.
@@ -235,6 +240,7 @@ Status Pipeline::run()
         log_.info() << "stop: signal received, draining and flushing...\n";
     while ( !pool_.empty() )
         ok += publish_oldest();
+    output_.drain();
     t_.report_total();
     output_.summary( ok, std::chrono::duration<double>( clk::now() - t0_ ).count(), sources_.reconnects() );
     return {};

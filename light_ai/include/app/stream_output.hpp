@@ -1,22 +1,30 @@
 // StreamOutput: output stage owning OverlaySink, ConsoleReporter, dirty-tile
-// flushing, and paced NO SIGNAL idle publishing. Extracted from Pipeline.
+// flushing, and paced NO SIGNAL idle publishing on a dedicated SPSC drop-oldest
+// worker thread (Stage F).
 
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
 
 #include "app/console_reporter.hpp"
 #include "config/config.hpp"
+#include "core/callout.hpp"
 #include "core/detection.hpp"
 #include "core/frame_view.hpp"
 #include "core/geometry.hpp"
 #include "core/global_track.hpp"
+#include "core/gpu_box.hpp"
 #include "core/log.hpp"
+#include "core/net_perf.hpp"
 #include "core/perf_reporter.hpp"
 #include "core/track.hpp"
 #include "core/tracker.hpp"
+#include "platform/joining_thread.hpp"
 #include "render/overlay_sink.hpp"
 
 class StreamOutput
@@ -29,7 +37,7 @@ public:
 
 public:
     explicit StreamOutput( const Log& log );
-    ~StreamOutput() = default;
+    ~StreamOutput();
     StreamOutput( const StreamOutput& ) = delete;
     StreamOutput& operator=( const StreamOutput& ) = delete;
     StreamOutput( StreamOutput&& ) = delete;
@@ -40,7 +48,9 @@ public:
 
     bool enabled() const noexcept { return sink_.enabled(); }
     void flush_dirty() noexcept;
-    void reset_source( int src ) noexcept { sink_.reset_source( src ); }
+    void reset_source( int src ) noexcept;
+    void wait_slot_free( int slot ) noexcept;
+    void drain() noexcept;
 
     double publish_frame( int frame, const FrameView& view, const DetList& dets, const TrajList& trajs,
                           const Tracker& tracker, int nsrc, bool defer_enc ) noexcept;
@@ -52,8 +62,8 @@ public:
     {
         if ( !sink_.enabled() )
             return;
-        sink_.flush_dirty();
-        perf.tick( PerfClock::now(), srcs, sink_ );
+        flush_dirty();
+        perf.tick( PerfClock::now(), srcs, *this );
         const int64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
                                    std::chrono::steady_clock::now() - t0 )
                                    .count();
@@ -65,16 +75,59 @@ public:
         if ( !any_absent && srcs.size() > 0 )  // no configured sources: one gray canvas
             return;
         last_idle_us_ = now_us;
-        sink_.publish_idle( now_us, absent.data(), srcs.size() );
+        post_idle( now_us, absent, srcs.size() );
     }
+
+    OverlayPerfWindow take_perf() noexcept;
+    bool has_enc_perf() const noexcept { return sink_.has_enc_perf(); }
+    EncPerfWindow take_enc_perf() noexcept;
 
     void summary( int frames, double elapsed_sec, int reconnects ) const noexcept;
 
-    OverlaySink& sink() noexcept { return sink_; }
+private:
+    struct PublishJob
+    {
+        FrameView view {};
+        GpuBoxList boxes {};
+        CalloutList callouts {};
+        bool defer_enc = false;
+    };
+
+    struct IdleJob
+    {
+        int64_t ts_us = 0;
+        std::array<bool, kMaxSources> absent {};
+        int nabs = 0;
+    };
 
 private:
+    void stop_worker() noexcept;
+    void post_idle( int64_t ts_us, const std::array<bool, kMaxSources>& absent, int nabs ) noexcept;
+    void worker_loop() noexcept;
+    void consume_controls() noexcept;
+    bool take_work( PublishJob& pjob, bool& has_pub, IdleJob& ijob, bool& has_idle ) noexcept;
+
+private:
+    const Log& log_;
     OverlaySink sink_;
     ConsoleReporter rep_;
     int fps_ = 0;
     int64_t last_idle_us_ = -1;
+
+    std::mutex mx_;
+    std::condition_variable cv_;
+    bool stop_ = false;
+    bool flush_req_ = false;
+    uint32_t reset_mask_ = 0;
+    bool has_pending_ = false;
+    PublishJob pending_ {};
+    bool has_idle_ = false;
+    IdleJob idle_ {};
+    int active_slot_ = -1;
+
+    std::mutex perf_mx_;
+    OverlayPerfWindow perf_snap_ {};
+    EncPerfWindow enc_perf_snap_ {};
+
+    JoiningThread worker_;
 };

@@ -55,6 +55,19 @@ public:
                              const Tracker& tracker,
                              bool defer_encode = false ) noexcept;
 
+    // Split path for async StreamOutput: prepare_overlay() runs on the pipeline
+    // thread (reads Tracker/filters), render_and_publish() runs on the output thread.
+    void prepare_overlay( const FrameView& frame,
+                          const DetList& dets,
+                          const TrajList& trajs,
+                          const Tracker& tracker,
+                          GpuBoxList& boxes_out,
+                          CalloutList& callouts_out ) noexcept;
+    double render_and_publish( const FrameView& frame,
+                               const GpuBoxList& boxes,
+                               const CalloutList& callouts,
+                               bool defer_encode = false ) noexcept;
+
     // NO SIGNAL idle publish (h264 path only): forwards to the encoder's
     // idle path; the raw NUT preview keeps its live-only diagnostic role.
     void publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept;
@@ -70,10 +83,9 @@ private:
     void reset_all_sources() noexcept;
     void sync_viewer_session() noexcept;
     float tile_scale( const FrameView& frame ) const noexcept;
-    bool draw_overlay_into_tensor( const FrameView& frame,
-                                   const DetList& dets,
-                                   const TrajList& trajs,
-                                   const Tracker& tracker ) noexcept;
+    bool draw_prepared_into_tensor( const FrameView& frame,
+                                    const GpuBoxList& boxes,
+                                    const CalloutList& callouts ) noexcept;
 
 private:
     const Log& log_;

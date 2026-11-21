@@ -33,6 +33,22 @@ struct EncPerfWindow
         ++dt_enc_hist[idx];
     }
 
+    void merge( const EncPerfWindow& o ) noexcept
+    {
+        enc_admit += o.enc_admit;
+        enc_skip += o.enc_skip;
+        idle_admit += o.idle_admit;
+        idle_skip += o.idle_skip;
+        for ( size_t i = 0; i < dt_enc_hist.size(); ++i )
+            dt_enc_hist[i] += o.dt_enc_hist[i];
+        max_dt_enc_ms = std::max( max_dt_enc_ms, o.max_dt_enc_ms );
+        h264_ms_max = std::max( h264_ms_max, o.h264_ms_max );
+        compose_ms_max = std::max( compose_ms_max, o.compose_ms_max );
+        eagain_cnt += o.eagain_cnt;
+        pts_clamp_cnt += o.pts_clamp_cnt;
+        q_flush_cnt += o.q_flush_cnt;
+    }
+
     void reset() noexcept { *this = EncPerfWindow {}; }
 
 public:
@@ -51,6 +67,13 @@ public:
 
 struct OverlayPerfWindow
 {
+    void merge( const OverlayPerfWindow& o ) noexcept
+    {
+        gpu_draw_ms_max = std::max( gpu_draw_ms_max, o.gpu_draw_ms_max );
+        sync_cpu_ms_max = std::max( sync_cpu_ms_max, o.sync_cpu_ms_max );
+        fence_tmo_cnt += o.fence_tmo_cnt;
+    }
+
     void reset() noexcept { *this = OverlayPerfWindow {}; }
 
 public:

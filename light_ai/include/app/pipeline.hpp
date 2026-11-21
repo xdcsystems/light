@@ -71,5 +71,6 @@ private:
     const StopFlag& stop_;
     const Log& log_;
     std::chrono::steady_clock::time_point t0_ {};  // run() start: pts base
+    int64_t t0_cap_us_ = 0;
     PerfReporter perf_;
 };

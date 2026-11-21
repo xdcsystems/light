@@ -185,35 +185,40 @@ float OverlaySink::tile_scale( const FrameView& frame ) const noexcept
     return tp.src.h > 0 && tp.dst.h > 0 ? static_cast<float>( tp.dst.h ) / static_cast<float>( tp.src.h ) : 1.0f;
 }
 
-bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
-                                            const DetList& dets,
-                                            const TrajList& trajs,
-                                            const Tracker& tracker ) noexcept
+void OverlaySink::prepare_overlay( const FrameView& frame,
+                                   const DetList& dets,
+                                   const TrajList& trajs,
+                                   const Tracker& tracker,
+                                   GpuBoxList& boxes_out,
+                                   CalloutList& callouts_out ) noexcept
 {
     const float sx = frame.lb.w / static_cast<float>( frame.src_w );
     const float sy = frame.lb.h / static_cast<float>( frame.src_h );
-    // disp: the display copy of the tracks, boxes through BoxFilter; trajs keeps
-    // the posteriors the trail was recorded from (BoxMapper bends the trail's head
-    // onto the filtered box).
     TrajList disp = trajs;
     const bool valid_src = frame.src_idx >= 0 && frame.src_idx < reid_cfg::kMaxSources;
     if ( valid_src )
         track_filt_[frame.src_idx].apply( disp, frame.ts_us, box_filter::kTrackBoxParams );
-    boxes_.clear();
-    mapper_.fill( dets, disp, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
-    callouts_.clear();
+    boxes_out.clear();
+    mapper_.fill( dets, disp, trajs, tracker, boxes_out, frame.lb, sx, sy, frame.ts_us );
+    callouts_out.clear();
     const CalloutConfig ccfg { label_lang_ == LabelLang::Ru, callout_text_scale( label_scale_, tile_scale( frame ) ) };
     if ( valid_src )
-        compute_callouts( disp, frame.lb, sx, sy, ccfg, callout_hist_[frame.src_idx], callouts_ );
+        compute_callouts( disp, frame.lb, sx, sy, ccfg, callout_hist_[frame.src_idx], callouts_out );
     else
-        compute_callouts( disp, frame.lb, sx, sy, ccfg, callouts_ );
-    if ( boxes_.n <= 0 && callouts_.n <= 0 )
+        compute_callouts( disp, frame.lb, sx, sy, ccfg, callouts_out );
+}
+
+bool OverlaySink::draw_prepared_into_tensor( const FrameView& frame,
+                                             const GpuBoxList& boxes,
+                                             const CalloutList& callouts ) noexcept
+{
+    if ( boxes.n <= 0 && callouts.n <= 0 )
         return false;
 
     if ( drawer_ )
     {
         const auto tg0 = clk::now();
-        drawer_->draw_slot( frame.tensor_idx, boxes_.d.data(), boxes_.n, &callouts_ );
+        drawer_->draw_slot( frame.tensor_idx, boxes.d.data(), boxes.n, &callouts );
         const auto tg1 = clk::now();
         drawer_->sync_cpu();
         const auto tg2 = clk::now();
@@ -228,8 +233,8 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
     dma::cache_drop( tn.data, tn.size );
     const int row_stride = static_cast<int>( tn.stride_bytes > 0 ? tn.stride_bytes : stride_bytes_ );
     uint8_t* rgb = static_cast<uint8_t*>( tn.data );
-    draw_boxes_cpu( rgb, model_w_, model_h_, row_stride, boxes_.d.data(), boxes_.n );
-    draw_callouts_cpu( rgb, model_w_, model_h_, row_stride, callouts_ );
+    draw_boxes_cpu( rgb, model_w_, model_h_, row_stride, boxes.d.data(), boxes.n );
+    draw_callouts_cpu( rgb, model_w_, model_h_, row_stride, callouts );
     dma::cache_clean( tn.data, tn.size );
     return true;
 }
@@ -240,6 +245,15 @@ double OverlaySink::draw_and_publish( const FrameView& frame,
                                       const Tracker& tracker,
                                       bool defer_encode ) noexcept
 {
+    prepare_overlay( frame, dets, trajs, tracker, boxes_, callouts_ );
+    return render_and_publish( frame, boxes_, callouts_, defer_encode );
+}
+
+double OverlaySink::render_and_publish( const FrameView& frame,
+                                        const GpuBoxList& boxes,
+                                        const CalloutList& callouts,
+                                        bool defer_encode ) noexcept
+{
     sync_viewer_session();
     double enc_ms = 0.0;
     const bool enc_live = enc_ && enc_->viewer_active();
@@ -248,7 +262,7 @@ double OverlaySink::draw_and_publish( const FrameView& frame,
         return enc_ms;
 
     const TensorRef& tn = frame.tensor;
-    const bool cpu_drew = draw_overlay_into_tensor( frame, dets, trajs, tracker );
+    const bool cpu_drew = draw_prepared_into_tensor( frame, boxes, callouts );
 
     if ( prev_live )
     {

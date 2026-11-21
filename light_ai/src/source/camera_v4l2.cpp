@@ -319,6 +319,18 @@ Status CameraV4L2::dequeue( int& index, uint32_t& size, int timeout_ms ) noexcep
     if ( const int werr = wait_clean( buf, timeout_ms ); werr != 0 )
         return dequeue_status( werr );
     skip_to_newest( buf );
+    if ( ( buf.flags & V4L2_BUF_FLAG_TIMESTAMP_MASK ) == V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC &&
+         ( buf.timestamp.tv_sec > 0 || buf.timestamp.tv_usec > 0 ) )
+    {
+        last_cap_us_ = static_cast<int64_t>( buf.timestamp.tv_sec ) * 1000000LL +
+                       static_cast<int64_t>( buf.timestamp.tv_usec );
+    }
+    else
+    {
+        last_cap_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch() )
+                           .count();
+    }
     err_streak_ = 0;  // clean buffer resets the streak
     size = buf.bytesused;
     index = static_cast<int>( buf.index );

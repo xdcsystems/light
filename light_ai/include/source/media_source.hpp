@@ -126,6 +126,17 @@ public:
             return -1;
         }
     }
+    int64_t last_cap_us() const noexcept
+    {
+        try
+        {
+            return std::visit( []( const auto& s ) { return s.last_cap_us(); }, src_ );
+        }
+        catch ( const std::bad_variant_access& )
+        {
+            return -1;
+        }
+    }
     uint64_t skip_parts_cnt() const noexcept
     {
         try
