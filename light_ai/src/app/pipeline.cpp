@@ -152,7 +152,10 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
     const auto t0 = clk::now();
     EncodedFrame f {};
     const auto drain_fn = [this, &ok]() noexcept { drain_done_slots( ok ); };
-    const auto idle_fn = [this]() noexcept { output_.idle_tick( t0_, sources_.sources() ); };
+    const auto idle_fn = [this]() noexcept {
+        perf_.tick( clk::now(), sources_.sources(), output_ );
+        output_.idle_tick( t0_, sources_.sources() );
+    };
     const auto reset_fn = [this]( int s ) noexcept { reset_source( s ); };
 
     const FrameStatus fs = sources_.next_frame( f, pool_, drain_fn, idle_fn );
@@ -179,9 +182,8 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
     {
         if ( !dec_st.ok() )
         {
-            EncodedFrame df = f;
-            df.st = dec_st;
-            if ( const Status hst = sources_.handle_failure( df, pool_, reset_fn ); !hst.ok() )
+            f.st = dec_st;
+            if ( const Status hst = sources_.handle_failure( f, pool_, reset_fn ); !hst.ok() )
             {
                 st = hst;
                 return Step::Fatal;
