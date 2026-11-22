@@ -24,6 +24,14 @@ namespace
         int min_h = 32;
     };
 
+    struct CropCand
+    {
+        ReidCropReq req {};
+        bool need_init = false;
+        int frames_since_reid = 0;
+        int idx = 0;
+    };
+
     bool any_cam_active( const GlobalTrack& g ) noexcept
     {
         return std::any_of( g.cams.begin(), g.cams.end(), []( const LocalBinding& b ) { return b.active; } );
@@ -227,7 +235,7 @@ void GlobalTrackTable::sync_global_entry( GlobalTrack& g, int src_idx, const Tra
         if ( has_live_track( trajs, g.cams[src_idx].local_id, g.cams[src_idx].gen ) )
         {
             g.cams[src_idx].last_seen_us = ts_us;
-            g.last_seen_us = ts_us;
+            g.last_seen_us = std::max( g.last_seen_us, ts_us );
         }
         else
         {
@@ -265,6 +273,20 @@ void GlobalTrackTable::sync_cam( int src_idx, TrajList& trajs, int64_t ts_us ) n
         next[out_n++] = item;
     }
     live_[src_idx] = next;
+}
+
+void GlobalTrackTable::refresh_global_ids( int src_idx, TrajList& trajs ) const noexcept
+{
+    if ( src_idx < 0 || src_idx >= reid_cfg::kMaxSources )
+        return;
+    for ( int k = 0; k < trajs.n; ++k )
+    {
+        TrackState& tr = trajs.d[k];
+        if ( tr.state != TRACK_TENT && tr.state != TRACK_CONF )
+            continue;
+        const int gslot = find_global_by_local( src_idx, tr.id, tr.gen );
+        tr.global_id = ( gslot >= 0 ) ? tracks_[gslot].global_id : 0;
+    }
 }
 
 void GlobalTrackTable::apply_bound_result( const ReidResult& res, LiveLocal& lv, int cur_slot ) noexcept
@@ -353,7 +375,8 @@ bool GlobalTrackTable::try_pick_crop( int src_idx,
                                       float sy,
                                       int min_w,
                                       int min_h,
-                                      bool need_init_pass,
+                                      bool& need_init,
+                                      int& frames_since_reid,
                                       ReidCropReq& out ) const noexcept
 {
     const TrackState& tr = trajs.d[k];
@@ -363,9 +386,8 @@ bool GlobalTrackTable::try_pick_crop( int src_idx,
     if ( lidx < 0 )
         return false;
     const LiveLocal& lv = live_[src_idx][lidx];
-    const bool need_init = ( lv.global_slot < 0 );
-    if ( need_init != need_init_pass )
-        return false;
+    need_init = ( lv.global_slot < 0 );
+    frames_since_reid = lv.frames_since_reid;
     const int interval = need_init
                                ? kUnboundRetryFrames
                                : ( ( tracks_[lv.global_slot].samples >= reid_cfg::kReidStableSamples )
@@ -402,16 +424,34 @@ int GlobalTrackTable::select_crops( int src_idx,
     const float sx = static_cast<float>( lb.w ) / static_cast<float>( src_w );
     const float sy = static_cast<float>( lb.h ) / static_cast<float>( src_h );
     const int cap = std::min( max_req, static_cast<int>( reid_cfg::kMaxCropsPerFrame ) );
-    int picked = 0;
+    const int min_w = ( dst_w + 7 ) / 8;
+    const int min_h = ( dst_h + 7 ) / 8;
 
-    for ( int pass = 0; pass < 2 && picked < cap; ++pass )
+    std::array<CropCand, TrajList::cap> cands {};
+    int n_cands = 0;
+    for ( int k = 0; k < trajs.n && n_cands < TrajList::cap; ++k )
     {
-        for ( int k = 0; k < trajs.n && picked < cap; ++k )
-        {
-            if ( try_pick_crop( src_idx, trajs, k, lb, sx, sy, ( dst_w + 7 ) / 8, ( dst_h + 7 ) / 8, pass == 0, dst[picked] ) )
-                ++picked;
-        }
+        CropCand cand {};
+        cand.idx = k;
+        if ( try_pick_crop( src_idx, trajs, k, lb, sx, sy, min_w, min_h, cand.need_init, cand.frames_since_reid, cand.req ) )
+            cands[n_cands++] = cand;
     }
+
+    const int picked = std::min( cap, n_cands );
+    const auto cmp = []( const CropCand& a, const CropCand& b ) {
+        if ( a.need_init != b.need_init )
+            return a.need_init;
+        if ( a.frames_since_reid != b.frames_since_reid )
+            return a.frames_since_reid > b.frames_since_reid;
+        return a.idx < b.idx;
+    };
+    if ( n_cands > picked )
+        std::partial_sort( cands.begin(), cands.begin() + picked, cands.begin() + n_cands, cmp );
+    else
+        std::sort( cands.begin(), cands.begin() + n_cands, cmp );
+
+    for ( int i = 0; i < picked; ++i )
+        dst[i] = cands[i].req;
     return picked;
 }
 

@@ -33,10 +33,10 @@ class Tracker
     {
         kMaxTracks = Associator::kMaxTracks,
         kConfirmHits = 3,   // consecutive matches to confirm a track
-        // Short coast: 6 misses (~0.24-0.28 s) bridge night detection
-        // dropouts up to 6 frames (validated on dataset_night) while clearing
-        // exited people well before 0.5 s.
-        kMaxMiss = 6,       // confirmed track dies after this many misses
+        // Short coast: 360 ms wall-clock patience bridges brief detection
+        // dropouts under variable frame rate while clearing exited people
+        // well before 0.5 s.
+        kConfMaxAgeMs = 360,  // confirmed track dies after this long with no match
         kMaxTentMiss = 2,   // tentative miss counter: still drives the KF
                             // freeze (miss >= 2) and velocity damping, but
                             // DEATH is time-based now (see kTentMaxAgeMs):
@@ -114,8 +114,8 @@ class Tracker
         int small_streak = 0;   // consecutive consistent matches < full band
         int64_t ts_last_us = 0;
         int64_t ts_last_match_us = 0;  // last time measure() matched this
-                                       // track: drives the tentative
-                                       // time-based patience (kTentMaxAgeMs)
+                                       // track: drives time-based patience
+                                       // (kTentMaxAgeMs / kConfMaxAgeMs)
         int hits = 0;
         int miss = 0;
         TrackLife life = TRACK_FREE;

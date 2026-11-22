@@ -114,7 +114,7 @@ void ReidWorker::BigCorePin::operator()() const noexcept
         return;
     // Once at the reid worker thread start (BasicReidQueue::worker_loop, before its job loop), not the frame path.
     prefault_current_thread_stack();
-    pin_current_thread_rt( "reid worker", -1, 50, *log );
+    pin_current_thread_rt( "reid worker", -1, 0, *log );
 }
 
 ReidWorker::ReidWorker( const char* model_path, int pool_size, int infer_core, const Log& log )

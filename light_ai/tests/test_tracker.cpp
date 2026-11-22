@@ -94,35 +94,36 @@ namespace
         for ( int f = 0; f < 3; ++f, ts += kFrameUs )
         {
             DetList crowd;
-            for ( int i = 0; i < 8; ++i )
-                crowd.push( person( 100.0f + static_cast<float>( i ) * 140.0f, 300.0f, 60.0f, 120.0f ) );
+            for ( int i = 0; i < 16; ++i )
+                crowd.push( person( 100.0f + static_cast<float>( i ) * 100.0f, 300.0f, 60.0f, 120.0f ) );
             trk.update( crowd, ts, out );
         }
         // Drop track idx 2 (id==3) first so it becomes oldest TRACK_DEAD (ts_last_match_us = 2*kFrameUs).
-        for ( int f = 0; f < 7; ++f, ts += kFrameUs )
+        // 10 frames at 40 ms = 400 ms > kConfMaxAgeMs (360 ms).
+        for ( int f = 0; f < 10; ++f, ts += kFrameUs )
         {
-            DetList seven;
-            for ( int i = 0; i < 8; ++i )
+            DetList fifteen;
+            for ( int i = 0; i < 16; ++i )
             {
                 if ( i != 2 )
-                    seven.push( person( 100.0f + static_cast<float>( i ) * 140.0f, 300.0f, 60.0f, 120.0f ) );
+                    fifteen.push( person( 100.0f + static_cast<float>( i ) * 100.0f, 300.0f, 60.0f, 120.0f ) );
             }
-            trk.update( seven, ts, out );
+            trk.update( fifteen, ts, out );
         }
-        for ( int f = 0; f < 7; ++f, ts += kFrameUs )
+        for ( int f = 0; f < 10; ++f, ts += kFrameUs )
             trk.update( DetList {}, ts, out );
-        CHECK( t, out.n == 8 );
+        CHECK( t, out.n == 16 );
 
-        // 9th spawn must evict oldest TRACK_DEAD (id==3), leaving 7 DEAD + 1 TENT (id==9).
-        trk.update( one( person( 1250.0f, 600.0f, 60.0f, 120.0f ) ), ts, out );
+        // 17th spawn must evict oldest TRACK_DEAD (id==3), leaving 15 DEAD + 1 TENT (id==17).
+        trk.update( one( person( 2200.0f, 600.0f, 60.0f, 120.0f ) ), ts, out );
         bool saw_new = false;
         bool saw_id3 = false;
         for ( int k = 0; k < out.n; ++k )
         {
-            saw_new = saw_new || ( out.d[k].id == 9 && out.d[k].state == TRACK_TENT );
+            saw_new = saw_new || ( out.d[k].id == 17 && out.d[k].state == TRACK_TENT );
             saw_id3 = saw_id3 || ( out.d[k].id == 3 );
         }
-        CHECK( t, out.n == 8 && saw_new && !saw_id3 );
+        CHECK( t, out.n == 16 && saw_new && !saw_id3 );
 
         const uint32_t prev_gen = out.d[0].gen;
         trk.reset();
@@ -160,12 +161,12 @@ namespace
         trk.update( DetList {}, 1040000, out );
         CHECK( t, out.n == 0 );
 
-        // 8 transient 1-frame false positives must not starve a 9th person after 1.04 s.
+        // 16 transient 1-frame false positives must not starve a 17th person after 1.04 s.
         DetList crowd;
-        for ( int i = 0; i < 8; ++i )
-            crowd.push( person( 100.0f + static_cast<float>( i ) * 120.0f, 300.0f, 60.0f, 120.0f ) );
+        for ( int i = 0; i < 16; ++i )
+            crowd.push( person( 100.0f + static_cast<float>( i ) * 100.0f, 300.0f, 60.0f, 120.0f ) );
         trk.update( crowd, 2000000, out );
-        CHECK( t, out.n == 8 );
+        CHECK( t, out.n == 16 );
         trk.update( DetList {}, 3040000, out );
         CHECK( t, out.n == 0 );
         trk.update( one( person( 600, 400, 100, 200 ) ), 3080000, out );
@@ -271,6 +272,85 @@ namespace
         CHECK( t, out.n == 1 && std::isfinite( out.d[0].cx ) && std::isfinite( out.d[0].cy ) && std::isfinite( out.d[0].bw ) );
         CHECK_NEAR( t, out.d[0].cx, 500.0f, 1.0f );
     }
+
+    // Confirmed track death is wall-clock time-based (> kConfMaxAgeMs = 360 ms),
+    // independent of missed-frame count.
+    void check_conf_death_timeout( TestRun& t )
+    {
+        {
+            Tracker trk;
+            TrajList out;
+            int64_t ts = stand( trk, out, 5, 0 );  // last match at 160 ms
+            CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF );
+            for ( int miss = 1; miss <= 9; ++miss, ts += kFrameUs )  // up to 360 ms gap
+            {
+                trk.update( DetList {}, ts, out );
+                CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF );
+            }
+            trk.update( DetList {}, ts, out );  // 400 ms > 360 ms
+            CHECK( t, out.n == 1 && out.d[0].state == TRACK_DEAD && out.d[0].id == 1 );
+            trk.update( DetList {}, ts + 5000000, out );
+            CHECK( t, out.n == 0 );
+        }
+        {
+            // High FPS (100 fps): 10 misses (100 ms) keeps track CONF; 361 ms kills it.
+            Tracker trk;
+            TrajList out;
+            int64_t ts = 0;
+            for ( int i = 0; i < 4; ++i, ts += 10000 )
+                trk.update( one( person( 500, 400, 100, 200 ) ), ts, out );
+            const int64_t last_match_us = ts - 10000;
+            for ( int miss = 1; miss <= 10; ++miss, ts += 10000 )
+            {
+                trk.update( DetList {}, ts, out );
+                CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF );
+            }
+            trk.update( DetList {}, last_match_us + 361000, out );
+            CHECK( t, out.n == 1 && out.d[0].state == TRACK_DEAD && out.d[0].id == 1 );
+        }
+    }
+
+    // Round-2 match allows gentle upward growth of bw/bh so partial-born tracks graduate back to round 1.
+    void check_round2_box_growth( TestRun& t )
+    {
+        Tracker trk;
+        TrajList out;
+        int64_t ts = 0;
+        for ( int i = 0; i < 3; ++i, ts += kFrameUs )
+            trk.update( one( person( 500, 400, 60, 120 ) ), ts, out );
+        CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF );
+        CHECK_NEAR( t, out.d[0].bw, 60.0f, 1e-2f );
+        CHECK_NEAR( t, out.d[0].bh, 120.0f, 1e-2f );
+
+        // 135x270 is 2.25x of 60x120 (> 200% round-1 max, <= 300% round-2 max), IoU = 0.1975 (>= 0.15).
+        trk.update( one( person( 500, 400, 135, 270 ) ), ts, out );
+        CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
+        CHECK_NEAR( t, out.d[0].bw, 67.5f, 1e-2f );
+        CHECK_NEAR( t, out.d[0].bh, 135.0f, 1e-2f );
+
+        for ( int i = 1; i < 20; ++i, ts += kFrameUs )
+            trk.update( one( person( 500, 400, 135, 270 ) ), ts, out );
+        CHECK( t, out.n == 1 && out.d[0].id == 1 && out.d[0].state == TRACK_CONF );
+        CHECK( t, out.d[0].bw > 120.0f && out.d[0].bh > 240.0f );
+    }
+
+    // KalmanAxis::update() maintains covariance symmetry (P01 == P10) and non-negative diagonal (P00, P11 >= 0).
+    void check_kalman_covariance( TestRun& t )
+    {
+        KalmanAxis kf;
+        kf.reset( 100.0f, 1e6f, 1e6f );
+        bool ok = true;
+        for ( int i = 0; i < 50; ++i )
+        {
+            kf.predict( 0.001f, 2000.0f );
+            const float z = 100.0f + ( ( i % 2 ) == 0 ? 50.0f : -50.0f );
+            kf.update( z, 1e-4f, 500.0f );
+            const auto& p = kf.p();
+            ok = ok && std::isfinite( p[0] ) && std::isfinite( p[1] ) && std::isfinite( p[2] ) && std::isfinite( p[3] );
+            ok = ok && ( p[1] == p[2] ) && ( p[0] >= 0.0f ) && ( p[3] >= 0.0f );
+        }
+        CHECK( t, ok );
+    }
 }  // namespace
 
 void test_tracker( TestRun& t )
@@ -310,23 +390,7 @@ void test_tracker( TestRun& t )
         trk.update( one( chair ), 0, out );
         CHECK( t, out.n == 0 );
     }
-    // A confirmed track coasts through 6 missed frames (kMaxMiss = 6) and dies on the 7th;
-    // the ghost keeps its trail until the points age out (4 s), then the slot is freed.
-    {
-        Tracker trk;
-        TrajList out;
-        int64_t ts = stand( trk, out, 5, 0 );
-        CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF );
-        for ( int miss = 1; miss <= 6; ++miss, ts += kFrameUs )
-        {
-            trk.update( DetList {}, ts, out );
-            CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF );
-        }
-        trk.update( DetList {}, ts, out );
-        CHECK( t, out.n == 1 && out.d[0].state == TRACK_DEAD && out.d[0].id == 1 );
-        trk.update( DetList {}, ts + 5000000, out );
-        CHECK( t, out.n == 0 );
-    }
+    check_conf_death_timeout( t );
     // A brief dropout does not change the identity.
     {
         Tracker trk;
@@ -377,16 +441,16 @@ void test_tracker( TestRun& t )
         CHECK_NEAR( t, out.d[0].bw, 100.0f, 1e-2f );  // the squeezed box never reached the filter
     }
     check_spawn_gates( t );
-    // Capacity: 8 track slots; the 9th person is dropped.
+    // Capacity: 16 track slots; the 17th person is dropped.
     {
         Tracker trk;
         TrajList out;
         DetList dets;
-        for ( int i = 0; i < 9; ++i )
+        for ( int i = 0; i < 17; ++i )
             dets.push( person( 100.0f + 300.0f * static_cast<float>( i ), 400, 100, 200 ) );
         trk.update( dets, 0, out );
-        CHECK( t, out.n == 8 );
-        CHECK( t, out.d[7].id == 8 );
+        CHECK( t, out.n == 16 );
+        CHECK( t, out.d[15].id == 16 );
     }
     // reset() restarts the id sequence.
     {
@@ -400,6 +464,8 @@ void test_tracker( TestRun& t )
         CHECK( t, out.n == 1 && out.d[0].id == 1 );
     }
     check_p2_9( t );
+    check_round2_box_growth( t );
+    check_kalman_covariance( t );
     check_trail_restart( t );
     check_ch10_dead_eviction( t );
     check_ch11_clipped_ramp( t );

@@ -23,6 +23,7 @@
 #include <drm/drm_fourcc.h>
 
 #include "render/gpu_box_drawer.hpp"
+#include "core/frame_view.hpp"
 #include "core/glyph_font.hpp"
 #include "core/log.hpp"
 
@@ -312,6 +313,8 @@ void GpuBoxDrawer::setup_attribs() const
 
 GpuBoxDrawer::~GpuBoxDrawer()
 {
+    static_assert( static_cast<int>( GpuBoxDrawer::State::kSlots ) >= static_cast<int>( TensorSet::cap ),
+                   "GpuBoxDrawer slot cache must cover TensorSet::cap" );
     done();
 }
 

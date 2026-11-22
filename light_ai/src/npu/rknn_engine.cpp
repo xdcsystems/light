@@ -212,14 +212,8 @@ Status RknnEngine::input_row( int& row_px ) const
     return {};
 }
 
-Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
+Status RknnEngine::prepare_input_attr( uint32_t& out_in_size, uint32_t& out_row_bytes )
 {
-    if ( !ctx_ )
-        return make_status( Errc::Failed, "engine not initialized" );
-    if ( input_slots <= 0 )
-        return make_status( Errc::Invalid, "input_slots must be >= 1" );
-    release_io();
-
     if ( in_attr_.n_dims != 4 || in_w_ <= 0 || in_h_ <= 0 || in_c_ <= 0 )
     {
         log_.warn() << "rknn: unsupported input tensor ndims=" << in_attr_.n_dims << " fmt=" << in_attr_.fmt << "\n";
@@ -245,18 +239,13 @@ Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
             : packed_u8;
     in_attr_.size = in_size;
 
-    in_mems_.assign( static_cast<size_t>( input_slots ), nullptr );
-    in_dma_.reserve( static_cast<size_t>( input_slots ) );
-    bool warned_fallback = false;
-    for ( int s = 0; s < input_slots; ++s )
-    {
-        if ( Status st = alloc_input_slot( s, in_size, warned_fallback ); !st.ok() )
-        {
-            release_io();
-            return st;
-        }
-    }
+    out_in_size = in_size;
+    out_row_bytes = row_bytes;
+    return {};
+}
 
+Status RknnEngine::finish_setup_io( bool keep_native_outputs, uint32_t row_bytes )
+{
     if ( Status st = bind_input_slot( 0 ); !st.ok() )
     {
         log_.error() << "rknn_set_io_mem (input) failed\n";
@@ -280,6 +269,72 @@ Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
     }
 
     return {};
+}
+
+Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
+{
+    if ( !ctx_ )
+        return make_status( Errc::Failed, "engine not initialized" );
+    if ( input_slots <= 0 )
+        return make_status( Errc::Invalid, "input_slots must be >= 1" );
+    release_io();
+
+    uint32_t in_size = 0;
+    uint32_t row_bytes = 0;
+    if ( Status st = prepare_input_attr( in_size, row_bytes ); !st.ok() )
+        return st;
+
+    in_mems_.assign( static_cast<size_t>( input_slots ), nullptr );
+    in_dma_.reserve( static_cast<size_t>( input_slots ) );
+    bool warned_fallback = false;
+    for ( int s = 0; s < input_slots; ++s )
+    {
+        if ( Status st = alloc_input_slot( s, in_size, warned_fallback ); !st.ok() )
+        {
+            release_io();
+            return st;
+        }
+    }
+
+    return finish_setup_io( keep_native_outputs, row_bytes );
+}
+
+Status RknnEngine::setup_io_shared( const TensorSet& shared_inputs, bool keep_native_outputs )
+{
+    if ( !ctx_ )
+        return make_status( Errc::Failed, "engine not initialized" );
+    if ( shared_inputs.n <= 0 )
+        return make_status( Errc::Invalid, "shared_inputs must be non-empty" );
+    release_io();
+
+    uint32_t in_size = 0;
+    uint32_t row_bytes = 0;
+    if ( Status st = prepare_input_attr( in_size, row_bytes ); !st.ok() )
+        return st;
+
+    // Engines[1..n-1] import dma-buf fds owned by engines_[0] without taking
+    // ownership of in_dma_ (release_io destroys only this context's mem handles).
+    in_mems_.assign( static_cast<size_t>( shared_inputs.n ), nullptr );
+    for ( int s = 0; s < shared_inputs.n; ++s )
+    {
+        const TensorRef& t = shared_inputs.d[s];
+        if ( t.fd < 0 || t.size < in_size )
+        {
+            log_.error() << "rknn: invalid shared input slot " << s << " (fd=" << t.fd << ", size=" << t.size << ")\n";
+            release_io();
+            return make_status( Errc::Invalid, "invalid shared input tensor" );
+        }
+        rknn_tensor_mem* const mem = rknn_create_mem_from_fd( ctx_, t.fd, t.data, t.size, 0 );
+        if ( !mem )
+        {
+            log_.error() << "rknn_create_mem_from_fd (shared input " << s << ") failed\n";
+            release_io();
+            return make_status( Errc::NoMemory, "rknn_create_mem_from_fd failed" );
+        }
+        in_mems_[static_cast<size_t>( s )] = mem;
+    }
+
+    return finish_setup_io( keep_native_outputs, row_bytes );
 }
 
 Status RknnEngine::alloc_input_slot( int slot, uint32_t in_size, bool& warned_fallback )

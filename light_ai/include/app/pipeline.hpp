@@ -57,7 +57,7 @@ private:
     void sync_and_orient( int src, int fd_src, int& ok ) noexcept;
     void drain_done_slots( int& ok ) noexcept;
     int publish_oldest() noexcept;  // collect -> analytics -> output; 1 if valid
-    int acquire_slot( int& ok ) noexcept;
+    int acquire_slot( int& ok, LbGeom eff_lb = {} ) noexcept;
     void reset_source( int src ) noexcept;
     int64_t now_us() const noexcept;
 

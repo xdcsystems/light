@@ -7,7 +7,7 @@
 // gate kIoUGateWeak, position only -- what a match does to the track (hits)
 // is Tracker::associate's business. Target case: person #2 emits conf
 // 0.25-0.55 dets that undershoot the strong IoU gate while their track
-// coasts on damped velocity -- without round 2 the track dies at kMaxMiss
+// coasts on damped velocity -- without round 2 the track dies at kConfMaxAgeMs
 // and the person re-spawns under a new id.
 //
 // Size gate: a det matches only if its w/h stay within [kSizeMin, kSizeMax]
@@ -46,7 +46,7 @@ public:
     // Tuning: x100 integer constants, one place to tune.
     enum
     {
-        kMaxTracks = 8,
+        kMaxTracks = 16,
         kMaxDets = DetList::cap,
         kIoUGate = 30,      // min IoU x100 to accept a match
         kIoUGateWeak = 15,  // round-2 IoU gate (x100): a det unmatched in round 1

@@ -56,6 +56,7 @@ public:
     RknnEngine& operator=( RknnEngine&& ) = delete;
 
     Status setup_io( bool keep_native_outputs = false, int input_slots = 1 );
+    Status setup_io_shared( const TensorSet& shared_inputs, bool keep_native_outputs = false );
     Status bind_input_slot( int slot ) noexcept;
     void sync_output( size_t i ) const noexcept;
     Status run() const;
@@ -102,7 +103,9 @@ private:
     // The input row width in pixels (queried w_stride or the tight width), or
     // Unsupported when it is not RGB888 rows RGA can read.
     Status input_row( int& row_px ) const;
+    Status prepare_input_attr( uint32_t& out_in_size, uint32_t& out_row_bytes );
     Status setup_outputs( bool keep_native_outputs );
+    Status finish_setup_io( bool keep_native_outputs, uint32_t row_bytes );
 
 private:
     rknn_context ctx_ = 0;

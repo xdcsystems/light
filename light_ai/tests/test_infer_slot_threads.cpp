@@ -75,8 +75,29 @@ namespace
     class FakeEngine
     {
     public:
-        explicit FakeEngine( FakeNpu* npu ) : npu_( npu ), fd_( npu->next_fd++ ) {}
-        Status setup_io() { return {}; }
+        explicit FakeEngine( FakeNpu* npu ) : npu_( npu ) {}
+        Status setup_io( bool = false, int input_slots = 1 )
+        {
+            slots_.clear();
+            slots_.reserve( static_cast<size_t>( input_slots ) );
+            for ( int s = 0; s < input_slots; ++s )
+                slots_.push_back( TensorRef { npu_->next_fd++, nullptr, 0, 1920 } );
+            return {};
+        }
+        Status setup_io_shared( const TensorSet& shared_inputs, bool = false )
+        {
+            slots_.clear();
+            for ( int s = 0; s < shared_inputs.n; ++s )
+                slots_.push_back( shared_inputs.d[s] );
+            return {};
+        }
+        Status bind_input_slot( int slot ) noexcept
+        {
+            if ( slot < 0 || slot >= static_cast<int>( slots_.size() ) )
+                return make_status( Errc::Invalid, "invalid input slot" );
+            bound_slot_ = slot;
+            return {};
+        }
         Status set_core_mask( unsigned ) { return {}; }
         Status run() const
         {
@@ -84,14 +105,21 @@ namespace
             npu_->runs.fetch_add( 1, std::memory_order_relaxed );
             return {};
         }
-        int input_fd() const { return fd_; }
+        int input_fd() const { return slots_.empty() ? -1 : slots_[0].fd; }
         void* input_data() const { return nullptr; }
         uint32_t input_size() const { return 0; }
+        TensorRef input_tensor( int slot ) const noexcept
+        {
+            if ( slot < 0 || slot >= static_cast<int>( slots_.size() ) )
+                return {};
+            return slots_[static_cast<size_t>( slot )];
+        }
         uint32_t input_stride_bytes() const noexcept { return 1920; }
 
     private:
         FakeNpu* npu_;
-        int fd_;
+        std::vector<TensorRef> slots_;
+        int bound_slot_ = 0;
     };
 
     struct FakeDecode
@@ -108,7 +136,7 @@ namespace
     {
         for ( int i = 0; i < 400; ++i )
         {
-            const int k = p.try_acquire( ( 1u << 1 ) | ( 1u << 2 ) );
+            const int k = p.try_acquire( 0x3Eu );
             if ( k == 0 )
                 return k;
             std::this_thread::sleep_for( 5ms );
@@ -143,23 +171,47 @@ namespace
         CHECK_EQ( t, pool.try_acquire( 1u << 1 ), 2 );
         CHECK( t, pool.submit( 2, make_job( 11, 0 ) ) );
         CHECK( t, npu.wait_entered( 2, 1000ms ) );
+        for ( int s = 3; s < 6; ++s )
+        {
+            CHECK_EQ( t, pool.try_acquire( 1u << 1 ), s );
+            CHECK( t, pool.submit( s, make_job( 9 + s, 0 ) ) );
+        }
+        CHECK( t, npu.wait_entered( 3, 1000ms ) );
 
-        // Slot 0 is Abandoned, slot 2 is Queued, slot 1 is Free & avoided -> fallback to slot 1.
+        // Slot 0 is Abandoned, slots 2..5 are Queued, slot 1 is Free & avoided -> fallback to slot 1.
         CHECK_EQ( t, pool.try_acquire( 1u << 1 ), 1 );
-        CHECK( t, pool.submit( 1, make_job( 12, 1 ) ) );
+        CHECK( t, pool.submit( 1, make_job( 15, 1 ) ) );
         CHECK_EQ( t, pool.try_acquire( 0 ), -1 );
 
         npu.release();
-        CHECK( t, pool.collect( res ) && res.job.frame == 11 && res.npu_ok );
-        CHECK( t, pool.collect( res ) && res.job.frame == 12 && res.npu_ok );
+        int next_s0 = 11;
+        bool got_s1 = false;
+        for ( int c = 0; c < 5; ++c )
+        {
+            CHECK( t, pool.collect( res ) && res.npu_ok );
+            if ( res.job.src_idx == 0 )
+            {
+                CHECK_EQ( t, res.job.frame, next_s0 );
+                ++next_s0;
+            }
+            else
+            {
+                CHECK_EQ( t, res.job.src_idx, 1 );
+                CHECK_EQ( t, res.job.frame, 15 );
+                CHECK( t, !got_s1 );
+                got_s1 = true;
+            }
+        }
+        CHECK_EQ( t, next_s0, 15 );
+        CHECK( t, got_s1 );
         CHECK_EQ( t, wait_slot_zero_free( pool ), 0 );
 
-        // Concurrent avoid_mask + discard() stress across all 3 worker threads.
+        // Concurrent avoid_mask + discard() stress across 6 slots and 3 worker threads.
         bool all_collect_ok = true;
         int collected = 0;
         for ( int i = 0; i < 60; ++i )
         {
-            const uint32_t avoid = 1u << static_cast<unsigned>( i % 3 );
+            const uint32_t avoid = 1u << static_cast<unsigned>( i % 6 );
             int k = pool.try_acquire( avoid );
             while ( k < 0 )
             {

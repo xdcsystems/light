@@ -229,6 +229,28 @@ namespace
         tf.apply( l, ts, box_filter::kTrackBoxParams );
         CHECK_NEAR( t, l.d[0].cx, 520.0f, 1e-6f );
     }
+
+    // Tiny positive dt_s is clamped to 1e-3f so dx_raw cannot overflow or produce NaN/Inf.
+    void tiny_dt_clamped( TestRun& t )
+    {
+        BoxFilter f_tiny;
+        BoxFilter f_ref;
+        const BoxCWH start { 100.0f, 100.0f, 50.0f, 100.0f };
+        const BoxCWH moved { 200.0f, 200.0f, 60.0f, 120.0f };
+        f_tiny.reset( start );
+        f_ref.reset( start );
+        f_tiny.step( moved, 1e-7f, box_filter::kTrackBoxParams );
+        f_ref.step( moved, 1e-3f, box_filter::kTrackBoxParams );
+        const BoxCWH o_tiny = f_tiny.out();
+        CHECK( t, std::isfinite( o_tiny.cx ) && std::isfinite( o_tiny.cy ) && std::isfinite( o_tiny.w ) &&
+                  std::isfinite( o_tiny.h ) );
+        CHECK( t, same( o_tiny, f_ref.out() ) );
+
+        f_tiny.step( moved, 1e-38f, box_filter::kTrackBoxParams );
+        const BoxCWH o_sub = f_tiny.out();
+        CHECK( t, std::isfinite( o_sub.cx ) && std::isfinite( o_sub.cy ) && std::isfinite( o_sub.w ) &&
+                  std::isfinite( o_sub.h ) );
+    }
 }  // namespace
 
 void test_box_filter( TestRun& t )
@@ -249,4 +271,5 @@ void test_box_filter( TestRun& t )
     dead_zone_edge( t );
     bad_input( t );
     track_filters( t );
+    tiny_dt_clamped( t );
 }

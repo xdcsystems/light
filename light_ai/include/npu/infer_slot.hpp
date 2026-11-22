@@ -1,16 +1,17 @@
-// InferSlot: one handoff cell between the pipeline thread and the NPU worker
-// that owns this slot.
+// InferSlot: one handoff cell between the pipeline thread and the NPU
+// worker pool.
 //
-//     Free --submit()--> Queued --run() done----> Done --take()--> Free
+//     Free --submit()--> Queued --finish_work()--> Done --take()--> Free
 //                          |                                ^
 //                          +--take()/reclaim() give up-->   |
-//                             Abandoned --run() done--------+
+//                             Abandoned --begin/finish------+
 //
-// A slot whose job is still on the NPU is freed only by its worker. When the
-// pipeline thread stops waiting (take()/reclaim() time out on a wedged NPU),
-// it marks the slot Abandoned, not Free: handing the tensor back to RGA while
-// rknn_run still reads it would corrupt that inference. The worker frees an
-// Abandoned slot when its job finishes.
+// A slot whose job is in flight (Queued in the work queue or running on an NPU)
+// is freed only by a worker. When the pipeline thread stops waiting
+// (take()/reclaim() time out on a wedged NPU), it marks the slot Abandoned, not
+// Free: handing the tensor back to RGA while rknn_run still reads it would
+// corrupt that inference. A worker frees an Abandoned slot in begin_work()
+// (before touching the NPU) or in finish_work() (upon completion).
 //
 // Payload follows the state, no lock needed:
 // - job_: written by submit() (Free, pipeline thread), read by the worker
@@ -31,9 +32,8 @@
 #include "core/geometry.hpp"   // LbGeom
 #include "platform/pi_mutex.hpp"
 
-// What the pipeline thread hands to a worker with one frame. The tensor
-// itself is not here: slot k always runs on engine k, and RGA has written
-// the frame into that engine's input tensor before submit().
+// What the pipeline thread hands to a worker with one frame. RGA has written
+// the frame into tensor(slot) before submit().
 struct InferJob
 {
     int src_idx = 0;     // owning source
@@ -61,7 +61,7 @@ struct InferResult
     InferJob job {};       // as submitted; job.tr.infer/post carry the worker's times
     DetList dets {};
     bool npu_ok = false;
-    int slot = -1;         // the slot (== engine == tensor) that ran the job
+    int slot = -1;         // the tensor slot that ran the job
 };
 
 class InferSlot
@@ -72,7 +72,7 @@ public:
         Free,
         Queued,
         Done,
-        Abandoned  // still on the NPU, nobody waits for it: the worker frees it
+        Abandoned  // still in flight, nobody waits for it: a worker frees it
     };
 
     InferSlot() = default;
@@ -82,9 +82,28 @@ public:
     InferSlot( InferSlot&& ) = delete;
     InferSlot& operator=( InferSlot&& ) = delete;
 
+    void set_free_signal( light_ai::platform::PiMutex* mx, light_ai::platform::PiCondVar* cv ) noexcept
+    {
+        free_mx_ = mx;
+        free_cv_ = cv;
+    }
+
     State state() const
     {
         const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+        return st_;
+    }
+
+    bool is_closed() const noexcept
+    {
+        const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+        return closed_;
+    }
+
+    State state_and_src( int& out_src ) const noexcept
+    {
+        const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+        out_src = job_.src_idx;
         return st_;
     }
 
@@ -118,20 +137,24 @@ public:
     // give-up (Queued) is returned.
     State take( std::chrono::milliseconds timeout, InferResult& out )
     {
-        std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
-        wait_settled( lk, timeout );
-        out.job = job_;
-        const State seen = st_;
-        if ( st_ != State::Done )
+        State seen = State::Free;
         {
-            abandon_if_queued();
-            return seen;
+            std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
+            wait_settled( lk, timeout );
+            out.job = job_;
+            seen = st_;
+            if ( st_ != State::Done )
+            {
+                abandon_if_queued();
+                return seen;
+            }
+            out.job.tr.infer = out_.infer_ms;
+            out.job.tr.post = out_.post_ms;
+            out.dets = out_.dets;
+            out.npu_ok = out_.npu_ok;
+            st_ = State::Free;
         }
-        out.job.tr.infer = out_.infer_ms;
-        out.job.tr.post = out_.post_ms;
-        out.dets = out_.dets;
-        out.npu_ok = out_.npu_ok;
-        st_ = State::Free;
+        notify_free();
         return seen;
     }
 
@@ -139,15 +162,18 @@ public:
     // frees a Done slot (true), abandons a still-Queued one (false).
     bool reclaim( std::chrono::milliseconds timeout )
     {
-        std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
-        wait_settled( lk, timeout );
-        if ( st_ == State::Done )
         {
+            std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
+            wait_settled( lk, timeout );
+            if ( st_ != State::Done )
+            {
+                abandon_if_queued();
+                return false;
+            }
             st_ = State::Free;
-            return true;
         }
-        abandon_if_queued();
-        return false;
+        notify_free();
+        return true;
     }
 
     // Shutdown: releases every wait on this slot; run() returns.
@@ -158,15 +184,65 @@ public:
             closed_ = true;
         }
         cv_.notify_all();
+        notify_free();
     }
 
-    // --- worker thread (one per slot) ------------------------------------
+    // --- worker thread (shared work queue or dedicated slot loop) --------
 
-    // The worker loop: blocks until a job is queued, runs work( const
-    // InferJob&, InferOutput& ) WITHOUT the lock (the pipeline thread's
-    // scans must not wait on rknn_run), then publishes the result:
-    // Queued -> Done, or Abandoned -> Free. Returns once close() is
-    // called (shutdown).
+    // Claims a queued job for execution. Returns true if Queued (job copied
+    // to out_job; state remains Queued during execution). If Abandoned, frees
+    // the slot immediately and returns false so the NPU skips it.
+    bool begin_work( InferJob& out_job ) noexcept
+    {
+        bool freed = false;
+        {
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+            if ( closed_ )
+                return false;
+            if ( st_ == State::Queued )
+            {
+                out_job = job_;
+                return true;
+            }
+            if ( st_ == State::Abandoned )
+            {
+                st_ = State::Free;
+                freed = true;
+            }
+        }
+        if ( freed )
+        {
+            cv_.notify_all();
+            notify_free();
+        }
+        return false;
+    }
+
+    // Publishes the worker result: Queued -> Done, or Abandoned -> Free.
+    void finish_work( const InferOutput& out ) noexcept
+    {
+        bool freed = false;
+        {
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+            if ( st_ == State::Abandoned )
+            {
+                st_ = State::Free;
+                freed = true;
+            }
+            else
+            {
+                out_ = out;
+                st_ = State::Done;
+            }
+        }
+        cv_.notify_all();
+        if ( freed )
+            notify_free();
+    }
+
+    // Dedicated single-slot worker loop (used by unit tests): blocks until
+    // a job is queued, runs work( const InferJob&, InferOutput& ) WITHOUT the
+    // lock, then publishes the result. Returns once close() is called.
     template <typename Work>
     void run( Work&& work )
     {
@@ -176,13 +252,24 @@ public:
     }
 
 private:
+    void notify_free() const noexcept
+    {
+        if ( free_mx_ != nullptr && free_cv_ != nullptr )
+        {
+            {
+                const std::lock_guard<light_ai::platform::PiMutex> lk( *free_mx_ );
+            }
+            free_cv_->notify_all();
+        }
+    }
+
     // Returns once the job left Queued, the slot is closed, or the timeout passed.
     void wait_settled( std::unique_lock<light_ai::platform::PiMutex>& lk, std::chrono::milliseconds timeout )
     {
         cv_.wait_for( lk, timeout, [this] { return closed_ || st_ != State::Queued; } );
     }
 
-    // Caller holds the lock. Only the worker may free a slot that is on the NPU.
+    // Caller holds the lock. Only a worker may free a slot that is on the NPU.
     void abandon_if_queued()
     {
         if ( st_ == State::Queued )
@@ -204,13 +291,20 @@ private:
         lk.unlock();
         work( static_cast<const InferJob&>( job_ ), out_ );
         lk.lock();
-        st_ = st_ == State::Abandoned ? State::Free : State::Done;
+        const bool freed = ( st_ == State::Abandoned );
+        st_ = freed ? State::Free : State::Done;
+        lk.unlock();
         cv_.notify_all();
+        if ( freed )
+            notify_free();
+        lk.lock();
     }
 
 private:
     mutable light_ai::platform::PiMutex mx_;
     light_ai::platform::PiCondVar cv_;
+    light_ai::platform::PiMutex* free_mx_ = nullptr;
+    light_ai::platform::PiCondVar* free_cv_ = nullptr;
     State st_ = State::Free;
     bool closed_ = false;
     InferJob job_ {};

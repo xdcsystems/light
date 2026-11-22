@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
-#include <thread>
 
 #include "app/pipeline.hpp"
 #include "core/frame_view.hpp"
@@ -122,10 +121,10 @@ void Pipeline::drain_done_slots( int& ok ) noexcept
     output_.flush_dirty();
 }
 
-int Pipeline::acquire_slot( int& ok ) noexcept
+int Pipeline::acquire_slot( int& ok, LbGeom eff_lb ) noexcept
 {
     bool starved_warned = false;
-    int k = pool_.try_acquire( output_.busy_slot_mask() );
+    int k = pool_.try_acquire( output_.busy_slot_mask(), eff_lb );
     while ( k < 0 && !stop_.requested() )
     {
         if ( !starved_warned )
@@ -137,8 +136,8 @@ int Pipeline::acquire_slot( int& ok ) noexcept
         if ( !pool_.empty() )
             ok += publish_oldest();
         else
-            std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
-        k = pool_.try_acquire( output_.busy_slot_mask() );
+            static_cast<void>( pool_.wait_any_slot_free( std::chrono::milliseconds( 5 ) ) );
+        k = pool_.try_acquire( output_.busy_slot_mask(), eff_lb );
     }
     if ( k >= 0 && !output_.wait_slot_free( k ) )
         return -1;
@@ -231,7 +230,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
     drain_done_slots( ok );
     if ( pool_.full() )
         ok += publish_oldest();
-    const int slot = acquire_slot( ok );
+    const int slot = acquire_slot( ok, pre_.expected_band( f.src, sources_[f.src] ) );
     if ( slot < 0 )
         return stop_.requested() ? Step::Stop : Step::Skipped;
     const int64_t ts_us = f.cap_us >= 0

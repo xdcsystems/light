@@ -66,6 +66,16 @@ public:
     int model_h() const noexcept { return model_h_; }
 
     void reset_orient( int src, const SourceChannel& ch ) noexcept;
+    LbGeom expected_band( int src, const SourceChannel& ch ) const noexcept
+    {
+        const SourceGeom& ss = ch.geom();
+        const int raw_w = ss.raw_w > 0 ? ss.raw_w : ss.w;
+        const int raw_h = ss.raw_h > 0 ? ss.raw_h : ss.h;
+        int ow = 0;
+        int oh = 0;
+        auto_orient::oriented_dims( raw_w, raw_h, orient_[static_cast<size_t>( src )].cur_rot, ow, oh );
+        return band_geom( ow, oh, model_w_, model_h_ );
+    }
     void prepare_tensor_band( int slot, const TensorRef& tn, const LbGeom& eff_lb ) noexcept;
 
     // The frame fd_src of source ch, rotated by rot, into slot's tensor: the

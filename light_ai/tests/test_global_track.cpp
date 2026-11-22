@@ -80,12 +80,12 @@ namespace
         CHECK( t, cam1b.d[0].global_id == 1 );
     }
 
-    // Low §3: the 32-slot gallery saturates without overflow -- the 33rd
-    // identity evicts the oldest inactive one (count stays 32); the evicted
+    // Low §3: the 64-slot gallery saturates without overflow -- the 65th
+    // identity evicts the oldest inactive one (count stays 64); the evicted
     // appearance comes back as a new id, a kept one re-identifies.
     void check_saturation( TestRun& t )
     {
-        constexpr int dim = 64;
+        constexpr int dim = 128;
         const auto one_hot = []( int lid, int64_t ts, int axis ) {
             ReidResult r {};
             r.src_idx = 0;
@@ -121,7 +121,7 @@ namespace
         CHECK( t, ids_ok );
         CHECK( t, tab.active_global_count() == reid_cfg::kMaxGlobalTracks );
 
-        CHECK( t, show( 100, 40, ts ) == reid_cfg::kMaxGlobalTracks + 1 );  // the 33rd evicts the oldest (id 1)
+        CHECK( t, show( 100, 80, ts ) == reid_cfg::kMaxGlobalTracks + 1 );  // the 65th evicts the oldest (id 1)
         CHECK( t, tab.active_global_count() == reid_cfg::kMaxGlobalTracks );
         ts += 100000;
         CHECK( t, show( 101, 5, ts ) == 6 );                                  // axis 5 is still in the gallery
@@ -145,6 +145,107 @@ namespace
         CHECK( t, tab.active_global_count() == 0 );
     }
 
+    // 5. last_seen_us does not move backwards when a second camera has an older timestamp.
+    void check_last_seen_monotonic( TestRun& t )
+    {
+        GlobalTrackTable tab( 0.62f );
+        TrajList cam0 {};
+        cam0.push( TrackState { 1, TRACK_CONF, 300.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 1, 180.0f } );
+        tab.sync_cam( 0, cam0, 1000000 );
+        tab.apply_result( make_res( 0, 1, 1, 1000000, 1.0f, 0.0f ) );
+        tab.sync_cam( 0, cam0, 50000000 );
+
+        TrajList cam1 {};
+        cam1.push( TrackState { 2, TRACK_CONF, 400.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 2, 180.0f } );
+        tab.sync_cam( 1, cam1, 10000000 );
+        tab.apply_result( make_res( 1, 2, 2, 10000000, 1.0f, 0.0f ) );
+        tab.sync_cam( 1, cam1, 10000000 );
+        CHECK( t, cam1.d[0].global_id == 1 );
+
+        const TrajList empty {};
+        TrajList e1 = empty;
+        tab.sync_cam( 1, e1, 11000000 );
+        TrajList e0 = empty;
+        tab.sync_cam( 0, e0, 50500000 );
+        // 56 s is > 45 s past cam1's 10 s, but only 6 s past cam0's 50 s -> must NOT evict.
+        e0 = empty;
+        tab.sync_cam( 0, e0, 56000000 );
+        CHECK( t, tab.active_global_count() == 1 );
+        // 96 s is > 45 s past 50 s -> now evicted.
+        e0 = empty;
+        tab.sync_cam( 0, e0, 96000000 );
+        CHECK( t, tab.active_global_count() == 0 );
+    }
+
+    // 6. select_crops() picks highest (need_init, frames_since_reid) even at tail of trajs.
+    void check_select_crops_priority( TestRun& t )
+    {
+        GlobalTrackTable tab( 0.62f );
+        TrajList cam0 {};
+        cam0.push( TrackState { 1, TRACK_CONF, 200.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 1, 180.0f } );
+        cam0.push( TrackState { 2, TRACK_CONF, 450.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 2, 180.0f } );
+        cam0.push( TrackState { 3, TRACK_CONF, 700.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 3, 180.0f } );
+        cam0.push( TrackState { 4, TRACK_CONF, 950.0f, 360.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 4, 180.0f } );
+
+        int64_t ts = 100000;
+        tab.sync_cam( 0, cam0, ts );
+        tab.apply_result( make_res( 0, 1, 1, ts, 1.0f, 0.0f, 0.0f ) );
+        tab.apply_result( make_res( 0, 2, 2, ts, 0.0f, 1.0f, 0.0f ) );
+        tab.apply_result( make_res( 0, 3, 3, ts, 0.0f, 0.0f, 1.0f ) );
+        tab.refresh_global_ids( 0, cam0 );
+
+        tab.mark_dispatched( 0, 1, 1 );
+        for ( int f = 0; f < 16; ++f )
+        {
+            ts += 33000;
+            tab.sync_cam( 0, cam0, ts );
+        }
+        tab.mark_dispatched( 0, 2, 2 );
+        for ( int f = 0; f < 15; ++f )
+        {
+            ts += 33000;
+            tab.sync_cam( 0, cam0, ts );
+        }
+
+        // Tail track 4 is unbound (need_init=true); tail track 3 has highest age (46 > 31 > 15).
+        ReidCropReq reqs[2] {};
+        CHECK( t, tab.select_crops( 0, cam0, { 0, 640, 80, 480 }, 1280, 720, 128, 256, reqs, 2 ) == 2 );
+        CHECK( t, reqs[0].local_id == 4 && reqs[1].local_id == 3 );
+
+        // Once track 4 binds and resets, highest frames_since_reid (3=46, 1=31) wins over head track 2 (15).
+        ReidResult r4 {};
+        r4.src_idx = 0;
+        r4.local_id = 4;
+        r4.gen = 4;
+        r4.ts_us = ts;
+        r4.dim = 4;
+        r4.ok = true;
+        r4.feat[3] = 1.0f;
+        tab.apply_result( r4 );
+        tab.mark_dispatched( 0, 4, 4 );
+        CHECK( t, tab.select_crops( 0, cam0, { 0, 640, 80, 480 }, 1280, 720, 128, 256, reqs, 2 ) == 2 );
+        CHECK( t, reqs[0].local_id == 3 && reqs[1].local_id == 1 );
+    }
+
+    // 7. sync_cam before apply_result + refresh_global_ids: dead track result creates no phantom.
+    void check_refresh_global_ids_dead_track( TestRun& t )
+    {
+        GlobalTrackTable tab( 0.62f );
+        TrajList f0 {};
+        f0.push( TrackState { 1, TRACK_CONF, 300.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 1, 180.0f } );
+        tab.sync_cam( 0, f0, 100000 );
+
+        TrajList f1 {};
+        f1.push( TrackState { 2, TRACK_CONF, 600.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 2, 180.0f } );
+        tab.sync_cam( 0, f1, 200000 );
+        tab.apply_result( make_res( 0, 1, 1, 150000, 1.0f, 0.0f ) );
+        CHECK( t, tab.active_global_count() == 0 );
+
+        tab.apply_result( make_res( 0, 2, 2, 200000, 0.0f, 1.0f ) );
+        tab.refresh_global_ids( 0, f1 );
+        CHECK( t, tab.active_global_count() == 1 );
+        CHECK( t, f1.d[0].global_id == 1 );
+    }
 }  // namespace
 
 void test_global_track( TestRun& t )
@@ -257,4 +358,8 @@ void test_global_track( TestRun& t )
     }
     check_ch9_reid_gating( t );
     check_m2_disconnect_cleanup( t );
+
+    check_last_seen_monotonic( t );
+    check_select_crops_priority( t );
+    check_refresh_global_ids_dead_track( t );
 }

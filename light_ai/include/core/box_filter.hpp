@@ -146,6 +146,7 @@ public:
         }
         if ( !std::isfinite( dt_s ) || !( dt_s > 0.0f ) )
             return;
+        dt_s = std::max( dt_s, 1e-3f );
         const float v[kAxes] = { b.cx, b.cy, b.w, b.h };
         float f[kAxes] {};
         for ( int i = 0; i < kAxes; ++i )
