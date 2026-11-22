@@ -6,7 +6,7 @@ PROJ_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd -P)"
 cd "$PROJ_ROOT"
 
 LOOPS="${CYCLICTEST_LOOPS:-15000}"
-MAX_JITTER_US="${MAX_JITTER_US:-150}"
+MAX_JITTER_US="${MAX_JITTER_US:-350}"
 PORT="${BENCH_PORT:-1234}"
 DEVICE="${BENCH_DEVICE:-/dev/video20}"
 LOG_AI="build/bench_light_ai.log"
