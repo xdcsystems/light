@@ -311,6 +311,7 @@ void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
     if ( pu.flushed > 0 )
     {
         ++q_flush_cnt_;
+        pts_.on_queue_flush( is_key );
         if ( is_key )
         {
             log_.warn() << "enc: packet queue flushed " << pu.flushed << " pkts (drop " << pu.drops

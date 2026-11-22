@@ -122,6 +122,62 @@ namespace
         CHECK( t, c.next( 9010000, 12 ) == 900 );
         CHECK( t, c.packet_ts( 900 ) == 900 );
     }
+    void queue_flush_continuity( TestRun& t )
+    {
+        // 1. Direct PtsClock rebase on queue flush: 600 ms stall collapses to 1 nominal step (50 ms = 4500 ticks).
+        PtsClock c( true );
+        c.restart( 1 );
+        CHECK( t, c.next( 1000000, 0 ) == 0 );
+        const int64_t p1 = c.next( 1050000, 1 );
+        CHECK( t, p1 == 4500 );
+        c.on_queue_flush();
+        const int64_t p2 = c.next( 1650000, 2 );  // +600 ms wall-clock stall
+        CHECK( t, p2 > p1 && ( p2 - p1 ) == 4500 );
+        const int64_t p3 = c.next( 1700000, 3 );  // next normal 50 ms frame continues smoothly
+        CHECK( t, p3 > p2 && ( p3 - p2 ) == 4500 );
+
+        // 2. SessionPtsFilter across a 750 ms IDR cooldown (14 dropped P-frames at 50 ms before recovery IDR).
+        SessionPtsFilter f( true );
+        f.on_epoch( 1 );
+        int64_t fpts = -1;
+        int64_t out_ts = -1;
+        const int64_t c0 = f.next_frame_pts( 1000000, 0, fpts );
+        CHECK( t, f.stamp_packet( true, c0, true, fpts, out_ts ) && out_ts == 0 );
+        f.advance();
+
+        const int64_t c1 = f.next_frame_pts( 1050000, 1, fpts );
+        int64_t prev_mux_ts = -1;
+        CHECK( t, f.stamp_packet( true, c1, false, fpts, prev_mux_ts ) && prev_mux_ts == 4500 );
+        f.advance();
+
+        // Queue flush occurs after frame 1 (non-key): awaiting_key_ armed, PTS rebased across cooldown.
+        f.on_queue_flush( false );
+        int64_t prev_cpts = c1;
+        uint64_t sent = 2;
+        for ( int64_t ts_us = 1100000; ts_us <= 1750000; ts_us += 50000 )
+        {
+            const int64_t cpts = f.next_frame_pts( ts_us, sent++, fpts );
+            CHECK( t, cpts > prev_cpts );
+            prev_cpts = cpts;
+            CHECK( t, !f.stamp_packet( true, cpts, false, fpts, out_ts ) );
+            f.advance();
+        }
+
+        // Recovery IDR arrives at +750 ms (1,800,000 us): mux PTS step stays within 1-2 nominal steps (~50 ms).
+        const int64_t c_idr = f.next_frame_pts( 1800000, sent++, fpts );
+        CHECK( t, c_idr > prev_cpts );
+        int64_t idr_mux_ts = -1;
+        CHECK( t, f.stamp_packet( true, c_idr, true, fpts, idr_mux_ts ) );
+        f.advance();
+        const int64_t dt_idr = idr_mux_ts - prev_mux_ts;
+        CHECK( t, idr_mux_ts > prev_mux_ts && dt_idr >= 4500 && dt_idr <= 9000 );
+
+        // Subsequent P-frame (+50 ms at 1,850,000 us) is accepted and steps by exact 4500 ticks (50 ms).
+        const int64_t c_next = f.next_frame_pts( 1850000, sent++, fpts );
+        int64_t next_mux_ts = -1;
+        CHECK( t, f.stamp_packet( true, c_next, false, fpts, next_mux_ts ) );
+        CHECK( t, next_mux_ts > idr_mux_ts && ( next_mux_ts - idr_mux_ts ) == 4500 );
+    }
 }  // namespace
 
 void test_pts_clock( TestRun& t )
@@ -130,4 +186,5 @@ void test_pts_clock( TestRun& t )
     cfr( t );
     vfr( t );
     session_filter( t );
+    queue_flush_continuity( t );
 }

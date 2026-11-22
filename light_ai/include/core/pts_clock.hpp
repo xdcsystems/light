@@ -20,6 +20,14 @@
 class PtsClock
 {
 public:
+    enum
+    {
+        kDefaultStep90k = 3600,  // 40 ms (25 fps) nominal VFR step in 1/90000 ticks
+        kMinStep90k = 1800,      // 20 ms (50 fps) lower bound for tracked nominal step
+        kMaxStep90k = 5400       // 60 ms (~16.7 fps) upper bound for tracked nominal step
+    };
+
+public:
     explicit PtsClock( bool vfr ) : vfr_( vfr ) {}
 
     // New viewer session: the CFR counter and the VFR base restart from zero.
@@ -31,6 +39,14 @@ public:
     // frames_sent: frames encoded so far (the VFR fallback grid).
     int64_t next( int64_t ts_us, uint64_t frames_sent ) noexcept;
 
+    // PacketQueue overflow flush: rebases VFR base_us_ on the next frame so
+    // the post-flush PTS step does not jump by the flushed/stalled duration.
+    void on_queue_flush() noexcept;
+
+    // Re-arms the post-flush rebase across discarded non-key frames while
+    // keeping the original pre-flush anchor PTS.
+    void rearm_flush() noexcept;
+
     // Codec pts -> the muxer time base.
     int64_t packet_ts( int64_t pts ) const noexcept { return pts * frame_step_; }
 
@@ -41,11 +57,14 @@ public:
 
 private:
     bool vfr_;
-    uint64_t counter_ = 0;    // CFR pts
-    int64_t base_us_ = -1;    // VFR: session base
-    int64_t last_pts_ = -1;   // VFR: last pts handed out
-    int64_t frame_step_ = 1;  // muxer ticks per codec pts
-    uint64_t clamp_cnt_ = 0;  // VFR non-monotonic clamp counter
+    uint64_t counter_ = 0;                     // CFR pts
+    int64_t base_us_ = -1;                     // VFR: session base
+    int64_t last_pts_ = -1;                    // VFR: last pts handed out
+    int64_t last_step_90k_ = kDefaultStep90k;  // VFR: recent nominal frame step
+    int64_t flush_anchor_pts_ = -1;            // VFR: last_pts_ before queue flush
+    bool flush_pending_ = false;               // VFR: rebase base_us_ on next timestamped frame
+    int64_t frame_step_ = 1;                   // muxer ticks per codec pts
+    uint64_t clamp_cnt_ = 0;                   // VFR non-monotonic clamp counter
 };
 
 // Session-aware codec->muxer PTS filter for persistent encoders: shifts each
@@ -60,6 +79,12 @@ public:
     // Starts a new viewer session: rebases codec PTS past prior submissions
     // and arms awaiting_key_ until the new session's forced IDR arrives.
     void on_epoch( int64_t frame_step ) noexcept;
+
+    // PacketQueue overflow flush: rebases VFR PTS continuity and, unless the
+    // flushing packet was already a keyframe, re-arms awaiting_key_ so
+    // non-key packets during IDR cooldown do not advance muxer PTS or enter
+    // the queue before the recovery IDR arrives.
+    void on_queue_flush( bool key_queued = false ) noexcept;
 
     // Computes session-relative fpts and monotonic AVFrame::pts for encode().
     int64_t next_frame_pts( int64_t ts_us, uint64_t frames_sent, int64_t& session_fpts ) noexcept;
