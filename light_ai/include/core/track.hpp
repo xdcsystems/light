@@ -46,4 +46,4 @@ struct TrackState
     int display_id() const noexcept { return global_id > 0 ? global_id : id; }
 };
 
-using TrajList = PodList<TrackState, 8>;
+using TrajList = PodList<TrackState, 16>;

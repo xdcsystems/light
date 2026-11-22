@@ -398,6 +398,74 @@ namespace
         CHECK( t, err.str().find( "yolo: candidate cap 4096 reached, 2048 candidates dropped (raise --conf)\n" ) == 0 );
         CHECK( t, err.str().find( "yolo: det cap 128 reached," ) != std::string::npos );
     }
+
+    // Scanning P5 -> P4 -> P3 ensures > kMaxCand noise on P3 does not drop a P5 detection.
+    void test_p5_survives_p3_overflow( TestRun& t )
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        YoloDecoder dec( 0.25f, 0.45f, log );
+        Head p3( 128, 16 );
+        for ( int gy = 0; gy < 16; ++gy )
+            for ( int gx = 0; gx < 128; ++gx )
+                for ( int k = 0; k < 3; ++k )
+                    p3.set( gx, gy, k, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 1.0f, 0.0f );
+        Head p5( 32, 4 );
+        p5.set( 16, 2, 0, 0.5f, 0.5f, 0.5f, 0.5f, 0.875f, 0.0f, 1.0f );
+
+        YoloFrame f;
+        f.cam_w = 1024.0f;
+        f.cam_h = 128.0f;
+        f.model_w = 1024.0f;
+        f.model_h = 128.0f;
+        f.lb = LbGeom { 0, 1024, 0, 128 };
+        // Pass P3 first in input array: decoder still scans P5 before P3.
+        const YoloHead heads[2] = { p3.view(), p5.view() };
+        DetList dets;
+        dec.decode( heads, 2, f, dets );
+        CHECK( t, dets.n > 0 );
+        CHECK( t, dets.n > 0 && dets.d[0].cls == 1 && dets.d[0].conf == 0.875f );
+        CHECK( t, err.str().find( "yolo: candidate cap 4096 reached, 2049 candidates dropped" ) == 0 );
+    }
+
+    // Candidates above kNmsTopK (384) are capped cleanly before O(N^2) NMS.
+    void test_nms_topk_cap( TestRun& t )
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        YoloDecoder dec( 0.25f, 0.45f, log );
+        Head p3( 128, 32 );
+        // 24 x 16 = 384 cells whose large class-0 boxes all overlap (IoU > 0.80).
+        for ( int gy = 0; gy < 16; ++gy )
+            for ( int gx = 0; gx < 24; ++gx )
+                if ( gx != 23 || gy != 15 )
+                    p3.set( gx, gy, 0, 0.5f, 0.5f, 8.0f, 8.0f, 0.75f, 1.0f, 0.0f );
+        // 384th candidate: lower-confidence class 1 (survives when total == kNmsTopK).
+        p3.set( 100, 20, 0, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.0f, 1.0f );
+
+        YoloFrame f;
+        f.cam_w = 1024.0f;
+        f.cam_h = 256.0f;
+        f.model_w = 1024.0f;
+        f.model_h = 256.0f;
+        f.lb = LbGeom { 0, 1024, 0, 256 };
+        const YoloHead heads[1] = { p3.view() };
+        DetList dets;
+        dec.decode( heads, 1, f, dets );
+        CHECK( t, dets.n == 2 );
+        CHECK( t, dets.n == 2 && dets.d[0].cls == 0 && dets.d[1].cls == 1 );
+
+        // Adding one more high-conf class-0 box (385 total > kNmsTopK) drops the
+        // lower-confidence class-1 box before NMS; the 384 overlapping class-0 boxes
+        // collapse to 1 survivor.
+        p3.set( 23, 15, 0, 0.5f, 0.5f, 8.0f, 8.0f, 0.75f, 1.0f, 0.0f );
+        dec.decode( heads, 1, f, dets );
+        CHECK( t, dets.n == 1 );
+        CHECK( t, dets.n == 1 && dets.d[0].cls == 0 && dets.d[0].conf == 0.75f );
+        CHECK( t, err.str().empty() );
+    }
 }  // namespace
 
 void test_yolo_decoder( TestRun& t )
@@ -411,4 +479,6 @@ void test_yolo_decoder( TestRun& t )
     test_edge_tolerance( t );
     test_det_cap_overflow( t );
     test_cap( t );
+    test_p5_survives_p3_overflow( t );
+    test_nms_topk_cap( t );
 }

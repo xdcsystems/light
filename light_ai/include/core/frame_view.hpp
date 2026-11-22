@@ -21,7 +21,7 @@ struct TensorRef
 };
 
 // The pool's tensors in slot order: tensor k belongs to pool slot k.
-using TensorSet = PodList<TensorRef, 3>;
+using TensorSet = PodList<TensorRef, 6>;
 
 struct FrameView
 {

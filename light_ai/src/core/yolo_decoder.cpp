@@ -61,6 +61,8 @@ void YoloDecoder::decode( const YoloHead* heads, int n_heads, const YoloFrame& f
                    static_cast<float>( f.lb.h ) };
     nc_ = 0;
     dropped_ = 0;
+    std::array<HeadScan, kMaxHeads> scans {};
+    int n_scans = 0;
     const int mw = static_cast<int>( f.model_w );
     const int mh = static_cast<int>( f.model_h );
     for ( int gi = 0; gi < n_heads && gi < kMaxHeads; ++gi )
@@ -72,8 +74,15 @@ void YoloDecoder::decode( const YoloHead* heads, int n_heads, const YoloFrame& f
         const int set = anchor_set( hd, gi, mw, mh, stride );
         if ( set < 0 )
             continue;
-        collect_head( HeadScan { hd.data, static_cast<size_t>( hd.h ) * hd.w, hd.h, hd.w, hd.ch / 3, stride, set }, b );
+        scans[n_scans++] = HeadScan { hd.data, static_cast<size_t>( hd.h ) * hd.w, hd.h, hd.w, hd.ch / 3, stride, set };
     }
+    // Scan P5 (stride=32) -> P4 (16) -> P3 (8) so dense P3 noise cannot fill
+    // kMaxCand and drop large P4/P5 objects.
+    std::sort( scans.begin(), scans.begin() + n_scans, []( const HeadScan& a, const HeadScan& c ) {
+        return a.stride > c.stride;
+    } );
+    for ( int i = 0; i < n_scans; ++i )
+        collect_head( scans[i], b );
 
     if ( dropped_ > 0 )
         log_.warn() << "yolo: candidate cap " << kMaxCand << " reached, " << dropped_ << " candidates dropped (raise --conf)\n";
@@ -255,9 +264,18 @@ void YoloDecoder::push_candidate( const Box& box ) noexcept
 // yolov5 behaviour: boxes of different classes never suppress each other).
 void YoloDecoder::suppress() noexcept
 {
-    std::sort( cand_.begin(), cand_.begin() + nc_, []( const Box& a, const Box& b ) {
+    const auto cmp = []( const Box& a, const Box& b ) {
         return a.conf != b.conf ? a.conf > b.conf : a.seq < b.seq;
-    } );
+    };
+    if ( nc_ > kNmsTopK )
+    {
+        std::partial_sort( cand_.begin(), cand_.begin() + kNmsTopK, cand_.begin() + nc_, cmp );
+        nc_ = kNmsTopK;
+    }
+    else
+    {
+        std::sort( cand_.begin(), cand_.begin() + nc_, cmp );
+    }
     std::fill_n( sup_.begin(), nc_, uint8_t { 0 } );
     for ( int i = 0; i < nc_; ++i )
     {

@@ -68,6 +68,11 @@ public:
         p_[1] = ( 1.0f - k0 ) * p01;
         p_[2] = p10 - k1 * p00;  // original p00 -- the x update above must not leak in
         p_[3] = p11 - k1 * p01;
+        const float p01_sym = 0.5f * ( p_[1] + p_[2] );
+        p_[1] = p01_sym;
+        p_[2] = p01_sym;
+        p_[0] = std::max( 0.0f, p_[0] );
+        p_[3] = std::max( 0.0f, p_[3] );
     }
 
     // Velocity decay (a coasting track): v *= factor.

@@ -58,8 +58,8 @@ void Tracker::predict( Track& t, float dt ) const
     // miss >= 2: freeze the state (the IoU gate must still find the reappearing object
     // near the last seen spot) but keep growing the covariance, so the gain
     // at the reappearance update matches the real length of the gap. Tentative
-    // tracks reach miss >= 2 as well (death is time-based, kTentMaxAgeMs), and
-    // kMaxMiss caps the growth at 15 frames.
+    // tracks reach miss >= 2 as well (death is time-based: kTentMaxAgeMs /
+    // kConfMaxAgeMs).
     const float q = static_cast<float>( kQAccel );
     if ( t.miss >= kMaxTentMiss )
     {
@@ -120,13 +120,22 @@ void Tracker::apply_match( Track& t, const Detection& d, int round, int64_t ts_u
 {
     // Round-2 dets (weak match: merged blob or squeezed partial box) pass d.h
     // for bottom-anchor offset calculation of cy when clipped, without mutating
-    // t.hp, t.bw, or t.bh (trust_size = false).
+    // t.hp (trust_size = false). Gentle upward bw/bh growth in round 2 prevents
+    // tracks born from a partial box from staying stuck in round 2 forever.
     measure( t, d.x + d.w * 0.5f, d.y + d.h * 0.5f, d.w, d.h, round == 0, ts_us );
     if ( round == 0 )
     {
         ++t.hits;
         if ( t.life == TRACK_TENT && t.hits >= kConfirmHits )
             t.life = TRACK_CONF;
+    }
+    if ( round == 1 )
+    {
+        constexpr float round2_grow_alpha = 0.1f;
+        if ( d.w > t.bw )
+            t.bw += ( d.w - t.bw ) * round2_grow_alpha;
+        if ( d.h > t.bh )
+            t.bh += ( d.h - t.bh ) * round2_grow_alpha;
     }
     t.miss = 0;
     t.ts_last_match_us = ts_us;
@@ -340,8 +349,8 @@ void Tracker::init_slot( Track& t, float cx, float cy, float bw, float bh, int64
 
 // An unmatched alive track: one more miss, the velocity decays; a tentative
 // track dies after kTentMaxAgeMs without a match, a confirmed one after
-// kMaxMiss misses -- into a ghost, not into nothing: the trail keeps
-// rendering while its points are alive, fading by age.
+// kConfMaxAgeMs without a match -- into a ghost, not into nothing: the trail
+// keeps rendering while its points are alive, fading by age.
 void Tracker::age( Track& t, int64_t ts_us ) const
 {
     if ( t.life == TRACK_DEAD )
@@ -350,15 +359,16 @@ void Tracker::age( Track& t, int64_t ts_us ) const
     const float drop = static_cast<float>( kMissVDrop ) / 100.0f;
     t.fx.damp( drop );
     t.fy.damp( drop );
+    const int64_t gap_us = ts_us - t.ts_last_match_us;
     const bool tent_expired = t.life == TRACK_TENT &&
-        ( ts_us - t.ts_last_match_us ) > static_cast<int64_t>( kTentMaxAgeMs ) * 1000;
+        gap_us > static_cast<int64_t>( kTentMaxAgeMs ) * 1000;
     if ( tent_expired )
     {
         t.life = TRACK_FREE;
         t.trail = TrailWindow{};
         return;
     }
-    if ( t.life == TRACK_CONF && t.miss > kMaxMiss )
+    if ( t.life == TRACK_CONF && gap_us > static_cast<int64_t>( kConfMaxAgeMs ) * 1000 )
         t.life = TRACK_DEAD;
 }
 

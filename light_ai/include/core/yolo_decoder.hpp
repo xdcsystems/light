@@ -64,6 +64,8 @@ public:
         // real flow to single digits; the cap is a safety net -- an overflow is
         // counted and reported once per frame, never silent.
         kMaxCand = 4096,
+        // Cap candidates before O(N^2) NMS so dense noise cannot stall the worker.
+        kNmsTopK = 384,
     };
 
     YoloDecoder( float conf_thr, float iou_thr, const Log& log );

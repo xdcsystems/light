@@ -98,7 +98,7 @@ private:
         // slots, only the dma-buf fd differs.
         // Slot 0 serves the single RGB888 output canvas (H.264 path) or
         // attach_tensor()/draw(); the raw preview pool uses attach_slot()/draw_slot().
-        enum { kSlots = 3 };
+        enum { kSlots = 6 };
         struct SlotImg
         {
             EGLImageKHR img = EGL_NO_IMAGE_KHR;

@@ -87,11 +87,15 @@ void AnalyticsStage::reset_source_analytics( int src, int64_t ts_us ) noexcept
 
 void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const RgaResizer& rga ) noexcept
 {
+    // Sync current frame first so tracks that died on this frame cannot match
+    // late Re-ID results and spawn 45s phantom global tracks.
+    global_tracks_.sync_cam( view.src_idx, trajs_, view.ts_us );
+
     ReidResult done {};
     while ( reid_worker_->poll_result( done ) )
         global_tracks_.apply_result( done );
 
-    global_tracks_.sync_cam( view.src_idx, trajs_, view.ts_us );
+    global_tracks_.refresh_global_ids( view.src_idx, trajs_ );
     if ( !rga_ok || view.tensor.fd < 0 )
         return;
 

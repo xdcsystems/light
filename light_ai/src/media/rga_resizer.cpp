@@ -126,8 +126,10 @@ Status RgaResizer::resize( const ResizeSrc& src_img, const CropImage& dst_img, c
     // composer, dumper, preview) uses this stride, so the writer must too.
     const rga_buffer_t dst = wrap( dst_img.fd, w_dst, h_dst, dst_img.w_stride > 0 ? dst_img.w_stride : w_dst, h_dst, RK_FORMAT_RGB_888 );
     const im_rect src_rect { 0, 0, rga_limits::even_down( w_src ), rga_limits::even_down( h_src ) };
-    if ( Status st = rga_check( improcess( src, dst, {}, src_rect, { g.left, g.top, g.w, g.h }, {},
-                                           rga_rot_usage( rot_deg ) ),
+    im_opt_t opt {};
+    opt.core = next_rga3_core();
+    if ( Status st = rga_check( improcess( src, dst, {}, src_rect, { g.left, g.top, g.w, g.h }, {}, -1, nullptr, &opt,
+                                           IM_SYNC | rga_rot_usage( rot_deg ) ),
                                 log_, "RGA resize failed" );
          !st.ok() )
         return st;
@@ -202,5 +204,13 @@ Status RgaResizer::downscale_to_aux( const ResizeSrc& src_img, int src_fmt_rk, c
     const rga_buffer_t src = wrap( src_img.fd, src_img.w, src_img.h, resolve_stride( src_img.w_stride, src_img.w ),
                                    resolve_stride( src_img.h_stride, src_img.h ), src_fmt_rk );
     const rga_buffer_t mid = wrap( aux.fd, aux.w, aux.h, align16( aux.w ), align16( aux.h ), RK_FORMAT_YCbCr_420_SP );
-    return rga_check( imresize( src, mid ), log_, "RGA resize (pass 1) failed" );
+    im_opt_t opt {};
+    opt.core = next_rga3_core();
+    return rga_check( improcess( src, mid, {}, {}, {}, {}, -1, nullptr, &opt, IM_SYNC ), log_, "RGA resize (pass 1) failed" );
+}
+
+int RgaResizer::next_rga3_core() const noexcept
+{
+    const uint32_t idx = rga3_rr_.fetch_add( 1U, std::memory_order_relaxed );
+    return ( idx & 1U ) == 0U ? IM_SCHEDULER_RGA3_CORE0 : IM_SCHEDULER_RGA3_CORE1;
 }

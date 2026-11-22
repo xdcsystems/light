@@ -16,7 +16,7 @@ namespace reid_cfg
     {
         kMaxSources = 4,
         kMaxLocalTracks = TrajList::cap,
-        kMaxGlobalTracks = 32,
+        kMaxGlobalTracks = 64,
         kReidDimMax = 512,
         kReidSlots = 4,
         kReidQueueCap = 4,
@@ -105,6 +105,9 @@ public:
     // global tracks (> 45 s), and writes TrackState::global_id onto live trajs.
     void sync_cam( int src_idx, TrajList& trajs, int64_t ts_us ) noexcept;
 
+    // Writes current global_id onto live trajs without advancing frame counters.
+    void refresh_global_ids( int src_idx, TrajList& trajs ) const noexcept;
+
     // Applies an asynchronous Re-ID inference result with collision guard,
     // margin check and switch hysteresis. Clipped or occluded crops never get
     // here: select_crops() refuses them up front.
@@ -146,7 +149,8 @@ private:
                         float sy,
                         int min_w,
                         int min_h,
-                        bool need_init_pass,
+                        bool& need_init,
+                        int& frames_since_reid,
                         ReidCropReq& out ) const noexcept;
 
 private:

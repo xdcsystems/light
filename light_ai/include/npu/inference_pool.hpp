@@ -1,28 +1,21 @@
-// InferencePool: the NPU stage -- N engines, one InferSlot and one worker
-// thread per engine, and a FIFO that hands results back strictly in submit
-// order (BoxSmoother and Tracker see frames in order).
+// InferencePool: the NPU stage -- up to 3 NPU workers fed by a shared work
+// queue over up to 6 input tensor slots, and a per-source FIFO that hands
+// results back in per-source submit order (a ready source never blocks behind
+// another source's slow/wedged frame, while same-source frames stay ordered).
 //
 // Mode, picked once from InferConfig::pool:
-//   pool < 3 -> one engine ("ring of one"): the caller submits and collects
-//               the same frame, the legacy synchronous path;
-//   pool 3   -> three engines, one per NPU core; up to three frames in
-//               flight, inference overlapped with capture.
-// 2 is rejected by the CLI; anything below 3 maps to one engine here, so a
-// direct construction can never create the untested 2-engine mode.
+//   pool < 3 -> 1 worker, 1 slot: the legacy synchronous path;
+//   pool 3   -> 3 workers (one per NPU core), 6 tensor slots: overlapped
+//               RGA resize, NPU inference, and output GPU/H.264 consumption.
+// 2 is rejected by the CLI; anything below 3 maps to 1 worker / 1 slot.
 //
-// Threading: all public methods run on the pipeline thread -- the FIFO has
-// no lock by design. Each worker touches only its own slot and engine (see
-// InferSlot for the handoff).
+// Threading: all public pipeline methods run on the pipeline thread -- fifo_,
+// next_slot_, and last_lb_ have no lock by design. Workers pop slot indices
+// from work_q_ (under work_mx_), bind the slot's tensor into their own engine,
+// and run with their own Decode copy.
 //
-// Template parameters (static polymorphism, no virtuals): Engine is
-// move-constructible from the EngineArgs of the constructor; Decode is
-// copy-constructible, one copy per worker, worker k calls only its own copy,
-// so a Decode may keep preallocated per-frame state (YoloDecode: the
-// candidate buffer) and is never called concurrently on one instance.
-//
-// Destruction closes every slot and joins the workers before the engines
-// die. A worker blocked inside a wedged rknn_run keeps the destructor
-// waiting, exactly as before the move.
+// Destruction stops the work queue, closes every slot, and joins the workers
+// before the engines die.
 
 #pragma once
 
@@ -32,18 +25,21 @@
 #include <cstddef>
 #include <cstdint>
 #include <ios>
+#include <mutex>
 #include <stdexcept>
 #include <vector>
 
-#include "core/throw_on.hpp"
 #include "config/config.hpp"  // InferConfig
 #include "core/frame_view.hpp"  // TensorRef, TensorSet
 #include "core/log.hpp"
-#include "sys/cpu_affinity.hpp"
-#include "npu/infer_slot.hpp"
+#include "core/pod_list.hpp"
 #include "core/pod_ring.hpp"
+#include "core/throw_on.hpp"
 #include "core/timings.hpp"  // Timings::clk, ms()
+#include "npu/infer_slot.hpp"
 #include "platform/joining_thread.hpp"
+#include "platform/pi_mutex.hpp"
+#include "sys/cpu_affinity.hpp"
 
 struct PoolOptions
 {
@@ -58,23 +54,37 @@ template <typename Engine, typename Decode>
 class InferencePool
 {
 public:
-    enum { kMaxSlots = 3 };
+    enum
+    {
+        kMaxWorkers = 3,
+        kMaxSlots = 6
+    };
+    static_assert( static_cast<int>( kMaxSlots ) <= static_cast<int>( TensorSet::cap ), "TensorSet must cover every pool slot" );
+    static_assert( kMaxSlots <= 32, "avoid_mask is a 32-bit slot bitmask" );
 
     // Loads the engines (each constructed from engine_args...), sets up
-    // their I/O, pins them to NPU cores and starts the workers.
+    // shared input tensors on engines_[0] and imports them into engines_[1..],
+    // pins them to NPU cores, and starts the workers.
     // Throws std::runtime_error on any failure; nothing is left running then.
     template <typename... EngineArgs>
     InferencePool( const InferConfig& cfg, const Decode& decode, const Log& log, PoolOptions opts,
                    const EngineArgs&... engine_args )
-      : decoders_ { { decode, decode, decode } }, log_( log ), opts_( opts ), n_( cfg.pool >= kMaxSlots ? kMaxSlots : 1 )
+      : decoders_ { { decode, decode, decode } }
+      , log_( log )
+      , opts_( opts )
+      , n_workers_( cfg.pool >= kMaxWorkers ? kMaxWorkers : 1 )
+      , n_slots_( n_workers_ >= kMaxWorkers ? kMaxSlots : 1 )
     {
-        engines_.reserve( static_cast<size_t>( n_ ) );  // never reallocates after: &engines_[k] stays valid
-        for ( int k = 0; k < n_; ++k )
+        for ( int s = 0; s < n_slots_; ++s )
+            slots_[static_cast<size_t>( s )].set_free_signal( &free_mx_, &free_cv_ );
+
+        engines_.reserve( static_cast<size_t>( n_workers_ ) );  // never reallocates after: &engines_[w] stays valid
+        for ( int w = 0; w < n_workers_; ++w )
             engines_.emplace_back( engine_args... );
-        for ( auto& e : engines_ )
-        {
-            throw_on( e.setup_io(), "rknn setup_io" );
-        }
+        throw_on( engines_[0].setup_io( false, n_slots_ ), "rknn setup_io" );
+        const TensorSet shared = tensors();
+        for ( int w = 1; w < n_workers_; ++w )
+            throw_on( engines_[static_cast<size_t>( w )].setup_io_shared( shared, false ), "rknn setup_io_shared" );
         set_core_masks( cfg.core );
         start_workers();  // last: nothing below may throw with workers running
     }
@@ -86,18 +96,15 @@ public:
     InferencePool( InferencePool&& ) = delete;
     InferencePool& operator=( InferencePool&& ) = delete;
 
-    int size() const { return n_; }
+    int size() const { return n_slots_; }
+    int workers_count() const { return n_workers_; }
     const Engine& engine( int k ) const { return engines_[static_cast<size_t>( k )]; }
 
-    TensorRef tensor( int k ) const
-    {
-        const Engine& e = engine( k );
-        return { e.input_fd(), e.input_data(), e.input_size(), e.input_stride_bytes() };
-    }
+    TensorRef tensor( int k ) const { return engines_[0].input_tensor( k ); }
     TensorSet tensors() const
     {
         TensorSet set {};
-        for ( int k = 0; k < n_; ++k )
+        for ( int k = 0; k < n_slots_; ++k )
             set.push( tensor( k ) );
         return set;
     }
@@ -106,35 +113,49 @@ public:
 
     int pending() const { return fifo_.size(); }  // submitted, not collected yet
     bool empty() const { return fifo_.empty(); }
-    bool full() const { return fifo_.size() >= n_; }
+    bool full() const { return fifo_.size() >= n_slots_; }
 
-    // The oldest pending result is ready: collect() will not wait.
-    bool front_done() const
+    // True when any entry in fifo_ is both the oldest pending entry for its
+    // source and in State::Done (collect() will return it without waiting).
+    bool front_done() const { return find_ready_fifo_pos() >= 0; }
+
+    // Blocks until at least one slot is Free (or closed), or timeout expires.
+    bool wait_any_slot_free( std::chrono::milliseconds timeout ) const noexcept
     {
-        return !fifo_.empty() && slots_[static_cast<size_t>( fifo_.front() )].state() == InferSlot::State::Done;
+        std::unique_lock<light_ai::platform::PiMutex> lk( free_mx_ );
+        return free_cv_.wait_for( lk, timeout, [this] { return any_slot_free_or_closed(); } );
     }
 
-    // A Free slot whose tensor the caller may fill, or -1. A slot can be
-    // missing although the FIFO is not full: an abandoned one stays in
-    // flight until its own worker finishes (InferSlot).
-    int try_acquire( uint32_t avoid_mask = 0 ) const
+    // A Free slot whose tensor the caller may fill, or -1.
+    // Preference: (!avoided && lb==eff_lb) > (!avoided) > (avoided && lb==eff_lb) > (avoided),
+    // breaking ties by rotating from next_slot_ and advancing next_slot_ = (best + 1) % n_slots_.
+    int try_acquire( uint32_t avoid_mask = 0, LbGeom eff_lb = {} ) const
     {
-        int fallback = -1;
-        for ( int i = 0; i < n_; ++i )
+        int best_slot = -1;
+        int best_tier = -1;
+        for ( int off = 0; off < n_slots_; ++off )
         {
+            const int i = ( next_slot_ + off ) % n_slots_;
             if ( slots_[static_cast<size_t>( i )].state() != InferSlot::State::Free )
                 continue;
-            if ( ( avoid_mask & ( 1u << static_cast<unsigned>( i ) ) ) == 0 )
-                return i;
-            if ( fallback < 0 )
-                fallback = i;
+            const bool avoided = ( avoid_mask & ( 1u << static_cast<unsigned>( i ) ) ) != 0U;
+            const bool lb_match = same_lb( last_lb_[static_cast<size_t>( i )], eff_lb );
+            const int tier = ( avoided ? 0 : 2 ) + ( lb_match ? 1 : 0 );
+            if ( tier > best_tier )
+            {
+                best_tier = tier;
+                best_slot = i;
+                if ( best_tier == 3 )
+                    break;
+            }
         }
-        return fallback;
+        if ( best_slot >= 0 )
+            next_slot_ = ( best_slot + 1 ) % n_slots_;
+        return best_slot;
     }
 
     // Queues the frame whose pixels are already in tensor(k). false: the
-    // frame is dropped (logged) -- the FIFO is full or slot k is not Free,
-    // both caller bugs that the old PubFifo guards reported the same way.
+    // frame is dropped (logged) -- the FIFO is full or slot k is not Free.
     bool submit( int k, const InferJob& job ) noexcept
     {
         if ( full() )
@@ -147,14 +168,21 @@ public:
             log_.warn() << "pool: slot " << k << " is not free, frame " << job.frame << " dropped\n";
             return false;
         }
+        last_lb_[static_cast<size_t>( k )] = job.lb;
         fifo_.push( k );
+        {
+            const std::lock_guard<light_ai::platform::PiMutex> lk( work_mx_ );
+            static_cast<void>( work_q_.push( k ) );
+        }
+        work_cv_.notify_one();
         return true;
     }
 
-    // Takes the oldest pending result, waiting up to PoolOptions::result_timeout.
+    // Takes the oldest ready per-source result (or falls back to waiting on
+    // fifo_.front() up to PoolOptions::result_timeout if none is ready yet).
     // true: `out` holds it and its slot is Free again. false: nothing was
     // pending, or the wait gave up (logged; the slot stays in flight until
-    // its worker finishes) -- out.npu_ok is false either way.
+    // a worker frees it) -- out.npu_ok is false either way.
     bool collect( InferResult& out ) noexcept
     {
         out.npu_ok = false;
@@ -163,8 +191,8 @@ public:
             log_.warn() << "pubfifo: empty (n=0), front invalid\n";
             return false;
         }
-        const int k = fifo_.front();
-        fifo_.pop();
+        const int ready_pos = find_ready_fifo_pos();
+        const int k = pop_fifo_at( ready_pos >= 0 ? ready_pos : 0 );
         out.slot = k;
         const InferSlot::State seen = slots_[static_cast<size_t>( k )].take( opts_.result_timeout, out );
         if ( seen == InferSlot::State::Done )
@@ -176,7 +204,7 @@ public:
 
     // Drops every pending frame of src_idx immediately (its source detached:
     // those frames are never published). Frames of other sources keep their
-    // order. Completed slots are freed; frames still on the NPU are marked
+    // order. Completed slots are freed; frames still in flight are marked
     // Abandoned with zero wait so their worker frees them upon completion.
     void discard( int src_idx )
     {
@@ -196,11 +224,76 @@ public:
     }
 
 private:
+    bool same_lb( const LbGeom& a, const LbGeom& b ) const noexcept
+    {
+        return a.left == b.left && a.w == b.w && a.top == b.top && a.h == b.h;
+    }
+
+    bool any_slot_free_or_closed() const noexcept
+    {
+        for ( int i = 0; i < n_slots_; ++i )
+        {
+            const InferSlot& s = slots_[static_cast<size_t>( i )];
+            if ( s.is_closed() || s.state() == InferSlot::State::Free )
+                return true;
+        }
+        return false;
+    }
+
+    int fifo_at( int pos ) const noexcept
+    {
+        return fifo_.d[static_cast<size_t>( ( fifo_.head + pos ) % PodRing<int, kMaxSlots>::cap )];
+    }
+
+    bool contains_src( const PodList<int, kMaxSlots>& list, int src ) const noexcept
+    {
+        for ( int i = 0; i < list.n; ++i )
+        {
+            if ( list.d[static_cast<size_t>( i )] == src )
+                return true;
+        }
+        return false;
+    }
+
+    int find_ready_fifo_pos() const noexcept
+    {
+        PodList<int, kMaxSlots> seen_src {};
+        const int n = fifo_.size();
+        for ( int i = 0; i < n; ++i )
+        {
+            const int k = fifo_at( i );
+            int src = 0;
+            const InferSlot::State st = slots_[static_cast<size_t>( k )].state_and_src( src );
+            if ( contains_src( seen_src, src ) )
+                continue;
+            seen_src.push( src );
+            if ( st == InferSlot::State::Done )
+                return i;
+        }
+        return -1;
+    }
+
+    int pop_fifo_at( int target_pos ) noexcept
+    {
+        int popped = -1;
+        const int n = fifo_.size();
+        for ( int i = 0; i < n; ++i )
+        {
+            const int k = fifo_.front();
+            fifo_.pop();
+            if ( i == target_pos )
+                popped = k;
+            else
+                fifo_.push( k );
+        }
+        return popped;
+    }
+
     // Pool of one keeps cfg.core verbatim (0 = AUTO: no call -- the A/B
     // baseline is untouched); the 3-pool pins one engine per core.
     void set_core_masks( int core )
     {
-        if ( n_ == 1 )
+        if ( n_workers_ == 1 )
         {
             if ( core != 0 )
             {
@@ -209,20 +302,20 @@ private:
             }
             return;
         }
-        constexpr std::array<unsigned, kMaxSlots> core_masks { 1U, 2U, 4U };  // NPU core 0 / 1 / 2
-        for ( int k = 0; k < n_; ++k )
+        constexpr std::array<unsigned, kMaxWorkers> core_masks { 1U, 2U, 4U };  // NPU core 0 / 1 / 2
+        for ( int w = 0; w < n_workers_; ++w )
         {
-            throw_on( engines_[static_cast<size_t>( k )].set_core_mask( core_masks[static_cast<size_t>( k )] ), "rknn set_core_mask" );
+            throw_on( engines_[static_cast<size_t>( w )].set_core_mask( core_masks[static_cast<size_t>( w )] ), "rknn set_core_mask" );
         }
-        log_.info() << "npu: pool of " << n_ << " engines, one per core\n";
+        log_.info() << "npu: pool of " << n_workers_ << " engines (" << n_slots_ << " slots), one per core\n";
     }
 
     void start_workers()
     {
         try
         {
-            for ( int k = 0; k < n_; ++k )
-                workers_[static_cast<size_t>( k )].start( &InferencePool::worker_loop, this, k );
+            for ( int w = 0; w < n_workers_; ++w )
+                workers_[static_cast<size_t>( w )].start( &InferencePool::worker_loop, this, w );
         }
         catch ( ... )  // NOLINT(custom-no-catch-all): startup, a failed std::thread start; cleans up, then rethrows
         {
@@ -235,23 +328,48 @@ private:
 
     void stop_workers()
     {
+        {
+            const std::lock_guard<light_ai::platform::PiMutex> lk( work_mx_ );
+            work_stop_ = true;
+        }
+        work_cv_.notify_all();
         for ( auto& slot : slots_ )
             slot.close();
-        for ( auto& w : workers_ )
-            w.join();
+        for ( int w = 0; w < n_workers_; ++w )
+            workers_[static_cast<size_t>( w )].join();
     }
 
-    void worker_loop( int k ) noexcept
+    bool next_work_slot( int& out_slot ) noexcept
+    {
+        std::unique_lock<light_ai::platform::PiMutex> lk( work_mx_ );
+        work_cv_.wait( lk, [this] { return work_stop_ || !work_q_.empty(); } );
+        if ( work_stop_ )
+            return false;
+        out_slot = work_q_.front();
+        work_q_.pop();
+        return true;
+    }
+
+    void worker_loop( int w ) noexcept
     {
         prefault_current_thread_stack();
         if ( opts_.pin_workers )
-            pin_current_thread_rt( "npu worker", 5 + ( k % 3 ), 70, log_ );
-        const std::size_t i = static_cast<std::size_t>( k );
-        const Engine& eng = engines_[i];
-        Decode& dec = decoders_[i];
-        InferSlot& slot = slots_[i];
-        const auto work = [this, &eng, &dec]( const InferJob& job, InferOutput& out ) { run_job( eng, dec, job, out ); };
-        slot.run( work );
+            pin_current_thread_rt( "npu worker", 5 + ( w % 3 ), 70, log_ );
+        const std::size_t wi = static_cast<std::size_t>( w );
+        Engine& eng = engines_[wi];
+        Decode& dec = decoders_[wi];
+        int k = -1;
+        while ( next_work_slot( k ) )
+        {
+            InferSlot& slot = slots_[static_cast<std::size_t>( k )];
+            InferJob job {};
+            if ( !slot.begin_work( job ) )
+                continue;
+            InferOutput out {};
+            if ( eng.bind_input_slot( k ).ok() )
+                run_job( eng, dec, job, out );
+            slot.finish_work( out );
+        }
     }
 
     // One job on the worker thread: inference, then the postprocess.
@@ -275,13 +393,22 @@ private:
     }
 
 private:
-    static_assert( kMaxSlots == 3, "decoders_ is initialized with one copy per slot" );
-    std::array<Decode, kMaxSlots> decoders_;  // one per worker: worker k touches only decoders_[k]
+    static_assert( kMaxWorkers == 3, "decoders_ is initialized with one copy per worker" );
+    std::array<Decode, kMaxWorkers> decoders_;  // one per worker: worker w touches only decoders_[w]
     const Log& log_;
     const PoolOptions opts_;
-    const int n_;
+    const int n_workers_;
+    const int n_slots_;
     std::vector<Engine> engines_;
     std::array<InferSlot, kMaxSlots> slots_ {};
+    mutable light_ai::platform::PiMutex free_mx_;
+    mutable light_ai::platform::PiCondVar free_cv_;
+    light_ai::platform::PiMutex work_mx_;
+    light_ai::platform::PiCondVar work_cv_;
+    PodRing<int, kMaxSlots> work_q_ {};
+    bool work_stop_ = false;
     PodRing<int, kMaxSlots> fifo_ {};  // slot indices in submit order; pipeline thread only
-    std::array<JoiningThread, kMaxSlots> workers_ {};  // last: joined before everything above dies
+    mutable int next_slot_ = 0;
+    std::array<LbGeom, kMaxSlots> last_lb_ {};
+    std::array<JoiningThread, kMaxWorkers> workers_ {};  // last: joined before everything above dies
 };

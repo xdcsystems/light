@@ -219,8 +219,8 @@ void test_box_mapper( TestRun& t )
         CHECK( t, dots_ok );
         CHECK( t, alpha_ok );
 
-        // The ghost: no box once the track is dead (dies on 7th miss for kMaxMiss=6), the trail keeps drawing.
-        for ( int miss = 0; miss < 7; ++miss, ts += 40000 )
+        // The ghost: no box once the track is dead (dies after > 360 ms for kConfMaxAgeMs=360), the trail keeps drawing.
+        for ( int miss = 0; miss < 10; ++miss, ts += 40000 )
             trk.update( DetList {}, ts, trajs );
         CHECK( t, trajs.n == 1 && trajs.d[0].state == TRACK_DEAD );
         mapper.fill( DetList {}, trajs, trajs, trk, boxes, kBand, kScale, kScale, ts - 40000 );

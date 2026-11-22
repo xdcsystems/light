@@ -1,5 +1,8 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
+
 #include "core/geometry.hpp"  // LbGeom, band_geom
 #include "core/status.hpp"
 
@@ -79,7 +82,9 @@ private:
     // Pass 1 of the two-pass path: src (its strides resolved, read as
     // src_fmt_rk) into aux (NV12).
     Status downscale_to_aux( const ResizeSrc& src, int src_fmt_rk, const AuxImage& aux ) const;
+    int next_rga3_core() const noexcept;
 
 private:
     const Log& log_;
+    mutable std::atomic<uint32_t> rga3_rr_ { 0 };
 };
