@@ -16,6 +16,7 @@
 #include "npu/inference_pool.hpp"
 #include "npu/rknn_engine.hpp"
 #include "npu/yolo_postprocess.hpp"
+#include "render/overlay_sink.hpp"
 #include "sys/sd_watchdog.hpp"
 
 class Pipeline

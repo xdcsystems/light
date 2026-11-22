@@ -733,3 +733,12 @@ Completed on `fix/audit-p0` (up to `3ccd8ae`, PR #71; merged into `master` in PR
       Every root header and its `.cpp` move into `app/`, `sys/`, `media/`, `npu/`, `render/` (new), `core/`, `source/`, `net/`; only `src/main.cpp` stays at the `src/` root; the nine legacy `.h` become `.hpp`; `core-include` allows std and `core/*` only. `git mv` only: `light_ai` and `light_ai_tests` `cmp`-identical to the base. Old -> new table and verification: [state.md](state.md) (Stage E section).
 - [x] **Pre-master tails (issue #117, `fix/audit-p2-tails`):**
       A hostname `--net-src` is resolved through `getaddrinfo_a`, bounded by `kConnectMs` and abandoned within `100 ms` on stop (a request glibc cannot cancel stays in `BufferedSocket`); a source back at another size re-attaches (the decoder is re-initialized, the camera and net-source size locks are gone); `rules_lint.sh` `sdk-include`; `RknnEngine::set_core_mask` names its cases; Re-ID stays off when its one-pass crops would exceed the RGA 8x limit; the MJPEG part deadline starts at the first body byte (headers: `kPollMs` from their first byte). `cmp_max` before / after Stage D overlaps (bimodal in both). Verification: [state.md](state.md) (pre-master tails section).
+
+## Soft-RTOS & Preempt-Kernel Cycle (`#123`–`#131`)
+
+- [x] **Soft-RTOS Phases 1–4 (`#123`–`#126`, PR `#127`, `#128`):**
+      Added stack prefault, `mallopt` tuning, and RT page-fault/p99 telemetry (`#123`); lock-free `AsyncLogSink` and `PiMutex`/`PiCondVar` (`#124`); systemd `WatchdogSec=5s` `NOTIFY_SOCKET` client (`SdWatchdog`) and RT-throttling control (`#125`); and `cyclictest` jitter bench (`350 us` gate in `#128`).
+- [x] **RK3588 `5.10.226-preempt` kernel transition & IRQ offload (`#126`, `#129`, `#130`):**
+      Transitioned the board to `Linux 5.10.226-preempt #7 SMP PREEMPT` with cleaned `/proc/cmdline` (`isolcpus=4-7 nohz_full=4-7 rcu_nocbs=4-7 irqaffinity=0-3`) and offloaded GPU and `rkvenc-core` IRQs from CPU4 to A55 cores `0-3` (`#130`).
+- [x] **Audit Sprint 1 (`#131`) & Sprint 2 (`chore/audit-sprint-2-tsan-rt`):**
+      Sprint 1 (`dbe29bf`, `#131`) fixed RT hot-path and resilience issues across `StreamOutput`, `H264Encoder`, `SdWatchdog`, `CameraV4L2`, and `MuxSession`; Sprint 2 expanded TSan and RT verification to `71` unit suites / `9,617` checks + `11` TSan suites / `6,188` checks.

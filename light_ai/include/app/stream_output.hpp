@@ -1,12 +1,15 @@
-// StreamOutput: output stage owning OverlaySink, ConsoleReporter, dirty-tile
-// flushing, and paced NO SIGNAL idle publishing on a dedicated SPSC drop-oldest
-// worker thread (Stage F).
+// BasicStreamOutput: output stage owning Sink (OverlaySink in production),
+// ConsoleReporter, dirty-tile flushing, and paced NO SIGNAL idle publishing on
+// a dedicated SPSC drop-oldest worker thread (Stage F).
+// SDK-free when instantiated with a fake Sink in host/TSan tests; OverlaySink
+// is instantiated in src/app/stream_output.cpp.
 
 #pragma once
 
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
 
@@ -25,9 +28,10 @@
 #include "core/tracker.hpp"
 #include "platform/joining_thread.hpp"
 #include "platform/pi_mutex.hpp"
-#include "render/overlay_sink.hpp"
+#include "sys/cpu_affinity.hpp"
 
-class StreamOutput
+template <class Sink>
+class BasicStreamOutput
 {
 public:
     enum
@@ -36,23 +40,121 @@ public:
     };
 
 public:
-    explicit StreamOutput( const Log& log );
-    ~StreamOutput();
+    explicit BasicStreamOutput( const Log& log, bool pin_worker = true )
+      : log_( log ), sink_( log ), rep_( log ), pin_worker_( pin_worker )
+    {
+    }
 
-    StreamOutput( const StreamOutput& ) = delete;
-    StreamOutput& operator=( const StreamOutput& ) = delete;
+    ~BasicStreamOutput()
+    {
+        stop_worker();
+    }
+
+    BasicStreamOutput( const BasicStreamOutput& ) = delete;
+    BasicStreamOutput& operator=( const BasicStreamOutput& ) = delete;
+    BasicStreamOutput( BasicStreamOutput&& ) = delete;
+    BasicStreamOutput& operator=( BasicStreamOutput&& ) = delete;
 
     void init( const StreamConfig& stream, const TensorSet& tensors, int model_w, int model_h,
-               const LbGeom& enc_lb, int nsrc = 1 );
+               const LbGeom& enc_lb, int nsrc = 1 )
+    {
+        fps_ = stream.fps;
+        sink_.init( stream, tensors, model_w, model_h, enc_lb, nsrc );
+        if ( sink_.enabled() )
+            worker_.start( &BasicStreamOutput::worker_loop, this );
+    }
 
-    void reset_source( int src ) noexcept;
-    void flush_dirty() noexcept;
-    bool wait_slot_free( int slot ) noexcept;
-    uint32_t busy_slot_mask() const noexcept;
-    void drain() noexcept;
+    void reset_source( int src ) noexcept
+    {
+        sink_.reset_source( src );
+    }
+
+    void flush_dirty() noexcept
+    {
+        if ( !sink_.enabled() || !sink_.viewer_live() )
+            return;
+        {
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+            flush_req_ = true;
+        }
+        cv_.notify_one();
+    }
+
+    bool wait_slot_free( int slot ) noexcept
+    {
+        if ( !sink_.enabled() || slot < 0 )
+            return true;
+        std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
+        const bool ok = cv_.wait_for( lk, std::chrono::milliseconds( 1500 ), [this, slot]() noexcept {
+            return stop_ || ( active_slot_ != slot && !slot_pending_locked( slot ) );
+        } );
+        if ( ok )
+            return !stop_;
+        for ( int s = 0; s < kMaxSources; ++s )
+        {
+            const std::size_t idx = static_cast<std::size_t>( s );
+            if ( has_pending_[idx] && pending_[idx].view.tensor_idx == slot )
+                has_pending_[idx] = false;
+        }
+        if ( active_slot_ != slot )
+        {
+            log_.warn() << "stream_output: evicted stalled pending job on slot " << slot << '\n';
+            return true;
+        }
+        log_.error() << "stream_output: wait_slot_free timeout on active slot " << slot << '\n';
+        return false;
+    }
+
+    uint32_t busy_slot_mask() const noexcept
+    {
+        if ( !sink_.enabled() )
+            return 0;
+        const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+        uint32_t mask = 0;
+        if ( active_slot_ >= 0 && active_slot_ < 32 )
+            mask |= ( 1u << static_cast<unsigned>( active_slot_ ) );
+        for ( int s = 0; s < kMaxSources; ++s )
+        {
+            const std::size_t idx = static_cast<std::size_t>( s );
+            if ( has_pending_[idx] && pending_[idx].view.tensor_idx >= 0 && pending_[idx].view.tensor_idx < 32 )
+                mask |= ( 1u << static_cast<unsigned>( pending_[idx].view.tensor_idx ) );
+        }
+        return mask;
+    }
+
+    void drain() noexcept
+    {
+        if ( !sink_.enabled() )
+            return;
+        std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
+        const bool ok = cv_.wait_for( lk, std::chrono::milliseconds( 2000 ), [this]() noexcept {
+            return stop_ || ( !any_pending_locked() && active_slot_ < 0 );
+        } );
+        if ( !ok )
+            log_.error() << "stream_output: drain timeout\n";
+    }
 
     double publish_frame( int frame, const FrameView& view, const DetList& dets, const TrajList& trajs,
-                          const Tracker& tracker, int nsrc, bool defer_enc ) noexcept;
+                          const Tracker& tracker, int nsrc, bool defer_enc ) noexcept
+    {
+        rep_.report( frame, dets, trajs, view.src_idx, nsrc );
+        if ( !sink_.enabled() || !sink_.viewer_live() )
+            return 0.0;
+
+        PublishJob job {};
+        job.view = view;
+        job.defer_enc = defer_enc;
+        sink_.prepare_overlay( view, dets, trajs, tracker, job.boxes, job.callouts );
+        const int s = ( view.src_idx >= 0 && view.src_idx < kMaxSources ) ? view.src_idx : 0;
+        const std::size_t idx = static_cast<std::size_t>( s );
+        {
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+            pending_[idx] = job;
+            has_pending_[idx] = true;  // drop-oldest per source
+        }
+        cv_.notify_one();
+        return 0.0;
+    }
 
     template <class Srcs>
     void idle_tick( PerfClock::time_point t0, const Srcs& srcs ) noexcept
@@ -74,11 +176,31 @@ public:
         post_idle( now_us, absent, srcs.size() );
     }
 
-    OverlayPerfWindow take_perf() noexcept;
-    bool has_enc_perf() const noexcept { return sink_.has_enc_perf(); }
-    EncPerfWindow take_enc_perf() noexcept;
+    OverlayPerfWindow take_perf() noexcept
+    {
+        const std::lock_guard<light_ai::platform::PiMutex> lk( perf_mx_ );
+        const OverlayPerfWindow out = perf_snap_;
+        perf_snap_.reset();
+        return out;
+    }
 
-    void summary( int frames, double elapsed_sec, int reconnects ) const noexcept;
+    bool has_enc_perf() const noexcept { return sink_.has_enc_perf(); }
+
+    EncPerfWindow take_enc_perf() noexcept
+    {
+        const std::lock_guard<light_ai::platform::PiMutex> lk( perf_mx_ );
+        const EncPerfWindow out = enc_perf_snap_;
+        enc_perf_snap_.reset();
+        return out;
+    }
+
+    void summary( int frames, double elapsed_sec, int reconnects ) const noexcept
+    {
+        rep_.summary( frames, elapsed_sec, reconnects );
+    }
+
+    Sink& sink() noexcept { return sink_; }
+    const Sink& sink() const noexcept { return sink_; }
 
 private:
     struct PublishJob
@@ -97,18 +219,144 @@ private:
     };
 
 private:
-    void stop_worker() noexcept;
-    void post_idle( int64_t ts_us, const std::array<bool, kMaxSources>& absent, int nabs ) noexcept;
-    void worker_loop() noexcept;
-    void consume_controls() noexcept;
-    bool any_pending_locked() const noexcept;
-    bool slot_pending_locked( int slot ) const noexcept;
-    bool take_work( PublishJob& pjob, bool& has_pub, IdleJob& ijob, bool& has_idle ) noexcept;
+    void stop_worker() noexcept
+    {
+        {
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+            stop_ = true;
+        }
+        cv_.notify_all();
+        worker_.join();
+    }
+
+    void post_idle( int64_t ts_us, const std::array<bool, kMaxSources>& absent, int nabs ) noexcept
+    {
+        {
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+            idle_.ts_us = ts_us;
+            idle_.absent = absent;
+            idle_.nabs = nabs;
+            has_idle_ = true;
+        }
+        cv_.notify_one();
+    }
+
+    void consume_controls() noexcept
+    {
+        bool flush = false;
+        {
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+            flush = flush_req_;
+            flush_req_ = false;
+        }
+        if ( flush )
+            sink_.flush_dirty();
+    }
+
+    bool any_pending_locked() const noexcept
+    {
+        for ( int s = 0; s < kMaxSources; ++s )
+        {
+            if ( has_pending_[static_cast<std::size_t>( s )] )
+                return true;
+        }
+        return false;
+    }
+
+    bool slot_pending_locked( int slot ) const noexcept
+    {
+        for ( int s = 0; s < kMaxSources; ++s )
+        {
+            const std::size_t idx = static_cast<std::size_t>( s );
+            if ( has_pending_[idx] && pending_[idx].view.tensor_idx == slot )
+                return true;
+        }
+        return false;
+    }
+
+    bool take_work( PublishJob& pjob, bool& has_pub, IdleJob& ijob, bool& has_idle ) noexcept
+    {
+        std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
+        cv_.wait( lk, [this]() noexcept {
+            return stop_ || any_pending_locked() || has_idle_ || flush_req_;
+        } );
+        if ( stop_ && !any_pending_locked() )
+            return false;
+        has_pub = false;
+        for ( int off = 0; off < kMaxSources; ++off )
+        {
+            const int s = ( next_src_ + off ) % kMaxSources;
+            const std::size_t idx = static_cast<std::size_t>( s );
+            if ( has_pending_[idx] )
+            {
+                pjob = pending_[idx];
+                has_pending_[idx] = false;
+                next_src_ = ( s + 1 ) % kMaxSources;
+                active_slot_ = pjob.view.tensor_idx;
+                has_pub = true;
+                break;
+            }
+        }
+        has_idle = !has_pub && has_idle_;
+        if ( has_idle )
+        {
+            ijob = idle_;
+            has_idle_ = false;
+        }
+        return true;
+    }
+
+    void worker_loop() noexcept
+    {
+        if ( pin_worker_ )
+        {
+            prefault_current_thread_stack();
+            pin_current_thread_rt( "stream output", -1, 60, log_ );
+        }
+        PublishJob pjob {};
+        IdleJob ijob {};
+        bool has_pub = false;
+        bool has_idle = false;
+        while ( take_work( pjob, has_pub, ijob, has_idle ) )
+        {
+            if ( has_pub )
+            {
+                static_cast<void>( sink_.render_and_publish( pjob.view, pjob.boxes, pjob.callouts, pjob.defer_enc ) );
+                {
+                    const std::lock_guard<light_ai::platform::PiMutex> plk( perf_mx_ );
+                    perf_snap_.merge( sink_.take_perf() );
+                    if ( sink_.has_enc_perf() )
+                        enc_perf_snap_.merge( sink_.take_enc_perf() );
+                }
+                {
+                    const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+                    active_slot_ = -1;
+                }
+                cv_.notify_all();
+            }
+            if ( has_idle )
+                sink_.publish_idle( ijob.ts_us, ijob.absent.data(), ijob.nabs );
+            bool pending_now = false;
+            {
+                const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+                pending_now = any_pending_locked();
+            }
+            if ( !pending_now )
+                consume_controls();
+            if ( !has_pub && sink_.has_enc_perf() )
+            {
+                const std::lock_guard<light_ai::platform::PiMutex> plk( perf_mx_ );
+                enc_perf_snap_.merge( sink_.take_enc_perf() );
+            }
+        }
+        sink_.release_worker_context();
+    }
 
 private:
     const Log& log_;
-    OverlaySink sink_;
+    Sink sink_;
     ConsoleReporter rep_;
+    const bool pin_worker_;
     int fps_ = 0;
     int64_t last_idle_us_ = -1;
 
@@ -129,3 +377,6 @@ private:
 
     JoiningThread worker_;
 };
+
+class OverlaySink;
+using StreamOutput = BasicStreamOutput<OverlaySink>;

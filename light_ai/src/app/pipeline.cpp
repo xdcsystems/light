@@ -252,11 +252,9 @@ Status Pipeline::run()
     // exit. Spawned BEFORE the RT pin so it keeps the scheduler default.
     SourceSupervisor::SourceProber prober( sources_.sources(), sources_.locator(), log_ );
     prober.start();
-    configure_rt_allocator( log_ );
-    lock_process_memory( log_ );
+    analytics_.init_box_logs( cfg_.box_log, sources_.size() );
     prefault_current_thread_stack();
     pin_current_thread_rt( "pipeline main", 4, 80, log_ );
-    analytics_.init_box_logs( cfg_.box_log, sources_.size() );
 
     t0_ = clk::now();
     t0_cap_us_ = std::chrono::duration_cast<std::chrono::microseconds>( t0_.time_since_epoch() ).count();

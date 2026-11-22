@@ -30,7 +30,12 @@ Each rule is marked **(gate)**, **(review)** or both. **(gate)** means `scripts/
 - **Startup-only exceptions** (review)**:** `std::runtime_error` (via [`throw_on`](include/core/throw_on.hpp) when wrapping a `Status`) is permitted only on the startup path (constructors and `Pipeline` initialization).
 - **`noexcept` frame path & threads** (`catch (...)`: gate, `custom-no-catch-all`; the rest: review)**:** Frame processing and thread bodies are `noexcept`: no exceptions are thrown and there is no `catch (...)` in the frame path. Exactly two `catch (...)` exist, both startup thread-launch rethrows (`InferencePool::start_workers`, `NetPreview` ctor), each allowlisted with `NOLINT(custom-no-catch-all): <reason>`.
 
-  `MediaSource` catches `std::bad_variant_access` only on the startup `emplace`. `pin_current_thread_to_big_cores` ([`src/sys/cpu_affinity.cpp`](src/sys/cpu_affinity.cpp)) is `noexcept` and catches `const std::exception&` from its `Log` stream (the line is dropped, the best-effort pin stands); it runs once at the start of the NPU and reid worker threads and on the main thread at `Pipeline` startup, never on the frame path.
+  Legitimate `catch (const std::exception&)` sites outside the frame path:
+  - [`src/main.cpp`](src/main.cpp): top-level startup `try`/`catch` logs `Fatal:` and returns exit code `3`.
+  - [`include/platform/log_sink.hpp`](include/platform/log_sink.hpp): `AsyncLogSink` flusher thread is `noexcept` and catches `const std::exception&` around stream `write`/`flush`/drop-notice formatting.
+  - [`include/platform/pi_mutex.hpp`](include/platform/pi_mutex.hpp): `PiMutex` constructor catches `const std::exception&` around its `PTHREAD_PRIO_INHERIT` fallback warning.
+  - [`src/sys/cpu_affinity.cpp`](src/sys/cpu_affinity.cpp): `pin_current_thread_rt`, `lock_process_memory`, and `configure_rt_allocator` are `noexcept` and catch `const std::exception&` from their `Log` stream (the line is dropped, the best-effort RT setup stands).
+  `MediaSource` catches `std::bad_variant_access` only on the startup `emplace`.
 
 ## Output Side vs. Recognition Invariant (review)
 
@@ -54,7 +59,7 @@ Every PR targeting `master` must pass the full board gate:
 
 This runs:
 1. Release CMake build (`light_ai`).
-2. Host unit tests (`light_ai_tests` — 65 suites, 9,357 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 6 suites, 23 checks).
+2. Host unit tests (`light_ai_tests` — 71 suites, 9,617 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 11 suites, 6,188 checks).
 3. Two-pass `clang-tidy` gate ([`scripts/tidy_run.sh`](scripts/tidy_run.sh)):
    - **self-test + lint:** the rules pass on [`tests/tidy_probe/`](tests/tidy_probe) and [`scripts/rules_lint.sh`](scripts/rules_lint.sh) on its fixture tree must give exactly the expected hits, and `--verify-config` must know every check option key of `scripts/tidy_rules.yaml`; then `rules_lint.sh` over the tree.
    - **main:** system `clang-tidy-11` against [`.clang-tidy`](.clang-tidy) (`tests/` uses [`tests/.clang-tidy`](tests/.clang-tidy)).

@@ -1,0 +1,38 @@
+# Production 24/7 systemd unit template for light_ai on RK3588.
+# Install manually when ready:
+#   sudo cp scripts/light_ai.service.example /etc/systemd/system/light_ai.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now light_ai.service
+
+[Unit]
+Description=light_ai multi-camera NPU inference pipeline
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=30s
+WatchdogSec=5s
+
+Restart=always
+RestartSec=2s
+
+User=linaro
+WorkingDirectory=/mnt/nvme_data/linaro/Projects/light/light_ai
+Slice=light_ai.slice
+AllowedCPUs=0-7
+LimitRTPRIO=90
+LimitMEMLOCK=infinity
+LimitNOFILE=4096
+MemoryMax=1G
+MemorySwapMax=0
+
+Environment=ENABLE_RT_UNLIMITED=1
+ExecStartPre=+/mnt/nvme_data/linaro/Projects/light/light_ai/scripts/isolate_rt.sh on
+ExecStart=/usr/bin/taskset -c 0-3 /mnt/nvme_data/linaro/Projects/light/light_ai/build/light_ai --config /mnt/nvme_data/linaro/Projects/light/light_ai/build/light_ai.ini
+ExecStopPost=+/mnt/nvme_data/linaro/Projects/light/light_ai/scripts/isolate_rt.sh off
+
+[Install]
+WantedBy=multi-user.target

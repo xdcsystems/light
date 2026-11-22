@@ -7,6 +7,7 @@
 #include "core/log.hpp"
 #include "core/stop_flag.hpp"
 #include "platform/log_sink.hpp"
+#include "sys/cpu_affinity.hpp"
 #include "sys/process_env.hpp"
 #include "sys/signal_waiter.hpp"
 
@@ -61,6 +62,8 @@ int main( int argc, char** argv )
 
     try
     {
+        configure_rt_allocator( log );
+        lock_process_memory( log );
         StopFlag stop;
         SignalWaiter waiter( env, stop );
         Pipeline p( cli.config(), stop, log );

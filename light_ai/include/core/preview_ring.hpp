@@ -1,11 +1,19 @@
-// PreviewRing: pre-allocated 2-slot drop-oldest ring for decoupling
+// BasicPreviewRing: pre-allocated 2-slot drop-oldest ring for decoupling
 // NetPreview::publish() (pipeline thread) from av_write_frame()/avio_flush()
 // (preview serve thread).
+//
+// Thread rule (every member is guarded by mx_):
+//   pipeline thread (producer): push(), push_rows(), drops();
+//   serve thread (consumer):    open(), close(), pop();
+//   the owner's destructor:     stop() (wakes a blocked pop for good).
 //
 // Startup-only allocation: both ring slots are sized once to frame_bytes in
 // the constructor, and the consumer owns a pre-allocated send_buf_ of the same
 // size swapped via std::vector::swap() in O(1) under mx_. Zero per-frame heap
 // allocations and zero socket-I/O lock hold on the pipeline thread.
+//
+// Production instantiation: BasicPreviewRing<PiMutex, PiCondVar> in
+// net/net_preview.hpp; host tests use PreviewRing = BasicPreviewRing<>.
 
 #pragma once
 
@@ -144,4 +152,4 @@ private:
     bool stopped_ = false;
 };
 
-using PreviewRing = BasicPreviewRing<std::mutex, std::condition_variable>;
+using PreviewRing = BasicPreviewRing<>;
