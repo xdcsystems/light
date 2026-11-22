@@ -34,6 +34,7 @@ add_executable(light_ai_tests
     test_joining_thread.cpp
     test_tcp_retry.cpp
     test_tcp_send.cpp
+    test_tcp_pull_threads.cpp
     test_yolo_head_shape.cpp
     test_http_url.cpp
     test_http_head.cpp
@@ -53,6 +54,7 @@ add_executable(light_ai_tests
     test_config.cpp
     test_signals.cpp
     test_log.cpp
+    test_async_log_sink.cpp
     test_cpu_affinity.cpp
     test_inference_pool.cpp
     test_timings.cpp
@@ -61,6 +63,7 @@ add_executable(light_ai_tests
     test_pi_mutex.cpp
     test_sd_watchdog.cpp
     test_console_reporter.cpp
+    test_stream_output_threads.cpp
     test_cal_dumper.cpp
     test_usb_node_locator.cpp
     test_source_channel.cpp
@@ -151,9 +154,17 @@ add_executable(light_ai_tests_tsan EXCLUDE_FROM_ALL
     test_session_gate.cpp
     test_reid_worker_tsan.cpp
     test_pi_mutex.cpp
+    test_async_log_sink.cpp
+    test_infer_slot_threads.cpp
+    test_stream_output_threads.cpp
+    test_tcp_pull_threads.cpp
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
     ${LIGHT_AI_ROOT}/src/core/global_track.cpp
     ${LIGHT_AI_ROOT}/src/core/status.cpp
+    ${LIGHT_AI_ROOT}/src/app/console_reporter.cpp
+    ${LIGHT_AI_ROOT}/src/sys/cpu_affinity.cpp
+    ${LIGHT_AI_ROOT}/src/platform/tcp_pull_server.cpp
+    ${LIGHT_AI_ROOT}/src/platform/tcp_send.cpp
 )
 target_include_directories(light_ai_tests_tsan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
