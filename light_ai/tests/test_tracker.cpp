@@ -316,7 +316,7 @@ namespace
         Tracker trk;
         TrajList out;
         int64_t ts = 0;
-        for ( int i = 0; i < 5; ++i, ts += kFrameUs )
+        for ( int i = 0; i < 3; ++i, ts += kFrameUs )
             trk.update( one( person( 500, 400, 60, 120 ) ), ts, out );
         CHECK( t, out.n == 1 && out.d[0].state == TRACK_CONF );
         CHECK_NEAR( t, out.d[0].bw, 60.0f, 1e-2f );

@@ -129,7 +129,7 @@ void Tracker::apply_match( Track& t, const Detection& d, int round, int64_t ts_u
         if ( t.life == TRACK_TENT && t.hits >= kConfirmHits )
             t.life = TRACK_CONF;
     }
-    if ( round == 1 )
+    if ( round == 1 && t.hits <= kConfirmHits )
     {
         constexpr float round2_grow_alpha = 0.1f;
         if ( d.w > t.bw )
