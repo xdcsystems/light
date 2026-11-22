@@ -188,14 +188,7 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const NetSessionGate::Se
     // the session's step, and its first frame is an IDR -- a TCP viewer
     // and a UDP (re)open alike, so a UDP receiver that stayed listening
     // across a reopen resumes at once instead of at the next GOP boundary.
-    if ( s.epoch != seen_epoch_ )
-    {
-        seen_epoch_ = s.epoch;
-        pts_.on_epoch( s.frame_step );
-        force_idr_ = true;
-        prev_fpts_ = 0;
-        has_prev_fpts_ = false;
-    }
+    prepare_frame_idr( s );
     int64_t fpts = 0;
     fr->pts = pts_.next_frame_pts( ts_us, frames_sent_, fpts );
 
@@ -273,6 +266,31 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const NetSessionGate::Se
 // Shared by the EAGAIN retry and the post-send drain in encode(): the
 // pipeline thread never touches the network (av_packet_move_ref, zero
 // per-frame heap allocs).
+void H264Encoder::prepare_frame_idr( const NetSessionGate::Session& s ) noexcept
+{
+    if ( s.epoch != seen_epoch_ )
+    {
+        seen_epoch_ = s.epoch;
+        pts_.on_epoch( s.frame_step );
+        force_idr_ = true;
+        has_flush_idr_ = false;
+        pending_flush_idr_ = false;
+        prev_fpts_ = 0;
+        has_prev_fpts_ = false;
+        return;
+    }
+    if ( !pending_flush_idr_ )
+        return;
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto flush_idr_cooldown = std::chrono::milliseconds( 750 );
+    if ( has_flush_idr_ && ( now - last_flush_idr_at_ ) < flush_idr_cooldown )
+        return;
+    force_idr_ = true;
+    pending_flush_idr_ = false;
+    last_flush_idr_at_ = now;
+    has_flush_idr_ = true;
+}
+
 void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
 {
     AVPacket* pkt = pkt_.get();
@@ -293,8 +311,25 @@ void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
     if ( pu.flushed > 0 )
     {
         ++q_flush_cnt_;
-        force_idr_ = true;
+        if ( is_key )
+        {
+            log_.warn() << "enc: packet queue flushed " << pu.flushed << " pkts (drop " << pu.drops
+                        << "), keyframe already queued\n";
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        constexpr auto flush_idr_cooldown = std::chrono::milliseconds( 750 );
+        if ( !has_flush_idr_ || ( now - last_flush_idr_at_ ) >= flush_idr_cooldown )
+        {
+            force_idr_ = true;
+            last_flush_idr_at_ = now;
+            has_flush_idr_ = true;
+            log_.warn() << "enc: packet queue flushed " << pu.flushed << " pkts (drop " << pu.drops
+                        << "), IDR next frame\n";
+            return;
+        }
+        pending_flush_idr_ = true;
         log_.warn() << "enc: packet queue flushed " << pu.flushed << " pkts (drop " << pu.drops
-                    << "), IDR next frame\n";
+                    << "), IDR deferred (cooldown)\n";
     }
 }

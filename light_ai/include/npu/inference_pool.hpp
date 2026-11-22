@@ -51,7 +51,7 @@ struct PoolOptions
     // Bounded wait for one result (P0-2): rknn_run normally always
     // completes; running out of it means a wedged NPU/runtime -- the frame
     // is dropped instead of hanging the pipeline (and Ctrl-C) forever.
-    std::chrono::milliseconds result_timeout { 5000 };
+    std::chrono::milliseconds result_timeout { 2000 };
 };
 
 template <typename Engine, typename Decode>

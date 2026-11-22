@@ -64,14 +64,29 @@ void StreamOutput::reset_source( int src ) noexcept
     sink_.reset_source( src );
 }
 
-void StreamOutput::wait_slot_free( int slot ) noexcept
+bool StreamOutput::wait_slot_free( int slot ) noexcept
 {
     if ( !sink_.enabled() || slot < 0 )
-        return;
+        return true;
     std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
-    cv_.wait( lk, [this, slot]() noexcept {
-        return active_slot_ != slot && !slot_pending_locked( slot );
+    const bool ok = cv_.wait_for( lk, std::chrono::milliseconds( 1500 ), [this, slot]() noexcept {
+        return stop_ || ( active_slot_ != slot && !slot_pending_locked( slot ) );
     } );
+    if ( ok )
+        return !stop_;
+    for ( int s = 0; s < kMaxSources; ++s )
+    {
+        const size_t idx = static_cast<size_t>( s );
+        if ( has_pending_[idx] && pending_[idx].view.tensor_idx == slot )
+            has_pending_[idx] = false;
+    }
+    if ( active_slot_ != slot )
+    {
+        log_.warn() << "stream_output: evicted stalled pending job on slot " << slot << '\n';
+        return true;
+    }
+    log_.error() << "stream_output: wait_slot_free timeout on active slot " << slot << '\n';
+    return false;
 }
 
 uint32_t StreamOutput::busy_slot_mask() const noexcept
@@ -96,7 +111,11 @@ void StreamOutput::drain() noexcept
     if ( !sink_.enabled() )
         return;
     std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
-    cv_.wait( lk, [this]() noexcept { return !any_pending_locked() && active_slot_ < 0; } );
+    const bool ok = cv_.wait_for( lk, std::chrono::milliseconds( 2000 ), [this]() noexcept {
+        return stop_ || ( !any_pending_locked() && active_slot_ < 0 );
+    } );
+    if ( !ok )
+        log_.error() << "stream_output: drain timeout\n";
 }
 
 double StreamOutput::publish_frame( int frame, const FrameView& view, const DetList& dets, const TrajList& trajs,
@@ -187,7 +206,6 @@ void StreamOutput::worker_loop() noexcept
     bool has_idle = false;
     while ( take_work( pjob, has_pub, ijob, has_idle ) )
     {
-        consume_controls();
         if ( has_pub )
         {
             static_cast<void>( sink_.render_and_publish( pjob.view, pjob.boxes, pjob.callouts, pjob.defer_enc ) );
@@ -205,6 +223,13 @@ void StreamOutput::worker_loop() noexcept
         }
         if ( has_idle )
             sink_.publish_idle( ijob.ts_us, ijob.absent.data(), ijob.nabs );
+        bool pending_now = false;
+        {
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+            pending_now = any_pending_locked();
+        }
+        if ( !pending_now )
+            consume_controls();
         if ( !has_pub && sink_.has_enc_perf() )
         {
             const std::lock_guard<light_ai::platform::PiMutex> plk( perf_mx_ );

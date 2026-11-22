@@ -1,5 +1,5 @@
 // EncodePacer: which publishes become an encoded H.264 frame.
-//   single view: every live frame is encoded;
+//   single view: paced to 1/fps in CFR mode (fps > 0), or every live frame in VFR (fps <= 0);
 //   multi-view: frames of different sources finish at their own native rates;
 //     a frame before the next phase-locked grid tick only updates its tile in
 //     the composite canvas. The grid step is 1/fps in CFR, or in follow-source

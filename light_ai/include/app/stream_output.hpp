@@ -47,7 +47,7 @@ public:
 
     void reset_source( int src ) noexcept;
     void flush_dirty() noexcept;
-    void wait_slot_free( int slot ) noexcept;
+    bool wait_slot_free( int slot ) noexcept;
     uint32_t busy_slot_mask() const noexcept;
     void drain() noexcept;
 

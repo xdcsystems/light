@@ -140,7 +140,8 @@ int Pipeline::acquire_slot( int& ok ) noexcept
             std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
         k = pool_.try_acquire( output_.busy_slot_mask() );
     }
-    output_.wait_slot_free( k );
+    if ( k >= 0 && !output_.wait_slot_free( k ) )
+        return -1;
     return k;
 }
 
@@ -232,7 +233,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
         ok += publish_oldest();
     const int slot = acquire_slot( ok );
     if ( slot < 0 )
-        return Step::Stop;
+        return stop_.requested() ? Step::Stop : Step::Skipped;
     const int64_t ts_us = f.cap_us >= 0
                               ? std::max<int64_t>( 0, f.cap_us - t0_cap_us_ )
                               : std::chrono::duration_cast<std::chrono::microseconds>( t1 - t0_ ).count();
@@ -281,6 +282,7 @@ Status Pipeline::run()
             break;
         i += r == Step::Dispatched ? 1 : 0;
     }
+    watchdog_.notify_stopping();
     if ( stop_.requested() )
         log_.info() << "stop: signal received, draining and flushing...\n";
     while ( !pool_.empty() )

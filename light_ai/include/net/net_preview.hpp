@@ -69,7 +69,7 @@ private:
     std::atomic<uint32_t> session_epoch_ { 0 };
     std::atomic<int64_t> next_send_us_ { 0 };
 
-    std::mutex tcp_mx_;
+    light_ai::platform::PiMutex tcp_mx_;
     TcpPullServer* active_tcp_ = nullptr;
     AVPacket* pkt_ = nullptr;  // allocated once, used only on serve() thread
     JoiningThread thread_;     // last: joined before members above die

@@ -12,11 +12,18 @@ namespace
 {
     void single_view( TestRun& t )
     {
-        // Every live frame is encoded, however close.
-        EncodePacer p( 1, 25 );
-        CHECK( t, p.admit( 1000, 0, 1 ) );
-        CHECK( t, p.admit( 1001, 0, 1 ) );
-        CHECK( t, p.admit( 1001, 31, 1 ) );
+        // VFR (fps <= 0): every live frame is encoded, however close.
+        EncodePacer vfr( 1, 0 );
+        CHECK( t, vfr.admit( 1000, 0, 1 ) );
+        CHECK( t, vfr.admit( 1001, 0, 1 ) );
+        CHECK( t, vfr.admit( 1001, 31, 1 ) );
+
+        // CFR (fps > 0): single camera respects 1000000 / fps pacing.
+        EncodePacer cfr( 1, 25 );
+        CHECK( t, cfr.admit( 100000, 0, 1 ) );
+        CHECK( t, !cfr.admit( 110000, 0, 1 ) );
+        CHECK( t, !cfr.admit( 139999, 0, 1 ) );
+        CHECK( t, cfr.admit( 140000, 0, 1 ) );
     }
 
     void multi_cfr( TestRun& t )
