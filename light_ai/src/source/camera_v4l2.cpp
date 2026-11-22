@@ -23,7 +23,13 @@ namespace
         pollfd pfd {};
         pfd.fd = fd;
         pfd.events = POLLIN;
-        return ::poll( &pfd, 1, timeout_ms );
+        const int pr = ::poll( &pfd, 1, timeout_ms );
+        if ( pr > 0 && ( pfd.revents & ( POLLERR | POLLHUP | POLLNVAL ) ) != 0 )
+        {
+            errno = ( pfd.revents & POLLNVAL ) != 0 ? ENODEV : EIO;
+            return -1;
+        }
+        return pr;
     }
 
     // Returns 0 when a frame is ready to dequeue, or the errno class
@@ -337,15 +343,22 @@ Status CameraV4L2::dequeue( int& index, uint32_t& size, int timeout_ms ) noexcep
     return {};
 }
 
-// Loop until a clean buffer comes out.
+// Loop until a clean buffer comes out, bounded by deadline and attempt limit.
 int CameraV4L2::wait_clean( v4l2_buffer& buf, int timeout_ms )
 {
+    const auto wait_ms = timeout_ms >= 0 ? std::max( timeout_ms, 50 ) : static_cast<int>( kDequeuePollMs );
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds( wait_ms );
+    constexpr int max_attempts = static_cast<int>( kBufCount ) * 4 + 8;
     int rc = 0;
-    do
+    for ( int attempt = 0; attempt < max_attempts; ++attempt )
     {
         rc = dequeue_once( buf, timeout_ms );
-    } while ( rc == kDequeueAgain );
-    return rc;
+        if ( rc != kDequeueAgain )
+            return rc;
+        if ( std::chrono::steady_clock::now() >= deadline )
+            return timeout_ms >= 0 ? EAGAIN : EIO;
+    }
+    return timeout_ms >= 0 ? EAGAIN : EIO;
 }
 
 int CameraV4L2::dequeue_once( v4l2_buffer& buf, int timeout_ms )
@@ -358,7 +371,11 @@ int CameraV4L2::dequeue_once( v4l2_buffer& buf, int timeout_ms )
     if ( const int perr = poll_frame( fd_, timeout_ms, static_cast<int>( kDequeuePollMs ), log_ ); perr != 0 )
         return perr;
     if ( ioctl( fd_, VIDIOC_DQBUF, &buf ) < 0 )
+    {
+        if ( errno == EAGAIN && timeout_ms >= 0 )
+            return EAGAIN;
         return ( errno == EINTR || errno == EAGAIN ) ? kDequeueAgain : errno;
+    }
     if ( !( buf.flags & V4L2_BUF_FLAG_ERROR ) && buf.bytesused > 0 )
         return 0;
     requeue( static_cast<int>( buf.index ) );

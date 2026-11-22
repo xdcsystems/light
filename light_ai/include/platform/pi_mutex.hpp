@@ -138,7 +138,8 @@ public:
         const timespec ts = detail::monotonic_deadline( rel );
         while ( !pred() )
         {
-            if ( ::pthread_cond_timedwait( &cv_, lk.mutex()->native_handle(), &ts ) == ETIMEDOUT )
+            const int rc = ::pthread_cond_timedwait( &cv_, lk.mutex()->native_handle(), &ts );
+            if ( rc != 0 && rc != EINTR )
                 return pred();
         }
         return true;

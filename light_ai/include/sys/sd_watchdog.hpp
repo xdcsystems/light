@@ -54,22 +54,15 @@ public:
 
     bool active() const noexcept { return fd_ >= 0; }
 
-    void notify_ready() noexcept
-    {
-        if ( fd_ < 0 )
-            return;
-        const char msg[] = "READY=1";
-        ::sendto( fd_, msg, sizeof( msg ) - 1, MSG_NOSIGNAL | MSG_DONTWAIT,
-                  reinterpret_cast<const sockaddr*>( &addr_ ), addr_len_ );
-    }
+    void notify_ready() noexcept { send_msg( "READY=1", 7 ); }
+
+    void notify_stopping() noexcept { send_msg( "STOPPING=1", 10 ); }
 
     void ping_now( PerfClock::time_point now ) noexcept
     {
         if ( fd_ < 0 )
             return;
-        const char msg[] = "WATCHDOG=1";
-        ::sendto( fd_, msg, sizeof( msg ) - 1, MSG_NOSIGNAL | MSG_DONTWAIT,
-                  reinterpret_cast<const sockaddr*>( &addr_ ), addr_len_ );
+        send_msg( "WATCHDOG=1", 10 );
         last_ping_ = now;
         pinged_ = true;
     }
@@ -83,6 +76,14 @@ public:
     }
 
 private:
+    void send_msg( const char* msg, std::size_t len ) noexcept
+    {
+        if ( fd_ < 0 )
+            return;
+        ::sendto( fd_, msg, len, MSG_NOSIGNAL | MSG_DONTWAIT,
+                  reinterpret_cast<const sockaddr*>( &addr_ ), addr_len_ );
+    }
+
     int fd_ = -1;
     sockaddr_un addr_ {};
     socklen_t addr_len_ = 0;

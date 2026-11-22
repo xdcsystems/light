@@ -58,10 +58,14 @@ void test_pi_mutex( TestRun& t )
         consumer.join();
         CHECK_EQ( t, sum, 5050 );
 
-        // wait_for timeout check.
+        // wait_for timeout check (including non-positive duration -> immediate ETIMEDOUT/exit).
         std::unique_lock<light_ai::platform::PiMutex> lk( mx );
         const bool pred = cv.wait_for( lk, std::chrono::milliseconds( 2 ), []() { return false; } );
         CHECK( t, !pred );
+        const bool pred_zero = cv.wait_for( lk, std::chrono::milliseconds( 0 ), []() { return false; } );
+        CHECK( t, !pred_zero );
+        const bool pred_true = cv.wait_for( lk, std::chrono::milliseconds( 0 ), []() { return true; } );
+        CHECK( t, pred_true );
     }
 
     // 2. AsyncLogSink multi-producer lock-free logging + Fixed/hex formatting.

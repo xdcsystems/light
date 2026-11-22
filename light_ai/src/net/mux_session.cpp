@@ -91,14 +91,19 @@ void MuxSession::serve() noexcept
         // Session body extracted (tidy: readability-function-size).
         // continue;/break; became return;: each failure path now falls
         // through to serve()'s trailing print + UDP backoff, same as before.
+        const auto session_t0 = std::chrono::steady_clock::now();
         run_session( tcp, tcp_pull, url );
         if ( !quit_.load() )
         {
-            log_.info() << ( tcp_pull ? "enc: viewer gone, waiting for the next one" 
+            const auto session_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - session_t0 ).count();
+            log_.info() << ( tcp_pull ? "enc: viewer gone, waiting for the next one"
                                     : "enc: udp path reset, reopening in 500 ms" ) << "\n";
 
             if ( !tcp_pull )
                 std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
+            if ( tcp_pull && session_ms < 1000 )
+                std::this_thread::sleep_for( std::chrono::milliseconds( 200 ) );
         }
     }
 }

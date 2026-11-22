@@ -90,7 +90,7 @@ void EncodePacer::advance_grid( int64_t ts_us, int64_t step_us ) noexcept
 bool EncodePacer::admit( int64_t ts_us, int queue_depth, uint32_t epoch ) noexcept
 {
     enter( epoch );
-    if ( nsrc_ <= 1 || ts_us < 0 || last_ts_us_ < 0 )
+    if ( ( nsrc_ <= 1 && fps_ <= 0 ) || ts_us < 0 || last_ts_us_ < 0 )
     {
         last_ts_us_ = ts_us;
         return true;

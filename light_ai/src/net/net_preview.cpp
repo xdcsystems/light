@@ -86,7 +86,7 @@ NetPreview::~NetPreview()
 {
     quit_.store( true );
     {
-        const std::lock_guard<std::mutex> lk( tcp_mx_ );
+        const std::lock_guard<light_ai::platform::PiMutex> lk( tcp_mx_ );
         if ( active_tcp_ != nullptr )
             active_tcp_->abort_client();
     }
@@ -102,16 +102,16 @@ void NetPreview::serve() noexcept
     TcpPullServer tcp( port_, 2 * 1024 * 1024, 5 );
     struct TcpReg
     {
-        std::mutex& mx;
+        light_ai::platform::PiMutex& mx;
         TcpPullServer*& slot;
-        TcpReg( std::mutex& m, TcpPullServer*& s, TcpPullServer& t ) : mx( m ), slot( s )
+        TcpReg( light_ai::platform::PiMutex& m, TcpPullServer*& s, TcpPullServer& t ) : mx( m ), slot( s )
         {
-            const std::lock_guard<std::mutex> lk( mx );
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx );
             slot = &t;
         }
         ~TcpReg()
         {
-            const std::lock_guard<std::mutex> lk( mx );
+            const std::lock_guard<light_ai::platform::PiMutex> lk( mx );
             slot = nullptr;
         }
     };
