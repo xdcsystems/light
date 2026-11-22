@@ -70,12 +70,14 @@ case "$MODE" in
         pin_irq 'i2c|spi'      '0-1'
         pin_irq 'xhci-hcd'     '2'
 
-        # Ускорители light_ai -> A76 (4-7)
-        pin_irq 'fb000000\.gpu' '4'
+        # GPU и H.264-энкодер -> A55 (0-3), чтобы разгрузить CPU 4 (pipeline main)
+        pin_irq 'fb000000\.gpu' '0-3'
+        pin_irq 'rkvenc-core'   '0-3'
+
+        # RGA и JPEG -> CPU 4
         pin_irq 'rga3'          '4'
         pin_irq 'rga2'          '4'
         pin_irq 'jpegd'         '4'
-        pin_irq 'rkvenc-core'   '4'
 
         # Три ядра NPU -> отдельные ядра 5, 6, 7
         npu_cores=(5 6 7)
@@ -131,7 +133,7 @@ case "$MODE" in
         echo "vm.stat_interval: $(cat /proc/sys/vm/stat_interval 2>/dev/null || echo n/a)"
         echo "sched_rt_runtime: $(cat /proc/sys/kernel/sched_rt_runtime_us 2>/dev/null || echo n/a)"
         [ -r "$THP_FILE" ] && echo "thp:              $(cat "$THP_FILE")"
-        for irq in $(awk '/fdab0000\.npu|rga3|eth0-0 / {gsub(/:/, "", $1); print $1}' /proc/interrupts); do
+        for irq in $(awk '/fdab0000\.npu|fb000000\.gpu|rga3|rga2|jpegd|rkvenc-core|xhci-hcd|eth0-0$/ {gsub(/:/, "", $1); print $1}' /proc/interrupts); do
             printf "IRQ %-4s -> CPU %s\n" "$irq" "$(cat "/proc/irq/$irq/smp_affinity_list" 2>/dev/null || echo n/a)"
         done
         ;;
