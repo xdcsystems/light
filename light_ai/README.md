@@ -1,7 +1,7 @@
 # `light_ai` — Zero-Copy Video Analytics on RK3588
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](#requirements--platform-constraints)
+[![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](#prerequisites)
 [![Standard: C++17](https://img.shields.io/badge/C%2B%2B-17-orange.svg)](CMakeLists.txt)
 [![Tests: 71 suites / 9617 checks](https://img.shields.io/badge/Unit%20Tests-71%20suites%20%2F%209617%20checks-brightgreen.svg)](#tests)
 
@@ -10,6 +10,7 @@ Zero-copy hardware-accelerated object detection, Kalman tracking, optional OSNet
 ## Table of Contents
 
 - [Live Captures](#live-captures)
+- [Prerequisites](#prerequisites)
 - [Quickstart](#quickstart)
 - [Architecture & Pipeline](#architecture--pipeline)
 - [Modules & Headers](#modules--headers)
@@ -17,7 +18,7 @@ Zero-copy hardware-accelerated object detection, Kalman tracking, optional OSNet
 - [Build & Static Analysis](#build--static-analysis)
 - [Tests](#tests)
 - [Run & CLI Reference](#run--cli-reference)
-- [Requirements & Platform Constraints](#requirements--platform-constraints)
+- [Platform Constraints](#platform-constraints)
 - [Measured Performance](#measured-performance)
 - [Scripts & Tools](#scripts--tools)
 - [Documentation & Licenses](#documentation--licenses)
@@ -35,6 +36,48 @@ Sample output frames captured directly from the encoded H.264 preview stream on 
 | ![Dual source showing NO SIGNAL idle plate on left slot and portrait live person tracking on right slot](docs/images/demo-dual-track.png) | ![Dual source side-by-side landscape USB camera and portrait HTTP MJPEG stream](docs/images/demo-dual-mixed.png) |
 | **Multi-View `2×2` Grid: `NO SIGNAL` Failover (`1280×960`)** | **Multi-View `2×2` Grid: 3 Active Mixed-Aspect Streams (`1280×960`)** |
 | ![Four-tile 2x2 grid showing NO SIGNAL failover on slot 0 and two active portrait person detections](docs/images/demo-grid-nosignal.png) | ![Four-tile 2x2 grid with three live cameras detecting people simultaneously](docs/images/demo-grid-multi.png) |
+
+---
+
+## Prerequisites
+
+### Hardware
+
+- **SoC:** Rockchip RK3588 or RK3588S (`aarch64`: 4× Cortex-A76 + 4× Cortex-A55, 3-core RKNPU2, RGA3/RGA2, MPP, Mali G610).
+- **Memory:** `>= 4 GB` RAM (on `>= 8 GB` boards, DMA allocations use `/dev/dma_heap/system-dma32` because RGA2 cannot map physical addresses above 4 GB).
+- **Storage:** External NVMe or USB SSD for repository checkout, builds, and `clang-tidy` cache (avoids wearing internal eMMC flash).
+- **Video Inputs:** USB V4L2 MJPEG camera and/or HTTP MJPEG streams (up to 4 concurrent sources).
+- **Cooling:** Active heatsink/fan cooling recommended for sustained 24/7 multi-core NPU + GPU + H.264 operation.
+
+### OS, Kernel & Soft-RTOS Runtime
+
+- **OS & Init:** Linux `aarch64` (verified on Debian 11 / Linaro ALIP with `5.10.226-preempt`) and `systemd`.
+- **Kernel Config (24/7 Soft-RTOS):** `CONFIG_PREEMPT=y`, `CONFIG_NO_HZ_FULL=y`, `CONFIG_RCU_NOCB_CPU=y`, `CONFIG_NVME_HWMON=y`.
+- **Kernel `bootargs`:** Clean isolation flags `isolcpus=4-7 nohz_full=4-7 rcu_nocbs=4-7 irqaffinity=0-3` (without `rcupdate.rcu_expedited=1` or `rcu_nocbs=all`).
+- **Permissions & Device Nodes:** Passwordless `sudo -n` (for RT thread pinning, `mlockall`, CPU/NPU/DDR governors, and `isolate_rt.sh`) and read/write access to `/dev/video*`, `/dev/dri/renderD*`, `/dev/dma_heap/system-dma32`, `/dev/rknpu`, and `/dev/cpu_dma_latency`.
+
+### Build & Test Dependencies
+
+- **Host-only tests (`./scripts/test.sh`):**
+  - `cmake >= 3.10`, GCC 10+ or Clang 11+ (C++17), `pthread`, `libanl` (no Rockchip/FFmpeg/EGL SDKs required).
+- **Full RK3588 build (`./scripts/build.sh`):**
+  - `pkg-config`, `rockchip_mpp`, `librga`, `egl`, `glesv2`, `libgbm`.
+  - Self-built shared `ffmpeg-rockchip` `8.1` installed in `/usr/local/lib/pkgconfig` (`FFMPEG_PKGCONF_DIR` defaults to `/usr/local/lib/pkgconfig` so distro FFmpeg 4.x headers never leak in; see [LGPL vs. GPL note](THIRD_PARTY_LICENSES.md#ffmpeg-lgpl-vs-gpl-important-for-binary-redistribution)):
+    ```bash
+    cd ~/work/ffmpeg-rockchip
+    ./configure --prefix=/usr/local --enable-gpl --enable-version3 --enable-rkmpp --enable-rkrga --enable-libdrm --enable-libx264 --enable-libx265 --enable-libvpx --enable-pic --enable-shared --disable-static
+    make -j$(nproc) && sudo make install && sudo ldconfig
+    ```
+  - RKNPU2 `2.5.0` (`rknn_api.h` and `librknnrt.so`, or override via `-DRKNN_ROOT=/path/to/rknpu2`).
+- **Optional (Gate, Benchmarks & Python Tools):**
+  - **2-pass `clang-tidy` gate:** system `clang-tidy-11` + `light_ai/venv` (`clang-tidy==23.1.4`, `clangd==22.1.1`).
+  - **Benchmarks & viewer checks:** `rt-tests` (`cyclictest`), `ffmpeg` / `ffplay`.
+  - **Python diagnostics (`scripts/`, `tools/`):** `./scripts/install_rknn.sh` (`rknn-toolkit-lite2==2.5.0`).
+
+### Models (not in Git)
+
+- `misc/yolov5s_relu_int8_mmse_v5.rknn` *(required; or pass `--model <path>`)*
+- `misc/osnet_x1_0_imagenet.rknn` *(optional, for cross-camera Re-ID)*
 
 ---
 
@@ -312,18 +355,7 @@ All **27 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 
 ---
 
-## Requirements & Platform Constraints
-
-### Dependencies
-
-| Component | Version / Source | Purpose |
-|---|---|---|
-| Hardware / OS | RK3588 (`aarch64` Linux), GCC 10+ / Clang 11+ | Target SoC (Cortex-A76/A55, RKNPU2, RGA3, Mali G610); verified on CoolPi RK3588 / Debian 11 |
-| `rockchip_mpp` | System `pkg-config` | Hardware MJPEG decode & H.264 encode (`h264_rkmpp`) |
-| `librga` | System `pkg-config` | Hardware resize, letterbox, RGB888→NV12, multi-view compose |
-| `rknnrt` | RKNPU2 `2.5.0` (`rknn_api.h`, `librknnrt.so`) | Zero-copy NPU inference |
-| `EGL`, `GLESv2`, `libgbm` | System Mesa / Mali | Zero-copy `dma-buf` → `EGLImage` box & trail rendering |
-| `FFmpeg` (`libav*`) | Self-built `ffmpeg-rockchip` 8.1 (`/usr/local/lib/pkgconfig`) | `h264_rkmpp`, MPEG-TS & NUT muxing *(see [LGPL vs. GPL note](THIRD_PARTY_LICENSES.md#ffmpeg-lgpl-vs-gpl-important-for-binary-redistribution))* |
+## Platform Constraints
 
 ### Verified Hardware & SDK Constraints
 
