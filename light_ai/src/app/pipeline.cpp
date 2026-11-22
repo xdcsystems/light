@@ -268,6 +268,7 @@ Status Pipeline::run()
         perf_.seed_rt_faults( minflt, majflt );
     }
     sources_.reset_stall_clocks( t0_ );
+    watchdog_.notify_ready();
     watchdog_.ping_now( t0_ );
 
     for ( int i = 0; ( cfg_.frames <= 0 || i < cfg_.frames ) && !stop_.requested(); )

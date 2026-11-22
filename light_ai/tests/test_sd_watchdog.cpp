@@ -18,6 +18,7 @@ void test_sd_watchdog( TestRun& t )
     {
         SdWatchdog wd( nullptr );
         CHECK( t, !wd.active() );
+        wd.notify_ready();
         wd.ping_now( PerfClock::now() );
     }
 
@@ -72,6 +73,11 @@ void test_sd_watchdog( TestRun& t )
 
         SdWatchdog wd( abs_name.c_str() );
         CHECK( t, wd.active() );
+        wd.notify_ready();
+        char rbuf[32] {};
+        const ssize_t rn = ::recv( abs_srv, rbuf, sizeof( rbuf ) - 1, 0 );
+        CHECK_EQ( t, rn, static_cast<ssize_t>( 7 ) );
+        CHECK_STR_EQ( t, std::string( rbuf ), "READY=1" );
         wd.ping_now( PerfClock::now() );
 
         char buf[32] {};

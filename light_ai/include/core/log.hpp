@@ -281,6 +281,11 @@ public:
             double scale = 1.0;
             for ( int i = 0; i < p; ++i )
                 scale *= 10.0;
+            if ( v * scale >= 9.0e18 )
+            {
+                append_bytes( "ovf", 3 );
+                return;
+            }
             const unsigned long long scaled = static_cast<unsigned long long>( std::llround( v * scale ) );
             const unsigned long long whole = scaled / static_cast<unsigned long long>( scale );
             const bool saved_hex = hex_;

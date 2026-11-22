@@ -5,7 +5,6 @@
 #pragma once
 
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>

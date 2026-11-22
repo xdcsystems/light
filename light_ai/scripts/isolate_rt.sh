@@ -103,6 +103,12 @@ case "$MODE" in
             done < "$STATE_FILE"
             rm -f "$STATE_FILE"
         fi
+        if [ -r /proc/sys/kernel/sched_rt_runtime_us ] && [ -w /proc/sys/kernel/sched_rt_runtime_us ]; then
+            rt_after="$(cat /proc/sys/kernel/sched_rt_runtime_us)"
+            if [ "${rt_after:-0}" -le 0 ] 2>/dev/null; then
+                echo 950000 > /proc/sys/kernel/sched_rt_runtime_us 2>/dev/null || true
+            fi
+        fi
 
         # Возвращаем все 8 ядер для ОС и сборок (разводку IRQ оставляем — она полезна всегда)
         for u in init.scope system.slice user.slice; do

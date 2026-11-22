@@ -54,6 +54,15 @@ public:
 
     bool active() const noexcept { return fd_ >= 0; }
 
+    void notify_ready() noexcept
+    {
+        if ( fd_ < 0 )
+            return;
+        const char msg[] = "READY=1";
+        ::sendto( fd_, msg, sizeof( msg ) - 1, MSG_NOSIGNAL | MSG_DONTWAIT,
+                  reinterpret_cast<const sockaddr*>( &addr_ ), addr_len_ );
+    }
+
     void ping_now( PerfClock::time_point now ) noexcept
     {
         if ( fd_ < 0 )
