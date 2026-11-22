@@ -33,7 +33,6 @@
 #include <cstdint>
 #include <ios>
 #include <stdexcept>
-#include <thread>
 #include <vector>
 
 #include "core/throw_on.hpp"
@@ -44,6 +43,7 @@
 #include "npu/infer_slot.hpp"
 #include "core/pod_ring.hpp"
 #include "core/timings.hpp"  // Timings::clk, ms()
+#include "platform/joining_thread.hpp"
 
 struct PoolOptions
 {
@@ -117,13 +117,19 @@ public:
     // A Free slot whose tensor the caller may fill, or -1. A slot can be
     // missing although the FIFO is not full: an abandoned one stays in
     // flight until its own worker finishes (InferSlot).
-    int try_acquire() const
+    int try_acquire( uint32_t avoid_mask = 0 ) const
     {
-        const auto end = slots_.begin() + n_;
-        const auto it = std::find_if( slots_.begin(), end, []( const InferSlot& s ) {
-            return s.state() == InferSlot::State::Free;
-        } );
-        return it != end ? static_cast<int>( it - slots_.begin() ) : -1;
+        int fallback = -1;
+        for ( int i = 0; i < n_; ++i )
+        {
+            if ( slots_[static_cast<size_t>( i )].state() != InferSlot::State::Free )
+                continue;
+            if ( ( avoid_mask & ( 1u << static_cast<unsigned>( i ) ) ) == 0 )
+                return i;
+            if ( fallback < 0 )
+                fallback = i;
+        }
+        return fallback;
     }
 
     // Queues the frame whose pixels are already in tensor(k). false: the
@@ -216,7 +222,7 @@ private:
         try
         {
             for ( int k = 0; k < n_; ++k )
-                workers_[static_cast<size_t>( k )] = std::thread( &InferencePool::worker_loop, this, k );
+                workers_[static_cast<size_t>( k )].start( &InferencePool::worker_loop, this, k );
         }
         catch ( ... )  // NOLINT(custom-no-catch-all): startup, a failed std::thread start; cleans up, then rethrows
         {
@@ -232,16 +238,14 @@ private:
         for ( auto& slot : slots_ )
             slot.close();
         for ( auto& w : workers_ )
-        {
-            if ( w.joinable() )
-                w.join();
-        }
+            w.join();
     }
 
     void worker_loop( int k ) noexcept
     {
+        prefault_current_thread_stack();
         if ( opts_.pin_workers )
-            pin_current_thread_to_big_cores( "npu worker", log_ );
+            pin_current_thread_rt( "npu worker", 5 + ( k % 3 ), 70, log_ );
         const std::size_t i = static_cast<std::size_t>( k );
         const Engine& eng = engines_[i];
         Decode& dec = decoders_[i];
@@ -279,5 +283,5 @@ private:
     std::vector<Engine> engines_;
     std::array<InferSlot, kMaxSlots> slots_ {};
     PodRing<int, kMaxSlots> fifo_ {};  // slot indices in submit order; pipeline thread only
-    std::array<std::thread, kMaxSlots> workers_ {};  // last: joined before everything above dies
+    std::array<JoiningThread, kMaxSlots> workers_ {};  // last: joined before everything above dies
 };

@@ -65,6 +65,7 @@ private:
     };
 
     void advance_watch_cursor() noexcept;
+    void consume_burst_round() noexcept;
     Result apply_choice( int best_idx, float best_sc, float second_sc, bool lock_now ) noexcept;
 
 private:

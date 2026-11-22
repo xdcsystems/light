@@ -53,6 +53,23 @@ struct TilePlacement
 // The band is scaled into its cell with band_geom() unless it already fits exactly.
 TilePlacement place_tile( const StreamLayout& layout, const LbGeom& band, int src_idx );
 
+// Scene -> overlay target projection for one frame:
+//   tiled == true  (H.264 stream): tp.dst inside the StreamLayout canvas (1:1 stream px);
+//   tiled == false (raw NUT preview): frame_lb inside the NPU tensor (1:1 tensor px).
+struct OverlayTarget
+{
+    LbGeom band {};
+    float sx = 0.0f;
+    float sy = 0.0f;
+};
+
+OverlayTarget make_overlay_target( const StreamLayout& layout,
+                                   bool tiled,
+                                   const LbGeom& frame_lb,
+                                   int src_idx,
+                                   int src_w,
+                                   int src_h ) noexcept;
+
 // The NO SIGNAL mask of an idle publish: tile s is absent when absent[s] is
 // set; absent == nullptr or s >= nabs counts as absent too.
 bool tile_absent( const bool* absent, int nabs, int s );
@@ -61,8 +78,8 @@ struct EncoderConfig
 {
     bool vfr() const { return fps <= 0; }  // --net-fps 0: follow the source, pts from publish times
     // Rate-control fps: VFR still needs a number (0/1 reaches MPP as the auto marker and the
-    // CBR per-frame budget collapses): nominal 25, 25 per source in multi-view.
-    int nominal_fps() const { return vfr() ? ( layout.nsrc > 1 ? 25 * layout.nsrc : 25 ) : fps; }
+    // CBR per-frame budget collapses): nominal 25 (multi-view paces to the slowest source, <= 30 fps).
+    int nominal_fps() const { return vfr() ? 25 : fps; }
     int gop() const { return vfr() ? nominal_fps() : fps; }  // 1 s: a late joiner waits at most one GOP
     // The bitrate the encoder and the stream header use: bitrate_kbps <= 0
     // (not validated by the caller) falls back to 12000 kbps, never 0 to MPP.

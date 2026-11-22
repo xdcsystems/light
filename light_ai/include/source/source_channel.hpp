@@ -41,7 +41,7 @@ class BasicSourceChannel
 
     enum
     {
-        kWarmupFrames = 3,  // valid decodes discarded after a hot attach (mid-stream start)
+        kWarmupFrames = 3,  // valid decodes discarded after a hot attach or V4L2 cold start (AE settling)
         kDecErrMax = 4,     // consecutive decoder failures before detaching
     };
 
@@ -96,7 +96,7 @@ public:
     }
 
     // The one attach path (startup, hot attach, re-attach), attaching thread only,
-    // never while Live. hot: false = the Pipeline ctor (startup log texts, no warm-up).
+    // never while Live. hot: false = the Pipeline ctor (startup log texts; V4L2 still warms up).
     // why: the reason when the result is not Live (ok when Live).
     template <class Locator>
     Attach attach( const NodeList& busy, Locator& loc, bool hot, Status& why ) noexcept
@@ -115,7 +115,7 @@ public:
             src_.teardown();
             return a;
         }
-        warmup_left_ = hot ? kWarmupFrames : 0;
+        warmup_left_ = ( hot || kind_ == SourceKind::V4L2 ) ? kWarmupFrames : 0;
         dec_err_streak_ = 0;
         exif_rot_.store( -1, std::memory_order_relaxed );
         attach_seq_.fetch_add( 1u, std::memory_order_relaxed );
@@ -146,11 +146,13 @@ public:
         out.src = idx_;
         out.buf = -1;
         out.size = 0;
+        out.cap_us = -1;
         out.st = src_.dequeue( out.buf, out.size, wait_ms );
         switch ( out.st.code() )
         {
             case Errc::Ok:
                 last_ok_.store( clk::now() );
+                out.cap_us = src_.last_cap_us();
                 skip_parts_ = src_.skip_parts_cnt();
                 return FrameStatus::Frame;
             case Errc::Timeout:
@@ -168,8 +170,8 @@ public:
     //   empty packet -- a dying/reconnecting camera hands out bytesused == 0; MPP
     //                   "decodes" it into a stale buffer, so it is never decoded;
     //   decode error -- does not consume the warm-up;
-    //   warm-up      -- the first valid decodes after a hot attach may be partial
-    //                   (mid-stream start): decoded, then discarded.
+    //   warm-up      -- the first valid decodes after a hot attach (mid-stream start)
+    //                   or V4L2 cold start (AE settling after STREAMON): decoded, then discarded.
     int decode( const EncodedFrame& f, Status* err = nullptr ) noexcept
     {
         int fd = -1;

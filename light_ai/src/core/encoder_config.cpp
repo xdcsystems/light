@@ -61,6 +61,23 @@ TilePlacement place_tile( const StreamLayout& layout, const LbGeom& band, int sr
     return p;
 }
 
+OverlayTarget make_overlay_target( const StreamLayout& layout,
+                                   bool tiled,
+                                   const LbGeom& frame_lb,
+                                   int src_idx,
+                                   int src_w,
+                                   int src_h ) noexcept
+{
+    OverlayTarget out {};
+    out.band = tiled ? place_tile( layout, frame_lb, src_idx ).dst : frame_lb;
+    if ( src_w > 0 && src_h > 0 )
+    {
+        out.sx = static_cast<float>( out.band.w ) / static_cast<float>( src_w );
+        out.sy = static_cast<float>( out.band.h ) / static_cast<float>( src_h );
+    }
+    return out;
+}
+
 bool tile_absent( const bool* absent, int nabs, int s )
 {
     return absent == nullptr || s >= nabs || absent[s];

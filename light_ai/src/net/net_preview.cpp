@@ -15,18 +15,21 @@ extern "C"
 #include "core/log.hpp"
 #include "net/muxer_teardown.hpp"
 #include "net/net_preview.hpp"
-#include "net/tcp_pull_server.hpp"
+#include "net/tcp_avio.hpp"
+#include "platform/tcp_pull_server.hpp"
 
 namespace
 {
     struct NutSessionGuard
     {
         TcpPullServer& tcp;
+        TcpAvio avio;
         AVFormatContext* fc = nullptr;
 
         ~NutSessionGuard()
         {
             teardown_muxer( fc );  // shared with NetEncoder::FcGuard
+            avio.close();
             tcp.close_client();
         }
         explicit NutSessionGuard( TcpPullServer& s ) : tcp( s ) {}
@@ -69,7 +72,7 @@ NetPreview::NetPreview( int w, int h, int stride, int fps, int port, const Log& 
     }
     try
     {
-        thread_ = std::thread( &NetPreview::serve, this );
+        thread_.start( &NetPreview::serve, this );
     }
     catch ( ... )  // NOLINT(custom-no-catch-all): startup (ctor), a failed std::thread start; frees, then rethrows
     {
@@ -88,8 +91,7 @@ NetPreview::~NetPreview()
             active_tcp_->abort_client();
     }
     ring_.stop();
-    if ( thread_.joinable() )
-        thread_.join();
+    thread_.join();
     if ( pkt_ )
         av_packet_free( &pkt_ );
     avformat_network_deinit();
@@ -127,7 +129,7 @@ void NetPreview::serve() noexcept
 
         NutSessionGuard s( tcp );
         AVStream* st = nullptr;
-        if ( const Status ost = open_session( tcp, s.fc, st ); !ost.ok() )
+        if ( const Status ost = open_session( tcp, s.avio, s.fc, st ); !ost.ok() )
         {
             log_.error() << "net: " << ost << '\n';
             continue;
@@ -139,11 +141,11 @@ void NetPreview::serve() noexcept
     }
 }
 
-Status NetPreview::open_session( TcpPullServer& tcp, AVFormatContext*& fc, AVStream*& st )
+Status NetPreview::open_session( TcpPullServer& tcp, TcpAvio& avio, AVFormatContext*& fc, AVStream*& st )
 {
     if ( const int r = avformat_alloc_output_context2( &fc, nullptr, "nut", nullptr ); r < 0 || !fc )
         return sdk_status( Errc::Failed, "avformat_alloc_output_context2 failed", r );
-    if ( Status ast = tcp.attach_avio( fc ); !ast.ok() )
+    if ( Status ast = avio.attach_avio( tcp, fc ); !ast.ok() )
         return ast;
 
     st = avformat_new_stream( fc, nullptr );

@@ -70,7 +70,7 @@ namespace box_filter
     // OverlaySink, person boxes from the Kalman posterior, already smooth in
     // position: a higher still cutoff and speed gain than the raw boxes keep the box
     // on a walking person (the dead zone still holds a standing one still).
-    constexpr BoxFilterParams kTrackBoxParams { 1.0f, 0.05f, 1.0f, 0.01f, 2.0f, 0.5f };
+    constexpr BoxFilterParams kTrackBoxParams { 2.5f, 0.15f, 4.0f, 0.008f, 1.5f, 0.5f };
 
     // One axis of the One-Euro filter.
     struct Axis

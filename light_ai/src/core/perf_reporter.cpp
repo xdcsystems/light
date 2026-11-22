@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 
 #include "core/fixed_fmt.hpp"
 #include "core/perf_reporter.hpp"
@@ -75,4 +76,53 @@ void PerfReporter::log_enc_line( const EncPerfWindow* ep, const OverlayPerfWindo
     line << "ovl gpu_max=" << Fixed { op.gpu_draw_ms_max, 1 }
          << " sync_max=" << Fixed { op.sync_cpu_ms_max, 1 }
          << " ftmo=" << op.fence_tmo_cnt << '\n';
+}
+
+void PerfReporter::seed_rt_faults( uint64_t minflt, uint64_t majflt ) noexcept
+{
+    prev_minflt_ = minflt;
+    prev_majflt_ = majflt;
+    win_minflt_ = 0;
+    win_majflt_ = 0;
+    faults_seeded_ = true;
+}
+
+void PerfReporter::note_rt_faults( uint64_t minflt, uint64_t majflt ) noexcept
+{
+    if ( !faults_seeded_ )
+    {
+        seed_rt_faults( minflt, majflt );
+        return;
+    }
+    win_minflt_ += minflt >= prev_minflt_ ? ( minflt - prev_minflt_ ) : 0U;
+    win_majflt_ += majflt >= prev_majflt_ ? ( majflt - prev_majflt_ ) : 0U;
+    prev_minflt_ = minflt;
+    prev_majflt_ = majflt;
+}
+
+void PerfReporter::record_rt_step( double step_ms ) noexcept
+{
+    step_samples_[step_sample_cnt_ % kMaxStepSamples] = step_ms;
+    ++step_sample_cnt_;
+    if ( deadline_ms_ > 0.0 && step_ms > deadline_ms_ )
+        ++deadline_miss_cnt_;
+}
+
+void PerfReporter::log_rt_line() noexcept
+{
+    const std::size_t n = std::min( step_sample_cnt_, static_cast<std::size_t>( kMaxStepSamples ) );
+    double p99 = 0.0;
+    if ( n > 0 )
+    {
+        const std::size_t idx = ( n * 99U ) / 100U;
+        std::nth_element( step_samples_.begin(), step_samples_.begin() + static_cast<std::ptrdiff_t>( idx ),
+                          step_samples_.begin() + static_cast<std::ptrdiff_t>( n ) );
+        p99 = step_samples_[idx];
+    }
+    log_.info() << "[perf] rt step_p99=" << Fixed { p99, 1 } << " deadline_miss=" << deadline_miss_cnt_
+                << " minflt=" << win_minflt_ << " majflt=" << win_majflt_ << '\n';
+    step_sample_cnt_ = 0;
+    deadline_miss_cnt_ = 0;
+    win_minflt_ = 0;
+    win_majflt_ = 0;
 }

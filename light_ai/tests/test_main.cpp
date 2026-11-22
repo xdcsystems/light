@@ -24,6 +24,7 @@ int main( int argc, char** argv )
         { "byte_window", &test_byte_window },
         { "status", &test_status },
         { "stop_flag", &test_stop_flag },
+        { "joining_thread", &test_joining_thread },
         { "tcp_retry", &test_tcp_retry },
         { "tcp_send", &test_tcp_send },
         { "yolo_head_shape", &test_yolo_head_shape },
@@ -76,6 +77,8 @@ int main( int argc, char** argv )
         { "infer_slot_threads", &test_infer_slot_threads },
         { "global_track", &test_global_track },
         { "reid_worker_tsan", &test_reid_worker_tsan },
+        { "pi_mutex", &test_pi_mutex },
+        { "sd_watchdog", &test_sd_watchdog },
     };
     return run_suites( "light_ai_tests", suites, argc, argv, std::cout, std::cerr );
 }

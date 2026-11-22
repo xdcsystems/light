@@ -2,10 +2,11 @@
 #include <exception>
 #include <iostream>
 
+#include "app/pipeline.hpp"
 #include "config/cli.hpp"  // CliOptions: argv + config-file reading/validation
 #include "core/log.hpp"
 #include "core/stop_flag.hpp"
-#include "app/pipeline.hpp"
+#include "platform/log_sink.hpp"
 #include "sys/process_env.hpp"
 #include "sys/signal_waiter.hpp"
 
@@ -54,11 +55,12 @@ int main( int argc, char** argv )
             break;
     }
 
-    const Log log( std::cout, std::cerr, cli.config().log_level );
+    const ProcessEnv env;
+    light_ai::platform::AsyncLogSink async_sink( std::cout, std::cerr );
+    const Log log( async_sink.sink_fn(), cli.config().log_level );
 
     try
     {
-        const ProcessEnv env;
         StopFlag stop;
         SignalWaiter waiter( env, stop );
         Pipeline p( cli.config(), stop, log );

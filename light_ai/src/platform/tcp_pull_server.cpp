@@ -1,60 +1,59 @@
 #include <arpa/inet.h>
 #include <cerrno>
-#include <chrono>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <unistd.h>
 
-extern "C"
-{
-#include <libavformat/avformat.h>
-#include <libavformat/avio.h>
-#include <libavutil/error.h>
-#include <libavutil/mem.h>
-}
-
-#include "net/tcp_pull_server.hpp"
+#include "platform/tcp_pull_server.hpp"
 
 namespace
 {
     enum
     {
-        kIoBufBytes = 32768,
         kPollMs = 200
     };
 
-    // The AVIO write callback: the POSIX drain loop is tcp_send_chunk()
-    // (src/net/tcp_send.cpp, host-tested); its negative codes are -errno, which
-    // is exactly FFmpeg's AVERROR() on POSIX, except the peer-EOF marker.
-    // NOLINTNEXTLINE(misc-redundant-expression): intentional drift guard - AVERROR(e) expands to -(e) on POSIX
-    static_assert( AVERROR( EPIPE ) == -EPIPE && AVERROR( ETIMEDOUT ) == -ETIMEDOUT && AVERROR( EIO ) == -EIO,
-                   "AVERROR is not -errno on this platform" );
-    // NOLINTNEXTLINE(misc-const-correctness): avio_alloc_context fixes the callback type, opaque is void*
-    int write_packet( void* opaque, const uint8_t* buf, int buf_size )
-    {
-        const int r = tcp_send_chunk( *static_cast<const TcpPullServer::WriteCtx*>( opaque ), buf, buf_size );
-        return r == kTcpSendEof ? AVERROR_EOF : r;
-    }
-
-    void configure_client_socket( int cfd, int sndbuf_bytes, int sndtimeo_sec ) noexcept
+    void configure_client_socket( int cfd, int sndbuf_bytes ) noexcept
     {
         int one = 1;
         ::setsockopt( cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof( one ) );
         if ( sndbuf_bytes > 0 )
             ::setsockopt( cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf_bytes, sizeof( sndbuf_bytes ) );
-        if ( sndtimeo_sec > 0 )
+#ifdef TCP_NOTSENT_LOWAT
+        int lowat = 16384;
+        ::setsockopt( cfd, IPPROTO_TCP, TCP_NOTSENT_LOWAT, &lowat, sizeof( lowat ) );
+#endif
+    }
+
+    // Returns 1 if lfd is ready for accept(), 0 on poll timeout/EINTR, -1 on error (err set).
+    int poll_listener_ready( int lfd, Status& err )
+    {
+        pollfd pf {};
+        pf.fd = lfd;
+        pf.events = POLLIN;
+        const int pr = ::poll( &pf, 1, kPollMs );
+        if ( pr < 0 )
         {
-            const timeval tv { sndtimeo_sec, 0 };
-            ::setsockopt( cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof( tv ) );
+            if ( errno == EINTR )
+                return 0;
+            err = errno_status( Errc::Failed, "poll", errno );
+            return -1;
         }
+        if ( pr == 0 )
+            return 0;
+        if ( ( pf.revents & ( POLLERR | POLLHUP | POLLNVAL ) ) != 0 )
+        {
+            err = make_status( Errc::Failed, "listener error (poll revents)" );
+            return -1;
+        }
+        return 1;
     }
 }  // namespace
 
 TcpPullServer::TcpPullServer( int port, int sndbuf_bytes, int sndtimeo_sec )
-  : port_( port ), sndbuf_bytes_( sndbuf_bytes ), sndtimeo_sec_( sndtimeo_sec ), write_ctx_( sndtimeo_sec )
+  : port_( port ), sndbuf_bytes_( sndbuf_bytes ), write_ctx_( sndtimeo_sec )
 {}
 
 TcpPullServer::~TcpPullServer()
@@ -96,23 +95,15 @@ Status TcpPullServer::accept_client( const std::atomic<bool>& quit )
     if ( lfd_ < 0 )
         return make_status( Errc::Invalid, "no listener" );
 
-    pollfd pf {};
-    pf.fd = lfd_;
-    pf.events = POLLIN;
     while ( !quit.load() )
     {
-        const int pr = ::poll( &pf, 1, kPollMs );
-        if ( pr < 0 )
-        {
-            if ( errno == EINTR )
-                continue;
-            return errno_status( Errc::Failed, "poll", errno );
-        }
-        if ( pr == 0 )
+        Status err;
+        const int ready = poll_listener_ready( lfd_, err );
+        if ( ready < 0 )
+            return err;
+        if ( ready == 0 )
             continue;
-        if ( ( pf.revents & ( POLLERR | POLLHUP | POLLNVAL ) ) != 0 )
-            return make_status( Errc::Failed, "listener error (poll revents)" );
-        const int cfd = ::accept4( lfd_, nullptr, nullptr, SOCK_CLOEXEC );
+        const int cfd = ::accept4( lfd_, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC );
         if ( cfd >= 0 )
         {
             if ( !adopt_client( cfd ) )
@@ -124,9 +115,12 @@ Status TcpPullServer::accept_client( const std::atomic<bool>& quit )
     }
     const int cfd = write_ctx_.cfd.load( std::memory_order_acquire );
     if ( quit.load() || cfd < 0 )
+    {
+        close_client();
         return make_status( Errc::Timeout, "no viewer" );
+    }
 
-    configure_client_socket( cfd, sndbuf_bytes_, sndtimeo_sec_ );
+    configure_client_socket( cfd, sndbuf_bytes_ );
     return {};
 }
 
@@ -142,34 +136,8 @@ bool TcpPullServer::adopt_client( int cfd ) noexcept
     return true;
 }
 
-Status TcpPullServer::attach_avio( AVFormatContext* fc )
-{
-    if ( write_ctx_.cfd.load( std::memory_order_acquire ) < 0 || !fc )
-        return make_status( Errc::Invalid, "no client" );
-    iobuf_ = static_cast<uint8_t*>( av_malloc( kIoBufBytes ) );
-    if ( !iobuf_ )
-        return make_status( Errc::NoMemory, "avio buffer alloc failed" );
-    pb_ = avio_alloc_context( iobuf_, kIoBufBytes, 1, &write_ctx_, nullptr, write_packet, nullptr );
-    if ( !pb_ )
-    {
-        av_freep( &iobuf_ );
-        return make_status( Errc::NoMemory, "avio_alloc_context failed" );
-    }
-    fc->pb = pb_;
-    fc->flags |= AVFMT_FLAG_CUSTOM_IO;
-    return {};
-}
-
 void TcpPullServer::close_client() noexcept
 {
-    if ( pb_ )
-    {
-        av_freep( &pb_->buffer );
-        avio_context_free( &pb_ );
-        iobuf_ = nullptr;  // the context owned it (or its replacement): freed above
-    }
-    if ( iobuf_ )  // allocated, but no context took it over
-        av_freep( &iobuf_ );
     int fd = -1;
     {
         const std::lock_guard<std::mutex> lk( cfd_mx_ );

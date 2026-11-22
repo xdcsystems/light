@@ -130,7 +130,7 @@ namespace
         c.fps = 0;  // follow the source: nominal 25 for rate control, GOP 1 s of it
         CHECK( t, c.vfr() && c.nominal_fps() == 25 && c.gop() == 25 );
         c.layout = make_stream_layout( 640, 640, kBand43, 3 );
-        CHECK( t, c.nominal_fps() == 75 && c.gop() == 75 );
+        CHECK( t, c.nominal_fps() == 25 && c.gop() == 25 );
         c.fps = 25;
         CHECK( t, c.nominal_fps() == 25 && c.gop() == 25 );
         // Bitrate: as configured, and 12000 kbps for an unset / invalid value (never 0 to MPP).
@@ -140,6 +140,48 @@ namespace
         CHECK( t, c.kbps() == 12000 && c.bit_rate() == 12000000 );
         c.bitrate_kbps = -5;
         CHECK( t, c.kbps() == 12000 );
+    }
+
+    void overlay_target( TestRun& t )
+    {
+        // Multi-view 2x1: s0 is 4:3 (640x480), s1 is portrait phone (720x1280 -> 360x640 tensor -> 270x480 tile at x=824).
+        const StreamLayout l2 = make_stream_layout( 640, 640, kBand43, 2 );
+        const OverlayTarget t0 = make_overlay_target( l2, true, kBand43, 0, 640, 480 );
+        CHECK( t, same( t0.band, 0, 640, 0, 480 ) );
+        CHECK_NEAR( t, t0.sx, 1.0f, 1e-6f );
+        CHECK_NEAR( t, t0.sy, 1.0f, 1e-6f );
+
+        const LbGeom portrait { 140, 360, 0, 640 };
+        const OverlayTarget t1 = make_overlay_target( l2, true, portrait, 1, 720, 1280 );
+        CHECK( t, same( t1.band, 824, 270, 0, 480 ) );
+        CHECK_NEAR( t, t1.sx, 270.0f / 720.0f, 1e-6f );
+        CHECK_NEAR( t, t1.sy, 480.0f / 1280.0f, 1e-6f );
+
+        // Multi-view 2x2: cell 2 (bottom-left portrait) and cell 3 (bottom-right 4:3).
+        const StreamLayout l4 = make_stream_layout( 640, 640, kBand43, 4 );
+        const OverlayTarget t2 = make_overlay_target( l4, true, portrait, 2, 720, 1280 );
+        CHECK( t, same( t2.band, 184, 270, 480, 480 ) );
+        const OverlayTarget t3 = make_overlay_target( l4, true, kBand43, 3, 1280, 960 );
+        CHECK( t, same( t3.band, 640, 640, 480, 480 ) );
+        CHECK_NEAR( t, t3.sx, 0.5f, 1e-6f );
+        CHECK_NEAR( t, t3.sy, 0.5f, 1e-6f );
+
+        // Single-view portrait: canvas is 368x640, band is 360x640 at (0, 0).
+        const StreamLayout lp = make_stream_layout( 640, 640, portrait, 1 );
+        const OverlayTarget tp = make_overlay_target( lp, true, portrait, 0, 720, 1280 );
+        CHECK( t, same( tp.band, 0, 360, 0, 640 ) );
+        CHECK_NEAR( t, tp.sx, 0.5f, 1e-6f );
+        CHECK_NEAR( t, tp.sy, 0.5f, 1e-6f );
+
+        // Raw NUT preview (tiled = false): maps straight into frame_lb in tensor pixels.
+        const OverlayTarget tn = make_overlay_target( l2, false, portrait, 1, 720, 1280 );
+        CHECK( t, same( tn.band, 140, 360, 0, 640 ) );
+        CHECK_NEAR( t, tn.sx, 0.5f, 1e-6f );
+        CHECK_NEAR( t, tn.sy, 0.5f, 1e-6f );
+
+        // Degenerate source dimensions produce zero scales without NaN/Inf.
+        const OverlayTarget bad = make_overlay_target( l2, true, kBand43, 0, 0, 480 );
+        CHECK( t, bad.sx == 0.0f && bad.sy == 0.0f );
     }
 }  // namespace
 
@@ -152,4 +194,5 @@ void test_encoder_config( TestRun& t )
     placement_multi( t );
     absent_mask( t );
     rates( t );
+    overlay_target( t );
 }

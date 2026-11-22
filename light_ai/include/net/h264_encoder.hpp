@@ -3,7 +3,7 @@
 // (the dma-buf frames of EncoderFramePool: no CPU pixel copies).
 //
 // encode() sends one frame and queues every packet the codec returns. It
-// runs under SessionGate::run() and owns the per-session encoder state:
+// runs under NetSessionGate::run() and owns the per-session encoder state:
 // on the first encode of a new session epoch it restarts the pts clock
 // with the session's frame_step and arms the forced IDR (every session,
 // TCP or UDP, starts with an IDR). A full rkmpp input queue drops the frame
@@ -51,10 +51,10 @@ public:
     H264Encoder( const H264Encoder& ) = delete;
     H264Encoder& operator=( const H264Encoder& ) = delete;
 
-    // One frame of session `s` (call under SessionGate::run()). ts_us: the
+    // One frame of session `s` (call under NetSessionGate::run()). ts_us: the
     // publish time (VFR pts), < 0 = none. false = a codec error: the caller
     // fails the session.
-    Status encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session& s, PacketQueue& queue );
+    Status encode( AVFrame* fr, int64_t ts_us, const NetSessionGate::Session& s, PacketQueue& queue );
 
     uint64_t eagain_cnt() const noexcept { return eagain_cnt_; }
     uint64_t q_flush_cnt() const noexcept { return q_flush_cnt_; }

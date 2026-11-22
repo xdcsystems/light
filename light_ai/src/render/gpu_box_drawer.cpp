@@ -11,6 +11,7 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -40,6 +41,12 @@ constexpr EGLTimeKHR kFenceWaitNs = 100ull * 1000 * 1000;
 
 namespace
 {
+    struct EglUnbind
+    {
+        EGLDisplay dpy;
+        ~EglUnbind() { eglMakeCurrent( dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT ); }
+    };
+
     bool has( const char *exts, const char *name ) { return exts && strstr( exts, name ) != nullptr; }
 
     // Per-vertex color (normalized ubyte attribute) instead of the per-box
@@ -136,16 +143,22 @@ namespace
             const GpuBox& b = boxes[i];
             if ( b.x1 - b.x0 < 1.0f || b.y1 - b.y0 < 1.0f )
                 continue;
-            emit_quad( qt, b.x0, b.y0, b.x1, b.y0 + t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
-            emit_quad( qt, b.x0, b.y1 - t, b.x1, b.y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            const float x0 = std::floor( b.x0 );
+            const float y0 = std::floor( b.y0 );
+            const float x1 = std::ceil( b.x1 );
+            const float y1 = std::ceil( b.y1 );
+            emit_quad( qt, x0, y0, x1, y0 + t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            if ( y1 - y0 > t )
+                emit_quad( qt, x0, y1 - t, x1, y1, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
             // Vertical bars stop short of the horizontal ones: each corner
             // pixel is blended once (M-10). Porter-Duff over is not
             // idempotent for a < 255 -- the semi-transparent trail dots had
             // bright double corners unlike draw_boxes_cpu.
-            if ( b.y1 - t <= b.y0 + t )
-                continue;  // 2 px tall: the two horizontal bars cover it
-            emit_quad( qt, b.x0, b.y0 + t, b.x0 + t, b.y1 - t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
-            emit_quad( qt, b.x1 - t, b.y0 + t, b.x1, b.y1 - t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            if ( y1 - t <= y0 + t )
+                continue;  // <= 2 px tall: horizontal bar(s) cover it
+            emit_quad( qt, x0, y0 + t, x0 + t, y1 - t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
+            if ( x1 - x0 > t )
+                emit_quad( qt, x1 - t, y0 + t, x1, y1 - t, qt.solid_u, qt.solid_v, qt.solid_u, qt.solid_v, b.r, b.g, b.b, b.a );
         }
     }
 
@@ -155,20 +168,22 @@ namespace
     void append_text_pass( QuadTarget& qt, const CalloutItem& c, uint8_t gray, uint8_t a ) noexcept
     {
         const float sc = c.scale;
-        glyph_font::for_each_glyph( c.text, c.text_bytes, static_cast<float>( c.text_x ), static_cast<float>( c.text_y ), sc,
-                                    [&qt, sc, gray, a]( int gi, const glyph_font::GlyphMetric& m, float gx, float gy ) {
-                                        float u0 = 0.0f;
-                                        float v0 = 0.0f;
-                                        float u1 = 0.0f;
-                                        float v1 = 0.0f;
-                                        glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
-                                        emit_quad( qt, gx, gy, gx + static_cast<float>( m.w ) * sc, gy + static_cast<float>( m.h ) * sc,
-                                                   u0, v0, u1, v1, gray, gray, gray, a );
-                                    } );
+        glyph_font::for_each_glyph(
+            c.text, c.text_bytes, static_cast<float>( c.text_x ), static_cast<float>( c.text_y ), sc,
+            [&qt, sc, gray, a]( int gi, const glyph_font::GlyphMetric& m, float gx, float gy ) {
+                float u0 = 0.0f;
+                float v0 = 0.0f;
+                float u1 = 0.0f;
+                float v1 = 0.0f;
+                glyph_font::glyph_uv( gi, u0, v0, u1, v1 );
+                emit_quad( qt, gx, gy, gx + static_cast<float>( m.w ) * sc, gy + static_cast<float>( m.h ) * sc,
+                           u0, v0, u1, v1, gray, gray, gray, a );
+            },
+            true );
     }
 
     // Connector, then the text: the baked dark outline (alpha 0 selects the A plane, #108),
-    // then the white fill over it (alpha 255 selects L).
+    // then the white fill over it (alpha 255 selects L) -- all in one GPU draw call.
     void append_callout_quads( QuadTarget& qt, const CalloutItem& c ) noexcept
     {
         for ( int s = 0; s < c.n_segs; ++s )
@@ -325,6 +340,7 @@ Status GpuBoxDrawer::init()
     }
     create_atlas();
     create_buffers();
+    eglMakeCurrent( st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );
     ready_ = true;
     return {};
 }
@@ -525,6 +541,7 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     if ( si.img != EGL_NO_IMAGE_KHR )
         return {};  // idempotent: the pool attaches each slot once
     make_current();
+    const EglUnbind unbind { st_.dpy };
 
     EGLint iattr[] = { 
         EGL_WIDTH,
@@ -710,6 +727,13 @@ void GpuBoxDrawer::release_slot( int slot )
     if ( si.img != EGL_NO_IMAGE_KHR && st_.destroy_image )
         st_.destroy_image( st_.dpy, si.img );
     si = {};
+}
+
+void GpuBoxDrawer::release_context() const noexcept
+{
+    if ( st_.dpy != EGL_NO_DISPLAY )
+        eglMakeCurrent( st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );
+    eglReleaseThread();
 }
 
 void GpuBoxDrawer::done()

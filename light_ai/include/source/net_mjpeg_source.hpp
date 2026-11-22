@@ -7,7 +7,7 @@
 
 #include "core/multipart_reader.hpp"
 #include "core/status.hpp"
-#include "source/buffered_socket.hpp"
+#include "platform/buffered_socket.hpp"
 #include "source/mjpeg_slot_pool.hpp"
 
 class Log;
@@ -18,7 +18,7 @@ class Log;
 // per frame (socket -> slot); V4L2 gives zero-copy via dma-buf.
 //
 // Built from independent parts: the TCP client + receive window
-// (source/buffered_socket.hpp), the HTTP head and multipart framing as pure
+// (platform/buffered_socket.hpp), the HTTP head and multipart framing as pure
 // parsers (core/http_head.hpp, core/multipart_reader.hpp), the frame slots
 // (source/mjpeg_slot_pool.hpp). This class keeps the MediaSource contract:
 // connect + prime, the start() drain, latest-frame skip, jpeg_frame_check,
@@ -102,6 +102,7 @@ public:
     int width() const { return width_; }
     int height() const { return height_; }
     uint64_t skip_parts_cnt() const noexcept { return skip_parts_cnt_; }
+    int64_t last_cap_us() const noexcept { return last_cap_us_; }
 
 private:
     Status send_get( const std::string& host, int port, const std::string& path ) const;
@@ -160,6 +161,7 @@ private:
     BufferedSocket sock_;
     MultipartReader parts_ { static_cast<size_t>( MjpegSlotPool::kSlotBytes ) };  // the boundary is set per connect
     int err_streak_ = 0;
+    int64_t last_cap_us_ = -1;
     int width_ = 0, height_ = 0;
     uint32_t primed_len_ = 0;  // first frame read during setup_device to extract SOF dims
     int rx_slot_ = -1;         // in-progress slot for non-blocking multi-call JPEG reads

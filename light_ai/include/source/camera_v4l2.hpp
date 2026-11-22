@@ -65,6 +65,7 @@ public:
     int width() const { return width_; }
     int height() const { return height_; }
     uint64_t skip_parts_cnt() const noexcept { return 0; }
+    int64_t last_cap_us() const noexcept { return last_cap_us_; }
 
 private:
     // setup_device() with the negotiated mode in got_w/got_h (adopted by reconnect()).
@@ -101,6 +102,7 @@ private:
     const Log& log_;
     int fd_ = -1;
     int err_streak_ = 0;
+    int64_t last_cap_us_ = -1;
     int width_ = 0, height_ = 0;
     Buffer bufs_[kBufCount];
 };

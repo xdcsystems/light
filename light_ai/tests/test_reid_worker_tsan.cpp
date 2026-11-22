@@ -3,7 +3,7 @@
 #include <thread>
 
 #include "check.hpp"
-#include "core/reid_queue.hpp"
+#include "npu/reid_queue.hpp"
 #include "suites.hpp"
 
 namespace

@@ -51,8 +51,7 @@ SignalWaiter::SignalWaiter( const ProcessEnv& env, StopFlag& stop )
 SignalWaiter::~SignalWaiter()
 {
     quit_.store( true );
-    if ( thread_.joinable() )
-        thread_.join();
+    thread_.join();
 }
 
 void SignalWaiter::loop() noexcept

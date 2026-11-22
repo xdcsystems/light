@@ -19,9 +19,9 @@ extern "C"
 #include "core/perf_clock.hpp"
 #include "net/muxer_teardown.hpp"
 #include "net/mux_session.hpp"
-#include "net/tcp_pull_server.hpp"
+#include "platform/tcp_pull_server.hpp"
 
-MuxSession::MuxSession( const EncoderConfig& cfg, PacketQueue& queue, SessionGate& gate, const Log& log )
+MuxSession::MuxSession( const EncoderConfig& cfg, PacketQueue& queue, NetSessionGate& gate, const Log& log )
   : log_( log )
   , cfg_( cfg )
   , queue_( queue )
@@ -37,7 +37,7 @@ MuxSession::~MuxSession()
 
 void MuxSession::start()
 {
-    thread_ = std::thread( &MuxSession::serve, this );
+    thread_.start( &MuxSession::serve, this );
 }
 
 void MuxSession::stop()
@@ -49,8 +49,7 @@ void MuxSession::stop()
         if ( active_tcp_ != nullptr )
             active_tcp_->abort_client();
     }
-    if ( thread_.joinable() )
-        thread_.join();
+    thread_.join();
 }
 
 void MuxSession::serve() noexcept
@@ -60,7 +59,7 @@ void MuxSession::serve() noexcept
     const std::string url = tcp_pull ? std::string() 
                                      : ( "udp://" + cfg_.host + ':' + std::to_string( cfg_.port ) + "?pkt_size=1316" );
 
-    TcpPullServer tcp( cfg_.port, 256 * 1024, 5 );
+    TcpPullServer tcp( cfg_.port, 64 * 1024, 5 );
     struct TcpReg
     {
         std::mutex& mx;
@@ -218,7 +217,10 @@ MuxSession::Transport::~Transport()
 void MuxSession::Transport::close()
 {
     if ( tcp_pull && tcp )
+    {
+        avio.close();
         tcp->close_client();
+    }
     if ( !tcp_pull && udp_pb )
         avio_closep( &udp_pb );
 }
@@ -247,7 +249,7 @@ Status MuxSession::open_transport( const std::string& url, AVFormatContext* fc, 
 
         log_.info() << "enc: viewer connected (tcp)\n";  // its first frame: an IDR (H264Encoder::encode)
 
-        return t.tcp->attach_avio( fc );
+        return t.avio.attach_avio( *t.tcp, fc );
     }
 
     // UDP: no handshake and no listener — the socket is opened once,
@@ -365,7 +367,7 @@ void MuxSession::run_session( TcpPullServer& tcp, bool tcp_pull, const std::stri
     // in the session; every session's first frame is an IDR (H264Encoder).
     const uint32_t epoch = ++sessions_;
     queue_.open( epoch );
-    SessionGate::Session session;
+    NetSessionGate::Session session;
     session.stream_index = st->index;
     session.frame_step = frame_step;
     session.epoch = epoch;

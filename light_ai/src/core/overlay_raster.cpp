@@ -59,7 +59,7 @@ namespace
             }
         };
         glyph_font::raster_text( c.text, c.text_bytes, static_cast<float>( c.text_x ), static_cast<float>( c.text_y ), c.scale, w, h,
-                                 visit );
+                                 visit, true );
     }
 
 }  // namespace

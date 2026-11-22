@@ -17,10 +17,11 @@
 #include <mutex>
 #include <vector>
 
-class PreviewRing
+template <class Mutex = std::mutex, class CondVar = std::condition_variable>
+class BasicPreviewRing
 {
 public:
-    explicit PreviewRing( size_t frame_bytes ) : frame_bytes_( frame_bytes )
+    explicit BasicPreviewRing( size_t frame_bytes ) : frame_bytes_( frame_bytes )
     {
         if ( frame_bytes_ > 0 )
         {
@@ -29,13 +30,13 @@ public:
         }
     }
 
-    PreviewRing( const PreviewRing& ) = delete;
-    PreviewRing& operator=( const PreviewRing& ) = delete;
+    BasicPreviewRing( const BasicPreviewRing& ) = delete;
+    BasicPreviewRing& operator=( const BasicPreviewRing& ) = delete;
 
     void open() noexcept
     {
         {
-            const std::lock_guard<std::mutex> lk( mx_ );
+            const std::lock_guard<Mutex> lk( mx_ );
             head_ = 0;
             count_ = 0;
             open_ = true;
@@ -46,7 +47,7 @@ public:
     void close() noexcept
     {
         {
-            const std::lock_guard<std::mutex> lk( mx_ );
+            const std::lock_guard<Mutex> lk( mx_ );
             open_ = false;
             head_ = 0;
             count_ = 0;
@@ -57,7 +58,7 @@ public:
     void stop() noexcept
     {
         {
-            const std::lock_guard<std::mutex> lk( mx_ );
+            const std::lock_guard<Mutex> lk( mx_ );
             stopped_ = true;
             open_ = false;
             head_ = 0;
@@ -82,7 +83,7 @@ public:
         if ( data == nullptr || frame_bytes_ == 0 || row_bytes == 0 || frame_bytes_ % row_bytes != 0 || src_stride < row_bytes )
             return false;
         {
-            const std::lock_guard<std::mutex> lk( mx_ );
+            const std::lock_guard<Mutex> lk( mx_ );
             if ( !open_ || stopped_ )
                 return false;
             size_t idx = 0;
@@ -113,7 +114,7 @@ public:
     {
         if ( frame_bytes_ == 0 || out.size() < frame_bytes_ )
             return false;
-        std::unique_lock<std::mutex> lk( mx_ );
+        std::unique_lock<Mutex> lk( mx_ );
         cv_.wait( lk, [this] { return !open_ || stopped_ || count_ > 0; } );
         if ( !open_ || stopped_ || count_ == 0 )
             return false;
@@ -127,14 +128,14 @@ public:
 
     uint64_t drops() const noexcept
     {
-        const std::lock_guard<std::mutex> lk( mx_ );
+        const std::lock_guard<Mutex> lk( mx_ );
         return drops_;
     }
 
 private:
     const size_t frame_bytes_;
-    mutable std::mutex mx_;
-    std::condition_variable cv_;
+    mutable Mutex mx_;
+    CondVar cv_;
     std::array<std::vector<uint8_t>, 2> slots_ {};
     size_t head_ = 0;
     size_t count_ = 0;
@@ -142,3 +143,5 @@ private:
     bool open_ = false;
     bool stopped_ = false;
 };
+
+using PreviewRing = BasicPreviewRing<std::mutex, std::condition_variable>;

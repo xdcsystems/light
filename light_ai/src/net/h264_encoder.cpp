@@ -182,7 +182,7 @@ H264Encoder::DrainTally H264Encoder::collect_pending()
     return tally;
 }
 
-Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const SessionGate::Session& s, PacketQueue& queue )
+Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const NetSessionGate::Session& s, PacketQueue& queue )
 {
     // A new session (its first encode): the pts restart from zero with
     // the session's step, and its first frame is an IDR -- a TCP viewer
@@ -294,7 +294,7 @@ void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
     {
         ++q_flush_cnt_;
         force_idr_ = true;
-        log_.warn() << "enc: packet queue overflow: flushed " << pu.flushed << " pkts (drop " << pu.drops
+        log_.warn() << "enc: packet queue flushed " << pu.flushed << " pkts (drop " << pu.drops
                     << "), IDR next frame\n";
     }
 }

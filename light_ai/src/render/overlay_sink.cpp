@@ -3,16 +3,16 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "render/overlay_sink.hpp"
-#include "render/box_mapper.hpp"
-#include "config/config.hpp"  // StreamConfig
+#include "config/config.hpp"        // StreamConfig
 #include "core/frame_view.hpp"
 #include "core/log.hpp"
 #include "core/overlay_raster.hpp"  // draw_boxes_cpu, draw_callouts_cpu
-#include "core/rga_limits.hpp"  // rgb888_stride_px
+#include "core/rga_limits.hpp"      // rgb888_stride_px
 #include "core/status.hpp"
-#include "media/dma_sync.hpp"
 #include "core/timings.hpp"
+#include "media/dma_sync.hpp"
+#include "render/box_mapper.hpp"
+#include "render/overlay_sink.hpp"
 
 namespace
 {
@@ -37,6 +37,13 @@ namespace
         c.bitrate_kbps = stream.bitrate_kbps;  // the <= 0 fallback is EncoderConfig::kbps()
         return c;
     }
+
+    struct CanvasOverlayCtx
+    {
+        OverlaySink* sink = nullptr;
+        const GpuBoxList* boxes = nullptr;
+        const CalloutList* callouts = nullptr;
+    };
 
 }  // namespace
 
@@ -79,14 +86,13 @@ void OverlaySink::init( const StreamConfig& stream,
                         << " kbps (viewer: ffplay tcp://<board-ip>:" << stream.port << ")\n";
         else
             log_.info() << "net: h264 preview -> " << stream.host << ':' << stream.port << ", " << ec.kbps() << " kbps\n";
-    }
-    else
-    {
-        preview_.emplace( model_w_, model_h_, static_cast<int>( stride_bytes_ ), stream.fps, stream.port, log_ );
-        log_.info() << "net: preview server on port " << stream.port << "\n";
+        init_gpu_drawer_canvas( stream.cpu_draw, enc_->canvas_buffer() );
+        return;
     }
 
-    init_gpu_drawer( stream.cpu_draw, tensors );
+    preview_.emplace( model_w_, model_h_, static_cast<int>( stride_bytes_ ), stream.fps, stream.port, log_ );
+    log_.info() << "net: preview server on port " << stream.port << "\n";
+    init_gpu_drawer_tensors( stream.cpu_draw, tensors );
 }
 
 // NO SIGNAL idle publish: h264 path only -- the encoder RGA-copies the
@@ -118,7 +124,7 @@ void OverlaySink::sync_viewer_session() noexcept
     {
         if ( was_viewer_live_ )
         {
-            reset_all_sources();
+            session_reset_gen_.fetch_add( 1, std::memory_order_release );
             was_viewer_live_ = false;
         }
         return;
@@ -127,13 +133,24 @@ void OverlaySink::sync_viewer_session() noexcept
     const bool ep_changed = ( enc_open && enc_ep != last_enc_epoch_ ) ||
                             ( prev_open && prev_ep != last_prev_epoch_ );
     if ( !was_viewer_live_ || ep_changed )
-        reset_all_sources();
+        session_reset_gen_.fetch_add( 1, std::memory_order_release );
 
     was_viewer_live_ = true;
     if ( enc_open )
         last_enc_epoch_ = enc_ep;
     if ( prev_open )
         last_prev_epoch_ = prev_ep;
+}
+
+bool OverlaySink::viewer_live() const noexcept
+{
+    return ( enc_ && enc_->viewer_active() ) || ( preview_ && preview_->viewer_connected() );
+}
+
+void OverlaySink::release_worker_context() noexcept
+{
+    if ( drawer_ )
+        drawer_->release_context();
 }
 
 void OverlaySink::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noexcept
@@ -150,9 +167,31 @@ void OverlaySink::flush_dirty() noexcept
         enc_->flush_dirty();
 }
 
-void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
+void OverlaySink::init_gpu_drawer_canvas( bool cpu_draw, const CanvasBuffer& canvas )
 {
-    if ( ( !preview_ && !enc_ ) || cpu_draw )
+    if ( !enc_ || cpu_draw || canvas.fd < 0 || canvas.w <= 0 || canvas.h <= 0 )
+        return;
+
+    drawer_.emplace( log_ );
+    Status drew_st = drawer_->init();
+    if ( drew_st.ok() )
+        drew_st = drawer_->attach_slot( 0, canvas.fd, canvas.w, canvas.h, canvas.stride_bytes );
+
+    if ( !drew_st.ok() )
+    {
+        log_.warn() << "pipeline: gpu drawer unavailable on output canvas, CPU fallback\n";
+        drawer_.reset();
+    }
+    else
+    {
+        log_.info() << "net: gpu overlay active on output canvas " << canvas.w << 'x' << canvas.h
+                    << " (Mali G610, EGL/GBM)\n";
+    }
+}
+
+void OverlaySink::init_gpu_drawer_tensors( bool cpu_draw, const TensorSet& tensors )
+{
+    if ( !preview_ || cpu_draw )
         return;
 
     drawer_.emplace( log_ );
@@ -175,50 +214,85 @@ void OverlaySink::init_gpu_drawer( bool cpu_draw, const TensorSet& tensors )
     }
 }
 
-// Output tile px per tensor px for this frame's band: the h264 stream scales the
-// band into its tile (place_tile); the raw NUT preview ships the tensor 1:1.
-float OverlaySink::tile_scale( const FrameView& frame ) const noexcept
+void OverlaySink::prepare_overlay( const FrameView& frame,
+                                   const DetList& dets,
+                                   const TrajList& trajs,
+                                   const Tracker& tracker,
+                                   GpuBoxList& boxes_out,
+                                   CalloutList& callouts_out ) noexcept
 {
-    if ( !tiled_ )
-        return 1.0f;
-    const TilePlacement tp = place_tile( layout_, frame.lb, frame.src_idx );
-    return tp.src.h > 0 && tp.dst.h > 0 ? static_cast<float>( tp.dst.h ) / static_cast<float>( tp.src.h ) : 1.0f;
-}
-
-bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
-                                            const DetList& dets,
-                                            const TrajList& trajs,
-                                            const Tracker& tracker ) noexcept
-{
-    const float sx = frame.lb.w / static_cast<float>( frame.src_w );
-    const float sy = frame.lb.h / static_cast<float>( frame.src_h );
-    // disp: the display copy of the tracks, boxes through BoxFilter; trajs keeps
-    // the posteriors the trail was recorded from (BoxMapper bends the trail's head
-    // onto the filtered box).
+    const uint32_t gen = session_reset_gen_.load( std::memory_order_acquire );
+    if ( gen != applied_reset_gen_ )
+    {
+        applied_reset_gen_ = gen;
+        reset_all_sources();
+    }
+    const OverlayTarget tgt = make_overlay_target( layout_, tiled_, frame.lb, frame.src_idx, frame.src_w, frame.src_h );
     TrajList disp = trajs;
     const bool valid_src = frame.src_idx >= 0 && frame.src_idx < reid_cfg::kMaxSources;
     if ( valid_src )
         track_filt_[frame.src_idx].apply( disp, frame.ts_us, box_filter::kTrackBoxParams );
-    boxes_.clear();
-    mapper_.fill( dets, disp, trajs, tracker, boxes_, frame.lb, sx, sy, frame.ts_us );
-    callouts_.clear();
-    const CalloutConfig ccfg { label_lang_ == LabelLang::Ru, callout_text_scale( label_scale_, tile_scale( frame ) ) };
+    boxes_out.clear();
+    mapper_.fill( dets, disp, trajs, tracker, boxes_out, tgt.band, tgt.sx, tgt.sy, frame.ts_us );
+    callouts_out.clear();
+    // Both H.264 (output canvas) and raw NUT preview (tensor) render 1:1 in target pixels.
+    const CalloutConfig ccfg { label_lang_ == LabelLang::Ru, callout_text_scale( label_scale_, 1.0f ) };
     if ( valid_src )
-        compute_callouts( disp, frame.lb, sx, sy, ccfg, callout_hist_[frame.src_idx], callouts_ );
+        compute_callouts( disp, tgt.band, tgt.sx, tgt.sy, ccfg, callout_hist_[frame.src_idx], callouts_out );
     else
-        compute_callouts( disp, frame.lb, sx, sy, ccfg, callouts_ );
-    if ( boxes_.n <= 0 && callouts_.n <= 0 )
+        compute_callouts( disp, tgt.band, tgt.sx, tgt.sy, ccfg, callouts_out );
+}
+
+void OverlaySink::draw_gpu_slot( int slot, const GpuBoxList& boxes, const CalloutList& callouts ) noexcept
+{
+    const auto tg0 = clk::now();
+    drawer_->draw_slot( slot, boxes.d.data(), boxes.n, &callouts );
+    const auto tg1 = clk::now();
+    drawer_->sync_cpu();
+    const auto tg2 = clk::now();
+    perf_.gpu_draw_ms_max = std::max( perf_.gpu_draw_ms_max, ms( tg0, tg1 ) );
+    perf_.sync_cpu_ms_max = std::max( perf_.sync_cpu_ms_max, ms( tg1, tg2 ) );
+}
+
+void OverlaySink::draw_prepared_into_canvas( const LbGeom& dst_band,
+                                             const GpuBoxList& boxes,
+                                             const CalloutList& callouts ) noexcept
+{
+    if ( boxes.n <= 0 && callouts.n <= 0 )
+        return;
+
+    if ( drawer_ )
+    {
+        draw_gpu_slot( 0, boxes, callouts );
+        return;
+    }
+    if ( !enc_ )
+        return;
+    const CanvasBuffer cv = enc_->canvas_buffer();
+    if ( cv.data == nullptr || cv.w <= 0 || cv.h <= 0 || cv.stride_bytes == 0 )
+        return;
+    const int y0 = std::clamp( dst_band.top, 0, cv.h );
+    const int y1 = std::clamp( dst_band.top + dst_band.h, y0, cv.h );
+    const size_t dirty_off = static_cast<size_t>( y0 ) * cv.stride_bytes;
+    const size_t dirty_len = static_cast<size_t>( y1 - y0 ) * cv.stride_bytes;
+    uint8_t* rgb = static_cast<uint8_t*>( cv.data );
+    const dma::DmaSync wr( cv.fd, true );
+    dma::cache_drop( rgb + dirty_off, dirty_len );
+    draw_boxes_cpu( rgb, cv.w, cv.h, static_cast<int>( cv.stride_bytes ), boxes.d.data(), boxes.n );
+    draw_callouts_cpu( rgb, cv.w, cv.h, static_cast<int>( cv.stride_bytes ), callouts );
+    dma::cache_clean( rgb + dirty_off, dirty_len );
+}
+
+bool OverlaySink::draw_prepared_into_tensor( const FrameView& frame,
+                                             const GpuBoxList& boxes,
+                                             const CalloutList& callouts ) noexcept
+{
+    if ( boxes.n <= 0 && callouts.n <= 0 )
         return false;
 
     if ( drawer_ )
     {
-        const auto tg0 = clk::now();
-        drawer_->draw_slot( frame.tensor_idx, boxes_.d.data(), boxes_.n, &callouts_ );
-        const auto tg1 = clk::now();
-        drawer_->sync_cpu();
-        const auto tg2 = clk::now();
-        perf_.gpu_draw_ms_max = std::max( perf_.gpu_draw_ms_max, ms( tg0, tg1 ) );
-        perf_.sync_cpu_ms_max = std::max( perf_.sync_cpu_ms_max, ms( tg1, tg2 ) );
+        draw_gpu_slot( frame.tensor_idx, boxes, callouts );
         return false;
     }
     const TensorRef& tn = frame.tensor;
@@ -228,17 +302,16 @@ bool OverlaySink::draw_overlay_into_tensor( const FrameView& frame,
     dma::cache_drop( tn.data, tn.size );
     const int row_stride = static_cast<int>( tn.stride_bytes > 0 ? tn.stride_bytes : stride_bytes_ );
     uint8_t* rgb = static_cast<uint8_t*>( tn.data );
-    draw_boxes_cpu( rgb, model_w_, model_h_, row_stride, boxes_.d.data(), boxes_.n );
-    draw_callouts_cpu( rgb, model_w_, model_h_, row_stride, callouts_ );
+    draw_boxes_cpu( rgb, model_w_, model_h_, row_stride, boxes.d.data(), boxes.n );
+    draw_callouts_cpu( rgb, model_w_, model_h_, row_stride, callouts );
     dma::cache_clean( tn.data, tn.size );
     return true;
 }
 
-double OverlaySink::draw_and_publish( const FrameView& frame,
-                                      const DetList& dets,
-                                      const TrajList& trajs,
-                                      const Tracker& tracker,
-                                      bool defer_encode ) noexcept
+double OverlaySink::render_and_publish( const FrameView& frame,
+                                        const GpuBoxList& boxes,
+                                        const CalloutList& callouts,
+                                        bool defer_encode ) noexcept
 {
     sync_viewer_session();
     double enc_ms = 0.0;
@@ -248,10 +321,10 @@ double OverlaySink::draw_and_publish( const FrameView& frame,
         return enc_ms;
 
     const TensorRef& tn = frame.tensor;
-    const bool cpu_drew = draw_overlay_into_tensor( frame, dets, trajs, tracker );
 
     if ( prev_live )
     {
+        const bool cpu_drew = draw_prepared_into_tensor( frame, boxes, callouts );
         const auto t5 = clk::now();
         const dma::DmaSync rd( tn.fd, false );
         // Whenever CPU draw did not invalidate cache lines this frame (GPU draw OR
@@ -263,10 +336,18 @@ double OverlaySink::draw_and_publish( const FrameView& frame,
     }
     if ( enc_live )
     {
+        const CanvasOverlayCtx draw_ctx { this, &boxes, &callouts };
+        const OverlayDrawHook hook {
+            []( const void* raw, const LbGeom& dst ) noexcept {
+                const CanvasOverlayCtx* c = static_cast<const CanvasOverlayCtx*>( raw );
+                c->sink->draw_prepared_into_canvas( dst, *c->boxes, *c->callouts );
+            },
+            &draw_ctx
+        };
         const auto t5 = clk::now();
-        enc_->publish( tn.fd, frame.lb, frame.ts_us, frame.src_idx, defer_encode );
+        enc_->publish( tn.fd, frame.lb, frame.ts_us, frame.src_idx, defer_encode, hook );
         const auto t6 = clk::now();
-        enc_ms = ms( t5, t6 );
+        enc_ms += ms( t5, t6 );
     }
     return enc_ms;
 }

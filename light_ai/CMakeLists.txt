@@ -79,10 +79,15 @@ add_executable(light_ai
     src/npu/rknn_engine.cpp
     src/npu/yolo_postprocess.cpp
     src/app/pipeline.cpp
+    src/app/preprocessor.cpp
+    src/app/analytics_stage.cpp
+    src/app/stream_output.cpp
+    src/app/source_supervisor.cpp
     src/source/sources.cpp
     src/render/overlay_sink.cpp
-    src/net/tcp_pull_server.cpp
-    src/net/tcp_send.cpp
+    src/platform/tcp_pull_server.cpp
+    src/platform/tcp_send.cpp
+    src/net/tcp_avio.cpp
     src/net/net_preview.cpp
     src/net/net_encoder.cpp
     src/core/tracker.cpp
@@ -116,7 +121,7 @@ add_executable(light_ai
     src/core/auto_orient.cpp
     src/core/global_track.cpp
     src/core/trail_window.cpp
-    src/source/buffered_socket.cpp
+    src/platform/buffered_socket.cpp
     src/source/mjpeg_slot_pool.cpp
     src/net/encoder_frame_pool.cpp
     src/net/frame_composer.cpp

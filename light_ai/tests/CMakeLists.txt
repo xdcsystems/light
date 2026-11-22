@@ -31,6 +31,7 @@ add_executable(light_ai_tests
     test_byte_window.cpp
     test_status.cpp
     test_stop_flag.cpp
+    test_joining_thread.cpp
     test_tcp_retry.cpp
     test_tcp_send.cpp
     test_yolo_head_shape.cpp
@@ -57,6 +58,8 @@ add_executable(light_ai_tests
     test_timings.cpp
     test_perf_clock.cpp
     test_perf_reporter.cpp
+    test_pi_mutex.cpp
+    test_sd_watchdog.cpp
     test_console_reporter.cpp
     test_cal_dumper.cpp
     test_usb_node_locator.cpp
@@ -100,7 +103,7 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/auto_orient.cpp
     ${LIGHT_AI_ROOT}/src/core/global_track.cpp
     ${LIGHT_AI_ROOT}/src/core/trail_window.cpp
-    ${LIGHT_AI_ROOT}/src/source/buffered_socket.cpp
+    ${LIGHT_AI_ROOT}/src/platform/buffered_socket.cpp
     ${LIGHT_AI_ROOT}/src/source/mjpeg_slot_pool.cpp
     ${LIGHT_AI_ROOT}/src/source/net_mjpeg_source.cpp
     ${LIGHT_AI_ROOT}/src/render/box_smoother.cpp
@@ -115,7 +118,8 @@ add_executable(light_ai_tests
     ${LIGHT_AI_ROOT}/src/core/timings.cpp
     ${LIGHT_AI_ROOT}/src/app/console_reporter.cpp
     ${LIGHT_AI_ROOT}/src/npu/cal_dumper.cpp
-    ${LIGHT_AI_ROOT}/src/net/tcp_send.cpp
+    ${LIGHT_AI_ROOT}/src/platform/tcp_pull_server.cpp
+    ${LIGHT_AI_ROOT}/src/platform/tcp_send.cpp
     ${LIGHT_AI_ROOT}/externals/inih/ini.c
 )
 # Same inih switch as the main target: the config-file handler relies on it.
@@ -146,6 +150,7 @@ add_executable(light_ai_tests_tsan EXCLUDE_FROM_ALL
     test_packet_queue.cpp
     test_session_gate.cpp
     test_reid_worker_tsan.cpp
+    test_pi_mutex.cpp
     ${LIGHT_AI_ROOT}/src/core/geometry.cpp
     ${LIGHT_AI_ROOT}/src/core/global_track.cpp
     ${LIGHT_AI_ROOT}/src/core/status.cpp

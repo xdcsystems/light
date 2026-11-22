@@ -25,9 +25,9 @@
 #include <pthread.h>
 
 #include <atomic>
-#include <thread>
 
 #include "core/stop_flag.hpp"
+#include "platform/joining_thread.hpp"
 #include "sys/process_env.hpp"
 
 class SignalWaiter
@@ -66,5 +66,5 @@ private:
     const pthread_t owner_;  // the constructing thread: woken on an armed stop
     std::atomic<bool> armed_ { false };
     std::atomic<bool> quit_ { false };
-    std::thread thread_;  // last: started once the flags above exist
+    JoiningThread thread_;  // last: started once the flags above exist
 };

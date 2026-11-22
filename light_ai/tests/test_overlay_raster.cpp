@@ -163,7 +163,8 @@ namespace
                                                  return;
                                              ++covered;
                                              dimmed += tile.px( px, py )[0] != 255 ? 1 : 0;
-                                         } );
+                                         },
+                                         true );
                 CHECK( t, covered > 0 );
                 CHECK_EQ( t, dimmed, 0 );
                 if ( dump_dir != nullptr )
@@ -216,6 +217,7 @@ namespace
         CHECK( t, tile.px( 5, 25 )[0] == 100 );
         CHECK( t, tile.px( 39, 29 )[0] == 0 && tile.px( 35, 20 )[0] == 0 );
     }
+
 }  // namespace
 
 void test_overlay_raster( TestRun& t )

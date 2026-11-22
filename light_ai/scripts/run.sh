@@ -4,6 +4,7 @@ set -e
 PROJ_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd -P)"
 BIN="$PROJ_ROOT/build/light_ai"
 DEFAULT_CFG="$PROJ_ROOT/build/light_ai.ini"
+ISOLATE_SCRIPT="$PROJ_ROOT/scripts/isolate_rt.sh"
 
 cd "$PROJ_ROOT"
 
@@ -59,6 +60,63 @@ if [ "$has_config" -eq 0 ]; then
         exit 2
     fi
     CFG_ARGS=(--config "$CFG")
+fi
+
+# Изоляция A55 (ОС + фоновые потоки) / A76 (горячие потоки light_ai)
+if [ "${SKIP_ISOLATE:-0}" != "1" ] && [ -r "$ISOLATE_SCRIPT" ] && command -v systemd-run >/dev/null 2>&1; then
+    SUDO=()
+    RUN_AS=()
+    can_isolate=0
+    if [ "$(id -u)" -eq 0 ]; then
+        can_isolate=1
+    elif command -v sudo >/dev/null 2>&1; then
+        SUDO=(sudo -n)
+        RUN_AS=(-p "User=$(id -un)")
+        can_isolate=1
+    fi
+
+    if [ "$can_isolate" -eq 1 ] && \
+       "${SUDO[@]}" env "SKIP_DMA_LATENCY=${SKIP_DMA_LATENCY:-0}" "ENABLE_RT_UNLIMITED=1" bash "$ISOLATE_SCRIPT" on >/dev/null 2>&1; then
+        UNIT_NAME="light_ai-$$.service"
+        cleanup_isolate() {
+            "${SUDO[@]}" systemctl stop "$UNIT_NAME" >/dev/null 2>&1 || true
+            "${SUDO[@]}" bash "$ISOLATE_SCRIPT" off >/dev/null 2>&1 || true
+        }
+        trap cleanup_isolate EXIT
+        trap 'exit 143' TERM
+        trap 'exit 129' HUP
+
+        IO_MODE="--pipe"
+        if [ -t 0 ] && [ -t 1 ]; then
+            IO_MODE="--pty"
+        fi
+
+        ENV_ARGS=()
+        while IFS= read -r kv; do
+            [ -n "$kv" ] && ENV_ARGS+=(--setenv="$kv")
+        done < <(env | grep '^LIGHT_AI_' || true)
+
+        rc=0
+        "${SUDO[@]}" systemd-run "$IO_MODE" --unit="$UNIT_NAME" --wait --collect \
+            --slice=light_ai.slice \
+            -p AllowedCPUs=0-7 \
+            -p LimitRTPRIO=90 \
+            -p LimitMEMLOCK=infinity \
+            -p Type=notify \
+            -p TimeoutStartSec=30s \
+            -p NotifyAccess=main \
+            -p WatchdogSec=5s \
+            -p Restart=on-failure \
+            -p RestartPreventExitStatus="1 2 3" \
+            -p WorkingDirectory="$PROJ_ROOT" \
+            "${RUN_AS[@]}" \
+            "${ENV_ARGS[@]}" \
+            /usr/bin/taskset -c 0-3 \
+            "$BIN" "${CFG_ARGS[@]}" "$@" || rc=$?
+        exit "$rc"
+    else
+        echo "run.sh: warning: failed to enable RT isolation (continuing without isolation)" >&2
+    fi
 fi
 
 exec "$BIN" "${CFG_ARGS[@]}" "$@"

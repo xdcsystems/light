@@ -12,7 +12,7 @@
 
 #include "check.hpp"
 #include "loopback.hpp"
-#include "source/buffered_socket.hpp"
+#include "platform/buffered_socket.hpp"
 #include "status_text.hpp"
 #include "suites.hpp"
 
