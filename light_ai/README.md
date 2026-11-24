@@ -102,7 +102,7 @@ Connect a viewer from another host on the LAN:
 ffplay -fflags nobuffer tcp://<board-ip>:1234
 ```
 
-*(For Windows `mpv` configuration and latency tuning, see [`docs/viewer.md`](docs/viewer.md).)*
+*(For simultaneous multi-viewer streaming on port `1236` via the on-demand A55 fan-out relay, see [`modules/ts_fanout/README.md`](../modules/ts_fanout/README.md). For Windows `mpv` configuration and latency tuning, see [`docs/viewer.md`](docs/viewer.md).)*
 
 ---
 
@@ -305,8 +305,9 @@ cp scripts/light_ai.ini.example build/light_ai.ini
 ./scripts/run.sh
 ./scripts/run.sh --log-level warn --frames 600
 
-# Viewers:
+# Viewers (direct single-viewer on :1234, or multi-viewer via modules/ts_fanout on :1236):
 ffplay -fflags nobuffer tcp://<board-ip>:1234
+ffplay -fflags nobuffer tcp://<board-ip>:1236
 # Legacy UDP push viewer (explicit IPv4 bind required on Windows):
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -analyzeduration 0 -vf setpts=0 -f mpegts udp://0.0.0.0:1234
 ```

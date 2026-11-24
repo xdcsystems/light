@@ -4,6 +4,16 @@ This document captures the verified client-side configuration for viewing the `l
 
 For general server-side stream options (`--net`, `--net-h264`, `--net-port`, `--net-bitrate`, `--net-fps`, `--net-gop`) and `ffplay` commands, see [README.md](../README.md).
 
+## Multi-Viewer Streaming (`:1236` via `modules/ts_fanout`)
+
+`light_ai` exposes a single-viewer TCP pull socket on port `1234`. To watch the live stream simultaneously from multiple PCs without altering the RT core, deploy [`modules/ts_fanout`](../../modules/ts_fanout/README.md) on the efficiency cores (`127.0.0.1:1234 -> 0.0.0.0:1236`) and point all viewers (`mpv` or `ffplay`) to port `1236`:
+
+```bash
+ffplay -fflags nobuffer tcp://<board-ip>:1236
+```
+
+The relay stays idle on upstream until the first viewer connects and closes `127.0.0.1:1234` after `--idle-grace-ms` (`1500 ms`) when the last viewer disconnects, preserving `light_ai`'s on-demand encoder sleep.
+
 ## Test Machine & Stream Profile
 
 - **Client hardware:** Intel Core 2 Duo T9550, ATI Mobility Radeon HD 3400 (legacy driver `8.970.100.0`, 2013-04-24 — final release for this series), DirectX 10.1 (exposes D3D11 feature level `10_1`), UVD2 H.264 decode via DXVA2, OpenGL without `WGL_NV_DX_interop`.

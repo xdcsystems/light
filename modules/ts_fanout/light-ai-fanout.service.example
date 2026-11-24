@@ -1,0 +1,16 @@
+[Unit]
+Description=light_ai on-demand MPEG-TS TCP fan-out relay
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/light-ai-fanout --upstream 127.0.0.1:1234 --listen 0.0.0.0:1236 --max-clients 8 --idle-grace-ms 1500
+Restart=always
+RestartSec=1s
+AllowedCPUs=0-3
+Nice=5
+MemoryMax=32M
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target
