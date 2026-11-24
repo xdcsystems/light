@@ -4,7 +4,7 @@
 
 namespace
 {
-    int64_t rebase_or_track_vfr( int64_t ts_us, int64_t last_pts, int64_t anchor_pts, bool& flush_pending,
+    int64_t rebase_or_track_vfr( int64_t ts_us, int64_t last_pts, int64_t& anchor_pts, bool& flush_pending,
                                  int64_t& base_us, int64_t& last_step_90k ) noexcept
     {
         if ( base_us < 0 )
@@ -22,6 +22,7 @@ namespace
             base_us = ts_us - ( max_target * 100 + 4 ) / 9;
             return max_target;
         }
+        anchor_pts = -1;
         const int64_t dt = p - last_pts;
         if ( dt >= PtsClock::kMinStep90k && dt <= PtsClock::kMaxStep90k )
             last_step_90k = dt;
@@ -62,6 +63,12 @@ void PtsClock::rearm_flush() noexcept
         flush_pending_ = true;
 }
 
+void PtsClock::disarm_flush() noexcept
+{
+    flush_pending_ = false;
+    flush_anchor_pts_ = -1;
+}
+
 int64_t PtsClock::next( int64_t ts_us, uint64_t frames_sent ) noexcept
 {
     if ( !vfr_ )
@@ -85,22 +92,36 @@ void SessionPtsFilter::on_epoch( int64_t frame_step ) noexcept
     epoch_base_pts_ = last_submitted_pts_ >= 0 ? ( last_submitted_pts_ + 1 ) : 0;
     last_pkt_pts_ = -1;
     awaiting_key_ = true;
+    recovery_idr_submitted_ = false;
 }
 
 void SessionPtsFilter::on_queue_flush( bool key_queued ) noexcept
 {
     pts_.on_queue_flush();
     if ( !key_queued )
+    {
         awaiting_key_ = true;
+        recovery_idr_submitted_ = false;
+    }
 }
 
-int64_t SessionPtsFilter::next_frame_pts( int64_t ts_us, uint64_t frames_sent, int64_t& session_fpts ) noexcept
+int64_t SessionPtsFilter::next_frame_pts( int64_t ts_us, uint64_t frames_sent, int64_t& session_fpts,
+                                          bool is_key_frame ) noexcept
 {
     session_fpts = pts_.next( ts_us, frames_sent );
     const int64_t codec_pts = epoch_base_pts_ + session_fpts;
     if ( codec_pts > last_submitted_pts_ )
         last_submitted_pts_ = codec_pts;
+    if ( awaiting_key_ && is_key_frame )
+        recovery_idr_submitted_ = true;
     return codec_pts;
+}
+
+void SessionPtsFilter::on_submit_failed( bool was_key_frame ) noexcept
+{
+    if ( was_key_frame )
+        recovery_idr_submitted_ = false;
+    pts_.rearm_flush();
 }
 
 bool SessionPtsFilter::stamp_packet( bool has_pts, int64_t raw_pkt_pts, bool is_key, int64_t session_fpts,
@@ -121,10 +142,13 @@ bool SessionPtsFilter::stamp_packet( bool has_pts, int64_t raw_pkt_pts, bool is_
     {
         if ( !is_key )
         {
-            pts_.rearm_flush();
+            if ( !recovery_idr_submitted_ )
+                pts_.rearm_flush();
             return false;
         }
         awaiting_key_ = false;
+        recovery_idr_submitted_ = false;
+        pts_.disarm_flush();
     }
 
     int64_t ts = pts_.packet_ts( rel_pts );

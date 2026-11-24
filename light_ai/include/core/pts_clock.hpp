@@ -47,6 +47,9 @@ public:
     // keeping the original pre-flush anchor PTS.
     void rearm_flush() noexcept;
 
+    // Clears post-flush rebase state once the recovery IDR has landed.
+    void disarm_flush() noexcept;
+
     // Codec pts -> the muxer time base.
     int64_t packet_ts( int64_t pts ) const noexcept { return pts * frame_step_; }
 
@@ -87,7 +90,12 @@ public:
     void on_queue_flush( bool key_queued = false ) noexcept;
 
     // Computes session-relative fpts and monotonic AVFrame::pts for encode().
-    int64_t next_frame_pts( int64_t ts_us, uint64_t frames_sent, int64_t& session_fpts ) noexcept;
+    // is_key_frame marks that the caller is submitting an IDR while awaiting_key_.
+    int64_t next_frame_pts( int64_t ts_us, uint64_t frames_sent, int64_t& session_fpts,
+                            bool is_key_frame = false ) noexcept;
+
+    // Restores pending flush/recovery state if avcodec_send_frame() failed to submit.
+    void on_submit_failed( bool was_key_frame ) noexcept;
 
     // Forwards CFR counter advance when a frame is submitted or dropped on EAGAIN.
     void advance() noexcept { pts_.advance(); }
@@ -106,6 +114,7 @@ private:
     int64_t last_submitted_pts_ = -1;
     int64_t last_pkt_pts_ = -1;
     bool awaiting_key_ = true;
+    bool recovery_idr_submitted_ = false;
 };
 
 // us -> 1/90000 ticks, rounded like av_rescale (AV_ROUND_NEAR_INF).
