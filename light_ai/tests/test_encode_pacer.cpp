@@ -16,7 +16,8 @@ namespace
         EncodePacer vfr( 1, 0 );
         CHECK( t, vfr.admit( 1000, 0, 1 ) );
         CHECK( t, vfr.admit( 1001, 0, 1 ) );
-        CHECK( t, vfr.admit( 1001, 31, 1 ) );
+        CHECK( t, vfr.admit( 1001, EncodePacer::kBusyDepth - 1, 1 ) );
+        CHECK( t, !vfr.admit( 1002, EncodePacer::kPauseDepth, 1 ) );
 
         // CFR (fps > 0): single camera respects 1000000 / fps pacing.
         EncodePacer cfr( 1, 25 );
@@ -166,6 +167,63 @@ namespace
         for ( size_t i = 0; i < mux_want.size(); ++i )
             CHECK_EQ( t, mux.mux_write_hist[i], mux_want[i] );
     }
+    void backpressure_hysteresis( TestRun& t )
+    {
+        // Pause-on-full and hysteresis resume (24 -> 12).
+        EncodePacer vfr( 1, 0 );
+        CHECK( t, vfr.admit( 100000, 0, 1 ) );
+        CHECK( t, !vfr.admit( 200000, EncodePacer::kPauseDepth, 1 ) );
+        CHECK( t, vfr.backpressure_paused() );
+        CHECK_EQ( t, vfr.backpressure_level(), 3 );
+        // Still paused at 13..23.
+        CHECK( t, !vfr.admit( 400000, EncodePacer::kHeavyDepth + 1, 1 ) );
+        CHECK( t, vfr.backpressure_paused() );
+        // Resumes once drained to <= kHeavyDepth (12), still throttled at level 3 (150 ms).
+        CHECK( t, vfr.admit( 500000, EncodePacer::kHeavyDepth, 1 ) );
+        CHECK( t, !vfr.backpressure_paused() );
+        CHECK( t, !vfr.admit( 600000, 0, 1 ) );  // < 150 ms while at level 3
+        CHECK( t, vfr.admit( 650000, 0, 1 ) );   // >= 150 ms
+
+        // Anti-oscillation: 2 s clean is not enough to recover (< 8 s hold-down).
+        CHECK( t, vfr.admit( 2650000, EncodePacer::kLowDepth, 1 ) );
+        CHECK_EQ( t, vfr.backpressure_level(), 3 );
+        // Continuous 8 s clean steps down one level at a time (3 -> 2 -> 1 -> 0).
+        CHECK( t, vfr.admit( 8700000, EncodePacer::kLowDepth, 1 ) );
+        CHECK_EQ( t, vfr.backpressure_level(), 2 );
+        CHECK( t, vfr.admit( 16800000, EncodePacer::kLowDepth, 1 ) );
+        CHECK_EQ( t, vfr.backpressure_level(), 1 );
+        CHECK( t, vfr.admit( 24900000, EncodePacer::kLowDepth, 1 ) );
+        CHECK_EQ( t, vfr.backpressure_level(), 0 );
+
+        // Gradual step-down with 1 s sustained congestion and immediate flush escalation.
+        EncodePacer mp( 2, 0 );
+        CHECK( t, mp.admit( 0, 0, 1 ) );
+        CHECK( t, mp.admit( 100000, EncodePacer::kBusyDepth, 1 ) );    // transient < 1 s
+        CHECK_EQ( t, mp.backpressure_level(), 0 );
+        CHECK( t, mp.admit( 1100000, EncodePacer::kBusyDepth, 1 ) );  // sustained >= 1 s -> level 1
+        CHECK_EQ( t, mp.backpressure_level(), 1 );
+        CHECK( t, mp.admit( 1300000, EncodePacer::kHeavyDepth, 1 ) ); // cooldown < 1 s
+        CHECK_EQ( t, mp.backpressure_level(), 1 );
+        CHECK( t, mp.admit( 2200000, EncodePacer::kHeavyDepth, 1 ) ); // sustained >= 1 s -> level 2
+        CHECK_EQ( t, mp.backpressure_level(), 2 );
+        mp.observe_flush( 2250000, 1 );
+        CHECK_EQ( t, mp.backpressure_level(), 3 );
+        // Out-of-order stale timestamp must not seed or advance hysteresis timers.
+        CHECK( t, mp.admit( 10000000, 0, 2 ) );
+        CHECK( t, !mp.admit( 1000000, EncodePacer::kBusyDepth, 2 ) );  // stale (< 10 s)
+        CHECK( t, mp.admit( 10050000, EncodePacer::kBusyDepth, 2 ) );
+        CHECK_EQ( t, mp.backpressure_level(), 0 );  // only 50 ms since 10 s, not 9 s
+
+        // ts_us < 0 at critical depth pauses and sets level 3.
+        CHECK( t, !mp.admit( -1, EncodePacer::kPauseDepth, 2 ) );
+        CHECK( t, mp.backpressure_paused() );
+        CHECK_EQ( t, mp.backpressure_level(), 3 );
+
+        // New session epoch resets backpressure cleanly.
+        CHECK( t, mp.admit( 1300000, 0, 3 ) );
+        CHECK_EQ( t, mp.backpressure_level(), 0 );
+        CHECK( t, !mp.backpressure_paused() );
+    }
 }  // namespace
 
 void test_encode_pacer( TestRun& t )
@@ -177,4 +235,5 @@ void test_encode_pacer( TestRun& t )
     idle( t );
     slowest_source_and_grid( t );
     perf_buckets( t );
+    backpressure_hysteresis( t );
 }

@@ -144,6 +144,7 @@ private:
     CounterDelta eagain_;
     CounterDelta pts_clamp_;
     CounterDelta q_flush_;
+    uint64_t last_q_flush_ = 0;
     // Encoder -> serve thread packet queue (net/av_packet_queue.hpp): its
     // own mutex, separate from the gate's: network-side wakeups never touch
     // the encode critical section. Overflow flush, key gate, fail( epoch ).

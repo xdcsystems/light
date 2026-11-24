@@ -251,6 +251,12 @@ void NetEncoder::run_encoded( uint32_t epoch, std::chrono::steady_clock::time_po
     const double h264_ms = ms_since( enc_t0 );
     if ( h264_ms > perf_.h264_ms_max )
         perf_.h264_ms_max = h264_ms;
+    const uint64_t cur_qf = codec_.q_flush_cnt();
+    if ( cur_qf > last_q_flush_ )
+    {
+        last_q_flush_ = cur_qf;
+        pacer_.observe_flush( steady_now_us(), epoch );
+    }
 }
 
 EncPerfWindow NetEncoder::take_perf() noexcept

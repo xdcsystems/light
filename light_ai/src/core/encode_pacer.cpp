@@ -6,14 +6,17 @@
 
 namespace
 {
-    constexpr int64_t kDefaultVfrStepUs = 33333;  // ~30 fps before sources report cadence
-    constexpr int64_t kMinVfrStepUs = 33333;      // cap multi-view VFR at ~30 fps
-    constexpr int64_t kMaxVfrStepUs = 200000;     // floor at 5 fps even for very slow cams
-    constexpr int64_t kHeavyVfrStepUs = 40000;    // 25 fps cap under heavy packet backlog
-    constexpr int64_t kMinSampleUs = 10000;       // ignore <10 ms bursts (e.g. duplicate polls)
-    constexpr int64_t kMaxSampleUs = 500000;      // ignore >500 ms pauses/reconnects
-    constexpr int64_t kStaleSourceUs = 1000000;   // silent >1 s: source detached, do not hold pace
-    constexpr int kMinSamples = 3;                // require 3 intervals before trusting median
+    constexpr int64_t kDefaultVfrStepUs = 33333;   // ~30 fps before sources report cadence
+    constexpr int64_t kMinVfrStepUs = 33333;       // cap multi-view VFR at ~30 fps
+    constexpr int64_t kMaxVfrStepUs = 200000;      // floor at 5 fps even for very slow cams
+    constexpr int64_t kHeavyVfrStepUs = 40000;     // 25 fps cap under heavy packet backlog
+    constexpr int64_t kMinSampleUs = 10000;        // ignore <10 ms bursts (e.g. duplicate polls)
+    constexpr int64_t kMaxSampleUs = 500000;       // ignore >500 ms pauses/reconnects
+    constexpr int64_t kStaleSourceUs = 1000000;    // silent >1 s: source detached, do not hold pace
+    constexpr int64_t kStepDownCooldownUs = 1000000;  // min 1 s between queue-driven step-downs
+    constexpr int64_t kRecoveryHoldUs = 8000000;   // 8 s clean channel before stepping back up
+    constexpr int kMinSamples = 3;                 // require 3 intervals before trusting median
+    constexpr std::array<int64_t, 4> kBpFloorStepUs { 0, 50000, 80000, 150000 };
 
     int64_t median_period_us( const std::array<int64_t, EncodePacer::kCadenceWindow>& dts, int count ) noexcept
     {
@@ -21,6 +24,17 @@ namespace
         const auto mid = static_cast<std::ptrdiff_t>( count / 2 );
         std::nth_element( tmp.begin(), tmp.begin() + mid, tmp.begin() + static_cast<std::ptrdiff_t>( count ) );
         return tmp[static_cast<size_t>( mid )];
+    }
+
+    int target_level_for_depth( int queue_depth ) noexcept
+    {
+        if ( queue_depth >= EncodePacer::kPauseDepth )
+            return 3;
+        if ( queue_depth >= EncodePacer::kHeavyDepth )
+            return 2;
+        if ( queue_depth >= EncodePacer::kBusyDepth )
+            return 1;
+        return 0;
     }
 }  // namespace
 
@@ -48,6 +62,15 @@ void EncodePacer::observe_source( int src_idx, int64_t ts_us ) noexcept
         sc.last_us = ts_us;
 }
 
+void EncodePacer::observe_flush( int64_t ts_us, uint32_t epoch ) noexcept
+{
+    enter( epoch );
+    bp_level_ = std::min( bp_level_ + 1, 3 );
+    bp_low_since_us_ = -1;
+    if ( ts_us >= 0 && ( bp_last_down_us_ < 0 || ts_us > bp_last_down_us_ ) )
+        bp_last_down_us_ = ts_us;
+}
+
 int64_t EncodePacer::slowest_period_us( int64_t now_us ) const noexcept
 {
     const int n = std::min( nsrc_, static_cast<int>( kMaxSources ) );
@@ -72,6 +95,11 @@ void EncodePacer::enter( uint32_t epoch ) noexcept
     {
         epoch_ = epoch;
         last_ts_us_ = -1;
+        bp_level_ = 0;
+        bp_paused_ = false;
+        bp_high_since_us_ = -1;
+        bp_low_since_us_ = -1;
+        bp_last_down_us_ = -1;
     }
 }
 
@@ -87,26 +115,88 @@ void EncodePacer::advance_grid( int64_t ts_us, int64_t step_us ) noexcept
         last_ts_us_ = ts_us;
 }
 
+void EncodePacer::update_backpressure( int64_t ts_us, int queue_depth ) noexcept
+{
+    if ( queue_depth >= kPauseDepth )
+    {
+        bp_paused_ = true;
+        bp_level_ = 3;
+        bp_high_since_us_ = -1;
+        bp_low_since_us_ = -1;
+    }
+    if ( bp_paused_ && queue_depth <= kHeavyDepth )
+        bp_paused_ = false;
+    if ( ts_us < 0 || ( last_ts_us_ >= 0 && ts_us < last_ts_us_ ) )
+        return;
+
+    const int target = target_level_for_depth( queue_depth );
+    if ( target >= 3 )
+    {
+        bp_last_down_us_ = ts_us;
+        return;
+    }
+    if ( target > bp_level_ )
+    {
+        bp_low_since_us_ = -1;
+        if ( bp_high_since_us_ < 0 )
+        {
+            bp_high_since_us_ = ts_us;
+            return;
+        }
+        const bool held = ( ts_us - bp_high_since_us_ ) >= kStepDownCooldownUs;
+        const bool cooldown_ok = ( bp_last_down_us_ < 0 ) || ( ( ts_us - bp_last_down_us_ ) >= kStepDownCooldownUs );
+        if ( held && cooldown_ok )
+        {
+            bp_level_ = std::min( bp_level_ + 1, target );
+            bp_high_since_us_ = ts_us;
+            bp_last_down_us_ = ts_us;
+        }
+        return;
+    }
+    bp_high_since_us_ = -1;
+    if ( queue_depth > kLowDepth )
+    {
+        bp_low_since_us_ = -1;
+        return;
+    }
+    if ( bp_level_ == 0 )
+        return;
+    if ( bp_low_since_us_ < 0 )
+    {
+        bp_low_since_us_ = ts_us;
+        return;
+    }
+    if ( ( ts_us - bp_low_since_us_ ) >= kRecoveryHoldUs )
+    {
+        --bp_level_;
+        bp_low_since_us_ = ts_us;
+    }
+}
+
+int64_t EncodePacer::effective_step_us( int64_t base_step_us, int queue_depth ) const noexcept
+{
+    int64_t step = base_step_us;
+    if ( nsrc_ > 1 && fps_ <= 0 && queue_depth >= kHeavyDepth )
+        step = std::max( step, kHeavyVfrStepUs );
+    const int64_t bp_floor = kBpFloorStepUs[static_cast<size_t>( bp_level_ )];
+    return std::max( step, bp_floor );
+}
+
 bool EncodePacer::admit( int64_t ts_us, int queue_depth, uint32_t epoch ) noexcept
 {
     enter( epoch );
-    if ( ( nsrc_ <= 1 && fps_ <= 0 ) || ts_us < 0 || last_ts_us_ < 0 )
+    update_backpressure( ts_us, queue_depth );
+    if ( bp_paused_ )
+        return false;
+    if ( ( nsrc_ <= 1 && fps_ <= 0 && bp_level_ == 0 ) || ts_us < 0 || last_ts_us_ < 0 )
     {
         last_ts_us_ = ts_us;
         return true;
     }
     if ( ts_us < last_ts_us_ )
         return false;
-    int64_t min_step_us = 0;
-    if ( fps_ > 0 )
-    {
-        min_step_us = 1000000 / fps_;
-    }
-    else
-    {
-        const int64_t base_vfr_us = slowest_period_us( ts_us );
-        min_step_us = queue_depth >= kHeavyDepth ? std::max( base_vfr_us, kHeavyVfrStepUs ) : base_vfr_us;
-    }
+    const int64_t base_step_us = ( fps_ > 0 ) ? ( 1000000 / fps_ ) : ( ( nsrc_ > 1 ) ? slowest_period_us( ts_us ) : 0 );
+    const int64_t min_step_us = effective_step_us( base_step_us, queue_depth );
     const bool enc = ( ts_us - last_ts_us_ ) >= min_step_us;
     if ( enc )
         advance_grid( ts_us, min_step_us );
@@ -116,7 +206,8 @@ bool EncodePacer::admit( int64_t ts_us, int queue_depth, uint32_t epoch ) noexce
 bool EncodePacer::admit_idle( int64_t ts_us, int queue_depth, uint32_t epoch ) noexcept
 {
     enter( epoch );
-    if ( queue_depth >= kBusyDepth )
+    update_backpressure( ts_us, queue_depth );
+    if ( bp_paused_ || queue_depth >= kBusyDepth )
         return false;
     if ( ts_us >= 0 && ( last_ts_us_ < 0 || ts_us > last_ts_us_ ) )
         last_ts_us_ = ts_us;

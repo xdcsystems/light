@@ -751,3 +751,8 @@ Completed on `fix/audit-p0` (up to `3ccd8ae`, PR #71; merged into `master` in PR
       Eliminated `qflush=10..13` overflow loops and `+314..+722 ms` PTS jumps via `BasicPacketQueue::push(..., on_flush)` and `SessionPtsFilter::rebase_flushed_key()` in muxer space (0 jumps across a 200K fuzzer with 2,868 key-flushes), and added `--net-gop` (`net_gop=50`, `net_bitrate=2000` in `light_ai.ini.example`).
 - [x] **Viewer tuning, documentation & `#105`/`#119` closure (`6988e11`, PR `#137`):**
       Documented low-latency `mpv` flags, Wi-Fi PSP / PCIe ASPM tuning, and multi-view settings in [`docs/viewer.md`](viewer.md); verified Victory Audit on `master @ 6988e11` (`10,085` unit checks, `6,207` TSan checks, `rules_lint.sh` and 2-pass `clang-tidy` 0 findings) and closed `#105` and `#119`.
+
+## Next / Track A Follow-ups (Backlog)
+
+- [ ] **Re-ID `[perf]` observability:** add `crops / drops / matches / reid_ms` counters to `[perf]` so cross-camera Re-ID throughput and 4-slot queue drops are measurable during multi-source soak runs.
+- [ ] **V4L2 `eagain` polling rate:** reduce idle `eagain` polls (`~1500` per 5 s window in 4-source soak) when USB camera cadence is slower than loop rate.
