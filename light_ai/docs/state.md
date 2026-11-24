@@ -1727,3 +1727,19 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
   - **1-hour A/B stress test (`--device /dev/video20 --net --net-h264 --net-port 1234`):**
     - `5.10.226` baseline: `71,984` frames in `3606.680 s` (`19.959 FPS`), `cam=47.6 ms`, `sum=75.3 ms`, post-warmup `step_p99` median `52.8 ms` (max `53.3 ms`), `deadline_miss=0` (720/720), `minflt=0 majflt=0` (721/721), `qflush=0`, `ww=0`, `pq_max=1`, `AsyncLog dropped=0`, `VmRSS` `327,328 -> 327,688 KiB`, `Send-Q > 0` in `6/60` (max `15604`).
     - `5.10.226-preempt`: `89,830` frames in `3601.687 s` (`24.941 FPS`), `cam=37.6 ms`, `sum=65.0 ms`, post-warmup `step_p99` median `43.2 ms` (max `44.8 ms`), `deadline_miss=0` (719/719), `minflt=0 majflt=0` (720/720), `qflush=0`, `ww=0`, `pq_max=1`, `AsyncLog dropped=0`, `VmRSS` `328,040 -> 328,412 KiB`, `Send-Q > 0` in `6/60` (max `15040`), NVMe `hwmon` `51.9-55.9 C`.
+
+## Post-RTOS Sprints, Streaming Stabilization & Fan-Out (`PR #134`–`#141`)
+
+- **Audit Sprint 3 — Scale & ML (`5bf52ce`, PR `#134`):** 6-slot NPU tensor pool across 3 workers, per-source FIFO, `LbGeom` affinity with `next_slot_` rotation, `wait_any_slot_free()`, `SCHED_FIFO` removed from `ReidWorker`, both RGA3 cores (`CORE0`/`CORE1`) enabled, P5->P3 `YoloDecoder` (`kNmsTopK=384`), `kMaxGlobalTracks=64`, `kMaxTracks=16`, `kConfMaxAgeMs=360`, and `BoxFilter` `dt >= 1e-3f`.
+- **PTS continuity & Wi-Fi streaming (`5556c4f` -> `2e3e762` -> `6988e11`, PRs `#135`–`#137`):**
+  - `BasicPacketQueue::push(..., on_flush)` + `SessionPtsFilter::rebase_flushed_key()` eliminated `qflush` overflow loops and `+314..+722 ms` PTS jumps (`0` jumps across 200K fuzzer / 2,868 key-flushes); added `--net-gop` (`net_gop=50`, `net_bitrate=2000`).
+  - Live 2.4 GHz Wi-Fi soak (`3h 48m`, 2,748 windows, 2 sources): `clamp=0`, `eagain=0`, `~53.6 FPS`, `mpv` `0` `(Buffering)`, `0` dropped frames, `~10.4 KiB` (`0.0 s`) cache.
+  - Tagged loopback (`#105`, `2000 kbps / gop 50`): 1-source `640x480` median `111.7 ms` (`p90 112.0 ms`); 2-source `1280x480` median `125.8 ms` (`p90 127.7 ms`).
+  - Paired `/dev/video20` test (`#119`, `c719ba7` vs `5556c4f` vs `6988e11`, `exposure_auto=3`): identical `cam=55.6 ms` (`~16.5 FPS`) on all three builds; `#105` and `#119` closed.
+- **Track A soak & Stage 10 Backpressure (`b0cf1ca` -> `1545f31`, PRs `#138`–`#139`):**
+  - 180 s multi-source soak (`--pool 3`, Re-ID, `--net-h264`): 4 sources sustained `89.01 FPS` (`~22.25 FPS/source`, `rga=1.0 ms`, `h264_max=3.3 ms`, `~13%` SoC CPU, `359.6 MiB` RSS) — confirmed RGA/VPU are not bottlenecks (M4 async RGA deferred).
+  - Stage 10 `EncodePacer` 4-level backpressure hysteresis verified under `~360 kbps` throttled TCP client (2 sources): `qflush=0`, `pq_max=7/32`, `49.443 FPS`.
+- **V4L2 `poll(2)`, Re-ID `[perf]` & Multi-viewer Fan-Out (`a3a87c7` -> `694e35d`, PRs `#140`–`#141`):**
+  - Event-driven `::poll(2)` in `SourceSet::wait_any()` cut `/dev/video20` `eagain` from `~1500/5 s` to `[0, 0, 0, 0]` (`49.07 FPS` 2-src, `88.59 FPS` 4-src); lock-free `[perf] reid` telemetry (`crops/drops/matches/ms_max`) verified live.
+  - Standalone `modules/ts_fanout/ts_fanout.cpp` (`127.0.0.1:1234 -> 0.0.0.0:1236`, A55 `cpu 0-3`, `0.1%` CPU, on-demand upstream with `1500 ms` grace) verified with 2 simultaneous viewers and `enc=0.0 ms` idle sleep at 0 viewers.
+  - Full gate on `master`: `light_ai_tests` `10,135/10,135`, `light_ai_tests_tsan` `6,207/6,207`, `rules_lint.sh` PASS (`242` files, `0` findings), 2-pass `clang-tidy` `0` findings.

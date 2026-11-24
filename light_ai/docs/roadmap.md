@@ -740,7 +740,7 @@ Completed on `fix/audit-p0` (up to `3ccd8ae`, PR #71; merged into `master` in PR
       Added stack prefault, `mallopt` tuning, and RT page-fault/p99 telemetry (`#123`); lock-free `AsyncLogSink` and `PiMutex`/`PiCondVar` (`#124`); systemd `WatchdogSec=5s` `NOTIFY_SOCKET` client (`SdWatchdog`) and RT-throttling control (`#125`); and `cyclictest` jitter bench (`350 us` gate in `#128`).
 - [x] **RK3588 `5.10.226-preempt` kernel transition & IRQ offload (`#126`, `#129`, `#130`):**
       Transitioned the board to `Linux 5.10.226-preempt #7 SMP PREEMPT` with cleaned `/proc/cmdline` (`isolcpus=4-7 nohz_full=4-7 rcu_nocbs=4-7 irqaffinity=0-3`) and offloaded GPU and `rkvenc-core` IRQs from CPU4 to A55 cores `0-3` (`#130`).
-- [x] **Audit Sprint 1 (`#131`) & Sprint 2 (`chore/audit-sprint-2-tsan-rt`):**
+- [x] **Audit Sprint 1 (`#131`) & Sprint 2 (`5199fe5`, PR `#132`):**
       Sprint 1 (`dbe29bf`, `#131`) fixed RT hot-path and resilience issues across `StreamOutput`, `H264Encoder`, `SdWatchdog`, `CameraV4L2`, and `MuxSession`; Sprint 2 expanded TSan and RT verification to `71` unit suites / `9,617` checks + `11` TSan suites / `6,188` checks.
 
 ## Audit Sprint 3, PTS/Wi-Fi Streaming & Viewer Stabilization (`PR #134`–`#137`)
@@ -754,5 +754,9 @@ Completed on `fix/audit-p0` (up to `3ccd8ae`, PR #71; merged into `master` in PR
 
 ## Next / Track A Follow-ups (Backlog)
 
-- [x] **Re-ID `[perf]` observability (`PR #140`):** add `crops / drops / matches / reid_ms` counters to `[perf]` so cross-camera Re-ID throughput and 4-slot queue drops are measurable during multi-source soak runs.
-- [x] **V4L2 `eagain` polling rate (`PR #140`):** reduce idle `eagain` polls (`~1500` per 5 s window in 4-source soak) when USB camera cadence is slower than loop rate.
+- [x] **Stage 10 — Transport Backpressure & Adaptive Pacing (`1545f31`, PR `#139`):**
+      Added 4-level queue-depth hysteresis in SDK-free `EncodePacer` + `NetEncoder` (`>= 24/32` pause -> `<= 12/32` resume, `1 s` sustained step-down, `8 s` clean recovery hold-down, instant `observe_flush()` escalation, epoch reset). Live `~360 kbps` throttled TCP test (2 sources): `qflush=0`, `pq_max=7/32`, recognition steady at `49.443 FPS`.
+- [x] **Re-ID `[perf]` observability & V4L2 `poll(2)` wait (`a3a87c7`, PR `#140`):**
+      Replaced idle `sleep_for(1 ms)` V4L2 polling in `SourceSet`/`SourceSupervisor` with event-driven `::poll(2)` (`wait_any()`, dropping `/dev/video20` `eagain` from `~1500/5 s` to `0` across 2- and 4-source runs) and added zero-alloc lock-free `[perf] reid` counters (`crops / drops / matches / ms_max`).
+- [x] **Multi-viewer MPEG-TS fan-out relay (`694e35d`, PR `#141`):**
+      Added standalone single-file C++17 `epoll_pwait` relay in [`modules/ts_fanout/`](../../modules/ts_fanout/README.md) (`127.0.0.1:1234 -> 0.0.0.0:1236`, A55 `cpu 0-3`, `0.1%` CPU, on-demand upstream with `1500 ms` idle grace preserving `enc=0.0 ms`, `188 B` `0x47` packet alignment, per-client `256 KiB` ring buffers with zero HoL-blocking).
