@@ -21,7 +21,10 @@ net = true
 net_h264 = true
 net_port = 1234
 net_fps = 0
-net_bitrate = 3000
+# RC uses nominal 25 fps; at 20 fps VFR multi-view, 2000 kbps yields ~1600 kbps ES (~1.7 Mbps wire)
+net_bitrate = 2000
+# H.264 keyframe interval in frames (0 = auto 1s); 50 halves periodic IDR bursts (~2.5s @ 20 fps)
+net_gop = 50
 label_lang = ru
 
 # Diagnostics (debug | info | warn | error | off)

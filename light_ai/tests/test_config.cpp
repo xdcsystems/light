@@ -253,12 +253,29 @@ namespace
         CHECK( t, error_text( { "--src-rot", "90" },
                               "--src-rot requires a preceding --device or --net-src (or --config source)\n" ) );
     }
+
+    void check_net_gop( TestRun& t )
+    {
+        using Status = CliOptions::ParseStatus;
+        Cli def_cli;
+        CHECK( t, parse( def_cli, {} ) == Status::Run && def_cli.config().stream.gop == 0 );
+
+        Cli gop_cli;
+        CHECK( t, parse( gop_cli, { "--net-gop", "50" } ) == Status::Run && gop_cli.config().stream.gop == 50 );
+        CHECK( t, rejected( { "--net-gop", "301" } ) );
+        CHECK( t, rejected( { "--net-gop", "-1" } ) );
+
+        const TempIni gop_ini( "net_gop = 50\n" );
+        Cli ini_cli;
+        CHECK( t, parse( ini_cli, { "--config", gop_ini.path() } ) == Status::Run && ini_cli.config().stream.gop == 50 );
+    }
 }  // namespace
 
 void test_config( TestRun& t )
 {
     check_log_level( t );
     check_stage6_options( t );
+    check_net_gop( t );
     texts( t );
 
     using Status = CliOptions::ParseStatus;

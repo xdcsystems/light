@@ -214,6 +214,55 @@ namespace
         CHECK( t, q_no_age.push( a, 0 ).flushed == 0 );
         CHECK( t, q_no_age.push( b, 10000000 ).flushed == 0 );
         CHECK( t, q_no_age.depth() == 2 );
+
+        // Wait-key non-key packet aged > max_age_us is drained silently on keyframe push.
+        Stats st_wait;
+        Queue q_wait( FakeOps { &st_wait }, 100000 );
+        q_wait.open( 1 );
+        FakePkt w1 = pkt( 1, true );
+        FakePkt w2 = pkt( 2, false );
+        FakePkt w3 = pkt( 3, false );
+        FakePkt w5 = pkt( 5, true );
+        CHECK( t, q_wait.push( w1, 1000 ).flushed == 0 );
+        CHECK( t, q_wait.push( w2, 50000 ).flushed == 0 );
+        const Queue::Pushed pu_fl = q_wait.push( w3, 102000 );
+        CHECK( t, pu_fl.flushed == 2 && pu_fl.drops == 1 && q_wait.depth() == 1 );
+        const Queue::Pushed pu_key = q_wait.push( w5, 450000 );
+        CHECK( t, pu_key.flushed == 0 && pu_key.drops == 1 && q_wait.depth() == 1 );
+        FakePkt wout;
+        const Queue::Popped wpop = q_wait.pop( wout );
+        CHECK( t, wpop.what == Pop::Packet && wout.seq == 5 && wpop.left == 0 );
+        CHECK( t, st_wait.unrefs == 3 );
+
+        // 3-arg push() invokes on_flush only when flushed > 0 and before moving src.
+        Stats st_cb;
+        Queue q_cb( FakeOps { &st_cb }, 100000 );
+        q_cb.open( 1 );
+        int cb_calls = 0;
+        int cb_flushed = 0;
+        const auto no_flush_cb = [&]( FakePkt& /*p*/, int /*fl*/ ) noexcept { ++cb_calls; };
+        FakePkt c1 = pkt( 1, true );
+        FakePkt c2 = pkt( 2, false );
+        CHECK( t, q_cb.push( c1, 1000, no_flush_cb ).flushed == 0 && cb_calls == 0 );
+        CHECK( t, q_cb.push( c2, 50000, no_flush_cb ).flushed == 0 && cb_calls == 0 );
+        FakePkt c3 = pkt( 3, true );
+        const Queue::Pushed pu_cb = q_cb.push( c3, 102000, [&]( FakePkt& p, int flushed ) noexcept {
+            ++cb_calls;
+            cb_flushed = flushed;
+            if ( p.seq == 3 )
+                p.seq = 300;
+        } );
+        CHECK( t, pu_cb.flushed == 2 && cb_calls == 1 && cb_flushed == 2 );
+        FakePkt cout;
+        CHECK( t, q_cb.pop( cout ).what == Pop::Packet && cout.seq == 300 );
+        // Draining aged wait_key_ non-key packet leaves flushed == 0 so on_flush is not called.
+        FakePkt c4 = pkt( 4, false );
+        FakePkt c5 = pkt( 5, false );
+        FakePkt c6 = pkt( 6, true );
+        CHECK( t, q_cb.push( c4, 150000 ).flushed == 0 );
+        CHECK( t, q_cb.push( c5, 251000 ).flushed == 1 );  // flushes c4, leaves c5 with wait_key_
+        cb_calls = 0;
+        CHECK( t, q_cb.push( c6, 400000, no_flush_cb ).flushed == 0 && cb_calls == 0 );
     }
 }  // namespace
 

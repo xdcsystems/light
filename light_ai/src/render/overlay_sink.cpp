@@ -35,6 +35,7 @@ namespace
         c.port = stream.port;
         c.host = stream.host;
         c.bitrate_kbps = stream.bitrate_kbps;  // the <= 0 fallback is EncoderConfig::kbps()
+        c.gop_override = stream.gop;
         return c;
     }
 

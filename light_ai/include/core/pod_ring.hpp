@@ -48,6 +48,11 @@ struct PodRing
         head = ( head + 1 ) % N;
         --n;
     }
+    void pop_back() noexcept
+    {
+        if ( n > 0 )
+            --n;
+    }
     // Indexing from the end: back(0) == newest, back(k) walks to oldest.
     T& back( int k )
     {

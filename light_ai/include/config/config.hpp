@@ -81,6 +81,7 @@ struct StreamConfig
     int fps = 25;
     bool h264 = false;         // --net-h264: h264_rkmpp + MPEG-TS instead of raw NUT
     int bitrate_kbps = 12000;  // --net-bitrate
+    int gop = 0;               // --net-gop: 0 = auto (1 s at nominal/configured fps)
     std::string host;          // --net-host: UDP push destination; empty = TCP pull on port
     bool cpu_draw = false;                // --cpu-draw: force the CPU box-drawing path (A/B vs the GPU drawer)
     LabelLang label_lang = LabelLang::En; // --label-lang: callout text language (en | ru)

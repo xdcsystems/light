@@ -1,6 +1,7 @@
 #include <cstdint>
 
 #include "check.hpp"
+#include "core/packet_queue.hpp"
 #include "core/pts_clock.hpp"
 #include "suites.hpp"
 
@@ -170,7 +171,7 @@ namespace
         CHECK( t, f.stamp_packet( true, c_idr, true, fpts, idr_mux_ts ) );
         f.advance();
         const int64_t dt_idr = idr_mux_ts - prev_mux_ts;
-        CHECK( t, idr_mux_ts > prev_mux_ts && dt_idr >= 4500 && dt_idr <= 9000 );
+        CHECK( t, idr_mux_ts > prev_mux_ts && dt_idr == 4500 );
 
         // Subsequent P-frame (+50 ms at 1,850,000 us) is accepted and steps by exact 4500 ticks (50 ms).
         const int64_t c_next = f.next_frame_pts( 1850000, sent++, fpts );
@@ -209,7 +210,7 @@ namespace
         // Then recovery IDR lands:
         int64_t lag_idr_ts = -1;
         CHECK( t, f.stamp_packet( true, c_idr_lag, true, fpts_idr_lag, lag_idr_ts ) );
-        CHECK( t, lag_idr_ts > next_mux_ts && ( lag_idr_ts - next_mux_ts ) == 4501 );
+        CHECK( t, lag_idr_ts > next_mux_ts && ( lag_idr_ts - next_mux_ts ) == 4500 );
         f.advance();
         // Next normal frame (+50 ms) MUST step by 4500 ticks, NOT collapse to +1 tick!
         const int64_t c_after_lag = f.next_frame_pts( 1550000, sent++, fpts );
@@ -227,7 +228,7 @@ namespace
         const int64_t c_retry = f.next_frame_pts( 1850000, sent++, fpts_retry, true );  // +250 ms later
         int64_t retry_ts = -1;
         CHECK( t, f.stamp_packet( true, c_retry, true, fpts_retry, retry_ts ) );
-        CHECK( t, retry_ts > after_lag_ts && ( retry_ts - after_lag_ts ) == 4501 );
+        CHECK( t, retry_ts > after_lag_ts && ( retry_ts - after_lag_ts ) == 4500 );
 
         // 5. on_queue_flush(true) when flushing packet is already a keyframe + frame_step > 1.
         SessionPtsFilter h( true );
@@ -276,6 +277,280 @@ namespace
         const int64_t cc2 = cfr_f.next_frame_pts( 0, 2, cf, true );
         CHECK( t, cfr_f.stamp_packet( true, cc2, true, cf, cts ) && cts == 7200 );
     }
+
+    struct TestPkt
+    {
+        int64_t pts = -1;
+        bool key = false;
+        bool alloc = false;
+    };
+
+    struct TestOps
+    {
+        bool init( TestPkt& p ) const noexcept
+        {
+            p.alloc = true;
+            return true;
+        }
+        void release( TestPkt& p ) const noexcept { p.alloc = false; }
+        void unref( TestPkt& p ) const noexcept
+        {
+            p.pts = -1;
+            p.key = false;
+        }
+        void move( TestPkt& dst, TestPkt& src ) const noexcept
+        {
+            dst.pts = src.pts;
+            dst.key = src.key;
+            unref( src );
+        }
+        bool is_key( const TestPkt& p ) const noexcept { return p.key; }
+    };
+
+    using TestQueue = BasicPacketQueue<TestPkt, TestOps, 32>;
+
+    TestQueue::Pushed push_encoded( SessionPtsFilter& f, TestQueue& q, int64_t ts_us, uint64_t& sent,
+                                    bool is_key, int64_t now_us, int64_t& stamped_ts )
+    {
+        int64_t fpts = -1;
+        const int64_t cpts = f.next_frame_pts( ts_us, sent++, fpts, is_key );
+        if ( !f.stamp_packet( true, cpts, is_key, fpts, stamped_ts ) )
+            return TestQueue::Pushed { 0, 0 };
+        TestPkt pkt { stamped_ts, is_key, true };
+        const TestQueue::Pushed pu = q.push( pkt, now_us, [&]( TestPkt& p, int flushed ) {
+            if ( is_key )
+            {
+                stamped_ts = f.rebase_flushed_key( true, cpts, fpts, flushed );
+                p.pts = stamped_ts;
+                return;
+            }
+            f.on_queue_flush( false, flushed );
+        } );
+        f.advance();
+        return pu;
+    }
+
+    void prime_muxed_0_to_9( TestRun& t, SessionPtsFilter& f, TestQueue& q, uint64_t& sent )
+    {
+        TestPkt out;
+        for ( int i = 0; i < 10; ++i )
+        {
+            const int64_t ts_us = 1000000 + static_cast<int64_t>( i ) * 50000;
+            int64_t stamped = -1;
+            const TestQueue::Pushed pu = push_encoded( f, q, ts_us, sent, i == 0, ts_us, stamped );
+            CHECK( t, pu.flushed == 0 && stamped == static_cast<int64_t>( i ) * 4500 );
+            CHECK( t, q.pop( out ).what == TestQueue::Pop::Packet && out.pts == stamped );
+        }
+    }
+
+    void case_a_immediate_idr( TestRun& t )
+    {
+        SessionPtsFilter f( true );
+        TestQueue q( TestOps {}, 300000 );
+        f.on_epoch( 1 );
+        q.open( 1 );
+        uint64_t sent = 0;
+        prime_muxed_0_to_9( t, f, q, sent );
+
+        int64_t ts = -1;
+        for ( int i = 10; i <= 15; ++i )
+        {
+            const int64_t us = 1000000 + static_cast<int64_t>( i ) * 50000;
+            CHECK( t, push_encoded( f, q, us, sent, false, us, ts ).flushed == 0 );
+        }
+        const TestQueue::Pushed fl = push_encoded( f, q, 1802000, sent, false, 1802000, ts );
+        CHECK( t, fl.flushed == 6 );
+        const TestQueue::Pushed idr = push_encoded( f, q, 1850000, sent, true, 1850000, ts );
+        CHECK( t, idr.flushed == 0 && ts == 45000 );
+
+        TestPkt out;
+        CHECK( t, q.pop( out ).what == TestQueue::Pop::Packet && out.pts == 45000 );
+        CHECK( t, push_encoded( f, q, 1900000, sent, false, 1900000, ts ).flushed == 0 && ts == 49500 );
+        CHECK( t, q.pop( out ).what == TestQueue::Pop::Packet && out.pts == 49500 );
+    }
+
+    void case_b_cooldown_and_aged_drain( TestRun& t )
+    {
+        SessionPtsFilter f( true );
+        TestQueue q( TestOps {}, 300000 );
+        f.on_epoch( 1 );
+        q.open( 1 );
+        uint64_t sent = 0;
+        prime_muxed_0_to_9( t, f, q, sent );
+
+        int64_t ts = -1;
+        for ( int i = 10; i <= 15; ++i )
+        {
+            const int64_t us = 1000000 + static_cast<int64_t>( i ) * 50000;
+            CHECK( t, push_encoded( f, q, us, sent, false, us, ts ).flushed == 0 );
+        }
+        CHECK( t, push_encoded( f, q, 1802000, sent, false, 1802000, ts ).flushed == 6 );
+
+        for ( int i = 17; i <= 24; ++i )
+        {
+            const int64_t us = 1000000 + static_cast<int64_t>( i ) * 50000;
+            int64_t fpts = -1;
+            const int64_t cpts = f.next_frame_pts( us, sent++, fpts, false );
+            CHECK( t, !f.stamp_packet( true, cpts, false, fpts, ts ) );
+            f.advance();
+        }
+        // Frame 16 sat in ring_[0] for 448 ms > 300 ms, but wait_key_ drains it without spurious flush.
+        const TestQueue::Pushed idr = push_encoded( f, q, 2250000, sent, true, 2250000, ts );
+        CHECK( t, idr.flushed == 0 && ts == 45000 );
+
+        TestPkt out;
+        CHECK( t, q.pop( out ).what == TestQueue::Pop::Packet && out.pts == 45000 );
+        CHECK( t, push_encoded( f, q, 2300000, sent, false, 2300000, ts ).flushed == 0 && ts == 49500 );
+        CHECK( t, q.pop( out ).what == TestQueue::Pop::Packet && out.pts == 49500 );
+    }
+
+    void case_double_flush_before_pop( TestRun& t )
+    {
+        SessionPtsFilter f( true );
+        TestQueue q( TestOps {}, 300000 );
+        f.on_epoch( 1 );
+        q.open( 1 );
+        uint64_t sent = 0;
+        prime_muxed_0_to_9( t, f, q, sent );
+
+        int64_t ts = -1;
+        for ( int i = 10; i <= 15; ++i )
+        {
+            const int64_t us = 1000000 + static_cast<int64_t>( i ) * 50000;
+            CHECK( t, push_encoded( f, q, us, sent, false, us, ts ).flushed == 0 );
+        }
+        CHECK( t, push_encoded( f, q, 1802000, sent, false, 1802000, ts ).flushed == 6 );
+        CHECK( t, push_encoded( f, q, 1850000, sent, true, 1850000, ts ).flushed == 0 && ts == 45000 );
+
+        for ( int i = 18; i <= 22; ++i )
+        {
+            const int64_t us = 1000000 + static_cast<int64_t>( i ) * 50000;
+            CHECK( t, push_encoded( f, q, us, sent, false, us, ts ).flushed == 0 );
+        }
+        CHECK( t, push_encoded( f, q, 2152000, sent, false, 2152000, ts ).flushed == 6 );
+        CHECK( t, push_encoded( f, q, 2200000, sent, true, 2200000, ts ).flushed == 0 && ts == 45000 );
+
+        TestPkt out;
+        CHECK( t, q.pop( out ).what == TestQueue::Pop::Packet && out.pts == 45000 );
+    }
+
+    void case_eagain_and_pre_pop_flush( TestRun& t )
+    {
+        SessionPtsFilter f( true );
+        TestQueue q( TestOps {}, 300000 );
+        f.on_epoch( 1 );
+        q.open( 1 );
+        uint64_t sent = 0;
+        prime_muxed_0_to_9( t, f, q, sent );
+
+        int64_t ts = -1;
+        for ( int i = 10; i <= 15; ++i )
+        {
+            const int64_t us = 1000000 + static_cast<int64_t>( i ) * 50000;
+            CHECK( t, push_encoded( f, q, us, sent, false, us, ts ).flushed == 0 );
+        }
+        CHECK( t, push_encoded( f, q, 1802000, sent, false, 1802000, ts ).flushed == 6 );
+
+        int64_t lag_fpts = -1;
+        const int64_t lag_cpts = f.next_frame_pts( 1850000, sent++, lag_fpts, false );
+        f.advance();
+        int64_t idr_fpts = -1;
+        const int64_t idr_cpts = f.next_frame_pts( 1900000, sent++, idr_fpts, true );
+        CHECK( t, !f.stamp_packet( true, lag_cpts, false, lag_fpts, ts ) );
+        CHECK( t, f.stamp_packet( true, idr_cpts, true, idr_fpts, ts ) && ts == 45000 );
+        f.advance();
+        CHECK( t, push_encoded( f, q, 1950000, sent, false, 1950000, ts ).flushed == 0 && ts == 49500 );
+
+        // Pre-first-pop flush (committed_mux_pts_ == -1): recovery IDR starts at 0.
+        SessionPtsFilter g( true );
+        TestQueue q2( TestOps {}, 300000 );
+        g.on_epoch( 1 );
+        q2.open( 1 );
+        uint64_t sent2 = 0;
+        for ( int i = 0; i <= 6; ++i )
+        {
+            const int64_t us = 1000000 + static_cast<int64_t>( i ) * 50000;
+            CHECK( t, push_encoded( g, q2, us, sent2, i == 0, us, ts ).flushed == 0 );
+        }
+        CHECK( t, push_encoded( g, q2, 1352000, sent2, false, 1352000, ts ).flushed == 7 );
+        CHECK( t, push_encoded( g, q2, 1400000, sent2, true, 1400000, ts ).flushed == 0 && ts == 0 );
+        CHECK( t, push_encoded( g, q2, 1450000, sent2, false, 1450000, ts ).flushed == 0 && ts == 4500 );
+    }
+
+    void case_key_queued_flush_rebases( TestRun& t )
+    {
+        // 1. 6-packet aged flush triggered by a periodic IDR (is_key == true, flushed == 6).
+        SessionPtsFilter f( true );
+        TestQueue q( TestOps {}, 300000 );
+        f.on_epoch( 1 );
+        q.open( 1 );
+        uint64_t sent = 0;
+        prime_muxed_0_to_9( t, f, q, sent );
+
+        int64_t ts = -1;
+        for ( int i = 10; i <= 15; ++i )
+        {
+            const int64_t us = 1000000 + static_cast<int64_t>( i ) * 50000;
+            CHECK( t, push_encoded( f, q, us, sent, false, us, ts ).flushed == 0 );
+        }
+        const TestQueue::Pushed key_fl = push_encoded( f, q, 1802000, sent, true, 1802000, ts );
+        CHECK( t, key_fl.flushed == 6 && ts == 45000 );
+        TestPkt out;
+        CHECK( t, q.pop( out ).what == TestQueue::Pop::Packet && out.pts == 45000 );
+        CHECK( t, push_encoded( f, q, 1852000, sent, false, 1852000, ts ).flushed == 0 && ts == 49500 );
+        CHECK( t, q.pop( out ).what == TestQueue::Pop::Packet && out.pts == 49500 );
+
+        // 2. 32-packet full-queue fast burst (8 ms frames) flushed by 33rd-frame periodic IDR.
+        SessionPtsFilter b( true );
+        TestQueue qb( TestOps {}, 300000 );
+        b.on_epoch( 1 );
+        qb.open( 1 );
+        uint64_t bsent = 0;
+        prime_muxed_0_to_9( t, b, qb, bsent );
+        for ( int i = 0; i < 32; ++i )
+        {
+            const int64_t us = 1458000 + static_cast<int64_t>( i ) * 8000;
+            CHECK( t, push_encoded( b, qb, us, bsent, false, us, ts ).flushed == 0 );
+        }
+        const TestQueue::Pushed burst_fl = push_encoded( b, qb, 1714000, bsent, true, 1714000, ts );
+        CHECK( t, burst_fl.flushed == 32 && ts == 45000 );
+        CHECK( t, qb.pop( out ).what == TestQueue::Pop::Packet && out.pts == 45000 );
+        CHECK( t, push_encoded( b, qb, 1764000, bsent, false, 1764000, ts ).flushed == 0 && ts == 49500 );
+        CHECK( t, qb.pop( out ).what == TestQueue::Pop::Packet && out.pts == 49500 );
+
+        // 3. Cooldown-deferred forced IDR hitting an aged wait_key_ queue (key at head stops drain).
+        SessionPtsFilter c( true );
+        TestQueue qc( TestOps {}, 300000 );
+        c.on_epoch( 1 );
+        qc.open( 1 );
+        uint64_t csent = 0;
+        prime_muxed_0_to_9( t, c, qc, csent );
+        for ( int i = 10; i <= 15; ++i )
+        {
+            const int64_t us = 1000000 + static_cast<int64_t>( i ) * 50000;
+            CHECK( t, push_encoded( c, qc, us, csent, false, us, ts ).flushed == 0 );
+        }
+        CHECK( t, push_encoded( c, qc, 1802000, csent, false, 1802000, ts ).flushed == 6 );
+        CHECK( t, push_encoded( c, qc, 1850000, csent, true, 1850000, ts ).flushed == 0 && ts == 45000 );
+        for ( int i = 18; i <= 21; ++i )
+        {
+            const int64_t us = 1000000 + static_cast<int64_t>( i ) * 50000;
+            CHECK( t, push_encoded( c, qc, us, csent, false, us, ts ).flushed == 0 );
+        }
+        const TestQueue::Pushed cd_fl = push_encoded( c, qc, 2152000, csent, true, 2152000, ts );
+        CHECK( t, cd_fl.flushed == 5 && ts == 45000 );
+        CHECK( t, qc.pop( out ).what == TestQueue::Pop::Packet && out.pts == 45000 );
+        CHECK( t, push_encoded( c, qc, 2202000, csent, false, 2202000, ts ).flushed == 0 && ts == 49500 );
+    }
+
+    void queue_buffered_flush_and_cooldown( TestRun& t )
+    {
+        case_a_immediate_idr( t );
+        case_b_cooldown_and_aged_drain( t );
+        case_double_flush_before_pop( t );
+        case_eagain_and_pre_pop_flush( t );
+        case_key_queued_flush_rebases( t );
+    }
 }  // namespace
 
 void test_pts_clock( TestRun& t )
@@ -286,4 +561,5 @@ void test_pts_clock( TestRun& t )
     session_filter( t );
     queue_flush_continuity( t );
     queue_flush_edge_cases( t );
+    queue_buffered_flush_and_cooldown( t );
 }
