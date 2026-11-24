@@ -78,9 +78,11 @@ struct EncoderConfig
 {
     bool vfr() const { return fps <= 0; }  // --net-fps 0: follow the source, pts from publish times
     // Rate-control fps: VFR still needs a number (0/1 reaches MPP as the auto marker and the
-    // CBR per-frame budget collapses): nominal 25 (multi-view paces to the slowest source, <= 30 fps).
+    // CBR per-frame budget collapses): nominal 25 (h264_rkmpp CBR budgets bit_rate / 25 per frame,
+    // so VFR pacing below 25 fps scales output proportionally, e.g. ~80% at 20 fps multi-view).
     int nominal_fps() const { return vfr() ? 25 : fps; }
-    int gop() const { return vfr() ? nominal_fps() : fps; }  // 1 s: a late joiner waits at most one GOP
+    // GOP size in frames: gop_override > 0 uses the configured value; 0 = auto 1 s.
+    int gop() const { return gop_override > 0 ? gop_override : ( vfr() ? nominal_fps() : fps ); }
     // The bitrate the encoder and the stream header use: bitrate_kbps <= 0
     // (not validated by the caller) falls back to 12000 kbps, never 0 to MPP.
     int kbps() const { return bitrate_kbps > 0 ? bitrate_kbps : 12000; }
@@ -95,4 +97,5 @@ public:
     int port = 1234;         // TCP pull listen port / UDP destination port
     std::string host;        // UDP push destination; empty = TCP pull
     int bitrate_kbps = 12000;  // as configured; read it through kbps() / bit_rate()
+    int gop_override = 0;      // --net-gop: 0 = auto (1 s at nominal/configured fps)
 };

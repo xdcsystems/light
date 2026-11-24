@@ -102,8 +102,11 @@ public:
 
     // Producer: moves src's payload into the queue (src is left empty).
     // An overflow or age-limit breach flushes the queue first (Pushed::flushed > 0):
-    // the caller forces an IDR on the next frame. A closed queue drops the packet.
-    Pushed push( Pkt& src, int64_t now_us = packet_queue_now_us() )
+    // when flushed > 0, on_flush( src, flushed ) runs under mx_ before src is
+    // moved into the ring so a queued keyframe can be rebased in place.
+    // A closed queue drops the packet without calling on_flush.
+    template <typename OnFlush>
+    Pushed push( Pkt& src, int64_t now_us, OnFlush&& on_flush )
     {
         const std::lock_guard<Mutex> lk( mx_ );
         if ( !open_ )
@@ -112,13 +115,24 @@ public:
             return Pushed { 0, drops_ };
         }
         int flushed = 0;
-        const bool aged = !ring_.empty() && max_age_us_ > 0 && ( now_us - push_us_[ring_.head] ) > max_age_us_;
-        if ( ring_.full() || aged )
+        bool need_flush = is_flush_needed_locked( now_us );
+        if ( need_flush && wait_key_ )
+        {
+            while ( !ring_.empty() && !ops_.is_key( ring_.front() ) )
+            {
+                ops_.unref( ring_.front() );
+                ring_.pop();
+            }
+            need_flush = is_flush_needed_locked( now_us );
+        }
+        if ( need_flush )
         {
             flushed = ring_.n;
             clear_locked();
             wait_key_ = true;
             ++drops_;
+            if ( flushed > 0 )
+                on_flush( src, flushed );
         }
         push_us_[( ring_.head + ring_.n ) % N] = now_us;
         ops_.move( ring_.push_slot(), src );  // !full() guaranteed above
@@ -126,6 +140,11 @@ public:
             max_depth_ = ring_.n;
         cv_.notify_one();
         return Pushed { flushed, drops_ };
+    }
+
+    Pushed push( Pkt& src, int64_t now_us = packet_queue_now_us() )
+    {
+        return push( src, now_us, []( Pkt& /*src*/, int /*flushed*/ ) noexcept {} );
     }
 
     int depth() const
@@ -206,6 +225,15 @@ public:
     }
 
 private:
+    bool is_flush_needed_locked( int64_t now_us ) const noexcept
+    {
+        if ( ring_.full() )
+            return true;
+        if ( ring_.empty() || max_age_us_ <= 0 )
+            return false;
+        return ( now_us - push_us_[ring_.head] ) > max_age_us_;
+    }
+
     void clear_locked()
     {
         while ( !ring_.empty() )

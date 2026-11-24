@@ -313,7 +313,7 @@ ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -analyzedurati
 
 ### CLI Options (`src/config/option_registry.cpp`)
 
-All **27 options** (plus `--help` / `-h`) are shared between the CLI parser and `--config` INI files (up to **4** video sources across `1×1`, `2×1`, or `2×2` grid). INI files (`key = value`) are applied **before** CLI flags so CLI flags always override. Missing camera nodes fall back via `UsbNodeLocator`; busy nodes stay `Detached` and are retried every `2 s` by `SourceProber`.
+All **28 options** (plus `--help` / `-h`) are shared between the CLI parser and `--config` INI files (up to **4** video sources across `1×1`, `2×1`, or `2×2` grid). INI files (`key = value`) are applied **before** CLI flags so CLI flags always override. Missing camera nodes fall back via `UsbNodeLocator`; busy nodes stay `Detached` and are retried every `2 s` by `SourceProber`.
 
 | Flag | Argument | Default | Description |
 |---|---|---|---|
@@ -338,6 +338,7 @@ All **27 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 | `--net-port` | `1..65535` | `1234` | Preview TCP listen port (or UDP destination port) |
 | `--net-host` | `<ip/host>` | `""` *(TCP pull)* | Optional UDP push destination (H.264 push); unset = TCP pull server |
 | `--net-fps` | `0..120` | `25` | Preview stream FPS (`0` = VFR follow-source timestamps) |
+| `--net-gop` | `0..300` | `0` *(auto 1s)* | H.264 GOP size in frames (`0` = auto 1 s at configured/nominal FPS) |
 | `--net-bitrate` | `1000..100000` | `12000` | H.264 encoder CBR bitrate in kbps (`1500–3000` is plenty for `640×480`) |
 | `--cpu-draw` | — | `false` | Force CPU box/trail/callout drawing (`A/B` baseline vs. Mali GPU drawer) |
 | `--cal` | `1..10000` | `0` *(off)* | Save up to `N` model-input frames (`cal_%04d.ppm`) for INT8 calibration |

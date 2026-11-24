@@ -56,13 +56,15 @@ H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log
     ctx->time_base = cfg.vfr() ? AVRational { 1, 90000 } : AVRational { 1, cfg.fps };
     // VFR: rc still needs a numeric fps — 0/1 reaches MPP as the auto
     // marker (65535) and the CBR per-frame budget collapses (stream
-    // dries to ~83 kbps). EncoderConfig::nominal_fps(): 25, 25 per source
-    // in multi-view, for rate control only; pts stay VFR from publish times.
+    // dries to ~83 kbps). EncoderConfig::nominal_fps() stays at 25 for
+    // rate control so h264_rkmpp allocates bit_rate / 25 per frame; when
+    // VFR pacing runs below 25 fps (e.g. ~20 fps multi-view), actual CBR
+    // output scales proportionally (~20/25 = 80% of net_bitrate).
     ctx->framerate = AVRational { cfg.nominal_fps(), 1 };
     ctx->bit_rate = cfg.bit_rate();
     // gop_size reaches MPP as rc:gop (rkmpp_set_enc_cfg):
-    // a captured stream shows I-frames every 26 for GOP 25.
-    ctx->gop_size = cfg.gop();  // 1 s: a late joiner waits at most one GOP
+    // a captured stream shows I-frames every gop + 1 frames.
+    ctx->gop_size = cfg.gop();
     ctx->max_b_frames = 0;  // no reorder: minimal latency
     // Synchronous MPP output collection per frame: prevents rkmppenc from holding
     // 4-5 DRM buffers in flight concurrently with RGA writes and cuts latency by 4 frames.
@@ -80,8 +82,8 @@ H264Encoder::H264Encoder( const EncoderConfig& cfg, const Log& log ) : log_( log
         log_.info() << "enc: rc mode CBR applied via rc_mode option\n";
     else
         log_.info() << "enc: rc_mode=CBR unavailable or unconsumed, encoder default stays\n";
-    log_.info() << "enc: h264_rkmpp open: " << cfg.layout.w << 'x' << cfg.layout.h << ", " << cfg.kbps() << " kbps, gop "
-                << ctx->gop_size << '\n';
+    log_.info() << "enc: h264_rkmpp open: " << cfg.layout.w << 'x' << cfg.layout.h << ", " << cfg.kbps()
+                << " kbps, nominal " << cfg.nominal_fps() << " fps, gop " << ctx->gop_size << '\n';
     if ( cfg.vfr() )
         log_.info() << "enc: VFR follow-source mode: time_base 1/90000, pts from publish times\n";
 }
@@ -298,8 +300,9 @@ void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
     AVPacket* pkt = pkt_.get();
     int64_t ts = 0;
     const bool has_pts = ( pkt->pts != AV_NOPTS_VALUE );
+    const int64_t raw_pkt_pts = pkt->pts;
     const bool is_key = ( pkt->flags & AV_PKT_FLAG_KEY ) != 0;
-    if ( !pts_.stamp_packet( has_pts, pkt->pts, is_key, fpts, ts ) )
+    if ( !pts_.stamp_packet( has_pts, raw_pkt_pts, is_key, fpts, ts ) )
     {
         av_packet_unref( pkt );
         return;
@@ -309,11 +312,18 @@ void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
     // Overflow = serve() stalled (slow viewer / Wi-Fi burst): the queue
     // flushed itself and re-armed its key gate (core/packet_queue.hpp);
     // an IDR on the next frame makes the gap one frame, not a full GOP.
-    const PacketQueue::Pushed pu = queue.push( pkt_.slot() );
+    const PacketQueue::Pushed pu = queue.push( pkt_.slot(), packet_queue_now_us(), [&]( AVPacket*& p, int flushed ) {
+        if ( is_key )
+        {
+            const int64_t rebased_ts = pts_.rebase_flushed_key( has_pts, raw_pkt_pts, fpts, flushed );
+            p->pts = p->dts = rebased_ts;
+            return;
+        }
+        pts_.on_queue_flush( false, flushed );
+    } );
     if ( pu.flushed > 0 )
     {
         ++q_flush_cnt_;
-        pts_.on_queue_flush( is_key );
         if ( is_key )
         {
             log_.warn() << "enc: packet queue flushed " << pu.flushed << " pkts (drop " << pu.drops

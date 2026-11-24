@@ -252,6 +252,8 @@ OptionRegistry::OptionRegistry( const Log& log )
                               +[]( Config& c, const char* v ) { return set_int( v, 1000, 100000, c.stream.bitrate_kbps ); } } },
         { "--net-fps",      { true, "preview stream fps 1..120, 0 = follow the source (VFR pts from publish times)", "0..120",
                               +[]( Config& c, const char* v ) { return set_int( v, 0, 120, c.stream.fps ); } } },
+        { "--net-gop",      { true, "H.264 GOP size 1..300 frames, 0 = auto 1s (default 0)", "0..300",
+                              +[]( Config& c, const char* v ) { return set_int( v, 0, 300, c.stream.gop ); } } },
         { "--net-h264",     { false, "H.264/MPEG-TS preview instead of raw rgb24", nullptr,
                               +[]( Config& c, const char* ) { return set_flag( c.stream.h264 ); } } },
         { "--net-host",     { true, "optional UDP destination (h264 push); unset = TCP pull", nullptr,

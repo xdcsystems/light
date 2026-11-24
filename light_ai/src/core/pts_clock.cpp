@@ -86,50 +86,98 @@ int64_t PtsClock::next( int64_t ts_us, uint64_t frames_sent ) noexcept
     return p;
 }
 
-void SessionPtsFilter::on_epoch( int64_t frame_step ) noexcept
+void SessionPtsFilter::commit_unconfirmed_head() noexcept
 {
-    pts_.restart( frame_step );
-    epoch_base_pts_ = last_submitted_pts_ >= 0 ? ( last_submitted_pts_ + 1 ) : 0;
-    last_pkt_pts_ = -1;
-    awaiting_key_ = true;
-    recovery_idr_submitted_ = false;
-}
-
-void SessionPtsFilter::on_queue_flush( bool key_queued ) noexcept
-{
-    pts_.on_queue_flush();
-    if ( !key_queued )
+    while ( !unconfirmed_.empty() )
     {
-        awaiting_key_ = true;
-        recovery_idr_submitted_ = false;
+        const StampedPacket p = unconfirmed_.front();
+        unconfirmed_.pop();
+        if ( !p.wait_key_discard )
+        {
+            committed_ = p;
+            has_committed_ = true;
+        }
     }
 }
 
-int64_t SessionPtsFilter::next_frame_pts( int64_t ts_us, uint64_t frames_sent, int64_t& session_fpts,
-                                          bool is_key_frame ) noexcept
+int64_t SessionPtsFilter::compute_vfr_adj( int64_t rel_pts ) noexcept
 {
-    session_fpts = pts_.next( ts_us, frames_sent );
-    const int64_t codec_pts = epoch_base_pts_ + session_fpts;
-    if ( codec_pts > last_submitted_pts_ )
-        last_submitted_pts_ = codec_pts;
-    if ( awaiting_key_ && is_key_frame )
-        recovery_idr_submitted_ = true;
-    return codec_pts;
+    const int64_t current_adj = rel_pts - mux_rebase_offset_;
+    if ( mux_flush_pending_ )
+    {
+        mux_flush_pending_ = false;
+        int64_t target_adj = 0;
+        if ( flush_anchor_mux_pts_ >= 0 )
+        {
+            const int64_t min_after = flush_anchor_mux_pts_ / frame_step_ + 1;
+            target_adj = std::max( min_after, flush_anchor_adj_rel_pts_ + flush_anchor_step_90k_ );
+        }
+        last_raw_rel_pts_ = rel_pts;
+        if ( current_adj <= target_adj )
+            return current_adj;
+        mux_rebase_offset_ = rel_pts - target_adj;
+        return target_adj;
+    }
+    if ( last_raw_rel_pts_ >= 0 )
+    {
+        const int64_t dt = rel_pts - last_raw_rel_pts_;
+        if ( dt >= PtsClock::kMinStep90k && dt <= PtsClock::kMaxStep90k )
+            last_step_90k_ = dt;
+    }
+    last_raw_rel_pts_ = rel_pts;
+    return current_adj;
 }
 
-void SessionPtsFilter::on_submit_failed( bool was_key_frame ) noexcept
+void SessionPtsFilter::on_epoch( int64_t frame_step ) noexcept
 {
-    if ( was_key_frame )
-        recovery_idr_submitted_ = false;
-    pts_.rearm_flush();
+    pts_.restart( frame_step );
+    frame_step_ = std::max<int64_t>( 1, frame_step );
+    epoch_base_pts_ = last_submitted_pts_ >= 0 ? ( last_submitted_pts_ + 1 ) : 0;
+    last_pkt_pts_ = -1;
+    awaiting_key_ = true;
+    has_stamped_ = false;
+
+    mux_rebase_offset_ = 0;
+    last_raw_rel_pts_ = -1;
+    last_step_90k_ = PtsClock::kDefaultStep90k;
+    mux_flush_pending_ = false;
+    flush_anchor_rel_pts_ = -1;
+    flush_anchor_adj_rel_pts_ = 0;
+    flush_anchor_mux_pts_ = -1;
+    flush_anchor_step_90k_ = PtsClock::kDefaultStep90k;
+    unconfirmed_.clear();
+    has_committed_ = false;
+    committed_ = StampedPacket {};
 }
 
-bool SessionPtsFilter::stamp_packet( bool has_pts, int64_t raw_pkt_pts, bool is_key, int64_t session_fpts,
-                                     int64_t& mux_pts_out ) noexcept
+void SessionPtsFilter::set_flush_anchor( bool use_queued_key ) noexcept
 {
-    if ( has_pts && raw_pkt_pts < epoch_base_pts_ )
-        return false;  // stale async packet from a prior viewer session
+    if ( use_queued_key || has_committed_ )
+    {
+        const StampedPacket anchor = use_queued_key ? unconfirmed_.back( 0 ) : committed_;
+        flush_anchor_rel_pts_ = anchor.rel_pts;
+        flush_anchor_adj_rel_pts_ = anchor.adj_rel_pts;
+        flush_anchor_mux_pts_ = anchor.mux_pts;
+        flush_anchor_step_90k_ = anchor.step_90k;
+        last_pkt_pts_ = anchor.mux_pts;
+        last_raw_rel_pts_ = anchor.rel_pts;
+        last_step_90k_ = anchor.step_90k;
+    }
+    else
+    {
+        flush_anchor_rel_pts_ = -1;
+        flush_anchor_adj_rel_pts_ = 0;
+        flush_anchor_mux_pts_ = -1;
+        flush_anchor_step_90k_ = PtsClock::kDefaultStep90k;
+        last_pkt_pts_ = -1;
+        last_raw_rel_pts_ = -1;
+        last_step_90k_ = PtsClock::kDefaultStep90k;
+    }
+    mux_flush_pending_ = true;
+}
 
+int64_t SessionPtsFilter::compute_rel_pts( bool has_pts, int64_t raw_pkt_pts, int64_t session_fpts ) const noexcept
+{
     int64_t rel_pts = session_fpts;
     if ( has_pts )
     {
@@ -137,24 +185,103 @@ bool SessionPtsFilter::stamp_packet( bool has_pts, int64_t raw_pkt_pts, bool is_
         if ( candidate >= 0 && candidate <= session_fpts )
             rel_pts = candidate;
     }
+    return rel_pts;
+}
+
+void SessionPtsFilter::on_queue_flush( bool key_queued, int flushed_count ) noexcept
+{
+    if ( !key_queued )
+        awaiting_key_ = true;
+    if ( !vfr_ || !has_stamped_ )
+        return;
+
+    if ( flushed_count > 0 && !unconfirmed_.empty() )
+    {
+        const StampedPacket triggering = unconfirmed_.back( 0 );
+        unconfirmed_.pop_back();
+        for ( int i = 0; i < flushed_count && !unconfirmed_.empty(); ++i )
+            unconfirmed_.pop_back();
+        commit_unconfirmed_head();
+        StampedPacket kept = triggering;
+        kept.wait_key_discard = !key_queued;
+        unconfirmed_.push( kept );
+    }
+    if ( flushed_count <= 0 )
+        commit_unconfirmed_head();
+
+    const bool use_queued_key = key_queued && !unconfirmed_.empty() && !unconfirmed_.back( 0 ).wait_key_discard;
+    set_flush_anchor( use_queued_key );
+}
+
+int64_t SessionPtsFilter::rebase_flushed_key( bool has_pts, int64_t raw_pkt_pts, int64_t session_fpts,
+                                              int flushed_count ) noexcept
+{
+    awaiting_key_ = false;
+    if ( !vfr_ || !has_stamped_ )
+        return unconfirmed_.empty() ? last_pkt_pts_ : unconfirmed_.back( 0 ).mux_pts;
+
+    if ( !unconfirmed_.empty() )
+        unconfirmed_.pop_back();
+    for ( int i = 0; i < flushed_count && !unconfirmed_.empty(); ++i )
+        unconfirmed_.pop_back();
+    commit_unconfirmed_head();
+    set_flush_anchor( false );
+
+    const int64_t rel_pts = compute_rel_pts( has_pts, raw_pkt_pts, session_fpts );
+    const int64_t adj_rel_pts = compute_vfr_adj( rel_pts );
+    int64_t ts = pts_.packet_ts( adj_rel_pts );
+    if ( last_pkt_pts_ >= 0 && ts <= last_pkt_pts_ )
+        ts = last_pkt_pts_ + 1;
+    last_pkt_pts_ = ts;
+    unconfirmed_.push( StampedPacket { rel_pts, adj_rel_pts, ts, last_step_90k_, false } );
+    return ts;
+}
+
+int64_t SessionPtsFilter::next_frame_pts( int64_t ts_us, uint64_t frames_sent, int64_t& session_fpts,
+                                          bool /*is_key_frame*/ ) noexcept
+{
+    session_fpts = pts_.next( ts_us, frames_sent );
+    const int64_t codec_pts = epoch_base_pts_ + session_fpts;
+    if ( codec_pts > last_submitted_pts_ )
+        last_submitted_pts_ = codec_pts;
+    return codec_pts;
+}
+
+void SessionPtsFilter::on_submit_failed( bool /*was_key_frame*/ ) noexcept {}
+
+bool SessionPtsFilter::stamp_packet( bool has_pts, int64_t raw_pkt_pts, bool is_key, int64_t session_fpts,
+                                     int64_t& mux_pts_out ) noexcept
+{
+    if ( has_pts && raw_pkt_pts < epoch_base_pts_ )
+        return false;  // stale async packet from a prior viewer session
+
+    const int64_t rel_pts = compute_rel_pts( has_pts, raw_pkt_pts, session_fpts );
 
     if ( awaiting_key_ )
     {
         if ( !is_key )
-        {
-            if ( !recovery_idr_submitted_ )
-                pts_.rearm_flush();
             return false;
-        }
         awaiting_key_ = false;
-        recovery_idr_submitted_ = false;
-        pts_.disarm_flush();
     }
 
-    int64_t ts = pts_.packet_ts( rel_pts );
+    const int64_t adj_rel_pts = vfr_ ? compute_vfr_adj( rel_pts ) : rel_pts;
+    int64_t ts = pts_.packet_ts( adj_rel_pts );
     if ( last_pkt_pts_ >= 0 && ts <= last_pkt_pts_ )
         ts = last_pkt_pts_ + 1;
     last_pkt_pts_ = ts;
     mux_pts_out = ts;
+    has_stamped_ = true;
+
+    if ( unconfirmed_.full() )
+    {
+        const StampedPacket oldest = unconfirmed_.front();
+        unconfirmed_.pop();
+        if ( !oldest.wait_key_discard )
+        {
+            committed_ = oldest;
+            has_committed_ = true;
+        }
+    }
+    unconfirmed_.push( StampedPacket { rel_pts, adj_rel_pts, ts, last_step_90k_, false } );
     return true;
 }

@@ -17,6 +17,8 @@
 
 #include <cstdint>
 
+#include "core/pod_ring.hpp"
+
 class PtsClock
 {
 public:
@@ -77,24 +79,27 @@ private:
 class SessionPtsFilter
 {
 public:
-    explicit SessionPtsFilter( bool vfr ) noexcept : pts_( vfr ) {}
+    explicit SessionPtsFilter( bool vfr ) noexcept : pts_( vfr ), vfr_( vfr ) {}
 
     // Starts a new viewer session: rebases codec PTS past prior submissions
     // and arms awaiting_key_ until the new session's forced IDR arrives.
     void on_epoch( int64_t frame_step ) noexcept;
 
-    // PacketQueue overflow flush: rebases VFR PTS continuity and, unless the
-    // flushing packet was already a keyframe, re-arms awaiting_key_ so
-    // non-key packets during IDR cooldown do not advance muxer PTS or enter
-    // the queue before the recovery IDR arrives.
-    void on_queue_flush( bool key_queued = false ) noexcept;
+    // PacketQueue overflow flush: rebases muxer-space VFR PTS continuity back to
+    // the last packet not flushed from the queue and, unless the flushing packet
+    // was already a keyframe, re-arms awaiting_key_.
+    void on_queue_flush( bool key_queued = false, int flushed_count = 0 ) noexcept;
+
+    // Re-anchors and rebases a keyframe that triggered a PacketQueue flush before
+    // it is moved into the queue, preventing VFR wire PTS jumps.
+    int64_t rebase_flushed_key( bool has_pts, int64_t raw_pkt_pts, int64_t session_fpts,
+                                int flushed_count ) noexcept;
 
     // Computes session-relative fpts and monotonic AVFrame::pts for encode().
-    // is_key_frame marks that the caller is submitting an IDR while awaiting_key_.
     int64_t next_frame_pts( int64_t ts_us, uint64_t frames_sent, int64_t& session_fpts,
                             bool is_key_frame = false ) noexcept;
 
-    // Restores pending flush/recovery state if avcodec_send_frame() failed to submit.
+    // Kept for encoder EAGAIN/drop symmetry; encode-side PTS stays un-rebased.
     void on_submit_failed( bool was_key_frame ) noexcept;
 
     // Forwards CFR counter advance when a frame is submitted or dropped on EAGAIN.
@@ -109,12 +114,47 @@ public:
     uint64_t clamp_cnt() const noexcept { return pts_.clamp_cnt(); }
 
 private:
+    struct StampedPacket
+    {
+        int64_t rel_pts = 0;
+        int64_t adj_rel_pts = 0;
+        int64_t mux_pts = 0;
+        int64_t step_90k = PtsClock::kDefaultStep90k;
+        bool wait_key_discard = false;
+    };
+
+    enum
+    {
+        kQueueHistoryCap = 33  // PacketQueue capacity (32) + 1 triggering packet before flush
+    };
+
+    void commit_unconfirmed_head() noexcept;
+    void set_flush_anchor( bool use_queued_key ) noexcept;
+    int64_t compute_rel_pts( bool has_pts, int64_t raw_pkt_pts, int64_t session_fpts ) const noexcept;
+    int64_t compute_vfr_adj( int64_t rel_pts ) noexcept;
+
+private:
     PtsClock pts_;
+    bool vfr_ = false;
+    int64_t frame_step_ = 1;
     int64_t epoch_base_pts_ = 0;
     int64_t last_submitted_pts_ = -1;
     int64_t last_pkt_pts_ = -1;
     bool awaiting_key_ = true;
-    bool recovery_idr_submitted_ = false;
+    bool has_stamped_ = false;
+
+    int64_t mux_rebase_offset_ = 0;
+    int64_t last_raw_rel_pts_ = -1;
+    int64_t last_step_90k_ = PtsClock::kDefaultStep90k;
+    bool mux_flush_pending_ = false;
+    int64_t flush_anchor_rel_pts_ = -1;
+    int64_t flush_anchor_adj_rel_pts_ = 0;
+    int64_t flush_anchor_mux_pts_ = -1;
+    int64_t flush_anchor_step_90k_ = PtsClock::kDefaultStep90k;
+
+    PodRing<StampedPacket, kQueueHistoryCap> unconfirmed_ {};
+    bool has_committed_ = false;
+    StampedPacket committed_ {};
 };
 
 // us -> 1/90000 ticks, rounded like av_rescale (AV_ROUND_NEAR_INF).
