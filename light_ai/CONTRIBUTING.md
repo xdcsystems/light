@@ -40,7 +40,7 @@ Each rule is marked **(gate)**, **(review)** or both. **(gate)** means `scripts/
 ## Output Side vs. Recognition Invariant (review)
 
 1. **No viewer connected:** The output side sleeps completely (no box drawing, no RGA compose, no `NO SIGNAL` frames, no H.264 encode; `enc` reads `0.0`).
-2. **Recognition never sleeps:** Capture, decode, NPU inference, and tracking always run regardless of viewer state.
+2. **Recognition is viewer-independent:** Capture, decode, NPU inference, and tracking run whenever at least one source is live regardless of viewer state, and sleep (NPU/Re-ID workers parked on condition variables) when all sources are absent.
 3. **With a viewer connected:** Online sources take the full draw/compose/encode path; absent sources display the pre-rendered gray `NO SIGNAL` tile.
 
 ## Comment Style & Formatting
@@ -59,7 +59,7 @@ Every PR targeting `master` must pass the full board gate:
 
 This runs:
 1. Release CMake build (`light_ai`).
-2. Host unit tests (`light_ai_tests` — 71 suites, 9,617 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 11 suites, 6,188 checks).
+2. Host unit tests (`light_ai_tests` — 71 suites, 10,135 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 11 suites, 6,207 checks).
 3. Two-pass `clang-tidy` gate ([`scripts/tidy_run.sh`](scripts/tidy_run.sh)):
    - **self-test + lint:** the rules pass on [`tests/tidy_probe/`](tests/tidy_probe) and [`scripts/rules_lint.sh`](scripts/rules_lint.sh) on its fixture tree must give exactly the expected hits, and `--verify-config` must know every check option key of `scripts/tidy_rules.yaml`; then `rules_lint.sh` over the tree.
    - **main:** system `clang-tidy-11` against [`.clang-tidy`](.clang-tidy) (`tests/` uses [`tests/.clang-tidy`](tests/.clang-tidy)).
@@ -75,4 +75,4 @@ For structural changes that add, move, or remove a folder or a pipeline stage, u
 ### Public Hygiene & Teamwork Quota Discipline
 
 - **Public-hygiene check (before commit/PR):** run `grep` over `git diff` and PR/issue drafts to ensure 0 internal hostnames, LAN IPs, or local machine paths leak into the repository.
-- **Agent execution discipline:** assign minimal Tier `0`–`3` (`Tier 0`: deterministic gate only; `Tier 1`: <= 1 executor + 1 clean-context adversarial reviewer; `Tier 2`: + fuzzer 50k–100k steps; `Tier 3`: cross-host/A/B), keep flat hierarchy (`max_depth = 1`), track `state.json` (`<= 40` lines) and `ledger.json`, run deterministic gates before LLM review, use `trap cleanup EXIT` in long shell wrappers, and enforce context diet (`<= 80` lines stdout, `handoff.md <= 120` lines). All C++17 and soft-RTOS invariants above remain mandatory.
+- **Agent execution discipline:** assign minimal Tier `0`–`3` (`Tier 0`: deterministic gate only; `Tier 1`: <= 1 executor + 1 clean-context adversarial reviewer; `Tier 2`: + fuzzer 50k–100k steps; `Tier 3`: cross-host/A/B), keep flat hierarchy (`max_depth = 1`), track `state.json` (`<= 40` lines) and `ledger.json`, run deterministic gates before LLM review, use `trap cleanup EXIT` in long shell wrappers, enforce context diet (`<= 80` lines stdout, `handoff.md <= 120` lines), and pass Research-Before-Code Gate (Rule 9: primary-source check + anti-pattern list + ablation before any OS/driver/scheduler/network code). All C++17 and soft-RTOS invariants above remain mandatory.

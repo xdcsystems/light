@@ -35,8 +35,10 @@ that change anything (add, commit, checkout, merge, stash, reset, push).
    line is checked by the gate).
 5. Comments and docs: every changed comment matches the code; docs/state.md or AUDIT_REPORT.md
    status is not claimed as done when the code says otherwise.
-6. Behavioural invariants: output side sleeps without viewer, recognition never sleeps,
-   tracker output stays byte-identical where the task says so.
+6. Behavioural invariants: output side sleeps without viewer, recognition is viewer-independent
+   (runs whenever >= 1 source is live, sleeps when all sources are absent), tracker output stays
+   byte-identical where the task says so, and any new OS/driver/scheduler call satisfies Rule 9
+   (primary-source link, anti-pattern check, and ablation rationale).
 7. Tests: the change is covered, or the report says what is not covered.
 
 ## Delivering the report (SubagentHandback)

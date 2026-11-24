@@ -108,7 +108,7 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   CLI check of one file: `venv/bin/clangd --check=src/a.cpp 2>&1 | grep -E '^E\[[^]]*\] \['` (diagnostics only;
   the exit code is not a verdict: `--check` also fails on refactoring tweaks it cannot apply).
   The diagnostics are hints only; the gate stays the authority.
-- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 71 suites / 9,617 checks + 11 TSan suites / 6,188 checks).
+- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 71 suites / 10,135 checks + 11 TSan suites / 6,207 checks).
   Single suite / flake hunt: `./build/tests/light_ai_tests [substr...] [--repeat N]` (also `light_ai_tests_tsan`;
   exit 2 on bad args).
 - Live run:
@@ -204,8 +204,9 @@ only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
   exceptions (`std::runtime_error` via `throw_on`) are startup-only; frame path and thread bodies are
   `noexcept` (no `throw`: review; no `catch (...)` outside the two allowlisted sites of CONTRIBUTING: gate).
   Exit codes (review): `0` clean, `1` runtime fatal, `2` bad CLI/config, `3` startup failure.
-- Output side vs recognition (review): no viewer -> output side sleeps completely (`enc=0.0`); recognition never
-  sleeps; with viewer, online sources run full path and absent sources show `NO SIGNAL`.
+- Output side vs recognition (review): no viewer -> output side sleeps completely (`enc=0.0`); recognition is
+  viewer-independent (runs whenever >= 1 source is live, sleeps when all sources are absent); with viewer, online
+  sources run full path and absent sources show `NO SIGNAL`.
 - Control flow (gate): no `if` / `else if` ladders (`if constexpr` too; `switch`, tables, early returns,
   independent `if`s), no loop with an empty body, no `for (;;)` / `while (true)`: every loop states its exit condition.
 - Comments match the code and docs (review); max line length `140` (`.clang-format`; gate).
@@ -233,4 +234,4 @@ Full milestone history and A/B records live in [docs/roadmap.md](docs/roadmap.md
 ## Completed soft-rtos & preempt-kernel cycle (`#123`–`#131`, Sprint 1 & Sprint 2)
 - **Kernel & boot cmdline (RK3588):** transitioned to `Linux 5.10.226-preempt #7 SMP PREEMPT` with cleaned `/proc/cmdline` (`isolcpus=4-7 nohz_full=4-7 rcu_nocbs=4-7 irqaffinity=0-3`) and GPU/`rkvenc-core` IRQ offload to A55 cores `0-3` (`#130`).
 - **Soft-RTOS (`#123`–`#126`, PR `#127`):** stack prefault, `mallopt` tuning, RT page-fault/p99 telemetry (`#123`), lock-free `AsyncLogSink` + `PiMutex`/`PiCondVar` (`#124`), systemd `WatchdogSec=5s` `NOTIFY_SOCKET` client (`#125`), and `cyclictest` jitter bench (`350 us` gate in `#128`).
-- **Sprint 1 (`#131`) & Sprint 2 (`chore/audit-sprint-2-tsan-rt`):** RT hot-path/resilience fixes (`StreamOutput`, `H264Encoder`, `SdWatchdog`, `CameraV4L2`, `MuxSession`) and expanded TSan/RT coverage (`71` unit suites / `9,617` checks + `11` TSan suites / `6,188` checks).
+- **Sprint 1 (`#131`) & Sprint 2 (`#132`):** RT hot-path/resilience fixes (`StreamOutput`, `H264Encoder`, `SdWatchdog`, `CameraV4L2`, `MuxSession`) and expanded TSan/RT coverage (`71` unit suites / `9,617` checks + `11` TSan suites / `6,188` checks at Sprint 2; `10,135` / `6,207` on current `master`).
