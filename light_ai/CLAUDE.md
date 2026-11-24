@@ -164,9 +164,16 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
 - **Deterministic gate before LLM:** build, `clang-tidy`/`rules_lint.sh`, unit/TSan, public-hygiene `grep` (0 internal
   hostnames, LAN IPs, or local paths in `git diff`/PR drafts), and fuzzer (Tier 2) must pass before LLM review.
 - **1 clean-context adversarial reviewer:** receives only `git diff`, test output, and `state.json` (no executor
-  persuasive summary).
+  persuasive summary). Auto-reject any new OS/driver call in `git diff` without a primary-source link and rationale.
 - **Context diet & wrappers:** stdout to LLM `<= 80` lines (`<= 25`-line summary for long wrappers with
   `trap cleanup EXIT`), `handoff.md <= 120` lines. Max 2 fix iterations per stage before escalating to the user.
+- **Research-Before-Code Gate (Rule 9):**
+  - **Trigger:** any task touching OS APIs, thread scheduler/priorities, timers/sleep, VSync/DWM/OpenGL, drivers
+    (GPU, V4L2, MPP, RGA), audio streams, network backpressure/congestion control, or non-trivial concurrency.
+  - **Before coding:** run 1-2 targeted primary-source queries (Microsoft Learn, Khronos, Linux kernel/RT, FFmpeg,
+    Rockchip SDK, Chromium/SDL) and record 2-3 canonical links + explicit "Known anti-patterns we avoid" in the plan.
+  - **Ablation rule:** never bundle system hacks (priorities, affinity, global timer) without measuring each one's
+    contribution; drop any hack before PR if metrics hold without it.
 
 ## Project rules (full text: [CONTRIBUTING.md](CONTRIBUTING.md))
 (gate) = enforced by `scripts/tidy_run.sh` (`custom-*` checks and `misc-const-correctness` of the `rules` pass,
