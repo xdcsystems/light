@@ -68,17 +68,15 @@ public:
                 std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
                 continue;
             }
-            FrameStatus st = blocking ? srcs_.next_blocking( f ) : srcs_.next( 0, f );
+            const FrameStatus st = blocking ? srcs_.next_blocking( f ) : srcs_.next( 0, f );
             if ( st != FrameStatus::NotReady )
                 return st;
             if ( blocking )
                 continue;
             drain_done();
             idle_tick();
-            st = srcs_.next( 1, f );
-            if ( st != FrameStatus::NotReady )
-                return st;
-            std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
+            if ( !srcs_.wait_any( 20 ) )
+                std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
         }
         return FrameStatus::Stopped;
     }

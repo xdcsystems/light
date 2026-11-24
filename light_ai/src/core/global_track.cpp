@@ -318,24 +318,24 @@ void GlobalTrackTable::apply_bound_result( const ReidResult& res, LiveLocal& lv,
         update_ema( tracks_[cur_slot], res.feat.data(), res.dim );
 }
 
-void GlobalTrackTable::apply_unbound_result( const ReidResult& res, LiveLocal& lv ) noexcept
+bool GlobalTrackTable::apply_unbound_result( const ReidResult& res, LiveLocal& lv ) noexcept
 {
     const SimMatch m = search_gallery( tracks_, res, -1 );
     const bool margin_ok = m.second_sim < -1.0f || ( m.best_sim - m.second_sim ) >= kReidMargin;
     if ( m.best_slot >= 0 && m.best_sim >= sim_thr_ )
     {
         if ( !margin_ok )
-            return;
+            return false;
         bind_slot( m.best_slot, res.src_idx, res.local_id, res.gen, res.ts_us );
         lv.global_slot = m.best_slot;
         if ( m.best_sim >= sim_thr_ + kEmaRefreshExtra )
             update_ema( tracks_[m.best_slot], res.feat.data(), res.dim );
-        return;
+        return true;
     }
 
     const int nslot = alloc_global_slot();
     if ( nslot < 0 )
-        return;
+        return false;
     GlobalTrack& g = tracks_[nslot];
     g = GlobalTrack {};
     g.used = true;
@@ -347,24 +347,27 @@ void GlobalTrackTable::apply_unbound_result( const ReidResult& res, LiveLocal& l
     std::copy_n( res.feat.data(), res.dim, g.ema_feat.data() );
     g.cams[res.src_idx] = { res.local_id, res.gen, res.ts_us, true };
     lv.global_slot = nslot;
+    return false;
 }
 
-void GlobalTrackTable::apply_result( const ReidResult& res ) noexcept
+bool GlobalTrackTable::apply_result( const ReidResult& res ) noexcept
 {
     if ( !res.ok || res.src_idx < 0 || res.src_idx >= reid_cfg::kMaxSources || res.dim <= 0 ||
          res.dim > reid_cfg::kReidDimMax )
-        return;
+        return false;
 
     const int lidx = find_live_idx( res.src_idx, res.local_id, res.gen );
     if ( lidx < 0 )
-        return;
+        return false;
 
     LiveLocal& lv = live_[res.src_idx][lidx];
     const int cur_slot = find_global_by_local( res.src_idx, res.local_id, res.gen );
     if ( cur_slot >= 0 )
+    {
         apply_bound_result( res, lv, cur_slot );
-    else
-        apply_unbound_result( res, lv );
+        return false;
+    }
+    return apply_unbound_result( res, lv );
 }
 
 bool GlobalTrackTable::try_pick_crop( int src_idx,

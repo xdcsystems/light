@@ -166,6 +166,8 @@ void Pipeline::idle_perf() noexcept
     const auto now = clk::now();
     watchdog_.ping_if_due( now );
     sample_rt_faults_if_due( perf_, now );
+    if ( analytics_.has_reid() )
+        perf_.record_reid( analytics_.take_reid_perf() );
     perf_.tick( now, sources_.sources(), output_ );
 }
 
@@ -174,6 +176,8 @@ void Pipeline::step_done_perf( PerfClock::time_point t0 ) noexcept
     const auto now = clk::now();
     watchdog_.ping_if_due( now );
     sample_rt_faults_if_due( perf_, now );
+    if ( analytics_.has_reid() )
+        perf_.record_reid( analytics_.take_reid_perf() );
     perf_.step_done( t0, now, sources_.sources(), output_ );
 }
 

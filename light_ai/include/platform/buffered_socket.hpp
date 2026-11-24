@@ -83,6 +83,7 @@ public:
     const uint8_t* data() const { return win_.data(); }
     size_t size() const { return win_.size(); }
     bool full() const { return win_.full(); }
+    int fd() const noexcept { return fd_; }
     void consume( size_t n ) { win_.consume( n ); }
     void clear() { win_.clear(); }
 

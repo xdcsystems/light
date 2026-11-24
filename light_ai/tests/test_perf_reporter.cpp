@@ -226,6 +226,29 @@ namespace
         CHECK_STR_EQ( t, out.str(), expected );
         CHECK( t, err.str().empty() );
     }
+    void reid_telemetry( TestRun& t )
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        PerfReporter perf( true, log );
+        FakeSrcs srcs;
+        srcs.n = 1;
+        FakeSink sink;
+        sink.has_enc = false;
+
+        perf.start( at_us( 0 ) );
+        perf.record_reid( ReidPerfWindow { 12, 2, 3, 7.4 } );
+        perf.record_reid( ReidPerfWindow { 5, 1, 1, 4.2 } );
+        perf.tick( at_us( 5000000 ), srcs, sink );
+
+        const std::string expected =
+            "[perf] src step_max=0.0 | s0 f=0 dq_max=0.0 eagain=0 dec_max=0.0 or_cnt=0 or_max=0.0 skip=0\n"
+            "[perf] ovl gpu_max=0.0 sync_max=0.0 ftmo=0\n"
+            "[perf] reid crops=17 drops=3 matches=4 ms_max=7.4\n";
+        CHECK_STR_EQ( t, out.str(), expected );
+        CHECK( t, err.str().empty() );
+    }
 }  // namespace
 
 void test_perf_reporter( TestRun& t )
@@ -234,4 +257,5 @@ void test_perf_reporter( TestRun& t )
     one_source_no_encoder( t );
     disabled( t );
     rt_telemetry( t );
+    reid_telemetry( t );
 }

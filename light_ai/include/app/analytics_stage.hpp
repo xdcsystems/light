@@ -13,6 +13,7 @@
 #include "core/detection.hpp"
 #include "core/frame_view.hpp"
 #include "core/global_track.hpp"
+#include "core/net_perf.hpp"
 #include "core/log.hpp"
 #include "core/track.hpp"
 #include "core/tracker.hpp"
@@ -58,6 +59,8 @@ public:
 
     int frame_count( int src ) const noexcept { return an_[static_cast<size_t>( src )].frames; }
     int next_frame_index( int src ) noexcept { return an_[static_cast<size_t>( src )].frames++; }
+    bool has_reid() const noexcept { return reid_worker_.has_value(); }
+    ReidPerfWindow take_reid_perf() noexcept;
 
     // Runs BoxSmoother, Tracker, and optional Re-ID stage for one NPU result.
     void process( const InferResult& res, const FrameView& view, const RgaResizer& rga ) noexcept;
@@ -80,6 +83,7 @@ private:
     std::optional<ReidWorker> reid_worker_ {};
     GlobalTrackTable global_tracks_ {};
     uint64_t reid_crop_fail_ = 0;
+    ReidPerfWindow reid_perf_ {};
     int model_w_ = 0;
     int model_h_ = 0;
 };

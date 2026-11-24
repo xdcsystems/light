@@ -93,6 +93,17 @@ public:
         catch ( const std::bad_variant_access& ) {}  // only after a failed use_net() emplace
     }
     // mmap'd MJPEG payload of the dequeued buffer (both: void* bufs_[i].start).
+    int poll_fd() const noexcept
+    {
+        try
+        {
+            return std::visit( []( const auto& s ) noexcept { return s.poll_fd(); }, src_ );
+        }
+        catch ( const std::bad_variant_access& )
+        {
+            return -1;
+        }
+    }
     void* buffer( int idx ) const noexcept
     {
         try

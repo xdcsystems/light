@@ -93,7 +93,10 @@ void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const R
 
     ReidResult done {};
     while ( reid_worker_->poll_result( done ) )
-        global_tracks_.apply_result( done );
+    {
+        if ( global_tracks_.apply_result( done ) )
+            ++reid_perf_.matches;
+    }
 
     global_tracks_.refresh_global_ids( view.src_idx, trajs_ );
     if ( !rga_ok || view.tensor.fd < 0 )
@@ -108,16 +111,23 @@ void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const R
     {
         const int rslot = reid_worker_->try_acquire_slot();
         if ( rslot < 0 )
+        {
+            reid_perf_.drops += static_cast<uint32_t>( nr - i );
             break;
+        }
         const TensorRef dst = reid_worker_->input_tensor( rslot );
         if ( dst.fd < 0 )
+        {
+            reid_perf_.drops += static_cast<uint32_t>( nr - i );
             break;
+        }
         const RgaResizer::CropImage src_img { view.tensor.fd, model_w_, model_h_,
                                               rga_limits::rgb888_stride_px( view.tensor.stride_bytes, model_w_ ) };
         const RgaResizer::CropImage dst_img { dst.fd, rw, rh, rga_limits::rgb888_stride_px( dst.stride_bytes, rw ) };
         // No aux: start_reid() keeps Re-ID off when a crop could need the two-pass path.
         if ( const Status cst = rga.crop_resize( src_img, reqs[i].srect, dst_img, {} ); !cst.ok() )
         {
+            ++reid_perf_.drops;
             if ( reid_crop_fail_++ % 256 == 0 )
                 log_.warn() << "reid: crop " << reqs[i].srect.w << 'x' << reqs[i].srect.h << " failed: " << cst
                             << " (" << reid_crop_fail_ << " so far)\n";
@@ -125,6 +135,21 @@ void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const R
         }
         const ReidJob job { rslot, view.src_idx, reqs[i].local_id, reqs[i].gen, view.ts_us };
         if ( reid_worker_->submit( job ) )
+        {
+            ++reid_perf_.crops;
             global_tracks_.mark_dispatched( view.src_idx, reqs[i].local_id, reqs[i].gen );
+        }
+        else
+        {
+            ++reid_perf_.drops;
+        }
     }
+}
+
+ReidPerfWindow AnalyticsStage::take_reid_perf() noexcept
+{
+    ReidPerfWindow out = reid_perf_;
+    out.ms_max = reid_worker_ ? reid_worker_->take_max_ms() : 0.0;
+    reid_perf_.reset();
+    return out;
 }
