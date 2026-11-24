@@ -189,8 +189,9 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const NetSessionGate::Se
     // and a UDP (re)open alike, so a UDP receiver that stayed listening
     // across a reopen resumes at once instead of at the next GOP boundary.
     prepare_frame_idr( s );
+    const bool forcing_idr = force_idr_;
     int64_t fpts = 0;
-    fr->pts = pts_.next_frame_pts( ts_us, frames_sent_, fpts );
+    fr->pts = pts_.next_frame_pts( ts_us, frames_sent_, fpts, forcing_idr );
 
     // Force an IDR frame through standard FFmpeg AVFrame::pict_type
     // (handled directly by h264_rkmpp via MPP_ENC_SET_IDR_FRAME).
@@ -240,6 +241,7 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const NetSessionGate::Se
         // frames_sent_ stays put (the frame was never encoded).
         log_.warn() << "enc: send_frame: input queue full, frame dropped, IDR next frame\n";
         force_idr_ = true;
+        pts_.on_submit_failed( forcing_idr );
         pts_.advance();
         return {};
     }
@@ -311,6 +313,7 @@ void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
     if ( pu.flushed > 0 )
     {
         ++q_flush_cnt_;
+        pts_.on_queue_flush( is_key );
         if ( is_key )
         {
             log_.warn() << "enc: packet queue flushed " << pu.flushed << " pkts (drop " << pu.drops
