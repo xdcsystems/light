@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -97,15 +98,32 @@ bool ReidWorker::EngineRunner::operator()( const ReidJob& job, ReidResult& res )
 {
     if ( !engine )
         return false;
-    if ( !engine->bind_input_slot( job.slot ).ok() )
-        return false;
-    if ( !engine->run().ok() )
-        return false;
-    engine->sync_output( 0 );
-    const auto& outs = engine->output_attrs();
-    if ( outs.empty() )
-        return false;
-    return extract_embedding( outs[0], engine->output_data( 0 ), res );
+    const auto t0 = std::chrono::steady_clock::now();
+    bool ok = engine->bind_input_slot( job.slot ).ok() && engine->run().ok();
+    if ( ok )
+    {
+        engine->sync_output( 0 );
+        const auto& outs = engine->output_attrs();
+        ok = !outs.empty() && extract_embedding( outs[0], engine->output_data( 0 ), res );
+    }
+    if ( max_ns != nullptr )
+    {
+        const auto ns = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>( std::chrono::steady_clock::now() - t0 ).count() );
+        uint64_t cur = max_ns->load( std::memory_order_relaxed );
+        while ( ns > cur )
+        {
+            if ( max_ns->compare_exchange_weak( cur, ns, std::memory_order_relaxed ) )
+                break;
+        }
+    }
+    return ok;
+}
+
+double ReidWorker::take_max_ms() noexcept
+{
+    const uint64_t ns = max_ns_.exchange( 0, std::memory_order_relaxed );
+    return static_cast<double>( ns ) * 1e-6;
 }
 
 void ReidWorker::BigCorePin::operator()() const noexcept
@@ -119,6 +137,6 @@ void ReidWorker::BigCorePin::operator()() const noexcept
 
 ReidWorker::ReidWorker( const char* model_path, int pool_size, int infer_core, const Log& log )
   : engine_( make_reid_engine( model_path, pool_size, infer_core, log ) )
-  , queue_( EngineRunner { &engine_ }, BigCorePin { &log } )
+  , queue_( EngineRunner { &engine_, &max_ns_ }, BigCorePin { &log } )
 {
 }

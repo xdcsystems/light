@@ -63,6 +63,7 @@ public:
     void decode( int src, double ms ) noexcept;
     // One auto-orient probe batch of src.
     void orient( int src, double ms ) noexcept;
+    void record_reid( const ReidPerfWindow& rw ) noexcept;
     // src detached: its next frame has no dequeue gap. Ungated.
     void source_reset( int src ) noexcept;
 
@@ -96,6 +97,8 @@ public:
         const OverlayPerfWindow op = sink.take_perf();
         const EncPerfWindow ep = sink.take_enc_perf();
         log_enc_line( sink.has_enc_perf() ? &ep : nullptr, op );
+        if ( reid_enabled_ )
+            log_reid_line();
         if ( rt_enabled_ )
             log_rt_line();
         win_start_ = now;
@@ -107,6 +110,7 @@ private:
     // The enc + ovl line; ep == nullptr: the ovl part only (no encoder).
     void log_enc_line( const EncPerfWindow* ep, const OverlayPerfWindow& op ) const noexcept;
     void record_rt_step( double step_ms ) noexcept;
+    void log_reid_line() noexcept;
     void log_rt_line() noexcept;
     bool tracked( int src ) const noexcept { return enabled_ && src >= 0 && src < kMaxSources; }
 
@@ -118,6 +122,8 @@ private:
     std::array<CounterDelta, kMaxSources> skip_ {};   // skip_parts_cnt per window
     MaxMs step_max_;                                  // the longest frame-loop step of the window
     PerfClock::time_point win_start_;
+    bool reid_enabled_ = false;
+    ReidPerfWindow reid_ {};
     bool rt_enabled_ = false;
     bool faults_seeded_ = false;
     double deadline_ms_ = 0.0;

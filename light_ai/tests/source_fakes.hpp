@@ -36,6 +36,7 @@ struct FakeDevice
     uint32_t dq_size = 100;
     int dequeues = 0;
     int requeues = 0;
+    int poll_fd = -1;
 };
 
 class FakeSrc
@@ -46,6 +47,7 @@ public:
     void use_camera() { d_.net = false; }
     void use_net() { d_.net = true; }
     void set_cancel( const std::atomic<bool>*, const std::atomic<bool>* ) noexcept {}
+    int poll_fd() const noexcept { return d_.poll_fd; }
     Status open( const std::string& id )
     {
         ++d_.opens;

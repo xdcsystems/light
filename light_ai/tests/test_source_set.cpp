@@ -12,6 +12,9 @@
 #include <string>
 #include <vector>
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include "check.hpp"
 #include "core/log.hpp"
 #include "source/source_channel.hpp"
@@ -233,6 +236,36 @@ namespace
         q.configure_v4l2( 1 );
         CHECK( t, q.set.busy_nodes( 0 ).empty() );  // only the configured channels count
     }
+    void wait_any_poll( TestRun& t )
+    {
+        // Mock without pollable fd falls back cleanly (returns false).
+        Rig r;
+        r.live( 2 );
+        CHECK( t, !r.set.wait_any( 1 ) );
+
+        // Pipe-backed pollable fds wake immediately on POLLIN and select the ready channel.
+        int p0[2] { -1, -1 };
+        int p1[2] { -1, -1 };
+        CHECK( t, ::pipe2( p0, O_CLOEXEC ) == 0 && ::pipe2( p1, O_CLOEXEC ) == 0 );
+        r.dev[0].poll_fd = p0[0];
+        r.dev[1].poll_fd = p1[0];
+        const char b = 1;
+        CHECK( t, ::write( p1[1], &b, 1 ) == 1 );
+        CHECK( t, r.set.wait_any( 50 ) );
+        r.dev[0].dq_buf = -1;
+        r.dev[1].dq_buf = 0;
+        EncodedFrame f;
+        CHECK_EQ( t, r.set.next( 0, f ), FrameStatus::Frame );
+        CHECK_EQ( t, f.src, 1 );
+        char drain = 0;
+        CHECK( t, ::read( p1[0], &drain, 1 ) == 1 );
+        CHECK( t, r.set.wait_any( 1 ) );  // timeout (rc == 0) returns true
+        ::close( p1[1] );                 // peer closed -> POLLHUP on p1[0] wakes wait_any
+        CHECK( t, r.set.wait_any( 50 ) );
+        ::close( p0[0] );
+        ::close( p0[1] );
+        ::close( p1[0] );
+    }
 }  // namespace
 
 void test_source_set( TestRun& t )
@@ -244,4 +277,5 @@ void test_source_set( TestRun& t )
     blocking( t );
     absent_mask( t );
     busy_nodes( t );
+    wait_any_poll( t );
 }

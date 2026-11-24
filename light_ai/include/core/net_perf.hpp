@@ -103,3 +103,22 @@ public:
     uint32_t pkt_q_max_depth = 0;
     uint32_t pkts = 0;
 };
+
+struct ReidPerfWindow
+{
+    void merge( const ReidPerfWindow& o ) noexcept
+    {
+        crops += o.crops;
+        drops += o.drops;
+        matches += o.matches;
+        ms_max = std::max( ms_max, o.ms_max );
+    }
+
+    void reset() noexcept { *this = ReidPerfWindow {}; }
+
+public:
+    uint32_t crops = 0;
+    uint32_t drops = 0;
+    uint32_t matches = 0;
+    double ms_max = 0.0;
+};

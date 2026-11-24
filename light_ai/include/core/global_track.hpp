@@ -108,10 +108,11 @@ public:
     // Writes current global_id onto live trajs without advancing frame counters.
     void refresh_global_ids( int src_idx, TrajList& trajs ) const noexcept;
 
-    // Applies an asynchronous Re-ID inference result with collision guard,
+    // Applies an asynchronous Re-ID inference result with collision guard;
+    // returns true when an unbound track matches an existing gallery slot,
     // margin check and switch hysteresis. Clipped or occluded crops never get
     // here: select_crops() refuses them up front.
-    void apply_result( const ReidResult& res ) noexcept;
+    bool apply_result( const ReidResult& res ) noexcept;
 
     // Selects up to max_req confirmed track crops mapped to tensor pixels (even-aligned,
     // within lb, and at least 1/8 of dst_w x dst_h to obey RGA3/RGA2 8x upscale limit).
@@ -140,7 +141,7 @@ private:
     void update_ema( GlobalTrack& g, const float* feat, int dim ) noexcept;
     void sync_global_entry( GlobalTrack& g, int src_idx, const TrajList& trajs, int64_t ts_us ) noexcept;
     void apply_bound_result( const ReidResult& res, LiveLocal& lv, int cur_slot ) noexcept;
-    void apply_unbound_result( const ReidResult& res, LiveLocal& lv ) noexcept;
+    bool apply_unbound_result( const ReidResult& res, LiveLocal& lv ) noexcept;
     bool try_pick_crop( int src_idx,
                         const TrajList& trajs,
                         int k,

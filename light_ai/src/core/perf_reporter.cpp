@@ -33,6 +33,14 @@ void PerfReporter::orient( int src, double ms ) noexcept
     sp.orient_probe_ms_max = std::max( sp.orient_probe_ms_max, ms );
 }
 
+void PerfReporter::record_reid( const ReidPerfWindow& rw ) noexcept
+{
+    if ( !enabled_ )
+        return;
+    reid_enabled_ = true;
+    reid_.merge( rw );
+}
+
 void PerfReporter::source_reset( int src ) noexcept
 {
     if ( src < 0 || src >= kMaxSources )
@@ -125,4 +133,11 @@ void PerfReporter::log_rt_line() noexcept
     deadline_miss_cnt_ = 0;
     win_minflt_ = 0;
     win_majflt_ = 0;
+}
+
+void PerfReporter::log_reid_line() noexcept
+{
+    log_.info() << "[perf] reid crops=" << reid_.crops << " drops=" << reid_.drops
+                << " matches=" << reid_.matches << " ms_max=" << Fixed { reid_.ms_max, 1 } << '\n';
+    reid_.reset();
 }

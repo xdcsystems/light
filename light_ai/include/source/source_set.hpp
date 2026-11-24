@@ -30,6 +30,8 @@
 #include <utility>
 #include <vector>
 
+#include <poll.h>
+
 #include "config/config.hpp"  // SourceEndpoint, SourceKind
 #include "core/log.hpp"
 #include "source/source_types.hpp"
@@ -113,6 +115,62 @@ public:
     // and moves the cursor. A NotReady channel without a frame for 2 s is
     // reported as Detached with out.st = dequeue_status( EIO ) (a stall: the source still
     // streams nothing). NotReady when the whole round had nothing.
+    // Event-driven wait across all Live sources using poll(2). Returns false
+    // if any Live source lacks a pollable fd (e.g. buffered net frame or test fake).
+    bool wait_any( int timeout_ms ) noexcept
+    {
+        std::array<struct pollfd, N> fds {};
+        std::array<int, N> idx_map {};
+        nfds_t nfds = 0;
+        for ( int s = 0; s < n_; ++s )
+        {
+            if ( !ch_[static_cast<std::size_t>( s )].live() )
+                continue;
+            const int fd = ch_[static_cast<std::size_t>( s )].poll_fd();
+            if ( fd < 0 )
+                return false;
+            fds[nfds] = pollfd { fd, POLLIN, 0 };
+            idx_map[nfds] = s;
+            ++nfds;
+        }
+        if ( nfds == 0 )
+            return false;
+        const int rc = ::poll( fds.data(), nfds, timeout_ms );
+        if ( rc < 0 )
+            return errno == EINTR;
+        if ( rc == 0 )
+            return true;
+        for ( nfds_t i = 0; i < nfds; ++i )
+        {
+            if ( ( fds[i].revents & ( POLLIN | POLLERR | POLLHUP | POLLNVAL ) ) != 0 )
+            {
+                cursor_ = ( idx_map[i] + n_ - 1 ) % n_;
+                break;
+            }
+        }
+        return true;
+    }
+
+    bool fd_not_ready( const Chan& c, int wait_ms ) const noexcept
+    {
+        const int fd = ( wait_ms == 0 ) ? c.poll_fd() : -1;
+        if ( fd < 0 )
+            return false;
+        pollfd pfd { fd, POLLIN, 0 };
+        return ::poll( &pfd, 1, 0 ) == 0;
+    }
+
+    bool stalled( int s, const Chan& c, EncodedFrame& out ) noexcept
+    {
+        if ( clk::now() - c.last_ok() < std::chrono::milliseconds( kStallMs ) )
+            return false;
+        log_.warn() << "source s" << s << ": no frame in " << static_cast<int>( kStallMs )
+                    << " ms - treating as recoverable stall\n";
+        cursor_ = s;
+        out.st = dequeue_status( EIO );
+        return true;
+    }
+
     FrameStatus next( int wait_ms, EncodedFrame& out ) noexcept
     {
         for ( int k = 0; k < n_; ++k )
@@ -121,6 +179,12 @@ public:
             Chan& c = ( *this )[s];
             if ( !c.live() )
                 continue;
+            if ( fd_not_ready( c, wait_ms ) )
+            {
+                if ( stalled( s, c, out ) )
+                    return FrameStatus::Detached;
+                continue;
+            }
             const FrameStatus st = c.poll( wait_ms, out );
             if ( st != FrameStatus::NotReady )
             {
@@ -128,14 +192,8 @@ public:
                 return st;
             }
             ++eagain_cnt_[static_cast<std::size_t>( s )];
-            if ( clk::now() - c.last_ok() >= std::chrono::milliseconds( kStallMs ) )
-            {
-                log_.warn() << "source s" << s << ": no frame in " << static_cast<int>( kStallMs )
-                            << " ms - treating as recoverable stall\n";
-                cursor_ = s;
-                out.st = dequeue_status( EIO );
+            if ( stalled( s, c, out ) )
                 return FrameStatus::Detached;
-            }
         }
         return FrameStatus::NotReady;
     }

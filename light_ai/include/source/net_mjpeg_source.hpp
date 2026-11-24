@@ -99,6 +99,7 @@ public:
     Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 ) noexcept;
     void requeue( int index ) noexcept;
     void* buffer( int index ) const noexcept { return pool_.data( index ); }
+    int poll_fd() const noexcept { return ( primed_len_ > 0 || part_buffered() ) ? -1 : sock_.fd(); }
     int width() const { return width_; }
     int height() const { return height_; }
     uint64_t skip_parts_cnt() const noexcept { return skip_parts_cnt_; }

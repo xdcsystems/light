@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 
 #include "core/frame_view.hpp"    // TensorRef
@@ -17,6 +18,7 @@ class ReidWorker
     struct EngineRunner
     {
         RknnEngine* engine = nullptr;
+        std::atomic<uint64_t>* max_ns = nullptr;
         bool operator()( const ReidJob& job, ReidResult& res ) const noexcept;
     };
 
@@ -41,8 +43,10 @@ public:
     int try_acquire_slot() noexcept { return queue_.try_acquire_slot(); }
     bool submit( const ReidJob& job ) noexcept { return queue_.submit( job ); }
     bool poll_result( ReidResult& out ) noexcept { return queue_.poll_result( out ); }
+    double take_max_ms() noexcept;
 
 private:
     RknnEngine engine_;
+    std::atomic<uint64_t> max_ns_ { 0 };
     BasicReidQueue<EngineRunner, BigCorePin> queue_;
 };

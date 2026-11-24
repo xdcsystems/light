@@ -212,6 +212,7 @@ public:
 
     State state() const { return state_.load( std::memory_order_acquire ); }
     bool live() const { return state() == State::Live; }
+    int poll_fd() const noexcept { return live() ? src_.poll_fd() : -1; }
     SourceKind kind() const { return kind_; }
     int index() const { return idx_; }
     // Frame thread while Live (see the thread rule).
