@@ -754,5 +754,5 @@ Completed on `fix/audit-p0` (up to `3ccd8ae`, PR #71; merged into `master` in PR
 
 ## Next / Track A Follow-ups (Backlog)
 
-- [ ] **Re-ID `[perf]` observability:** add `crops / drops / matches / reid_ms` counters to `[perf]` so cross-camera Re-ID throughput and 4-slot queue drops are measurable during multi-source soak runs.
-- [ ] **V4L2 `eagain` polling rate:** reduce idle `eagain` polls (`~1500` per 5 s window in 4-source soak) when USB camera cadence is slower than loop rate.
+- [x] **Re-ID `[perf]` observability (`PR #140`):** add `crops / drops / matches / reid_ms` counters to `[perf]` so cross-camera Re-ID throughput and 4-slot queue drops are measurable during multi-source soak runs.
+- [x] **V4L2 `eagain` polling rate (`PR #140`):** reduce idle `eagain` polls (`~1500` per 5 s window in 4-source soak) when USB camera cadence is slower than loop rate.
