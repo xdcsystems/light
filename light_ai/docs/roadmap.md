@@ -199,7 +199,7 @@ under `README.md`. References map to [Platform constraints](../README.md#require
       the recall risk. 640x640 stays; model-side resize levers are
       exhausted — remaining FPS levers are on the platform side.
 
-- [ ] M3.5: netsend — network preview subsystem (design agreed
+- [x] M3.5: netsend — network preview subsystem (design agreed
       2026-10-24). STATUS 2026-10-26 (day session, v2 model —
       superseded by v3 later the same day, see M2.4): phase A
       LIVE on both transports, PULL is the product.
@@ -742,3 +742,12 @@ Completed on `fix/audit-p0` (up to `3ccd8ae`, PR #71; merged into `master` in PR
       Transitioned the board to `Linux 5.10.226-preempt #7 SMP PREEMPT` with cleaned `/proc/cmdline` (`isolcpus=4-7 nohz_full=4-7 rcu_nocbs=4-7 irqaffinity=0-3`) and offloaded GPU and `rkvenc-core` IRQs from CPU4 to A55 cores `0-3` (`#130`).
 - [x] **Audit Sprint 1 (`#131`) & Sprint 2 (`chore/audit-sprint-2-tsan-rt`):**
       Sprint 1 (`dbe29bf`, `#131`) fixed RT hot-path and resilience issues across `StreamOutput`, `H264Encoder`, `SdWatchdog`, `CameraV4L2`, and `MuxSession`; Sprint 2 expanded TSan and RT verification to `71` unit suites / `9,617` checks + `11` TSan suites / `6,188` checks.
+
+## Audit Sprint 3, PTS/Wi-Fi Streaming & Viewer Stabilization (`PR #134`–`#137`)
+
+- [x] **Audit Sprint 3 — Scale & ML (`5bf52ce`, PR `#134`):**
+      Closed C7/C8 with a 6-slot NPU tensor pool across 3 workers, per-source FIFO, `LbGeom` affinity with `next_slot_` rotation, `wait_any_slot_free()`, `SCHED_FIFO` removed from `ReidWorker`, both RGA3 cores (`CORE0`/`CORE1`) enabled, P5->P3 `YoloDecoder` with `kNmsTopK=384`, `sync_cam()` before `apply_result()`, `kMaxGlobalTracks=64`, `kMaxTracks=16`, `kConfMaxAgeMs=360`, and `BoxFilter` `dt >= 1e-3f`.
+- [x] **PTS continuity & Wi-Fi streaming stabilization (`5556c4f` -> `2e3e762`, PRs `#135`, `#136`):**
+      Eliminated `qflush=10..13` overflow loops and `+314..+722 ms` PTS jumps via `BasicPacketQueue::push(..., on_flush)` and `SessionPtsFilter::rebase_flushed_key()` in muxer space (0 jumps across a 200K fuzzer with 2,868 key-flushes), and added `--net-gop` (`net_gop=50`, `net_bitrate=2000` in `light_ai.ini.example`).
+- [x] **Viewer tuning, documentation & `#105`/`#119` closure (`6988e11`, PR `#137`):**
+      Documented low-latency `mpv` flags, Wi-Fi PSP / PCIe ASPM tuning, and multi-view settings in [`docs/viewer.md`](viewer.md); verified Victory Audit on `master @ 6988e11` (`10,085` unit checks, `6,207` TSan checks, `rules_lint.sh` and 2-pass `clang-tidy` 0 findings) and closed `#105` and `#119`.

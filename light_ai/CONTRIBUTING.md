@@ -71,3 +71,8 @@ This runs:
 For pure-logic or multi-threaded changes, also verify Layer A reference parity (`bash tools/ref_replay.sh misc/ref_evening.mjpeg build/ref_p3.csv 3 reference/ref_evening.csv`) and live hardware execution on the board.
 
 For structural changes that add, move, or remove a folder or a pipeline stage, update [`docs/images/architecture.svg`](docs/images/architecture.svg) by hand and check it with `xmllint --noout docs/images/architecture.svg`.
+
+### Public Hygiene & Teamwork Quota Discipline
+
+- **Public-hygiene check (before commit/PR):** run `grep` over `git diff` and PR/issue drafts to ensure 0 internal hostnames, LAN IPs, or local machine paths leak into the repository.
+- **Agent execution discipline:** assign minimal Tier `0`–`3` (`Tier 0`: deterministic gate only; `Tier 1`: <= 1 executor + 1 clean-context adversarial reviewer; `Tier 2`: + fuzzer 50k–100k steps; `Tier 3`: cross-host/A/B), keep flat hierarchy (`max_depth = 1`), track `state.json` (`<= 40` lines) and `ledger.json`, run deterministic gates before LLM review, use `trap cleanup EXIT` in long shell wrappers, and enforce context diet (`<= 80` lines stdout, `handoff.md <= 120` lines). All C++17 and soft-RTOS invariants above remain mandatory.

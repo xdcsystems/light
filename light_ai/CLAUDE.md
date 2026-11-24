@@ -144,6 +144,30 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
 - Branch switching for A/B runs stays in the main session: check out, then ask `board-check` to measure;
   keep baseline logs (`build/run_*.log`) to avoid re-measuring.
 
+## Teamwork & Quota Discipline
+- **Tier routing (assign minimal Tier before launch):**
+  - **Tier 0** (docs, configs, `.bak`, issue close, 1-2 non-critical files): 1 agent, no sub-orchestrator,
+    no recon, no LLM review; deterministic script only (`rules_lint.sh`, `sha256sum`, `gh api`, `git diff --stat`).
+  - **Tier 1** (local fix/feature 1-5 files, tests, refactor): max 1 executor + 1 clean-context adversarial
+    reviewer after full build + unit/TSan.
+  - **Tier 2** (concurrency, RT core, queues, PTS, net stack): 1 scout + 1 executor + 1 reviewer + 1 fuzzer
+    challenger (50k-100k steps before LLM review).
+  - **Tier 3** (unknown bug, cross-host diag, A/B): <= 2 scouts (separate hosts) -> 1 A/B executor ->
+    1 measurement auditor; raw JSON metrics.
+  - Escalate Tier +1 only on explicit trigger (>5 files, mutexes/atomics/RT/net, or 2 gate failures in a row).
+    Never run 5-verifier waves on Tier 0-1.
+- **Flat hierarchy (`max_depth = 1`):** orchestrator invokes workers and reviewer directly; no sub-orchestrators.
+- **`state.json` (<= 40 lines):** 1 shell call at session start and after major mutations (`timestamp_utc`, `repo`,
+  `branch`, `head_sha`, `open_prs`, `open_issues`, `active_pids`, config `sha256`); no repeated multi-scout pre-flights.
+- **`ledger.json`:** record real `commit_sha`, `pr_url`, `issue_state` after irreversible `git`/`gh` actions for
+  idempotent `429` recovery.
+- **Deterministic gate before LLM:** build, `clang-tidy`/`rules_lint.sh`, unit/TSan, public-hygiene `grep` (0 internal
+  hostnames, LAN IPs, or local paths in `git diff`/PR drafts), and fuzzer (Tier 2) must pass before LLM review.
+- **1 clean-context adversarial reviewer:** receives only `git diff`, test output, and `state.json` (no executor
+  persuasive summary).
+- **Context diet & wrappers:** stdout to LLM `<= 80` lines (`<= 25`-line summary for long wrappers with
+  `trap cleanup EXIT`), `handoff.md <= 120` lines. Max 2 fix iterations per stage before escalating to the user.
+
 ## Project rules (full text: [CONTRIBUTING.md](CONTRIBUTING.md))
 (gate) = enforced by `scripts/tidy_run.sh` (`custom-*` checks and `misc-const-correctness` of the `rules` pass,
 `scripts/rules_lint.sh`, both self-tested on `tests/tidy_probe/`): nobody re-checks it by hand. Fix a (gate) finding
