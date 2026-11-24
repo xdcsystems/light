@@ -117,7 +117,7 @@ One frame's path: V4L2 or HTTP MJPEG → `MppDecoder` (dma-buf YUV) → `RgaResi
 - **Zero-copy `dma-buf` pipeline:** Decoded YUV frames, RGA-letterboxed RGB888 NPU input tensors, GPU box overlays, and H.264 NV12 encoder inputs stay in `dma-buf` memory. CPU reads occur only when `--dump-cal` or `--cal` explicitly dumps a calibration PPM (`DmaSync`).
 - **Output side vs. recognition gating:**
   1. **No viewer attached:** The output path sleeps completely — no GPU/CPU box drawing, no RGA compose, no `NO SIGNAL` tile generation, and no H.264 encoding (`enc` reports `0.0 ms`).
-  2. **Recognition never sleeps:** Capture, MPP decode, RKNN inference, and Kalman tracking always run regardless of viewer state.
+  2. **Recognition is viewer-independent:** Capture, MPP decode, RKNN inference, and Kalman tracking run whenever at least one source is live regardless of viewer state, and sleep (NPU/Re-ID workers parked on condition variables) when all sources are absent.
   3. **Viewer attached:** Online sources run the full render/compose/encode path; absent or disconnected sources display the pre-rendered gray `NO SIGNAL` tile (`IdlePlate`: the DejaVu label font of the callouts, 21 px capitals, no outline).
 - **Canonical stream canvases (`NetEncoder`):**
   - `1` source: `640×480` (letterbox band cropped 1:1 from NPU tensor).
