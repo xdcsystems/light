@@ -6,11 +6,12 @@
 //     the composite canvas. The grid step is 1/fps in CFR, or in follow-source
 //     mode (fps <= 0) the rolling-median period of the slowest active source
 //     (clamped to [33.3 ms, 200 ms], at least 40 ms while the packet queue
-//     holds kHeavyDepth packets or more);
-//   transport backpressure (Stage 10): tracks PacketQueue depth (32 slots) and
+//     holds kHeavyDepth packets or head age reaches kHeavyAgeUs);
+//   transport backpressure (Stage 10): tracks PacketQueue depth and oldest
+//     packet age (aligned with PacketQueue::kDefaultMaxAgeUs = 300 ms) plus
 //     overflow flushes across levels 0..3 with hysteresis (fast step-down on
 //     congestion, 8 s clean-channel hold-down before stepping back up, and
-//     admission pause at >= kPauseDepth until drained <= kHeavyDepth);
+//     admission pause before the 300 ms qflush threshold until drained);
 //   idle (NO SIGNAL) frames: encoded unless the queue is busy, and they
 //     share the budget: a live frame right after an idle one is paced
 //     against the idle stamp.
@@ -33,11 +34,15 @@ class EncodePacer
 public:
     enum
     {
-        kBusyDepth = 4,    // queued packets at which the mux side counts as lagging
-        kHeavyDepth = 12,  // deeper queue backlog: throttle VFR and resume threshold after pause
-        kPauseDepth = 24,  // critical backlog (32-slot queue): pause admission to prevent qflush
-        kLowDepth = 2,     // clean-channel threshold for backpressure recovery
-        kMaxSources = 4,   // matches StreamLayout::kMaxTiles
+        kBusyDepth = 4,       // queued packets at which the mux side counts as lagging
+        kHeavyDepth = 6,      // deeper backlog (~200 ms @ 30 fps): throttle VFR and resume threshold
+        kPauseDepth = 8,      // critical backlog (~267 ms @ 30 fps): pause before 300 ms qflush
+        kLowDepth = 2,        // clean-channel depth threshold for backpressure recovery
+        kLowAgeUs = 60000,    // 60 ms: clean-channel age threshold for recovery
+        kBusyAgeUs = 100000,  // 100 ms: mild congestion (level 1, 1/3 of 300 ms flush limit)
+        kHeavyAgeUs = 180000, // 180 ms: heavy congestion (level 2) and pause-resume ceiling
+        kPauseAgeUs = 240000, // 240 ms: critical congestion (level 3 + pause before 300 ms qflush)
+        kMaxSources = 4,      // matches StreamLayout::kMaxTiles
         kCadenceWindow = 7
     };
 
@@ -57,10 +62,10 @@ public:
     bool backpressure_paused() const noexcept { return bp_paused_; }
 
     // Live frame: true = encode it (the stamp is taken), false = canvas only.
-    bool admit( int64_t ts_us, int queue_depth, uint32_t epoch ) noexcept;
+    bool admit( int64_t ts_us, int queue_depth, uint32_t epoch, int64_t head_age_us = 0 ) noexcept;
 
     // Idle frame: false = skip this tick (queue busy); true = encode it (stamped).
-    bool admit_idle( int64_t ts_us, int queue_depth, uint32_t epoch ) noexcept;
+    bool admit_idle( int64_t ts_us, int queue_depth, uint32_t epoch, int64_t head_age_us = 0 ) noexcept;
 
 private:
     struct SourceCadence
@@ -73,8 +78,8 @@ private:
 
     void enter( uint32_t epoch ) noexcept;
     void advance_grid( int64_t ts_us, int64_t step_us ) noexcept;
-    void update_backpressure( int64_t ts_us, int queue_depth ) noexcept;
-    int64_t effective_step_us( int64_t base_step_us, int queue_depth ) const noexcept;
+    void update_backpressure( int64_t ts_us, int queue_depth, int64_t head_age_us ) noexcept;
+    int64_t effective_step_us( int64_t base_step_us, int queue_depth, int64_t head_age_us ) const noexcept;
 
 private:
     int nsrc_;
@@ -82,7 +87,7 @@ private:
     int64_t last_ts_us_ = -1;  // phase-locked grid stamp of this session; -1 = none yet
     uint32_t epoch_ = 0;
     int bp_level_ = 0;              // 0 = normal, 1 = mild, 2 = heavy, 3 = critical
-    bool bp_paused_ = false;        // true when depth >= kPauseDepth until depth <= kHeavyDepth
+    bool bp_paused_ = false;        // true when backlog >= pause threshold until drained <= heavy
     int64_t bp_high_since_us_ = -1; // continuous congestion start for step-down hold
     int64_t bp_low_since_us_ = -1;  // continuous clean-channel start for recovery hold-down
     int64_t bp_last_down_us_ = -1;  // last congestion step-down timestamp

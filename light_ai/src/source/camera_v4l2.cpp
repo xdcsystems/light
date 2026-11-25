@@ -49,6 +49,22 @@ namespace
 
     // dequeue_once(): no clean buffer yet, poll again (never an errno: those are positive).
     constexpr int kDequeueAgain = -1;
+    constexpr int kDeadlineExpired = -2;
+
+    int next_step_timeout_ms( int timeout_ms, int attempt, std::chrono::steady_clock::time_point deadline ) noexcept
+    {
+        if ( timeout_ms >= 0 || attempt == 0 )
+            return timeout_ms;
+        const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             deadline - std::chrono::steady_clock::now() )
+                             .count();
+        return rem > 0 ? static_cast<int>( rem ) : kDeadlineExpired;
+    }
+
+    bool is_retryable_dequeue( int rc, bool blocking ) noexcept
+    {
+        return rc == kDequeueAgain || ( blocking && rc == EAGAIN );
+    }
 
     // A failed open / setup ioctl: the node gone or never there is Absent (the
     // locator moves on), EBUSY is Busy, anything else Failed.
@@ -115,7 +131,7 @@ Status CameraV4L2::fail( const Status& st )
 // open() failure: nothing is open yet, the teardown() inside fail() is a no-op.
 Status CameraV4L2::open_node( const std::string& dev )
 {
-    fd_ = ::open( dev.c_str(), O_RDWR | O_CLOEXEC );
+    fd_ = ::open( dev.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC );
     if ( fd_ >= 0 )
         return {};
     const int e = errno;  // before the log write can touch errno
@@ -346,19 +362,32 @@ Status CameraV4L2::dequeue( int& index, uint32_t& size, int timeout_ms ) noexcep
 // Loop until a clean buffer comes out, bounded by deadline and attempt limit.
 int CameraV4L2::wait_clean( v4l2_buffer& buf, int timeout_ms )
 {
-    const auto wait_ms = timeout_ms >= 0 ? std::max( timeout_ms, 50 ) : static_cast<int>( kDequeuePollMs );
+    const bool blocking = timeout_ms < 0;
+    const int timeout_err = blocking ? EIO : EAGAIN;
+    const auto wait_ms = blocking ? static_cast<int>( kDequeuePollMs ) : std::max( timeout_ms, 50 );
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds( wait_ms );
     constexpr int max_attempts = static_cast<int>( kBufCount ) * 4 + 8;
-    int rc = 0;
     for ( int attempt = 0; attempt < max_attempts; ++attempt )
     {
-        rc = dequeue_once( buf, timeout_ms );
-        if ( rc != kDequeueAgain )
+        const int step_ms = next_step_timeout_ms( timeout_ms, attempt, deadline );
+        if ( step_ms == kDeadlineExpired )
+        {
+            log_.warn() << "cam: no frame in " << kDequeuePollMs << " ms - treating as recoverable stall\n";
+            return EIO;
+        }
+        const int rc = dequeue_once( buf, step_ms );
+        if ( !is_retryable_dequeue( rc, blocking ) )
             return rc;
         if ( std::chrono::steady_clock::now() >= deadline )
-            return timeout_ms >= 0 ? EAGAIN : EIO;
+        {
+            if ( blocking && rc == EAGAIN )
+                log_.warn() << "cam: no frame in " << kDequeuePollMs << " ms - treating as recoverable stall\n";
+            return timeout_err;
+        }
     }
-    return timeout_ms >= 0 ? EAGAIN : EIO;
+    if ( blocking )
+        log_.warn() << "cam: dequeue attempt limit reached - treating as recoverable stall\n";
+    return timeout_err;
 }
 
 int CameraV4L2::dequeue_once( v4l2_buffer& buf, int timeout_ms )

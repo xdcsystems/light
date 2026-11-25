@@ -35,7 +35,7 @@ namespace
         CHECK( t, !p.admit( 110000, 0, 1 ) );
         CHECK( t, !p.admit( 139999, 0, 1 ) );
         CHECK( t, p.admit( 140000, 0, 1 ) );  // measured from the last ENCODED frame
-        CHECK( t, !p.admit( 170000, 9, 1 ) );  // queue depth does not matter in CFR
+        CHECK( t, !p.admit( 170000, 5, 1 ) );  // queue depth below pause does not speed up CFR
         // No timestamp: always encoded, and the next frame starts over.
         CHECK( t, p.admit( -1, 0, 1 ) );
         CHECK( t, p.admit( 170001, 0, 1 ) );
@@ -169,16 +169,16 @@ namespace
     }
     void backpressure_hysteresis( TestRun& t )
     {
-        // Pause-on-full and hysteresis resume (24 -> 12).
+        // Pause-on-critical and hysteresis resume (8 -> 6).
         EncodePacer vfr( 1, 0 );
         CHECK( t, vfr.admit( 100000, 0, 1 ) );
         CHECK( t, !vfr.admit( 200000, EncodePacer::kPauseDepth, 1 ) );
         CHECK( t, vfr.backpressure_paused() );
         CHECK_EQ( t, vfr.backpressure_level(), 3 );
-        // Still paused at 13..23.
+        // Still paused above kHeavyDepth.
         CHECK( t, !vfr.admit( 400000, EncodePacer::kHeavyDepth + 1, 1 ) );
         CHECK( t, vfr.backpressure_paused() );
-        // Resumes once drained to <= kHeavyDepth (12), still throttled at level 3 (150 ms).
+        // Resumes once drained to <= kHeavyDepth (6), still throttled at level 3 (150 ms).
         CHECK( t, vfr.admit( 500000, EncodePacer::kHeavyDepth, 1 ) );
         CHECK( t, !vfr.backpressure_paused() );
         CHECK( t, !vfr.admit( 600000, 0, 1 ) );  // < 150 ms while at level 3
@@ -195,19 +195,43 @@ namespace
         CHECK( t, vfr.admit( 24900000, EncodePacer::kLowDepth, 1 ) );
         CHECK_EQ( t, vfr.backpressure_level(), 0 );
 
-        // Gradual step-down with 1 s sustained congestion and immediate flush escalation.
+        // Gradual step-down with 200 ms hold / 500 ms cooldown and immediate flush escalation.
         EncodePacer mp( 2, 0 );
         CHECK( t, mp.admit( 0, 0, 1 ) );
-        CHECK( t, mp.admit( 100000, EncodePacer::kBusyDepth, 1 ) );    // transient < 1 s
+        CHECK( t, mp.admit( 100000, EncodePacer::kBusyDepth, 1 ) );    // transient < 200 ms
         CHECK_EQ( t, mp.backpressure_level(), 0 );
-        CHECK( t, mp.admit( 1100000, EncodePacer::kBusyDepth, 1 ) );  // sustained >= 1 s -> level 1
+        CHECK( t, mp.admit( 300000, EncodePacer::kBusyDepth, 1 ) );    // sustained >= 200 ms -> level 1
         CHECK_EQ( t, mp.backpressure_level(), 1 );
-        CHECK( t, mp.admit( 1300000, EncodePacer::kHeavyDepth, 1 ) ); // cooldown < 1 s
+        CHECK( t, mp.admit( 600000, EncodePacer::kHeavyDepth, 1 ) );   // cooldown < 500 ms
         CHECK_EQ( t, mp.backpressure_level(), 1 );
-        CHECK( t, mp.admit( 2200000, EncodePacer::kHeavyDepth, 1 ) ); // sustained >= 1 s -> level 2
+        CHECK( t, mp.admit( 800000, EncodePacer::kHeavyDepth, 1 ) );   // sustained >= 200 ms + cooldown >= 500 ms -> level 2
         CHECK_EQ( t, mp.backpressure_level(), 2 );
-        mp.observe_flush( 2250000, 1 );
+        mp.observe_flush( 850000, 1 );
         CHECK_EQ( t, mp.backpressure_level(), 3 );
+
+        // Age-driven backpressure works even at low depth (e.g. throttled FPS before 300 ms qflush).
+        EncodePacer age_p( 2, 0 );
+        CHECK( t, age_p.admit( 0, 0, 1, 0 ) );
+        CHECK( t, age_p.admit( 100000, 2, 1, EncodePacer::kBusyAgeUs ) );  // seeds hold timer
+        CHECK_EQ( t, age_p.backpressure_level(), 0 );
+        CHECK( t, age_p.admit( 300000, 2, 1, EncodePacer::kBusyAgeUs ) );  // >= 200 ms -> level 1
+        CHECK_EQ( t, age_p.backpressure_level(), 1 );
+        CHECK( t, !age_p.admit_idle( 350000, 1, 1, EncodePacer::kBusyAgeUs ) );  // idle skipped on busy age
+        CHECK( t, !age_p.admit( 400000, 2, 1, EncodePacer::kPauseAgeUs ) );      // pauses before 300 ms qflush
+        CHECK( t, age_p.backpressure_paused() );
+        CHECK_EQ( t, age_p.backpressure_level(), 3 );
+        // Stays paused while age > kHeavyAgeUs even if depth <= kHeavyDepth.
+        CHECK( t, !age_p.admit( 600000, 2, 1, EncodePacer::kHeavyAgeUs + 1 ) );
+        CHECK( t, age_p.backpressure_paused() );
+        // Resumes once age <= kHeavyAgeUs and depth <= kHeavyDepth.
+        CHECK( t, age_p.admit( 700000, 2, 1, EncodePacer::kHeavyAgeUs ) );
+        CHECK( t, !age_p.backpressure_paused() );
+        // High age blocks recovery even when depth <= kLowDepth.
+        CHECK( t, age_p.admit( 9000000, 1, 1, EncodePacer::kLowAgeUs + 1 ) );
+        CHECK_EQ( t, age_p.backpressure_level(), 3 );
+        CHECK( t, age_p.admit( 9200000, 1, 1, EncodePacer::kLowAgeUs ) );
+        CHECK( t, age_p.admit( 17200000, 1, 1, EncodePacer::kLowAgeUs ) );
+        CHECK_EQ( t, age_p.backpressure_level(), 2 );
         // Out-of-order stale timestamp must not seed or advance hysteresis timers.
         CHECK( t, mp.admit( 10000000, 0, 2 ) );
         CHECK( t, !mp.admit( 1000000, EncodePacer::kBusyDepth, 2 ) );  // stale (< 10 s)

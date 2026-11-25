@@ -124,7 +124,12 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     const bool multi = cfg_.layout.nsrc > 1;
     const bool warm_ready = warmup_.ready( now_us );
     const bool hold_for_peer = defer_encode && multi;
-    const bool do_enc = warm_ready && !hold_for_peer && pacer_.admit( now_us, queue_.depth(), epoch );
+    bool do_enc = false;
+    if ( warm_ready && !hold_for_peer )
+    {
+        const PacketQueue::Backlog bl = queue_.backlog( now_us );
+        do_enc = pacer_.admit( now_us, bl.depth, epoch, bl.head_age_us );
+    }
     if ( warm_ready )
         do_enc ? ++perf_.enc_admit : ++perf_.enc_skip;
     // Single view skipped by the pacer: no persistent multi-view canvas to
@@ -177,7 +182,10 @@ void NetEncoder::flush_dirty() noexcept
     const int64_t now_us = steady_now_us();
     if ( enter_session( epoch, now_us ) )
         return;
-    if ( !warmup_.ready( now_us ) || !pacer_.admit( now_us, queue_.depth(), epoch ) )
+    if ( !warmup_.ready( now_us ) )
+        return;
+    const PacketQueue::Backlog bl = queue_.backlog( now_us );
+    if ( !pacer_.admit( now_us, bl.depth, epoch, bl.head_age_us ) )
         return;
     ++perf_.enc_admit;
     compose_and_encode( epoch, now_us, dirty_ts_us_, [this]( int /*slot*/, MppBuffer out ) {
@@ -216,7 +224,12 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noe
     if ( !any )
         return;  // every tile went live since the tick was scheduled
     const bool warm_ready = warmup_.ready( now_us );
-    const bool do_enc = warm_ready && pacer_.admit_idle( now_us, queue_.depth(), epoch );
+    bool do_enc = false;
+    if ( warm_ready )
+    {
+        const PacketQueue::Backlog bl = queue_.backlog( now_us );
+        do_enc = pacer_.admit_idle( now_us, bl.depth, epoch, bl.head_age_us );
+    }
     if ( warm_ready )
         do_enc ? ++perf_.idle_admit : ++perf_.idle_skip;
     if ( !do_enc )

@@ -4,7 +4,7 @@
 // moves slot to slot (av_packet_move_ref in production).
 //
 // Thread rule (every member is guarded by mx_):
-//   pipeline thread (producer): push(), depth(), fail( epoch );
+//   pipeline thread (producer): push(), depth(), backlog(), fail( epoch );
 //   serve thread (consumer):    open( epoch ), pop(), close();
 //   the owner's destructor:     stop() (wakes a blocked pop for good).
 //
@@ -65,6 +65,12 @@ public:
     {
         Pop what = Pop::Stopped;
         int left = 0;  // packets still queued after this one
+    };
+
+    struct Backlog
+    {
+        int depth = 0;            // live packets queued (excluding wait_key_ dead weight)
+        int64_t head_age_us = 0;  // age of the oldest live packet; 0 when empty
     };
 
 public:
@@ -151,6 +157,26 @@ public:
     {
         const std::lock_guard<Mutex> lk( mx_ );
         return ring_.n;
+    }
+
+    // Producer: snapshot of queued packet count and oldest packet age under mx_.
+    // While wait_key_ is armed, leading non-key packets will be discarded by pop()/push()
+    // and do not count as live backlog (so backpressure never blocks the needed IDR).
+    Backlog backlog( int64_t now_us = packet_queue_now_us() ) const
+    {
+        const std::lock_guard<Mutex> lk( mx_ );
+        int skip = 0;
+        if ( wait_key_ )
+        {
+            while ( skip < ring_.n && !ops_.is_key( ring_.d[static_cast<size_t>( ( ring_.head + skip ) % N )] ) )
+                ++skip;
+        }
+        const int live = ring_.n - skip;
+        if ( live <= 0 )
+            return Backlog {};
+        const auto idx = static_cast<size_t>( ( ring_.head + skip ) % N );
+        const int64_t age = now_us - push_us_[idx];
+        return Backlog { live, age > 0 ? age : 0 };
     }
 
     int take_max_depth() noexcept

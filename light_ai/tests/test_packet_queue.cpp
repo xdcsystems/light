@@ -264,6 +264,29 @@ namespace
         cb_calls = 0;
         CHECK( t, q_cb.push( c6, 400000, no_flush_cb ).flushed == 0 && cb_calls == 0 );
     }
+
+    void backlog_stats( TestRun& t )
+    {
+        // backlog() reports live depth and oldest packet age, skipping wait_key_ dead weight.
+        Stats st_bl;
+        Queue q_bl( FakeOps { &st_bl }, 300000 );
+        q_bl.open( 1 );
+        const Queue::Backlog b0 = q_bl.backlog( 10000 );
+        CHECK( t, b0.depth == 0 && b0.head_age_us == 0 );
+        FakePkt b_p1 = pkt( 1, false );  // gated non-key while wait_key_ == true
+        CHECK( t, q_bl.push( b_p1, 10000 ).flushed == 0 );
+        const Queue::Backlog b1 = q_bl.backlog( 260000 );
+        CHECK( t, b1.depth == 0 && b1.head_age_us == 0 );
+        FakePkt b_k1 = pkt( 2, true );
+        FakePkt b_p2 = pkt( 3, false );
+        CHECK( t, q_bl.push( b_k1, 200000 ).flushed == 0 );
+        CHECK( t, q_bl.push( b_p2, 240000 ).flushed == 0 );
+        const Queue::Backlog b2 = q_bl.backlog( 320000 );
+        CHECK( t, b2.depth == 2 && b2.head_age_us == 120000 );
+        // Non-monotonic now_us clamps age to 0.
+        const Queue::Backlog b3 = q_bl.backlog( 150000 );
+        CHECK( t, b3.depth == 2 && b3.head_age_us == 0 );
+    }
 }  // namespace
 
 void test_packet_queue( TestRun& t )
@@ -273,6 +296,7 @@ void test_packet_queue( TestRun& t )
     overflow( t );
     failures( t );
     age_limit( t );
+    backlog_stats( t );
 }
 
 namespace
@@ -329,14 +353,15 @@ namespace
             }
         }
 
-        // Reader: the depth stays within [0, 8] while the others run.
+        // Reader: depth and backlog stay within valid bounds while the others run.
         void read_depth()
         {
             latch();
             while ( !done.load() )
             {
                 const int d = q.depth();
-                if ( d < 0 || d > 8 )
+                const RaceQueue::Backlog bl = q.backlog();
+                if ( d < 0 || d > 8 || bl.depth < 0 || bl.depth > 8 || bl.head_age_us < 0 )
                     depth_out_of_range.fetch_add( 1 );
                 std::this_thread::yield();
             }
