@@ -33,7 +33,7 @@ public:
     enum class Fill : uint8_t
     {
         Data,         // bytes appended to the window
-        Timeout,      // nothing within timeout_ms
+        Timeout,      // nothing within timeout_ms (or spurious POLLIN + EAGAIN)
         Interrupted,  // a signal interrupted poll/recv: transient, the caller retries
         Closed,       // EOF, a socket error, or no socket: the connection is gone
         Full          // the window holds kWindow unconsumed bytes: nothing was read
@@ -71,7 +71,7 @@ public:
         prober_quit_ = prober_quit;
     }
     bool cancelled() const noexcept;
-    // One poll( timeout_ms; < 0 = do not wait ) + one recv into the window.
+    // One poll( timeout_ms; < 0 = do not wait ) + non-blocking recv (MSG_DONTWAIT) into the window.
     Fill fill( int timeout_ms );
     // Bounded wait across slice_ms steps, returning Interrupted promptly on cancel.
     Fill fill_until( int total_ms, int slice_ms = 200 );

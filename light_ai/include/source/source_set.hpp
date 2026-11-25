@@ -122,8 +122,9 @@ public:
         std::array<struct pollfd, N> fds {};
         std::array<int, N> idx_map {};
         nfds_t nfds = 0;
-        for ( int s = 0; s < n_; ++s )
+        for ( int k = 0; k < n_; ++k )
         {
+            const int s = ( cursor_ + 1 + k ) % n_;
             if ( !ch_[static_cast<std::size_t>( s )].live() )
                 continue;
             const int fd = ch_[static_cast<std::size_t>( s )].poll_fd();

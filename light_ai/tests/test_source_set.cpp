@@ -266,6 +266,38 @@ namespace
         ::close( p0[1] );
         ::close( p1[0] );
     }
+
+    void wait_any_round_robin( TestRun& t )
+    {
+        // Both fds ready simultaneously: wait_any() + next() must alternate fairly instead of starving s1.
+        Rig r;
+        r.live( 2 );
+        int p0[2] { -1, -1 };
+        int p1[2] { -1, -1 };
+        CHECK( t, ::pipe2( p0, O_CLOEXEC ) == 0 && ::pipe2( p1, O_CLOEXEC ) == 0 );
+        r.dev[0].poll_fd = p0[0];
+        r.dev[1].poll_fd = p1[0];
+        const char b = 1;
+        CHECK( t, ::write( p0[1], &b, 1 ) == 1 && ::write( p1[1], &b, 1 ) == 1 );
+        r.dev[0].dq_buf = 0;
+        r.dev[1].dq_buf = 0;
+
+        EncodedFrame f;
+        CHECK( t, r.set.wait_any( 50 ) );
+        CHECK_EQ( t, r.set.next( 0, f ), FrameStatus::Frame );
+        const int first = f.src;
+        CHECK( t, r.set.wait_any( 50 ) );
+        CHECK_EQ( t, r.set.next( 0, f ), FrameStatus::Frame );
+        CHECK_EQ( t, f.src, 1 - first );
+        CHECK( t, r.set.wait_any( 50 ) );
+        CHECK_EQ( t, r.set.next( 0, f ), FrameStatus::Frame );
+        CHECK_EQ( t, f.src, first );
+
+        ::close( p0[0] );
+        ::close( p0[1] );
+        ::close( p1[0] );
+        ::close( p1[1] );
+    }
 }  // namespace
 
 void test_source_set( TestRun& t )
@@ -278,4 +310,5 @@ void test_source_set( TestRun& t )
     absent_mask( t );
     busy_nodes( t );
     wait_any_poll( t );
+    wait_any_round_robin( t );
 }

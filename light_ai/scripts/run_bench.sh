@@ -38,8 +38,8 @@ if ! pgrep -x light_ai >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "run_bench.sh: running cyclictest -t4 -a 4-7 -p 80 -m -i 1000 -l $LOOPS..."
-sudo -n cyclictest -t4 -a 4-7 -p 80 -m -i 1000 -l "$LOOPS" -q | tee "$LOG_CYC"
+echo "run_bench.sh: running cyclictest -t4 -a 4-7 -p 90 -m -i 1000 -d 0 -l $LOOPS..."
+sudo -n cyclictest -t4 -a 4-7 -p 90 -m -i 1000 -d 0 -l "$LOOPS" -q | tee "$LOG_CYC"
 
 # Stop load cleanly (SIGINT -> Drain & summary)
 sudo -n pkill -INT -x light_ai 2>/dev/null || true
