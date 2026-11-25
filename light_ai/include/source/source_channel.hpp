@@ -94,6 +94,10 @@ public:
     {
         src_.set_cancel( stop, prober_quit );
     }
+    void set_wake_fd( int fd ) noexcept
+    {
+        src_.set_wake_fd( fd );
+    }
 
     // The one attach path (startup, hot attach, re-attach), attaching thread only,
     // never while Live. hot: false = the Pipeline ctor (startup log texts; V4L2 still warms up).

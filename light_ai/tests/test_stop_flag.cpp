@@ -39,4 +39,22 @@ void test_stop_flag( TestRun& t )
         wake.join();
         CHECK( t, interrupted );
     }
+    // attach_wake(): callback fires on request() and wake_fd() reflects attached descriptor.
+    {
+        StopFlag sf;
+        CHECK_EQ( t, sf.wake_fd(), -1 );
+        struct Counter
+        {
+            mutable int calls = 0;
+        };
+        const Counter counter {};
+        const auto cb = []( const void* ctx ) noexcept { ++static_cast<const Counter*>( ctx )->calls; };
+        sf.attach_wake( 42, &counter, cb );
+        CHECK_EQ( t, sf.wake_fd(), 42 );
+        sf.request();
+        CHECK( t, sf.requested() );
+        CHECK_EQ( t, counter.calls, 1 );
+        sf.attach_wake( -1, nullptr, nullptr );
+        CHECK_EQ( t, sf.wake_fd(), -1 );
+    }
 }

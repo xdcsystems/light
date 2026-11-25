@@ -62,6 +62,7 @@ public:
     Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 ) noexcept;
     void requeue( int index ) noexcept;
     void* buffer( int index ) const noexcept { return bufs_[index].start; }
+    void set_wake_fd( int fd ) noexcept { wake_fd_ = fd; }
     int poll_fd() const noexcept { return fd_; }
     int width() const { return width_; }
     int height() const { return height_; }
@@ -94,7 +95,8 @@ private:
     int dequeue_once( v4l2_buffer& buf, int timeout_ms );
     // skip_to_newest: the drain-ahead -- at most kBufCount - 1 buffers that are
     // already done replace buf with the newest clean one; the others are requeued.
-    void skip_to_newest( v4l2_buffer& buf );
+    int poll_next_ready( v4l2_buffer& next_buf ) const noexcept;
+    int skip_to_newest( v4l2_buffer& buf );
 
     // Non-throwing ioctl wrapper: EINTR retry only, errno is the caller's error report.
     int xioctl_r( unsigned long req, void* arg ) const;
@@ -102,6 +104,7 @@ private:
 private:
     const Log& log_;
     int fd_ = -1;
+    int wake_fd_ = -1;
     int err_streak_ = 0;
     int64_t last_cap_us_ = -1;
     int width_ = 0, height_ = 0;

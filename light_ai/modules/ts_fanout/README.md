@@ -13,7 +13,7 @@ Lightweight single-file C++17 `epoll` relay that fans out a single upstream MPEG
 ## Build & Install
 
 ```bash
-cd modules/ts_fanout
+cd light_ai/modules/ts_fanout
 make
 sudo make install   # installs /usr/local/bin/light-ai-fanout
 ```

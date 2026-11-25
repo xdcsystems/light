@@ -38,6 +38,11 @@ public:
         if ( auto* net = std::get_if<NetMjpegSource>( &src_ ) )
             net->set_cancel( stop, prober_quit );
     }
+    void set_wake_fd( int fd ) noexcept
+    {
+        if ( auto* cam = std::get_if<CameraV4L2>( &src_ ) )
+            cam->set_wake_fd( fd );
+    }
 
     // Starts streaming from id, tearing down whatever was open:
     //   camera -- reconnect(): teardown + full setup + STREAMON;

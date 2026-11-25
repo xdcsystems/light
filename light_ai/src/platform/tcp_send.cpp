@@ -24,6 +24,7 @@ namespace
 
     int wait_writable( int fd, bool has_to, std::chrono::steady_clock::time_point deadline ) noexcept
     {
+        pollfd pf { fd, POLLOUT, 0 };
         int pr = 0;
         do
         {
@@ -36,11 +37,17 @@ namespace
                 const auto rem_ms = std::chrono::duration_cast<std::chrono::milliseconds>( rem_ns ).count();
                 timeout_ms = static_cast<int>( std::clamp<int64_t>( rem_ms, 1, INT_MAX ) );
             }
-            pollfd pf { fd, POLLOUT, 0 };
+            pf.revents = 0;
             pr = ::poll( &pf, 1, timeout_ms );
         } while ( pr < 0 && errno == EINTR );
         if ( pr > 0 )
+        {
+            if ( ( pf.revents & POLLNVAL ) != 0 )
+                return -EIO;
+            if ( ( pf.revents & ( POLLERR | POLLHUP ) ) != 0 )
+                return -EPIPE;
             return 0;
+        }
         return pr == 0 ? -ETIMEDOUT : -EIO;
     }
 

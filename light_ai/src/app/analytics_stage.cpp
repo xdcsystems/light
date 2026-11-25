@@ -138,6 +138,7 @@ void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const R
         const TensorRef dst = reid_worker_->input_tensor( rslot );
         if ( dst.fd < 0 )
         {
+            reid_worker_->release_slot( rslot );
             reid_perf_.drops += static_cast<uint32_t>( nr - i );
             break;
         }
@@ -147,6 +148,7 @@ void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const R
         // No aux: start_reid() keeps Re-ID off when a crop could need the two-pass path.
         if ( const Status cst = rga.crop_resize( src_img, reqs[i].srect, dst_img, {} ); !cst.ok() )
         {
+            reid_worker_->release_slot( rslot );
             ++reid_perf_.drops;
             if ( reid_crop_fail_++ % 256 == 0 )
                 log_.warn() << "reid: crop " << reqs[i].srect.w << 'x' << reqs[i].srect.h << " failed: " << cst

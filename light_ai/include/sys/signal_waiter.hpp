@@ -57,12 +57,23 @@ public:
     };
 
 private:
+    struct WakeFd
+    {
+        explicit WakeFd( StopFlag& s ) noexcept;
+        ~WakeFd();
+        WakeFd( const WakeFd& ) = delete;
+        WakeFd& operator=( const WakeFd& ) = delete;
+        StopFlag& stop;
+        int fd = -1;
+    };
+
     void loop() noexcept;
     void on_signal( int sig );
 
 private:
     const ProcessEnv& env_;
     StopFlag& stop_;
+    WakeFd wake_;
     const pthread_t owner_;  // the constructing thread: woken on an armed stop
     std::atomic<bool> armed_ { false };
     std::atomic<bool> quit_ { false };

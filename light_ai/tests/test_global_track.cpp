@@ -329,8 +329,8 @@ void test_global_track( TestRun& t )
         tab.sync_cam( 1, cam1, 260000 );
         CHECK( t, cam1.d[0].global_id == 1 );
 
-        // 2nd consecutive observation matching global 2 triggers the switch.
-        tab.apply_result( make_res( 1, 1, 1, 300000, 0.0f, 1.0f ) );
+        // 2nd consecutive observation matching global 2 triggers the switch and returns true.
+        CHECK( t, tab.apply_result( make_res( 1, 1, 1, 300000, 0.0f, 1.0f ) ) );
         tab.sync_cam( 1, cam1, 310000 );
         CHECK( t, cam1.d[0].global_id == 2 );
     }

@@ -102,7 +102,8 @@ bool YoloDecoder::band_fits( const YoloFrame& f ) const noexcept
     const float lb_w = static_cast<float>( f.lb.w );
     const float lb_top = static_cast<float>( f.lb.top );
     const float lb_h = static_cast<float>( f.lb.h );
-    if ( lb_w > 0.0f && lb_h > 0.0f && lb_top >= 0.0f && lb_top + lb_h <= f.model_h && lb_left >= 0.0f && lb_left + lb_w <= f.model_w )
+    if ( std::isfinite( f.cam_w ) && std::isfinite( f.cam_h ) && f.cam_w > 0.0f && f.cam_h > 0.0f &&
+         lb_w > 0.0f && lb_h > 0.0f && lb_top >= 0.0f && lb_top + lb_h <= f.model_h && lb_left >= 0.0f && lb_left + lb_w <= f.model_w )
         return true;
     log_.warn() << "yolo_postprocess: letterbox band x=[" << lb_left << ", " << lb_left + lb_w << ") y=[" << lb_top << ", "
                 << lb_top + lb_h << ") does not fit model " << f.model_w << 'x' << f.model_h << '\n';

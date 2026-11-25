@@ -289,7 +289,7 @@ void GlobalTrackTable::refresh_global_ids( int src_idx, TrajList& trajs ) const 
     }
 }
 
-void GlobalTrackTable::apply_bound_result( const ReidResult& res, LiveLocal& lv, int cur_slot ) noexcept
+bool GlobalTrackTable::apply_bound_result( const ReidResult& res, LiveLocal& lv, int cur_slot ) noexcept
 {
     const SimMatch m = search_gallery( tracks_, res, cur_slot );
     // Switch only when current affinity drops below threshold and another gallery entry clears sim_thr_.
@@ -309,13 +309,15 @@ void GlobalTrackTable::apply_bound_result( const ReidResult& res, LiveLocal& lv,
             lv.pending_switch_gid = 0;
             lv.pending_switch_hits = 0;
             update_ema( tracks_[m.best_slot], res.feat.data(), res.dim );
+            return true;
         }
-        return;
+        return false;
     }
     lv.pending_switch_gid = 0;
     lv.pending_switch_hits = 0;
     if ( tracks_[cur_slot].samples == 0 || m.cur_sim >= sim_thr_ + kEmaRefreshExtra )
         update_ema( tracks_[cur_slot], res.feat.data(), res.dim );
+    return false;
 }
 
 bool GlobalTrackTable::apply_unbound_result( const ReidResult& res, LiveLocal& lv ) noexcept
@@ -328,6 +330,7 @@ bool GlobalTrackTable::apply_unbound_result( const ReidResult& res, LiveLocal& l
             return false;
         bind_slot( m.best_slot, res.src_idx, res.local_id, res.gen, res.ts_us );
         lv.global_slot = m.best_slot;
+        lv.unbound_attempts = 0;
         if ( m.best_sim >= sim_thr_ + kEmaRefreshExtra )
             update_ema( tracks_[m.best_slot], res.feat.data(), res.dim );
         return true;
@@ -347,6 +350,7 @@ bool GlobalTrackTable::apply_unbound_result( const ReidResult& res, LiveLocal& l
     std::copy_n( res.feat.data(), res.dim, g.ema_feat.data() );
     g.cams[res.src_idx] = { res.local_id, res.gen, res.ts_us, true };
     lv.global_slot = nslot;
+    lv.unbound_attempts = 0;
     return false;
 }
 
@@ -363,10 +367,7 @@ bool GlobalTrackTable::apply_result( const ReidResult& res ) noexcept
     LiveLocal& lv = live_[res.src_idx][lidx];
     const int cur_slot = find_global_by_local( res.src_idx, res.local_id, res.gen );
     if ( cur_slot >= 0 )
-    {
-        apply_bound_result( res, lv, cur_slot );
-        return false;
-    }
+        return apply_bound_result( res, lv, cur_slot );
     return apply_unbound_result( res, lv );
 }
 
@@ -391,8 +392,11 @@ bool GlobalTrackTable::try_pick_crop( int src_idx,
     const LiveLocal& lv = live_[src_idx][lidx];
     need_init = ( lv.global_slot < 0 );
     frames_since_reid = lv.frames_since_reid;
+    const int unbound_interval = std::min(
+        kUnboundRetryFrames << std::min( lv.unbound_attempts, 2 ),
+        static_cast<int>( reid_cfg::kReidRefreshFrames ) );
     const int interval = need_init
-                               ? kUnboundRetryFrames
+                               ? unbound_interval
                                : ( ( tracks_[lv.global_slot].samples >= reid_cfg::kReidStableSamples )
                                          ? reid_cfg::kReidStableFrames
                                          : reid_cfg::kReidRefreshFrames );
@@ -462,7 +466,12 @@ void GlobalTrackTable::mark_dispatched( int src_idx, int local_id, uint32_t gen 
 {
     const int idx = find_live_idx( src_idx, local_id, gen );
     if ( idx >= 0 )
-        live_[src_idx][idx].frames_since_reid = 0;
+    {
+        LiveLocal& lv = live_[src_idx][idx];
+        lv.frames_since_reid = 0;
+        if ( lv.global_slot < 0 && lv.unbound_attempts < 4 )
+            ++lv.unbound_attempts;
+    }
 }
 
 int GlobalTrackTable::active_global_count() const noexcept

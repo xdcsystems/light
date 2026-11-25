@@ -88,7 +88,7 @@ public:
         free_cv_ = cv;
     }
 
-    State state() const
+    State state() const noexcept
     {
         const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
         return st_;
@@ -110,14 +110,14 @@ public:
     // --- pipeline thread -------------------------------------------------
 
     // Source of the job last submitted here (discard() picks frames by it).
-    int src_idx() const
+    int src_idx() const noexcept
     {
         const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
         return job_.src_idx;
     }
 
     // Free -> Queued. false (nothing changes) if the slot is not Free or is closed.
-    bool submit( const InferJob& job )
+    bool submit( const InferJob& job ) noexcept
     {
         {
             const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
@@ -135,7 +135,7 @@ public:
     // Otherwise (timeout or close): a Queued slot becomes Abandoned, `out.job`
     // still names the frame for the caller's log, and the state seen at the
     // give-up (Queued) is returned.
-    State take( std::chrono::milliseconds timeout, InferResult& out )
+    State take( std::chrono::milliseconds timeout, InferResult& out ) noexcept
     {
         State seen = State::Free;
         {
@@ -160,7 +160,7 @@ public:
 
     // Discards the job without reading its result: waits up to `timeout`,
     // frees a Done slot (true), abandons a still-Queued one (false).
-    bool reclaim( std::chrono::milliseconds timeout )
+    bool reclaim( std::chrono::milliseconds timeout ) noexcept
     {
         {
             std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
@@ -177,7 +177,7 @@ public:
     }
 
     // Shutdown: releases every wait on this slot; run() returns.
-    void close()
+    void close() noexcept
     {
         {
             const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
@@ -264,20 +264,20 @@ private:
     }
 
     // Returns once the job left Queued, the slot is closed, or the timeout passed.
-    void wait_settled( std::unique_lock<light_ai::platform::PiMutex>& lk, std::chrono::milliseconds timeout )
+    void wait_settled( std::unique_lock<light_ai::platform::PiMutex>& lk, std::chrono::milliseconds timeout ) noexcept
     {
         cv_.wait_for( lk, timeout, [this] { return closed_ || st_ != State::Queued; } );
     }
 
     // Caller holds the lock. Only a worker may free a slot that is on the NPU.
-    void abandon_if_queued()
+    void abandon_if_queued() noexcept
     {
         if ( st_ == State::Queued )
             st_ = State::Abandoned;
     }
 
     // Worker: blocks until a job is queued. false: the slot is closed (shutdown).
-    bool wait_for_job( std::unique_lock<light_ai::platform::PiMutex>& lk )
+    bool wait_for_job( std::unique_lock<light_ai::platform::PiMutex>& lk ) noexcept
     {
         cv_.wait( lk, [this] { return closed_ || st_ == State::Queued; } );
         return !closed_;

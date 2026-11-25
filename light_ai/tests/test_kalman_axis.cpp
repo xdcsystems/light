@@ -1,6 +1,7 @@
 // KalmanAxis against hand-computed values: r = 25, q = 2000, dt = 0.1 s
 // (the Tracker tuning), a spawn-like start P = diag(25, 900).
 
+#include <cmath>
 #include "core/kalman_axis.hpp"
 #include "check.hpp"
 #include "suites.hpp"
@@ -55,4 +56,14 @@ void test_kalman_axis( TestRun& t )
     wild_neg.predict( 0.1f, 2000.0f );
     wild_neg.update( -1000.0f, 25.0f, 500.0f );
     CHECK( t, wild_neg.v() == -500.0f );
+
+    // Defensive guards: NaN / negative r / s == 0 leave state finite and unchanged.
+    KalmanAxis g;
+    g.reset( 50.0f, 0.0f, 0.0f );
+    g.update( 100.0f, 0.0f, 500.0f );  // s == 0 -> ignored
+    CHECK( t, g.x() == 50.0f && g.v() == 0.0f );
+    g.update( std::nanf( "" ), 25.0f, 500.0f );
+    g.predict( std::nanf( "" ), 2000.0f );
+    g.damp( std::nanf( "" ) );
+    CHECK( t, std::isfinite( g.x() ) && std::isfinite( g.v() ) && g.x() == 50.0f );
 }

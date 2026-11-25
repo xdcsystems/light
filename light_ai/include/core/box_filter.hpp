@@ -139,13 +139,18 @@ public:
     {
         if ( !box_filter::usable( b ) )
             return;
-        if ( !primed_ || dt_s > p.max_dt_s )
+        if ( !primed_ )
         {
             reset( b );
             return;
         }
         if ( !std::isfinite( dt_s ) || !( dt_s > 0.0f ) )
             return;
+        if ( dt_s > p.max_dt_s )
+        {
+            reset( b );
+            return;
+        }
         dt_s = std::max( dt_s, 1e-3f );
         const float v[kAxes] = { b.cx, b.cy, b.w, b.h };
         float f[kAxes] {};

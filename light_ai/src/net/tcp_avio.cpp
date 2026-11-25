@@ -16,7 +16,7 @@ namespace
 {
     enum
     {
-        kIoBufBytes = 32768
+        kIoBufBytes = 174 * 188  // exact multiple of 188-byte MPEG-TS packet (32712 B)
     };
 
     // The AVIO write callback: the POSIX drain loop is tcp_send_chunk()

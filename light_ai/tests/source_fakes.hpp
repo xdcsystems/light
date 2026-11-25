@@ -47,6 +47,7 @@ public:
     void use_camera() { d_.net = false; }
     void use_net() { d_.net = true; }
     void set_cancel( const std::atomic<bool>*, const std::atomic<bool>* ) noexcept {}
+    void set_wake_fd( int ) noexcept {}
     int poll_fd() const noexcept { return d_.poll_fd; }
     Status open( const std::string& id )
     {

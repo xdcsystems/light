@@ -92,6 +92,7 @@ class GlobalTrackTable
         int pending_switch_gid = 0;
         int pending_switch_hits = 0;
         int frames_since_reid = 0;
+        int unbound_attempts = 0;
     };
 
 public:
@@ -140,7 +141,7 @@ private:
     void bind_slot( int gslot, int src_idx, int local_id, uint32_t gen, int64_t ts_us ) noexcept;
     void update_ema( GlobalTrack& g, const float* feat, int dim ) noexcept;
     void sync_global_entry( GlobalTrack& g, int src_idx, const TrajList& trajs, int64_t ts_us ) noexcept;
-    void apply_bound_result( const ReidResult& res, LiveLocal& lv, int cur_slot ) noexcept;
+    bool apply_bound_result( const ReidResult& res, LiveLocal& lv, int cur_slot ) noexcept;
     bool apply_unbound_result( const ReidResult& res, LiveLocal& lv ) noexcept;
     bool try_pick_crop( int src_idx,
                         const TrajList& trajs,
