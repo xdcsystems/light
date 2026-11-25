@@ -247,13 +247,22 @@ BufferedSocket::Fill BufferedSocket::fill( int timeout_ms )
         return errno == EINTR ? Fill::Interrupted : Fill::Closed;
     if ( pr == 0 )
         return Fill::Timeout;
-    const ssize_t n = ::recv( fd_, dst, win_.room(), 0 );
-    if ( n < 0 && errno == EINTR )
-        return Fill::Interrupted;  // interrupted before any data (e.g. a stop signal
-                                   // arriving between poll() and recv()): not a
-                                   // connection error and not a watchdog expiry
-    if ( n <= 0 )
-        return Fill::Closed;  // 0 = EOF, -1 = error: the connection is gone either way
+    if ( ( p.revents & POLLNVAL ) != 0 )
+        return Fill::Closed;
+    if ( ( p.revents & ( POLLERR | POLLHUP ) ) != 0 && ( p.revents & POLLIN ) == 0 )
+        return Fill::Closed;
+    // MSG_DONTWAIT: a spurious POLLIN must never block the RT pipeline thread in recv().
+    const ssize_t n = ::recv( fd_, dst, win_.room(), MSG_DONTWAIT );
+    if ( n < 0 )
+    {
+        if ( errno == EINTR )
+            return Fill::Interrupted;
+        if ( errno == EAGAIN || errno == EWOULDBLOCK )
+            return Fill::Timeout;
+        return Fill::Closed;
+    }
+    if ( n == 0 )
+        return Fill::Closed;
     win_.commit( static_cast<size_t>( n ) );
     return Fill::Data;
 }

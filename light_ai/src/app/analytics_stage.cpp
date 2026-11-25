@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -33,8 +34,9 @@ void AnalyticsStage::init( const InferConfig& cfg, int model_w, int model_h, int
 
 void AnalyticsStage::init_box_logs( const std::string& box_log, int nsrc )
 {
-    for ( int s = 0; s < nsrc; ++s )
-        an_[s].smoother.set_log( source_box_log( box_log, s, nsrc ), log_ );
+    nsrc_ = std::clamp( nsrc, 1, static_cast<int>( kMaxSources ) );
+    for ( int s = 0; s < nsrc_; ++s )
+        an_[static_cast<size_t>( s )].smoother.set_log( source_box_log( box_log, s, nsrc_ ), log_ );
 }
 
 bool AnalyticsStage::sync_attach_seq( int src, uint32_t seq ) noexcept
@@ -65,7 +67,8 @@ void AnalyticsStage::start_reid( const InferConfig& cfg, int pool_size )
 void AnalyticsStage::process( const InferResult& res, const FrameView& view, const RgaResizer& rga ) noexcept
 {
     SourceAnalytics& ss = an_[static_cast<size_t>( res.job.src_idx )];
-    ss.smoother.update( res.dets, dets_ );
+    // Preserve deterministic nominal dt when --box-log (Layer A replay) is active.
+    ss.smoother.update( res.dets, dets_, ss.smoother.has_log() ? -1 : res.job.ts_us );
     ss.smoother.log_frame( res.job.frame, res.dets, dets_ );
     // Anti-jitter stage 1: the Kalman tracker consumes RAW person detections;
     // dets_ stays the BoxSmoother output for non-person drawing and --box-log.
@@ -85,18 +88,33 @@ void AnalyticsStage::reset_source_analytics( int src, int64_t ts_us ) noexcept
     global_tracks_.sync_cam( src, trajs_, ts_us );
 }
 
-void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const RgaResizer& rga ) noexcept
+void AnalyticsStage::drain_reid_results() noexcept
 {
-    // Sync current frame first so tracks that died on this frame cannot match
-    // late Re-ID results and spawn 45s phantom global tracks.
-    global_tracks_.sync_cam( view.src_idx, trajs_, view.ts_us );
-
     ReidResult done {};
     while ( reid_worker_->poll_result( done ) )
     {
         if ( global_tracks_.apply_result( done ) )
             ++reid_perf_.matches;
     }
+}
+
+int AnalyticsStage::acquire_reid_slot( int src, int cam_cap ) noexcept
+{
+    // Work-conserving fairness: reserve the last free slot for peer cameras,
+    // while letting an active camera use idle slots when >= 2 slots are free.
+    if ( reid_worker_->inflight_for( src ) >= cam_cap && reid_worker_->free_slot_count() <= 1 )
+        return -1;
+    return reid_worker_->try_acquire_slot();
+}
+
+void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const RgaResizer& rga ) noexcept
+{
+    if ( view.src_idx < 0 || view.src_idx >= kMaxSources )
+        return;
+    // Sync current frame first so tracks that died on this frame cannot match
+    // late Re-ID results and spawn 45s phantom global tracks.
+    global_tracks_.sync_cam( view.src_idx, trajs_, view.ts_us );
+    drain_reid_results();
 
     global_tracks_.refresh_global_ids( view.src_idx, trajs_ );
     if ( !rga_ok || view.tensor.fd < 0 )
@@ -107,9 +125,11 @@ void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const R
     const int rh = reid_worker_->input_height();
     const int nr = global_tracks_.select_crops( view.src_idx, trajs_, view.lb, view.src_w, view.src_h, rw, rh,
                                                 reqs.data(), reid_cfg::kMaxCropsPerFrame );
+    const int cam_cap = ( nsrc_ > 1 ) ? std::max( 1, static_cast<int>( reid_cfg::kReidSlots ) / nsrc_ )
+                                      : static_cast<int>( reid_cfg::kReidSlots );
     for ( int i = 0; i < nr; ++i )
     {
-        const int rslot = reid_worker_->try_acquire_slot();
+        const int rslot = acquire_reid_slot( view.src_idx, cam_cap );
         if ( rslot < 0 )
         {
             reid_perf_.drops += static_cast<uint32_t>( nr - i );

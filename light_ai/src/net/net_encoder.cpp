@@ -83,13 +83,29 @@ Status NetEncoder::timed_compose( Compose&& compose, double base_ms ) noexcept
 // grid), the next ring slot, the timed compose( slot, out ) into it, then a
 // failed compose ends THIS session only (serve() reopens the stream path),
 // and a good one is encoded.
+int NetEncoder::acquire_slot_or_drain( uint32_t epoch, bool& drain_failed ) noexcept
+{
+    drain_failed = false;
+    const int slot = ring_.acquire_writable();
+    if ( slot >= 0 )
+        return slot;
+    gate_.run( epoch, [this, &drain_failed]( const NetSessionGate::Session& s ) {
+        if ( !codec_.drain_ready( s, queue_ ).ok() )
+        {
+            queue_.fail( s.epoch );
+            drain_failed = true;
+        }
+    } );
+    sync_flush_backpressure( epoch );
+    return drain_failed ? -1 : ring_.acquire_writable();
+}
+
 template <typename Compose>
-void NetEncoder::compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose,
+void NetEncoder::compose_and_encode( int slot, uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose,
                                      double prior_cmp_ms ) noexcept
 {
     canvas_dirty_ = false;
     ts_us_ = ( ts_flag >= 0 ) ? now_us : -1;
-    const int slot = ring_.advance();
     if ( !timed_compose( [&] { return compose( slot, ring_.buf( slot ) ); }, prior_cmp_ms ).ok() )
     {
         queue_.fail( epoch );
@@ -125,10 +141,18 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     const bool warm_ready = warmup_.ready( now_us );
     const bool hold_for_peer = defer_encode && multi;
     bool do_enc = false;
+    int enc_slot = -1;
     if ( warm_ready && !hold_for_peer )
     {
-        const PacketQueue::Backlog bl = queue_.backlog( now_us );
-        do_enc = pacer_.admit( now_us, bl.depth, epoch, bl.head_age_us );
+        bool drain_failed = false;
+        enc_slot = acquire_slot_or_drain( epoch, drain_failed );
+        if ( drain_failed )
+            return;
+        if ( enc_slot >= 0 )
+        {
+            const PacketQueue::Backlog bl = queue_.backlog( now_us );
+            do_enc = pacer_.admit( now_us, bl.depth, epoch, bl.head_age_us );
+        }
     }
     if ( warm_ready )
         do_enc ? ++perf_.enc_admit : ++perf_.enc_skip;
@@ -157,7 +181,7 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
     if ( do_enc )
     {
         compose_and_encode(
-            epoch, now_us, ts_us, [this]( int /*slot*/, MppBuffer out ) { return composer_.flush_canvas( out ); },
+            enc_slot, epoch, now_us, ts_us, [this]( int /*slot*/, MppBuffer out ) { return composer_.flush_canvas( out ); },
             tile_ms );
         return;
     }
@@ -184,11 +208,15 @@ void NetEncoder::flush_dirty() noexcept
         return;
     if ( !warmup_.ready( now_us ) )
         return;
+    bool drain_failed = false;
+    const int enc_slot = acquire_slot_or_drain( epoch, drain_failed );
+    if ( drain_failed || enc_slot < 0 )
+        return;
     const PacketQueue::Backlog bl = queue_.backlog( now_us );
     if ( !pacer_.admit( now_us, bl.depth, epoch, bl.head_age_us ) )
         return;
     ++perf_.enc_admit;
-    compose_and_encode( epoch, now_us, dirty_ts_us_, [this]( int /*slot*/, MppBuffer out ) {
+    compose_and_encode( enc_slot, epoch, now_us, dirty_ts_us_, [this]( int /*slot*/, MppBuffer out ) {
         return composer_.flush_canvas( out );
     } );
 }
@@ -225,23 +253,29 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noe
         return;  // every tile went live since the tick was scheduled
     const bool warm_ready = warmup_.ready( now_us );
     bool do_enc = false;
+    int enc_slot = -1;
     if ( warm_ready )
     {
-        const PacketQueue::Backlog bl = queue_.backlog( now_us );
-        do_enc = pacer_.admit_idle( now_us, bl.depth, epoch, bl.head_age_us );
+        bool drain_failed = false;
+        enc_slot = acquire_slot_or_drain( epoch, drain_failed );
+        if ( drain_failed )
+            return;
+        if ( enc_slot >= 0 )
+        {
+            const PacketQueue::Backlog bl = queue_.backlog( now_us );
+            do_enc = pacer_.admit_idle( now_us, bl.depth, epoch, bl.head_age_us );
+        }
     }
     if ( warm_ready )
         do_enc ? ++perf_.idle_admit : ++perf_.idle_skip;
     if ( !do_enc )
     {
-        // Held or the encode queue busy: no encode this tick. Multi-view
-        // still plates the absent cells that lack it (none after the
-        // first such tick: compose_idle skips plated cells). Untimed.
+        // Held, queue busy, or all VPU slots busy: multi-view still plates absent cells.
         if ( lay.nsrc > 1 && !composer_.compose_idle( absent, nabs, ring_.current(), nullptr ).ok() )
             queue_.fail( epoch );
         return;
     }
-    compose_and_encode( epoch, now_us, ts_us, [&]( int slot, MppBuffer out ) {
+    compose_and_encode( enc_slot, epoch, now_us, ts_us, [&]( int slot, MppBuffer out ) {
         return composer_.compose_idle( absent, nabs, slot, out );
     } );
 }
@@ -264,6 +298,11 @@ void NetEncoder::run_encoded( uint32_t epoch, std::chrono::steady_clock::time_po
     const double h264_ms = ms_since( enc_t0 );
     if ( h264_ms > perf_.h264_ms_max )
         perf_.h264_ms_max = h264_ms;
+    sync_flush_backpressure( epoch );
+}
+
+void NetEncoder::sync_flush_backpressure( uint32_t epoch ) noexcept
+{
     const uint64_t cur_qf = codec_.q_flush_cnt();
     if ( cur_qf > last_q_flush_ )
     {

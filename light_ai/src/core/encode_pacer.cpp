@@ -13,8 +13,8 @@ namespace
     constexpr int64_t kMinSampleUs = 10000;        // ignore <10 ms bursts (e.g. duplicate polls)
     constexpr int64_t kMaxSampleUs = 500000;       // ignore >500 ms pauses/reconnects
     constexpr int64_t kStaleSourceUs = 1000000;    // silent >1 s: source detached, do not hold pace
-    constexpr int64_t kStepDownHoldUs = 200000;       // 200 ms sustained backlog before step-down
-    constexpr int64_t kStepDownCooldownUs = 500000;   // min 500 ms between queue-driven step-downs
+    constexpr int64_t kStepDownHoldUs = 80000;        // 80 ms sustained backlog (< 140 ms gap to pause)
+    constexpr int64_t kStepDownCooldownUs = 250000;   // min 250 ms between queue-driven step-downs
     constexpr int64_t kRecoveryHoldUs = 8000000;   // 8 s clean channel before stepping back up
     constexpr int kMinSamples = 3;                 // require 3 intervals before trusting median
     constexpr std::array<int64_t, 4> kBpFloorStepUs { 0, 50000, 80000, 150000 };
@@ -82,6 +82,7 @@ void EncodePacer::observe_flush( int64_t ts_us, uint32_t epoch ) noexcept
 {
     enter( epoch );
     bp_level_ = std::min( bp_level_ + 1, 3 );
+    bp_high_since_us_ = -1;
     bp_low_since_us_ = -1;
     if ( ts_us >= 0 && ( bp_last_down_us_ < 0 || ts_us > bp_last_down_us_ ) )
         bp_last_down_us_ = ts_us;
@@ -224,6 +225,9 @@ bool EncodePacer::admit_idle( int64_t ts_us, int queue_depth, uint32_t epoch, in
     enter( epoch );
     update_backpressure( ts_us, queue_depth, head_age_us );
     if ( bp_paused_ || queue_depth >= kBusyDepth || head_age_us >= kBusyAgeUs )
+        return false;
+    if ( bp_level_ > 0 && ts_us >= 0 && last_ts_us_ >= 0 &&
+         ( ts_us - last_ts_us_ ) < kBpFloorStepUs[static_cast<size_t>( bp_level_ )] )
         return false;
     if ( ts_us >= 0 && ( last_ts_us_ < 0 || ts_us > last_ts_us_ ) )
         last_ts_us_ = ts_us;

@@ -36,6 +36,12 @@
 #ifndef EGL_SYNC_FLUSH_COMMANDS_BIT_KHR
 #define EGL_SYNC_FLUSH_COMMANDS_BIT_KHR 0x0001
 #endif
+#ifndef EGL_SYNC_FENCE_KHR
+#define EGL_SYNC_FENCE_KHR 0x30F9
+#endif
+#ifndef EGL_SYNC_NATIVE_FENCE_ANDROID
+#define EGL_SYNC_NATIVE_FENCE_ANDROID 0x3144
+#endif
 
 // 100 ms cap for sync_cpu(): a wedged GPU must not hang the pipeline.
 constexpr EGLTimeKHR kFenceWaitNs = 100ull * 1000 * 1000;
@@ -441,7 +447,14 @@ bool GpuBoxDrawer::load_entry_points()
         return false;
     }
     // destroy_sync too: a fence created without it would leak one EGLSync per frame (M-10).
-    st_.native_fence = has( exts, "EGL_ANDROID_native_fence_sync" ) && st_.create_sync && st_.client_wait && st_.destroy_sync;
+    // Prefer EGL_ANDROID_native_fence_sync, fall back to EGL_KHR_fence_sync before glFinish().
+    if ( st_.create_sync && st_.client_wait && st_.destroy_sync )
+    {
+        if ( has( exts, "EGL_KHR_fence_sync" ) )
+            st_.fence_type = EGL_SYNC_FENCE_KHR;
+        if ( has( exts, "EGL_ANDROID_native_fence_sync" ) )
+            st_.fence_type = EGL_SYNC_NATIVE_FENCE_ANDROID;
+    }
     return true;
 }
 
@@ -615,7 +628,8 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
         st_.stride = stride;
     }
     log_.info() << "drawer: tensor attached (slot " << slot << ") " << w << 'x' << h << " stride=" << stride
-              << " (native fence: " << ( st_.native_fence ? "yes" : "no" ) << ")\n";
+              << " (fence: " << ( st_.fence_type == EGL_SYNC_NATIVE_FENCE_ANDROID ? "native"
+                                  : ( st_.fence_type == EGL_SYNC_FENCE_KHR ? "khr" : "none" ) ) << ")\n";
     return {};
 }
 
@@ -681,43 +695,30 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const Callou
     glFlush();
 }
 
-void GpuBoxDrawer::sync_cpu() noexcept
+bool GpuBoxDrawer::sync_cpu() noexcept
 {
     if ( st_.dpy == EGL_NO_DISPLAY )
-        return;
-    // Unconditional make_current(): the fallback path below used to call
-    // glFinish() without ensuring the context is current (the fence path
-    // did it inside the branch). make_current() is a no-op when the
-    // context is already current (the hot-path case), so this costs
-    // nothing in the steady state and makes the contract total: sync_cpu()
-    // is safe from any thread state where dpy is alive.
+        return true;
     make_current();
-    if ( st_.native_fence )
+    if ( st_.fence_type != 0 )
     {
-        EGLSyncKHR sync = st_.create_sync( st_.dpy, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr );
+        EGLSyncKHR sync = st_.create_sync( st_.dpy, st_.fence_type, nullptr );
         if ( sync != EGL_NO_SYNC_KHR )
         {
-            // Flush bit: without it the fence may never signal if the
-            // driver has not flushed the command stream. Bounded wait:
-            // a wedged GPU must not hang the pipeline.
             const EGLint r = st_.client_wait( st_.dpy, sync, EGL_SYNC_FLUSH_COMMANDS_BIT_KHR, kFenceWaitNs );
-            st_.destroy_sync( st_.dpy, sync );  // non-null: part of the native_fence gate
+            st_.destroy_sync( st_.dpy, sync );
             if ( r == EGL_CONDITION_SATISFIED_KHR )
-                return;
+                return true;
             ++fence_tmo_cnt_;
-            log_.warn() << "drawer: fence wait timed out, glFinish fallback\n";
+            log_.warn() << "drawer: fence wait failed/timed out (rc=" << r << "), skipping glFinish\n";
+            return false;
         }
-        else
-        {
-            ++fence_tmo_cnt_;
-        }
+        ++fence_tmo_cnt_;
+        log_.warn() << "drawer: eglCreateSyncKHR failed, skipping glFinish\n";
+        return false;
     }
-    // Known limit: glFinish() has no timeout. If the fence timed out
-    // because the GPU is wedged, this call will likely hang too -- the
-    // 100 ms cap bounds the fence path only. Documented as accepted:
-    // there is no bounded glFinish in EGL/GLES, and skipping the sync
-    // would read the tensor mid-write (worse than hanging).
     glFinish();
+    return true;
 }
 
 void GpuBoxDrawer::release_slot( int slot )

@@ -41,12 +41,8 @@ public:
     EncoderFramePool( const EncoderFramePool& ) = delete;
     EncoderFramePool& operator=( const EncoderFramePool& ) = delete;
 
-    // Steps the ring to the next slot and returns it.
-    int advance()
-    {
-        cur_ = ( cur_ + 1 ) % kSlots;
-        return cur_;
-    }
+    // Steps the ring to the next writable slot (not referenced by the VPU) or returns -1.
+    int acquire_writable() noexcept;
     int current() const { return cur_; }
     MppBuffer buf( int slot ) const { return ring_.buf[slot]; }
     AVFrame* frame( int slot ) const { return frames_[slot]; }

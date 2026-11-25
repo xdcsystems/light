@@ -23,7 +23,14 @@ void BoxSmoother::reset() noexcept
     tracks_ = {};
 }
 
-void BoxSmoother::update( const DetList& in, DetList& out ) noexcept
+float BoxSmoother::track_dt_s( int64_t prev_us, int64_t ts_us ) const noexcept
+{
+    if ( ts_us < 0 || prev_us < 0 || ts_us <= prev_us )
+        return kFrameDtS;
+    return std::clamp( static_cast<float>( ts_us - prev_us ) * 1e-6f, kMinDtS, kMaxDtS );
+}
+
+void BoxSmoother::update( const DetList& in, DetList& out, int64_t ts_us ) noexcept
 {
     out.clear();
     for ( auto& t : tracks_ )
@@ -39,9 +46,9 @@ void BoxSmoother::update( const DetList& in, DetList& out ) noexcept
     std::array<unsigned char, kTrackCount> trk_taken {};
     const size_t na = greedy_iou_match( pairs_.data(), static_cast<size_t>( np ),
                                         det_trk.data(), trk_taken.data() );
-    apply_matches( in, static_cast<int>( na ) );
-    expire();
-    emit( in, det_trk, out );
+    apply_matches( in, static_cast<int>( na ), ts_us );
+    expire( ts_us );
+    emit( in, det_trk, out, ts_us );
 }
 
 // Every same-class (det, alive track) pair above kMatchThr into pairs_
@@ -70,33 +77,43 @@ int BoxSmoother::collect_pairs( const DetList& in )
 }
 
 // The filter step of every accepted pair (pairs_[0 .. na), compacted by the matcher).
-void BoxSmoother::apply_matches( const DetList& in, int na )
+void BoxSmoother::apply_matches( const DetList& in, int na, int64_t ts_us )
 {
     for ( int p = 0; p < na; ++p )
     {
         const Pair& pr = pairs_[p];
         BoxTrack& t = tracks_[pr.trk];
         const Detection& d = in.d[pr.det];
-        t.filt.step( BoxCWH { d.x + 0.5f * d.w, d.y + 0.5f * d.h, d.w, d.h }, kFrameDtS, box_filter::kRawBoxParams );
+        const float dt_s = track_dt_s( t.last_seen_us, ts_us );
+        t.filt.step( BoxCWH { d.x + 0.5f * d.w, d.y + 0.5f * d.h, d.w, d.h }, dt_s, box_filter::kRawBoxParams );
         const BoxCWH o = t.filt.out();
         t.x = o.cx - 0.5f * o.w;
         t.y = o.cy - 0.5f * o.h;
         t.w = o.w;
         t.h = o.h;
         t.conf = d.conf;
+        t.last_seen_us = ts_us;
         t.hits = std::min( t.hits + 1, static_cast<int>( kCoastMinHits ) );
         t.miss = 0;
         t.matched = true;
     }
 }
 
-// An alive track without a match this frame: one more miss; past kMaxMiss it frees its slot.
-void BoxSmoother::expire()
+// An alive track without a match this frame: expire by wall-clock age when ts_us >= 0,
+// or by frame count (kMaxMiss / kUnconfMaxMiss) in deterministic replay mode (ts_us < 0).
+void BoxSmoother::expire( int64_t ts_us )
 {
     for ( auto& t : tracks_ )
     {
         if ( !t.alive || t.matched )
             continue;
+        if ( ts_us >= 0 && t.last_seen_us >= 0 && ts_us > t.last_seen_us )
+        {
+            const int64_t lim_us = ( t.hits >= kCoastMinHits ) ? kMaxMissUs : kUnconfMaxMissUs;
+            if ( ( ts_us - t.last_seen_us ) > lim_us )
+                t.alive = false;
+            continue;
+        }
         const int lim = ( t.hits >= kCoastMinHits ) ? kMaxMiss : kUnconfMaxMiss;
         if ( ++t.miss > lim )
             t.alive = false;
@@ -105,7 +122,7 @@ void BoxSmoother::expire()
 
 // The output in input order: a matched det carries its track's smoothed box,
 // an unmatched one passes through unsmoothed and spawns a track.
-void BoxSmoother::emit( const DetList& in, const DetTrack& det_trk, DetList& out )
+void BoxSmoother::emit( const DetList& in, const DetTrack& det_trk, DetList& out, int64_t ts_us )
 {
     for ( int i = 0; i < in.n; ++i )
     {
@@ -127,7 +144,7 @@ void BoxSmoother::emit( const DetList& in, const DetTrack& det_trk, DetList& out
             }
             else
             {
-                spawn( d );
+                spawn( d, ts_us );
                 if ( d.conf < kInstantConf )
                     continue;
             }
@@ -148,7 +165,7 @@ void BoxSmoother::emit_coast( DetList& out ) const
 
 // The first free slot takes the detection: the first sighting passes
 // through unsmoothed (warm-up). No free slot: no track.
-void BoxSmoother::spawn( const Detection& d )
+void BoxSmoother::spawn( const Detection& d, int64_t ts_us )
 {
     auto* const it = std::find_if( tracks_.begin(), tracks_.end(), []( const BoxTrack& t ) {
         return !t.alive;
@@ -164,6 +181,7 @@ void BoxSmoother::spawn( const Detection& d )
     t.h = d.h;
     t.conf = d.conf;
     t.cls = d.cls;
+    t.last_seen_us = ts_us;
     t.hits = 1;
     t.miss = 0;
     t.alive = true;

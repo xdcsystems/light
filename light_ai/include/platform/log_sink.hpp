@@ -33,6 +33,18 @@ inline void pin_drainer_a55() noexcept
         CPU_SET( c, &set );
     ::sched_setaffinity( 0, sizeof( set ), &set );
 }
+
+inline void cpu_relax() noexcept
+{
+#if defined( __aarch64__ )
+    // NOLINTNEXTLINE(hicpp-no-assembler): ARMv8 spin-wait hint for lock-free contention
+    __asm__ volatile( "yield" ::: "memory" );
+#elif defined( __x86_64__ )
+    __builtin_ia32_pause();
+#else
+    std::this_thread::yield();
+#endif
+}
 }  // namespace detail
 
 class AsyncLogSink
@@ -42,7 +54,7 @@ public:
     {
         kCapacity = 512,
         kMask = kCapacity - 1,
-        kMaxLineBytes = 512
+        kMaxLineBytes = 504  // 8 B header + 504 B payload = 512 B (exact 8 cache lines)
     };
     static_assert( ( kCapacity & kMask ) == 0, "AsyncLogSink::kCapacity must be power of two" );
 
@@ -102,6 +114,7 @@ public:
                 done = true;
                 continue;
             }
+            detail::cpu_relax();
             pos = head_.load( std::memory_order_relaxed );
         }
         return ok;
@@ -110,7 +123,7 @@ public:
     uint64_t dropped_count() const noexcept { return total_dropped_.load( std::memory_order_relaxed ); }
 
 private:
-    struct Slot
+    struct alignas( 64 ) Slot
     {
         std::atomic<uint32_t> seq { 0 };
         bool is_err = false;
@@ -200,9 +213,9 @@ private:
     std::array<Slot, kCapacity> slots_ {};
     alignas( 64 ) std::atomic<uint32_t> head_ { 0 };
     alignas( 64 ) uint32_t tail_ = 0;
-    std::atomic<uint64_t> dropped_ { 0 };
+    alignas( 64 ) std::atomic<uint64_t> dropped_ { 0 };
     std::atomic<uint64_t> total_dropped_ { 0 };
-    std::atomic<bool> stop_ { false };
+    alignas( 64 ) std::atomic<bool> stop_ { false };
     JoiningThread drainer_;
 };
 

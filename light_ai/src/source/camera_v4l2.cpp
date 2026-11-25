@@ -53,7 +53,7 @@ namespace
 
     int next_step_timeout_ms( int timeout_ms, int attempt, std::chrono::steady_clock::time_point deadline ) noexcept
     {
-        if ( timeout_ms >= 0 || attempt == 0 )
+        if ( timeout_ms == 0 || attempt == 0 )
             return timeout_ms;
         const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(
                              deadline - std::chrono::steady_clock::now() )
@@ -372,15 +372,16 @@ int CameraV4L2::wait_clean( v4l2_buffer& buf, int timeout_ms )
         const int step_ms = next_step_timeout_ms( timeout_ms, attempt, deadline );
         if ( step_ms == kDeadlineExpired )
         {
-            log_.warn() << "cam: no frame in " << kDequeuePollMs << " ms - treating as recoverable stall\n";
-            return EIO;
+            if ( blocking )
+                log_.warn() << "cam: no frame in " << kDequeuePollMs << " ms - treating as recoverable stall\n";
+            return timeout_err;
         }
         const int rc = dequeue_once( buf, step_ms );
         if ( !is_retryable_dequeue( rc, blocking ) )
             return rc;
         if ( std::chrono::steady_clock::now() >= deadline )
         {
-            if ( blocking && rc == EAGAIN )
+            if ( blocking )
                 log_.warn() << "cam: no frame in " << kDequeuePollMs << " ms - treating as recoverable stall\n";
             return timeout_err;
         }
@@ -401,9 +402,11 @@ int CameraV4L2::dequeue_once( v4l2_buffer& buf, int timeout_ms )
         return perr;
     if ( ioctl( fd_, VIDIOC_DQBUF, &buf ) < 0 )
     {
+        if ( errno == EINTR )
+            return EINTR;
         if ( errno == EAGAIN && timeout_ms >= 0 )
             return EAGAIN;
-        return ( errno == EINTR || errno == EAGAIN ) ? kDequeueAgain : errno;
+        return errno == EAGAIN ? kDequeueAgain : errno;
     }
     if ( !( buf.flags & V4L2_BUF_FLAG_ERROR ) && buf.bytesused > 0 )
         return 0;

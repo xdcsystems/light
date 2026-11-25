@@ -4,10 +4,12 @@
 // Header-only: guards are trivial RAII, cache ops are per-line one-liners.
 
 #pragma once
-#include <cerrno>   // EINTR
+#include <cerrno>   // EINTR, EAGAIN
+#include <chrono>   // steady_clock deadline for bounded EAGAIN retry
 #include <cstddef>  // size_t
 #include <cstdint>  // uintptr_t
 #include <cstring>  // std::memset
+#include <time.h>   // nanosleep
 #include <fcntl.h>  // dma-buf sync ioctl
 #include <sys/ioctl.h>
 #include <linux/dma-buf.h>
@@ -39,20 +41,34 @@ struct DmaSync
     DmaSync& operator=( const DmaSync& ) = delete;
 
 private:
-    // Best effort, but not lost to a signal: DMA_BUF_IOCTL_SYNC can return
-    // EINTR (the kernel waits on the buffer's fences interruptibly), and an
-    // unretried START/END leaves the bracket half-open (M-15).
+    // Best effort, but not lost to a signal or transient fence wait:
+    // DMA_BUF_IOCTL_SYNC can return EINTR or EAGAIN per Linux DMA-BUF docs,
+    // and an unretried START/END leaves the bracket half-open (M-15).
     void sync( unsigned long long flags ) const noexcept
     {
         if ( fd_ < 0 )
             return;
         dma_buf_sync s {};
         s.flags = flags;
-        int rc = 0;
-        do
+        const timespec pause { 0, 100000L };  // 100 us backoff on transient EAGAIN
+        std::chrono::steady_clock::time_point deadline {};
+        bool has_deadline = false;
+        while ( ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s ) != 0 )
         {
-            rc = ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s );
-        } while ( rc < 0 && errno == EINTR );
+            if ( errno == EINTR )
+                continue;
+            if ( errno != EAGAIN )
+                return;
+            const auto now = std::chrono::steady_clock::now();
+            if ( !has_deadline )
+            {
+                deadline = now + std::chrono::milliseconds( 50 );
+                has_deadline = true;
+            }
+            if ( now >= deadline )
+                return;
+            ::nanosleep( &pause, nullptr );
+        }
     }
 
 private:

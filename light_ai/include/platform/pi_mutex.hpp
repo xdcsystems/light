@@ -20,6 +20,12 @@ namespace platform
 {
 namespace detail
 {
+inline void check_pthread( int rc ) noexcept
+{
+    if ( rc != 0 )
+        std::terminate();
+}
+
 template <class Rep, class Period>
 inline timespec monotonic_deadline( const std::chrono::duration<Rep, Period>& rel ) noexcept
 {
@@ -46,7 +52,7 @@ public:
     explicit PiMutex( const Log* log = nullptr ) noexcept
     {
         pthread_mutexattr_t attr {};
-        ::pthread_mutexattr_init( &attr );
+        detail::check_pthread( ::pthread_mutexattr_init( &attr ) );
         const int set_rc = ::pthread_mutexattr_setprotocol( &attr, PTHREAD_PRIO_INHERIT );
         const int pi_rc = ( set_rc == 0 ) ? ::pthread_mutex_init( &mx_, &attr ) : set_rc;
         if ( pi_rc == 0 )
@@ -57,8 +63,8 @@ public:
         }
 
         // Fallback when kernel/container does not support PTHREAD_PRIO_INHERIT.
-        ::pthread_mutexattr_setprotocol( &attr, PTHREAD_PRIO_NONE );
-        ::pthread_mutex_init( &mx_, &attr );
+        detail::check_pthread( ::pthread_mutexattr_setprotocol( &attr, PTHREAD_PRIO_NONE ) );
+        detail::check_pthread( ::pthread_mutex_init( &mx_, &attr ) );
         ::pthread_mutexattr_destroy( &attr );
         if ( log != nullptr )
         {
@@ -80,9 +86,9 @@ public:
     PiMutex( PiMutex&& ) = delete;
     PiMutex& operator=( PiMutex&& ) = delete;
 
-    void lock() noexcept { ::pthread_mutex_lock( &mx_ ); }
+    void lock() noexcept { detail::check_pthread( ::pthread_mutex_lock( &mx_ ) ); }
     bool try_lock() noexcept { return ::pthread_mutex_trylock( &mx_ ) == 0; }
-    void unlock() noexcept { ::pthread_mutex_unlock( &mx_ ); }
+    void unlock() noexcept { detail::check_pthread( ::pthread_mutex_unlock( &mx_ ) ); }
 
     pthread_mutex_t* native_handle() noexcept { return &mx_; }
     bool prio_inherit_enabled() const noexcept { return pi_active_; }
@@ -98,9 +104,9 @@ public:
     PiCondVar() noexcept
     {
         pthread_condattr_t attr {};
-        ::pthread_condattr_init( &attr );
-        ::pthread_condattr_setclock( &attr, CLOCK_MONOTONIC );
-        ::pthread_cond_init( &cv_, &attr );
+        detail::check_pthread( ::pthread_condattr_init( &attr ) );
+        detail::check_pthread( ::pthread_condattr_setclock( &attr, CLOCK_MONOTONIC ) );
+        detail::check_pthread( ::pthread_cond_init( &cv_, &attr ) );
         ::pthread_condattr_destroy( &attr );
     }
 
@@ -114,7 +120,10 @@ public:
     void notify_one() noexcept { ::pthread_cond_signal( &cv_ ); }
     void notify_all() noexcept { ::pthread_cond_broadcast( &cv_ ); }
 
-    void wait( std::unique_lock<PiMutex>& lk ) noexcept { ::pthread_cond_wait( &cv_, lk.mutex()->native_handle() ); }
+    void wait( std::unique_lock<PiMutex>& lk ) noexcept
+    {
+        detail::check_pthread( ::pthread_cond_wait( &cv_, lk.mutex()->native_handle() ) );
+    }
 
     template <class Pred>
     void wait( std::unique_lock<PiMutex>& lk, Pred pred ) noexcept( noexcept( pred() ) )

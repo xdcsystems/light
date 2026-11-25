@@ -38,6 +38,8 @@ public:
     {
         for ( auto& s : states_ )
             s.store( ReidSlotState::Free, std::memory_order_relaxed );
+        for ( auto& c : inflight_ )
+            c.store( 0, std::memory_order_relaxed );
         worker_.start( [this]() noexcept { worker_loop(); } );
     }
 
@@ -55,6 +57,24 @@ public:
     BasicReidQueue& operator=( const BasicReidQueue& ) = delete;
     BasicReidQueue( BasicReidQueue&& ) = delete;
     BasicReidQueue& operator=( BasicReidQueue&& ) = delete;
+
+    int inflight_for( int src ) const noexcept
+    {
+        if ( src < 0 || src >= reid_cfg::kMaxSources )
+            return 0;
+        return inflight_[static_cast<size_t>( src )].load( std::memory_order_acquire );
+    }
+
+    int free_slot_count() const noexcept
+    {
+        int n = 0;
+        for ( const auto& s : states_ )
+        {
+            if ( s.load( std::memory_order_acquire ) == ReidSlotState::Free )
+                ++n;
+        }
+        return n;
+    }
 
     // Non-blocking slot claim; returns [0..3] or -1 when all slots are in flight.
     int try_acquire_slot() noexcept
@@ -77,6 +97,8 @@ public:
                 states_[job.slot].store( ReidSlotState::Free, std::memory_order_release );
                 return false;
             }
+            if ( job.src_idx >= 0 && job.src_idx < reid_cfg::kMaxSources )
+                inflight_[static_cast<size_t>( job.src_idx )].fetch_add( 1, std::memory_order_release );
             jobs_.push( job );
         }
         cv_.notify_one();
@@ -119,7 +141,9 @@ private:
             res.gen = job.gen;
             res.ts_us = job.ts_us;
             res.ok = runner_( job, res );
-            // Publish Free BEFORE enqueueing result so producer sees the freed slot immediately.
+            // Decrement inflight and publish Free BEFORE enqueueing result (immune to results_ eviction).
+            if ( job.src_idx >= 0 && job.src_idx < reid_cfg::kMaxSources )
+                inflight_[static_cast<size_t>( job.src_idx )].fetch_sub( 1, std::memory_order_release );
             states_[job.slot].store( ReidSlotState::Free, std::memory_order_release );
 
             const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
@@ -133,6 +157,7 @@ private:
     Runner runner_;
     OnStart on_start_;
     std::array<std::atomic<ReidSlotState>, reid_cfg::kReidSlots> states_ {};
+    std::array<std::atomic<int>, reid_cfg::kMaxSources> inflight_ {};
     PodRing<ReidJob, reid_cfg::kReidQueueCap> jobs_ {};
     PodRing<ReidResult, reid_cfg::kReidQueueCap> results_ {};
     light_ai::platform::PiMutex mx_;

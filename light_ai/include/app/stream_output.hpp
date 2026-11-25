@@ -36,13 +36,16 @@ class BasicStreamOutput
 public:
     enum
     {
-        kMaxSources = reid_cfg::kMaxSources
+        kMaxSources = reid_cfg::kMaxSources,
+        kJobPoolSize = kMaxSources + 2  // kMaxSources pending + 1 active + 1 producer staging
     };
+    static_assert( kJobPoolSize <= 31, "BasicStreamOutput::free_mask_ shift fits in uint32_t" );
 
 public:
     explicit BasicStreamOutput( const Log& log, bool pin_worker = true )
       : log_( log ), sink_( log ), rep_( log ), pin_worker_( pin_worker )
     {
+        pending_idx_.fill( -1 );
     }
 
     ~BasicStreamOutput()
@@ -93,8 +96,12 @@ public:
         for ( int s = 0; s < kMaxSources; ++s )
         {
             const std::size_t idx = static_cast<std::size_t>( s );
-            if ( has_pending_[idx] && pending_[idx].view.tensor_idx == slot )
-                has_pending_[idx] = false;
+            const int jidx = pending_idx_[idx];
+            if ( jidx >= 0 && jobs_[static_cast<std::size_t>( jidx )].view.tensor_idx == slot )
+            {
+                release_job_locked( jidx );
+                pending_idx_[idx] = -1;
+            }
         }
         if ( active_slot_ != slot )
         {
@@ -115,9 +122,12 @@ public:
             mask |= ( 1u << static_cast<unsigned>( active_slot_ ) );
         for ( int s = 0; s < kMaxSources; ++s )
         {
-            const std::size_t idx = static_cast<std::size_t>( s );
-            if ( has_pending_[idx] && pending_[idx].view.tensor_idx >= 0 && pending_[idx].view.tensor_idx < 32 )
-                mask |= ( 1u << static_cast<unsigned>( pending_[idx].view.tensor_idx ) );
+            const int jidx = pending_idx_[static_cast<std::size_t>( s )];
+            if ( jidx < 0 )
+                continue;
+            const int tslot = jobs_[static_cast<std::size_t>( jidx )].view.tensor_idx;
+            if ( tslot >= 0 && tslot < 32 )
+                mask |= ( 1u << static_cast<unsigned>( tslot ) );
         }
         return mask;
     }
@@ -141,16 +151,19 @@ public:
         if ( !sink_.enabled() || !sink_.viewer_live() )
             return 0.0;
 
-        PublishJob job {};
+        PublishJob& job = jobs_[static_cast<std::size_t>( staging_idx_ )];
         job.view = view;
         job.defer_enc = defer_enc;
+        job.boxes.clear();
+        job.callouts.clear();
         sink_.prepare_overlay( view, dets, trajs, tracker, job.boxes, job.callouts );
         const int s = ( view.src_idx >= 0 && view.src_idx < kMaxSources ) ? view.src_idx : 0;
         const std::size_t idx = static_cast<std::size_t>( s );
         {
             const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
-            pending_[idx] = job;
-            has_pending_[idx] = true;  // drop-oldest per source
+            const int prev = pending_idx_[idx];
+            pending_idx_[idx] = staging_idx_;  // drop-oldest per source: swap slot index only
+            staging_idx_ = ( prev >= 0 ) ? prev : acquire_free_job_locked();
         }
         cv_.notify_one();
         return 0.0;
@@ -253,11 +266,31 @@ private:
             sink_.flush_dirty();
     }
 
+    int acquire_free_job_locked() noexcept
+    {
+        for ( int i = 0; i < kJobPoolSize; ++i )
+        {
+            const uint32_t bit = 1u << static_cast<unsigned>( i );
+            if ( ( free_mask_ & bit ) != 0 )
+            {
+                free_mask_ &= ~bit;
+                return i;
+            }
+        }
+        return 0;  // unreachable: kJobPoolSize == kMaxSources + 2
+    }
+
+    void release_job_locked( int jidx ) noexcept
+    {
+        if ( jidx >= 0 && jidx < kJobPoolSize )
+            free_mask_ |= ( 1u << static_cast<unsigned>( jidx ) );
+    }
+
     bool any_pending_locked() const noexcept
     {
         for ( int s = 0; s < kMaxSources; ++s )
         {
-            if ( has_pending_[static_cast<std::size_t>( s )] )
+            if ( pending_idx_[static_cast<std::size_t>( s )] >= 0 )
                 return true;
         }
         return false;
@@ -267,14 +300,14 @@ private:
     {
         for ( int s = 0; s < kMaxSources; ++s )
         {
-            const std::size_t idx = static_cast<std::size_t>( s );
-            if ( has_pending_[idx] && pending_[idx].view.tensor_idx == slot )
+            const int jidx = pending_idx_[static_cast<std::size_t>( s )];
+            if ( jidx >= 0 && jobs_[static_cast<std::size_t>( jidx )].view.tensor_idx == slot )
                 return true;
         }
         return false;
     }
 
-    bool take_work( PublishJob& pjob, bool& has_pub, IdleJob& ijob, bool& has_idle ) noexcept
+    bool take_work( int& pub_idx, IdleJob& ijob, bool& has_idle ) noexcept
     {
         std::unique_lock<light_ai::platform::PiMutex> lk( mx_ );
         cv_.wait( lk, [this]() noexcept {
@@ -282,22 +315,21 @@ private:
         } );
         if ( stop_ && !any_pending_locked() )
             return false;
-        has_pub = false;
+        pub_idx = -1;
         for ( int off = 0; off < kMaxSources; ++off )
         {
             const int s = ( next_src_ + off ) % kMaxSources;
             const std::size_t idx = static_cast<std::size_t>( s );
-            if ( has_pending_[idx] )
+            if ( pending_idx_[idx] >= 0 )
             {
-                pjob = pending_[idx];
-                has_pending_[idx] = false;
+                pub_idx = pending_idx_[idx];
+                pending_idx_[idx] = -1;
                 next_src_ = ( s + 1 ) % kMaxSources;
-                active_slot_ = pjob.view.tensor_idx;
-                has_pub = true;
+                active_slot_ = jobs_[static_cast<std::size_t>( pub_idx )].view.tensor_idx;
                 break;
             }
         }
-        has_idle = !has_pub && has_idle_;
+        has_idle = ( pub_idx < 0 ) && has_idle_;
         if ( has_idle )
         {
             ijob = idle_;
@@ -313,14 +345,15 @@ private:
             prefault_current_thread_stack();
             pin_current_thread_rt( "stream output", -1, 60, log_ );
         }
-        PublishJob pjob {};
         IdleJob ijob {};
-        bool has_pub = false;
+        int pub_idx = -1;
         bool has_idle = false;
-        while ( take_work( pjob, has_pub, ijob, has_idle ) )
+        while ( take_work( pub_idx, ijob, has_idle ) )
         {
+            const bool has_pub = pub_idx >= 0;
             if ( has_pub )
             {
+                const PublishJob& pjob = jobs_[static_cast<std::size_t>( pub_idx )];
                 static_cast<void>( sink_.render_and_publish( pjob.view, pjob.boxes, pjob.callouts, pjob.defer_enc ) );
                 {
                     const std::lock_guard<light_ai::platform::PiMutex> plk( perf_mx_ );
@@ -330,6 +363,7 @@ private:
                 }
                 {
                     const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
+                    release_job_locked( pub_idx );
                     active_slot_ = -1;
                 }
                 cv_.notify_all();
@@ -364,8 +398,10 @@ private:
     light_ai::platform::PiCondVar cv_;
     bool stop_ = false;
     bool flush_req_ = false;
-    std::array<bool, kMaxSources> has_pending_ {};
-    std::array<PublishJob, kMaxSources> pending_ {};
+    std::array<PublishJob, kJobPoolSize> jobs_ {};
+    std::array<int, kMaxSources> pending_idx_ {};
+    uint32_t free_mask_ = ( ( 1u << static_cast<unsigned>( kJobPoolSize ) ) - 1u ) & ~1u;
+    int staging_idx_ = 0;  // producer-only staging slot (never read by worker)
     int next_src_ = 0;
     bool has_idle_ = false;
     IdleJob idle_ {};

@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstdint>
 #include <sstream>
 
 #include "render/box_smoother.hpp"
@@ -120,6 +121,31 @@ namespace
         const float speeds[4] = { 0.5f, 1.0f, 2.0f, 3.0f };
         for ( const float spd : speeds )
             check_slow_ramp( t, spd );
+    }
+    void test_wall_clock_expire( TestRun& t )
+    {
+        // Wall-clock ts_us: confirmed track expires after 300 ms regardless of FPS (e.g. 30 fps = 9 frames).
+        BoxSmoother sm;
+        DetList out;
+        const Detection d = det( 100, 100, 40, 40, 2 );
+        sm.update( one( d ), out, 100000 );
+        sm.update( one( d ), out, 133333 );  // confirmed (hits == 2)
+        CHECK_EQ( t, out.n, 1 );
+        for ( int k = 1; k <= 8; ++k )
+        {
+            sm.update( DetList {}, out, 133333 + static_cast<int64_t>( k ) * 33333 );
+            CHECK_EQ( t, out.n, 1 );
+        }
+        sm.update( DetList {}, out, 133333 + 333333 );
+        CHECK_EQ( t, out.n, 0 );
+
+        // Frozen/duplicate ts_us falls back to frame-count expiry instead of keeping tracks alive forever.
+        sm.reset();
+        sm.update( one( d ), out, 500000 );
+        sm.update( one( d ), out, 500000 );
+        for ( int k = 0; k < 7; ++k )
+            sm.update( DetList {}, out, 500000 );
+        CHECK_EQ( t, out.n, 0 );
     }
 }  // namespace
 
@@ -253,4 +279,5 @@ void test_box_smoother( TestRun& t )
     }
     test_filter_and_coast( t );
     test_slow_ramp( t );
+    test_wall_clock_expire( t );
 }
