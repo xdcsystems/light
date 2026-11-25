@@ -253,15 +253,10 @@ void OverlaySink::draw_gpu_slot( int slot, const GpuBoxList& boxes, const Callou
     const auto tg2 = clk::now();
     perf_.gpu_draw_ms_max = std::max( perf_.gpu_draw_ms_max, ms( tg0, tg1 ) );
     perf_.sync_cpu_ms_max = std::max( perf_.sync_cpu_ms_max, ms( tg1, tg2 ) );
-    if ( synced )
+    if ( !synced )
     {
-        gpu_sync_fail_streak_ = 0;
-        return;
-    }
-    if ( ++gpu_sync_fail_streak_ >= 3 )
-    {
-        log_.error() << "overlay: 3 consecutive GPU fence failures - disabling GPU drawer (CPU fallback)\n";
-        drawer_.reset();
+        log_.error() << "overlay: GPU fence failed/timed out - switching to CPU fallback\n";
+        gpu_disabled_ = true;
     }
 }
 
@@ -272,7 +267,7 @@ void OverlaySink::draw_prepared_into_canvas( const LbGeom& dst_band,
     if ( boxes.n <= 0 && callouts.n <= 0 )
         return;
 
-    if ( drawer_ )
+    if ( drawer_ && !gpu_disabled_ )
     {
         draw_gpu_slot( 0, boxes, callouts );
         return;
@@ -301,7 +296,7 @@ bool OverlaySink::draw_prepared_into_tensor( const FrameView& frame,
     if ( boxes.n <= 0 && callouts.n <= 0 )
         return false;
 
-    if ( drawer_ )
+    if ( drawer_ && !gpu_disabled_ )
     {
         draw_gpu_slot( frame.tensor_idx, boxes, callouts );
         return false;
