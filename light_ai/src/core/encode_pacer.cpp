@@ -13,7 +13,8 @@ namespace
     constexpr int64_t kMinSampleUs = 10000;        // ignore <10 ms bursts (e.g. duplicate polls)
     constexpr int64_t kMaxSampleUs = 500000;       // ignore >500 ms pauses/reconnects
     constexpr int64_t kStaleSourceUs = 1000000;    // silent >1 s: source detached, do not hold pace
-    constexpr int64_t kStepDownCooldownUs = 1000000;  // min 1 s between queue-driven step-downs
+    constexpr int64_t kStepDownHoldUs = 200000;       // 200 ms sustained backlog before step-down
+    constexpr int64_t kStepDownCooldownUs = 500000;   // min 500 ms between queue-driven step-downs
     constexpr int64_t kRecoveryHoldUs = 8000000;   // 8 s clean channel before stepping back up
     constexpr int kMinSamples = 3;                 // require 3 intervals before trusting median
     constexpr std::array<int64_t, 4> kBpFloorStepUs { 0, 50000, 80000, 150000 };
@@ -26,13 +27,28 @@ namespace
         return tmp[static_cast<size_t>( mid )];
     }
 
-    int target_level_for_depth( int queue_depth ) noexcept
+    bool is_critical_backlog( int queue_depth, int64_t head_age_us ) noexcept
     {
-        if ( queue_depth >= EncodePacer::kPauseDepth )
+        return queue_depth >= EncodePacer::kPauseDepth || head_age_us >= EncodePacer::kPauseAgeUs;
+    }
+
+    bool can_resume_backlog( int queue_depth, int64_t head_age_us ) noexcept
+    {
+        return queue_depth <= EncodePacer::kHeavyDepth && head_age_us <= EncodePacer::kHeavyAgeUs;
+    }
+
+    bool is_clean_backlog( int queue_depth, int64_t head_age_us ) noexcept
+    {
+        return queue_depth <= EncodePacer::kLowDepth && head_age_us <= EncodePacer::kLowAgeUs;
+    }
+
+    int target_level_for_backlog( int queue_depth, int64_t head_age_us ) noexcept
+    {
+        if ( is_critical_backlog( queue_depth, head_age_us ) )
             return 3;
-        if ( queue_depth >= EncodePacer::kHeavyDepth )
+        if ( queue_depth >= EncodePacer::kHeavyDepth || head_age_us >= EncodePacer::kHeavyAgeUs )
             return 2;
-        if ( queue_depth >= EncodePacer::kBusyDepth )
+        if ( queue_depth >= EncodePacer::kBusyDepth || head_age_us >= EncodePacer::kBusyAgeUs )
             return 1;
         return 0;
     }
@@ -115,21 +131,21 @@ void EncodePacer::advance_grid( int64_t ts_us, int64_t step_us ) noexcept
         last_ts_us_ = ts_us;
 }
 
-void EncodePacer::update_backpressure( int64_t ts_us, int queue_depth ) noexcept
+void EncodePacer::update_backpressure( int64_t ts_us, int queue_depth, int64_t head_age_us ) noexcept
 {
-    if ( queue_depth >= kPauseDepth )
+    if ( is_critical_backlog( queue_depth, head_age_us ) )
     {
         bp_paused_ = true;
         bp_level_ = 3;
         bp_high_since_us_ = -1;
         bp_low_since_us_ = -1;
     }
-    if ( bp_paused_ && queue_depth <= kHeavyDepth )
+    if ( bp_paused_ && can_resume_backlog( queue_depth, head_age_us ) )
         bp_paused_ = false;
     if ( ts_us < 0 || ( last_ts_us_ >= 0 && ts_us < last_ts_us_ ) )
         return;
 
-    const int target = target_level_for_depth( queue_depth );
+    const int target = target_level_for_backlog( queue_depth, head_age_us );
     if ( target >= 3 )
     {
         bp_last_down_us_ = ts_us;
@@ -143,7 +159,7 @@ void EncodePacer::update_backpressure( int64_t ts_us, int queue_depth ) noexcept
             bp_high_since_us_ = ts_us;
             return;
         }
-        const bool held = ( ts_us - bp_high_since_us_ ) >= kStepDownCooldownUs;
+        const bool held = ( ts_us - bp_high_since_us_ ) >= kStepDownHoldUs;
         const bool cooldown_ok = ( bp_last_down_us_ < 0 ) || ( ( ts_us - bp_last_down_us_ ) >= kStepDownCooldownUs );
         if ( held && cooldown_ok )
         {
@@ -154,7 +170,7 @@ void EncodePacer::update_backpressure( int64_t ts_us, int queue_depth ) noexcept
         return;
     }
     bp_high_since_us_ = -1;
-    if ( queue_depth > kLowDepth )
+    if ( !is_clean_backlog( queue_depth, head_age_us ) )
     {
         bp_low_since_us_ = -1;
         return;
@@ -173,19 +189,19 @@ void EncodePacer::update_backpressure( int64_t ts_us, int queue_depth ) noexcept
     }
 }
 
-int64_t EncodePacer::effective_step_us( int64_t base_step_us, int queue_depth ) const noexcept
+int64_t EncodePacer::effective_step_us( int64_t base_step_us, int queue_depth, int64_t head_age_us ) const noexcept
 {
     int64_t step = base_step_us;
-    if ( nsrc_ > 1 && fps_ <= 0 && queue_depth >= kHeavyDepth )
+    if ( nsrc_ > 1 && fps_ <= 0 && ( queue_depth >= kHeavyDepth || head_age_us >= kHeavyAgeUs ) )
         step = std::max( step, kHeavyVfrStepUs );
     const int64_t bp_floor = kBpFloorStepUs[static_cast<size_t>( bp_level_ )];
     return std::max( step, bp_floor );
 }
 
-bool EncodePacer::admit( int64_t ts_us, int queue_depth, uint32_t epoch ) noexcept
+bool EncodePacer::admit( int64_t ts_us, int queue_depth, uint32_t epoch, int64_t head_age_us ) noexcept
 {
     enter( epoch );
-    update_backpressure( ts_us, queue_depth );
+    update_backpressure( ts_us, queue_depth, head_age_us );
     if ( bp_paused_ )
         return false;
     if ( ( nsrc_ <= 1 && fps_ <= 0 && bp_level_ == 0 ) || ts_us < 0 || last_ts_us_ < 0 )
@@ -196,18 +212,18 @@ bool EncodePacer::admit( int64_t ts_us, int queue_depth, uint32_t epoch ) noexce
     if ( ts_us < last_ts_us_ )
         return false;
     const int64_t base_step_us = ( fps_ > 0 ) ? ( 1000000 / fps_ ) : ( ( nsrc_ > 1 ) ? slowest_period_us( ts_us ) : 0 );
-    const int64_t min_step_us = effective_step_us( base_step_us, queue_depth );
+    const int64_t min_step_us = effective_step_us( base_step_us, queue_depth, head_age_us );
     const bool enc = ( ts_us - last_ts_us_ ) >= min_step_us;
     if ( enc )
         advance_grid( ts_us, min_step_us );
     return enc;
 }
 
-bool EncodePacer::admit_idle( int64_t ts_us, int queue_depth, uint32_t epoch ) noexcept
+bool EncodePacer::admit_idle( int64_t ts_us, int queue_depth, uint32_t epoch, int64_t head_age_us ) noexcept
 {
     enter( epoch );
-    update_backpressure( ts_us, queue_depth );
-    if ( bp_paused_ || queue_depth >= kBusyDepth )
+    update_backpressure( ts_us, queue_depth, head_age_us );
+    if ( bp_paused_ || queue_depth >= kBusyDepth || head_age_us >= kBusyAgeUs )
         return false;
     if ( ts_us >= 0 && ( last_ts_us_ < 0 || ts_us > last_ts_us_ ) )
         last_ts_us_ = ts_us;

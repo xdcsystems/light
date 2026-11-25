@@ -85,7 +85,8 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
 - Before a PR, the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
   (CMake build + 71 unit suites + 11 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
-  `SKIP_TSAN=1` / `SKIP_TIDY=1` to narrow intermediate iterations).
+  `SKIP_TSAN=1` / `SKIP_TIDY=1` to narrow intermediate iterations). With `isolcpus=4-7`, prepend
+  `taskset -c 0-7` when `light_ai` is stopped to build/test/tidy across all 8 cores instead of only A55 `0-3`.
   Two-pass tidy gate: self-test + `scripts/rules_lint.sh` first, then `main` = system `clang-tidy-11`
   (`.clang-tidy`, `tests/.clang-tidy`) and `rules` = pinned `clang-tidy==23.1.4` in `venv/`
   (`scripts/tidy_rules.yaml`: cognitive complexity 20 + `misc-const-correctness` (#94) + the `custom-*` project

@@ -45,6 +45,11 @@ Setup, static-analysis, testing, and tooling guide for [`light_ai`](../README.md
 ./scripts/build.sh
 ```
 
+> **Note (`isolcpus=4-7`):** Because the Soft-RTOS kernel isolates Cortex-A76 cores `4-7`, a plain `./scripts/build.sh` runs only on Cortex-A55 cores `0-3`. When `light_ai` is **not** running, use all 8 cores to speed up the build, tests, and `clang-tidy`:
+> ```bash
+> taskset -c 0-7 ./scripts/build.sh
+> ```
+
 `scripts/build.sh` runs three gates in sequence and fails on the first error:
 1. **Release CMake build** (`build/light_ai`, C++17, `-O3 -Wall -Wextra`).
 2. **Host unit tests + ThreadSanitizer** (`scripts/test.sh`; skip tests with `SKIP_TESTS=1`, skip only TSan with `SKIP_TSAN=1`).
