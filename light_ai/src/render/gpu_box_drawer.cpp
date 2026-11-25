@@ -18,6 +18,7 @@
 #include <initializer_list>
 #include <linux/dma-buf.h>
 #include <cstring>
+#include <ios>
 #include <unistd.h>
 #include <string_view>
 #include <drm/drm_fourcc.h>
@@ -714,7 +715,8 @@ bool GpuBoxDrawer::sync_cpu() noexcept
             return false;
         }
         ++fence_tmo_cnt_;
-        log_.warn() << "drawer: eglCreateSyncKHR failed, skipping glFinish\n";
+        log_.warn() << "drawer: eglCreateSyncKHR failed (err=0x" << std::hex << eglGetError()
+                    << std::dec << "), skipping glFinish\n";
         return false;
     }
     glFinish();
