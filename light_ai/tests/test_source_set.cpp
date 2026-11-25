@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <sys/eventfd.h>
 #include <unistd.h>
 
 #include "check.hpp"
@@ -298,6 +299,30 @@ namespace
         ::close( p1[0] );
         ::close( p1[1] );
     }
+
+    void wait_any_wake_fd( TestRun& t )
+    {
+        // eventfd wakes wait_any() immediately even when signaled before wait_any() (no TOCTOU).
+        Rig r;
+        r.live( 1 );
+        int p0[2] { -1, -1 };
+        CHECK( t, ::pipe2( p0, O_CLOEXEC ) == 0 );
+        const int efd = ::eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
+        CHECK( t, efd >= 0 );
+        r.dev[0].poll_fd = p0[0];
+        r.set.set_wake_fd( efd );
+        const uint64_t one = 1;
+        CHECK_EQ( t, ::write( efd, &one, sizeof( one ) ), static_cast<ssize_t>( sizeof( one ) ) );
+        const auto t0 = std::chrono::steady_clock::now();
+        CHECK( t, r.set.wait_any( 2000 ) );
+        const auto el = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0 )
+                            .count();
+        CHECK( t, el < 200 );
+        ::close( efd );
+        ::close( p0[0] );
+        ::close( p0[1] );
+    }
 }  // namespace
 
 void test_source_set( TestRun& t )
@@ -311,4 +336,5 @@ void test_source_set( TestRun& t )
     busy_nodes( t );
     wait_any_poll( t );
     wait_any_round_robin( t );
+    wait_any_wake_fd( t );
 }

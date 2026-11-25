@@ -110,11 +110,10 @@ void H264Encoder::drain()
     // MPP pool ("invalid mem pool ptr" at exit, idle-run case).
     if ( frames_sent_ == 0 )
         return;
-    // Blocking drain in rkmppenc (AV_CODEC_FLAG_LOW_DELAY -> MPP_TIMEOUT_BLOCK)
-    // so every queued frame is reclaimed before avcodec_free_context() tears down pools.
+    // AV_CODEC_FLAG_LOW_DELAY is already set before avcodec_open2(), so rkmppenc
+    // drains synchronously (MPP_TIMEOUT_BLOCK) without mutating ctx_->flags post-open.
     // Note: collect_pending()'s 512x1 ms EAGAIN bound assumes MPP responds rather than
     // wedges indefinitely, which is accepted here at teardown once frames were sent.
-    ctx_->flags |= AV_CODEC_FLAG_LOW_DELAY;
     send_eof();
     // Telemetry: pulled / eof / eagains make the drain outcome
     // visible for the shutdown-print investigation.

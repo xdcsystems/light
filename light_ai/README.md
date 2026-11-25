@@ -55,7 +55,7 @@ Connect a viewer on the LAN:
 ffplay -fflags nobuffer tcp://<board-ip>:1234
 ```
 
-*(For simultaneous multi-viewer streaming on port `1236` via the on-demand A55 fan-out relay, see [`modules/ts_fanout/README.md`](../modules/ts_fanout/README.md). For Windows `mpv` configuration and latency tuning, see [`docs/viewer.md`](docs/viewer.md).)*
+*(For simultaneous multi-viewer streaming on port `1236` via the on-demand A55 fan-out relay, see [`modules/ts_fanout/README.md`](modules/ts_fanout/README.md). For Windows `mpv` configuration and latency tuning, see [`docs/viewer.md`](docs/viewer.md).)*
 
 ## Architecture
 
@@ -164,7 +164,7 @@ All **28 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | 104-header / 62-TU module map, `core/` pure-logic inventory, error model & exit codes, and verified RK3588 hardware/SDK constraints. |
 | [`docs/development.md`](docs/development.md) | Hardware/kernel/SDK prerequisites, `ffmpeg-rockchip` 8.1 build, CMake flags, `clang-tidy` / `clangd` operations, 71 test suites, and `scripts/` + `tools/` index. |
-| [`../modules/ts_fanout/README.md`](../modules/ts_fanout/README.md) | Standalone A55 MPEG-TS multi-viewer TCP fan-out relay (`:1234 → :1236`). |
+| [`modules/ts_fanout/README.md`](modules/ts_fanout/README.md) | Standalone A55 MPEG-TS multi-viewer TCP fan-out relay (`:1234 → :1236`). |
 | [`docs/viewer.md`](docs/viewer.md) | Legacy Windows laptop `mpv` viewer guide and latency notes. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Coding rules (`gate` vs `review`), error/exception policy, comment style, and PR verification gate. |
 | [`CLAUDE.md`](CLAUDE.md) | On-board developer workflow, USB replug commands, and audit stage notes. |

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <system_error>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -44,11 +45,17 @@ public:
         th_ = std::thread( std::forward<Fn>( fn ), std::forward<Args>( args )... );
     }
 
-    // Joins the thread if joinable; idempotent.
-    void join()
+    // Joins the thread if joinable; idempotent and noexcept-safe for dtor / move-assign.
+    void join() noexcept
     {
-        if ( th_.joinable() )
-            th_.join();
+        try
+        {
+            if ( th_.joinable() )
+                th_.join();
+        }
+        catch ( const std::system_error& )
+        {
+        }
     }
 
     bool joinable() const noexcept { return th_.joinable(); }

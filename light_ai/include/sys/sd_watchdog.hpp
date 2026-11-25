@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -13,16 +15,36 @@
 
 #include "core/perf_clock.hpp"
 
+namespace sd_watchdog_detail
+{
+inline double parse_ping_interval_ms( const char* watchdog_usec, double fallback_ms, double max_ms ) noexcept
+{
+    if ( watchdog_usec == nullptr || watchdog_usec[0] == '\0' )
+        return fallback_ms;
+    errno = 0;
+    char* end = nullptr;
+    const long long usec = std::strtoll( watchdog_usec, &end, 10 );
+    if ( errno == ERANGE || end == watchdog_usec || end == nullptr || *end != '\0' || usec <= 0 )
+        return fallback_ms;
+    const double half_ms = static_cast<double>( usec ) / 2000.0;
+    return std::clamp<double>( half_ms, 1.0, max_ms );
+}
+}  // namespace sd_watchdog_detail
+
 class SdWatchdog
 {
 public:
     enum
     {
-        kPingIntervalMs = 1000
+        kPingIntervalMs = 1000,
+        kMaxPingIntervalMs = 60000
     };
 
 public:
-    explicit SdWatchdog( const char* socket_path = std::getenv( "NOTIFY_SOCKET" ) ) noexcept
+    explicit SdWatchdog( const char* socket_path = std::getenv( "NOTIFY_SOCKET" ),
+                         const char* watchdog_usec = std::getenv( "WATCHDOG_USEC" ) ) noexcept
+      : ping_interval_ms_( sd_watchdog_detail::parse_ping_interval_ms(
+            watchdog_usec, static_cast<double>( kPingIntervalMs ), static_cast<double>( kMaxPingIntervalMs ) ) )
     {
         if ( socket_path == nullptr || ( socket_path[0] != '/' && socket_path[0] != '@' ) || socket_path[1] == '\0' )
             return;
@@ -53,6 +75,7 @@ public:
     SdWatchdog& operator=( SdWatchdog&& ) = delete;
 
     bool active() const noexcept { return fd_ >= 0; }
+    double ping_interval_ms() const noexcept { return ping_interval_ms_; }
 
     void notify_ready() noexcept { send_msg( "READY=1", 7 ); }
 
@@ -71,7 +94,7 @@ public:
     {
         if ( fd_ < 0 )
             return;
-        if ( !pinged_ || ms_between( last_ping_, now ) >= kPingIntervalMs )
+        if ( !pinged_ || ms_between( last_ping_, now ) >= ping_interval_ms_ )
             ping_now( now );
     }
 
@@ -85,6 +108,7 @@ private:
     }
 
     int fd_ = -1;
+    double ping_interval_ms_ = static_cast<double>( kPingIntervalMs );
     sockaddr_un addr_ {};
     socklen_t addr_len_ = 0;
     PerfClock::time_point last_ping_ {};

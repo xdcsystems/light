@@ -24,6 +24,7 @@ WorkingDirectory=/mnt/nvme_data/linaro/Projects/light/light_ai
 Slice=light_ai.slice
 AllowedCPUs=0-7
 LimitRTPRIO=90
+LimitRTTIME=2000000
 LimitMEMLOCK=infinity
 LimitNOFILE=4096
 MemoryMax=1G

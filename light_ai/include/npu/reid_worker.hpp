@@ -43,6 +43,7 @@ public:
     int inflight_for( int src ) const noexcept { return queue_.inflight_for( src ); }
     int free_slot_count() const noexcept { return queue_.free_slot_count(); }
     int try_acquire_slot() noexcept { return queue_.try_acquire_slot(); }
+    void release_slot( int slot ) noexcept { queue_.release_slot( slot ); }
     bool submit( const ReidJob& job ) noexcept { return queue_.submit( job ); }
     bool poll_result( ReidResult& out ) noexcept { return queue_.poll_result( out ); }
     double take_max_ms() noexcept;

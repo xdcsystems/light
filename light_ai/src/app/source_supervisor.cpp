@@ -16,6 +16,7 @@ void SourceSupervisor::configure( const std::vector<SourceEndpoint>& sources, in
 {
     srcs_.configure( sources, model_w, model_h );
     srcs_.set_stop( &stop_.raw() );
+    srcs_.set_wake_fd( stop_.wake_fd() );
 }
 
 // The first attach of every channel, through the same SourceChannel::attach as

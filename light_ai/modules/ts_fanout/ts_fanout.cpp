@@ -176,6 +176,8 @@ struct Client {
     bool epoll_out = false;
     std::size_t head = 0;
     std::size_t len = 0;
+    std::size_t sync_len = 0;
+    std::array<uint8_t, 3 * kTsPacketSize> sync_buf{};
     std::array<uint8_t, kClientBufSize> buf{};
 
     bool push_bytes(const uint8_t* data, std::size_t n) noexcept {
@@ -263,10 +265,47 @@ std::size_t find_ts_sync(const uint8_t* data, std::size_t n) noexcept {
                 return i;
             }
         }
-    } else if (n == kTsPacketSize && data[0] == kTsSyncByte) {
-        return 0;
     }
     return n;
+}
+
+bool feed_client_sync(Client& c, const uint8_t* data, std::size_t n) noexcept {
+    if (c.sync_len == 0 && n > kTsPacketSize) {
+        const std::size_t off = find_ts_sync(data, n);
+        if (off < n) {
+            c.synced = true;
+            return enqueue_client_data(c, data + off, n - off);
+        }
+    }
+    // Accumulate small or unaligned chunks until >= 2 consecutive 0x47 sync bytes appear.
+    const std::size_t cap = c.sync_buf.size();
+    std::size_t pos = 0;
+    while (pos < n) {
+        const std::size_t take = std::min(n - pos, cap - c.sync_len);
+        std::memcpy(c.sync_buf.data() + c.sync_len, data + pos, take);
+        c.sync_len += take;
+        pos += take;
+        const std::size_t off = find_ts_sync(c.sync_buf.data(), c.sync_len);
+        if (off < c.sync_len) {
+            c.synced = true;
+            const bool ok1 = enqueue_client_data(c, c.sync_buf.data() + off, c.sync_len - off);
+            c.sync_len = 0;
+            if (!ok1) {
+                return false;
+            }
+            if (pos < n) {
+                return enqueue_client_data(c, data + pos, n - pos);
+            }
+            return true;
+        }
+        if (c.sync_len == cap) {
+            // Keep trailing 2 * kTsPacketSize bytes for cross-chunk sync detection.
+            const std::size_t keep = 2 * kTsPacketSize;
+            std::memmove(c.sync_buf.data(), c.sync_buf.data() + (cap - keep), keep);
+            c.sync_len = keep;
+        }
+    }
+    return true;
 }
 
 enum class UpstreamState {
@@ -327,6 +366,7 @@ struct Relay {
         idle_deadline_ms = 0;
         for (auto& c : clients) {
             c.synced = false;
+            c.sync_len = 0;
         }
     }
 
@@ -462,19 +502,10 @@ struct Relay {
                 const std::size_t un = static_cast<std::size_t>(n);
                 for (std::size_t i = 0; i < clients.size();) {
                     Client& c = clients[i];
-                    const uint8_t* payload = chunk.data();
-                    std::size_t payload_len = un;
-                    if (!c.synced) {
-                        const std::size_t off = find_ts_sync(chunk.data(), un);
-                        if (off >= un) {
-                            ++i;
-                            continue;
-                        }
-                        c.synced = true;
-                        payload += off;
-                        payload_len -= off;
-                    }
-                    if (!enqueue_client_data(c, payload, payload_len)) {
+                    const bool ok = c.synced
+                        ? enqueue_client_data(c, chunk.data(), un)
+                        : feed_client_sync(c, chunk.data(), un);
+                    if (!ok) {
                         drop_client_at(i, "slow consumer or send error");
                         continue;
                     }
@@ -634,9 +665,17 @@ struct Relay {
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::signal(SIGPIPE, SIG_IGN);
-    std::signal(SIGINT, handle_signal);
-    std::signal(SIGTERM, handle_signal);
+    struct sigaction sa_ign{};
+    sa_ign.sa_handler = SIG_IGN;
+    sigemptyset(&sa_ign.sa_mask);
+    static_cast<void>(::sigaction(SIGPIPE, &sa_ign, nullptr));
+
+    struct sigaction sa_stop{};
+    sa_stop.sa_handler = handle_signal;
+    sigemptyset(&sa_stop.sa_mask);
+    sa_stop.sa_flags = 0;
+    static_cast<void>(::sigaction(SIGINT, &sa_stop, nullptr));
+    static_cast<void>(::sigaction(SIGTERM, &sa_stop, nullptr));
 
     sigset_t block_mask{};
     sigemptyset(&block_mask);

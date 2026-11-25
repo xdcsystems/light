@@ -11,21 +11,26 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 
 class KalmanAxis
 {
 public:
     // A fresh filter at x with no velocity and the diagonal covariance (p00, p11).
-    void reset( float x, float p00, float p11 )
+    void reset( float x, float p00, float p11 ) noexcept
     {
+        if ( !std::isfinite( x ) || !std::isfinite( p00 ) || !std::isfinite( p11 ) || p00 < 0.0f || p11 < 0.0f )
+            return;
         x_ = x;
         v_ = 0.0f;
         p_ = { p00, 0.0f, 0.0f, p11 };
     }
 
     // Full predict: the state moves by v * dt, the covariance grows.
-    void predict( float dt, float q )
+    void predict( float dt, float q ) noexcept
     {
+        if ( !std::isfinite( dt ) || !std::isfinite( q ) || dt < 0.0f || q < 0.0f )
+            return;
         x_ += v_ * dt;
         predict_cov( dt, q );
     }
@@ -35,8 +40,10 @@ public:
     // frozen so the IoU gate can still re-associate the reappearing object at the last seen spot,
     // but the covariance keeps growing -- otherwise P sat at its post-update size for the whole
     // gap and the tiny Kalman gain made the track crawl to the new measurement instead of snapping.
-    void predict_cov( float dt, float q )
+    void predict_cov( float dt, float q ) noexcept
     {
+        if ( !std::isfinite( dt ) || !std::isfinite( q ) || dt < 0.0f || q < 0.0f )
+            return;
         const float p00 = p_[0];
         const float p01 = p_[1];
         const float p10 = p_[2];
@@ -50,10 +57,15 @@ public:
 
     // Measurement update with position z (noise r); the velocity is clamped
     // to [-vmax, vmax]: a single wild measurement must not give the filter an
-    // unphysical speed.
-    void update( float z, float r, float vmax )
+    // unphysical speed. Uses Joseph form P = (I-KH)P(I-KH)^T + K R K^T to keep
+    // covariance symmetric positive semi-definite in FP32.
+    void update( float z, float r, float vmax ) noexcept
     {
+        if ( !std::isfinite( z ) || !std::isfinite( r ) || !std::isfinite( vmax ) || r < 0.0f || vmax < 0.0f )
+            return;
         const float s = p_[0] + r;
+        if ( !std::isfinite( s ) || !( s > 1e-9f ) )
+            return;
         const float k0 = p_[0] / s;
         const float k1 = p_[2] / s;
         const float y = z - x_;
@@ -64,10 +76,13 @@ public:
         const float p01 = p_[1];
         const float p10 = p_[2];
         const float p11 = p_[3];
-        p_[0] = ( 1.0f - k0 ) * p00;
-        p_[1] = ( 1.0f - k0 ) * p01;
-        p_[2] = p10 - k1 * p00;  // original p00 -- the x update above must not leak in
-        p_[3] = p11 - k1 * p01;
+        const float a = 1.0f - k0;
+        const float b0 = p10 - k1 * p00;
+        const float b1 = p11 - k1 * p01;
+        p_[0] = a * a * p00 + k0 * k0 * r;
+        p_[1] = a * ( p01 - k1 * p00 ) + k0 * k1 * r;
+        p_[2] = b0 * a + k1 * k0 * r;
+        p_[3] = -k1 * b0 + b1 + k1 * k1 * r;
         const float p01_sym = 0.5f * ( p_[1] + p_[2] );
         p_[1] = p01_sym;
         p_[2] = p01_sym;
@@ -76,7 +91,11 @@ public:
     }
 
     // Velocity decay (a coasting track): v *= factor.
-    void damp( float factor ) { v_ *= factor; }
+    void damp( float factor ) noexcept
+    {
+        if ( std::isfinite( factor ) )
+            v_ *= factor;
+    }
 
     float x() const { return x_; }
     float v() const { return v_; }

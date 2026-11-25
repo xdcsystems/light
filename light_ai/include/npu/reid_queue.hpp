@@ -19,6 +19,7 @@
 enum class ReidSlotState : uint8_t
 {
     Free,
+    Reserved,
     Queued,
     Busy
 };
@@ -76,25 +77,48 @@ public:
         return n;
     }
 
-    // Non-blocking slot claim; returns [0..3] or -1 when all slots are in flight.
+    // Non-blocking slot claim (Free -> Reserved via CAS); returns [0..3] or -1.
     int try_acquire_slot() noexcept
     {
-        const auto it = std::find_if( states_.begin(), states_.end(), []( const std::atomic<ReidSlotState>& s ) {
-            return s.load( std::memory_order_acquire ) == ReidSlotState::Free;
-        } );
-        return it != states_.end() ? static_cast<int>( it - states_.begin() ) : -1;
+        for ( int i = 0; i < reid_cfg::kReidSlots; ++i )
+        {
+            ReidSlotState expected = ReidSlotState::Free;
+            if ( states_[static_cast<size_t>( i )].compare_exchange_strong(
+                     expected, ReidSlotState::Reserved, std::memory_order_acq_rel, std::memory_order_acquire ) )
+                return i;
+        }
+        return -1;
+    }
+
+    // Releases a Reserved slot if the caller aborts before submit() (e.g. RGA crop error).
+    void release_slot( int slot ) noexcept
+    {
+        if ( slot < 0 || slot >= reid_cfg::kReidSlots )
+            return;
+        ReidSlotState expected = ReidSlotState::Reserved;
+        states_[static_cast<size_t>( slot )].compare_exchange_strong(
+            expected, ReidSlotState::Free, std::memory_order_acq_rel, std::memory_order_relaxed );
     }
 
     bool submit( const ReidJob& job ) noexcept
     {
         if ( job.slot < 0 || job.slot >= reid_cfg::kReidSlots )
             return false;
-        states_[job.slot].store( ReidSlotState::Queued, std::memory_order_release );
+        const auto idx = static_cast<size_t>( job.slot );
+        ReidSlotState cur = states_[idx].load( std::memory_order_acquire );
+        while ( cur == ReidSlotState::Reserved || cur == ReidSlotState::Free )
+        {
+            if ( states_[idx].compare_exchange_weak(
+                     cur, ReidSlotState::Queued, std::memory_order_acq_rel, std::memory_order_acquire ) )
+                break;
+        }
+        if ( cur != ReidSlotState::Reserved && cur != ReidSlotState::Free )
+            return false;
         {
             const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
             if ( stop_ || jobs_.full() )
             {
-                states_[job.slot].store( ReidSlotState::Free, std::memory_order_release );
+                states_[idx].store( ReidSlotState::Free, std::memory_order_release );
                 return false;
             }
             if ( job.src_idx >= 0 && job.src_idx < reid_cfg::kMaxSources )
@@ -134,7 +158,8 @@ private:
         ReidJob job {};
         while ( next_job( job ) )
         {
-            states_[job.slot].store( ReidSlotState::Busy, std::memory_order_release );
+            const auto idx = static_cast<size_t>( job.slot );
+            states_[idx].store( ReidSlotState::Busy, std::memory_order_release );
             ReidResult res {};
             res.src_idx = job.src_idx;
             res.local_id = job.local_id;
@@ -144,7 +169,7 @@ private:
             // Decrement inflight and publish Free BEFORE enqueueing result (immune to results_ eviction).
             if ( job.src_idx >= 0 && job.src_idx < reid_cfg::kMaxSources )
                 inflight_[static_cast<size_t>( job.src_idx )].fetch_sub( 1, std::memory_order_release );
-            states_[job.slot].store( ReidSlotState::Free, std::memory_order_release );
+            states_[idx].store( ReidSlotState::Free, std::memory_order_release );
 
             const std::lock_guard<light_ai::platform::PiMutex> lk( mx_ );
             if ( results_.full() )

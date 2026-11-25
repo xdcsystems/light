@@ -297,7 +297,6 @@ Status MuxSession::setup_stream( AVFormatContext* fc, AVStream** st_out, int64_t
     // can join at any point, not only at stream startup.
     AVDictionary* mux_opts = nullptr;
     av_dict_set( &mux_opts, "mpegts_flags", "+pat_pmt_at_frames+resend_headers", 0 );
-    av_dict_set( &mux_opts, "pat_period", "0.1", 0 );
     av_dict_set( &mux_opts, "sdt_period", "0.25", 0 );
     const int ret2 = avformat_write_header( fc, &mux_opts );
     av_dict_free( &mux_opts );

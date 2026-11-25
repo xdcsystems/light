@@ -6,7 +6,7 @@ For general server-side stream options (`--net`, `--net-h264`, `--net-port`, `--
 
 ## Multi-Viewer Streaming (`:1236` via `modules/ts_fanout`)
 
-`light_ai` exposes a single-viewer TCP pull socket on port `1234`. To watch the live stream simultaneously from multiple PCs without altering the RT core, deploy [`modules/ts_fanout`](../../modules/ts_fanout/README.md) on the efficiency cores (`127.0.0.1:1234 -> 0.0.0.0:1236`) and point all viewers (`mpv` or `ffplay`) to port `1236`:
+`light_ai` exposes a single-viewer TCP pull socket on port `1234`. To watch the live stream simultaneously from multiple PCs without altering the RT core, deploy [`modules/ts_fanout`](../modules/ts_fanout/README.md) on the efficiency cores (`127.0.0.1:1234 -> 0.0.0.0:1236`) and point all viewers (`mpv` or `ffplay`) to port `1236`:
 
 ```bash
 ffplay -fflags nobuffer tcp://<board-ip>:1236

@@ -162,7 +162,8 @@ namespace
         f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, 0.0f, box_filter::kRawBoxParams );
         f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, -0.04f, box_filter::kRawBoxParams );
         f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, std::nanf( "" ), box_filter::kRawBoxParams );
-        CHECK( t, same( f.out(), o ) );  // dt <= 0 or NaN: held
+        f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, INFINITY, box_filter::kRawBoxParams );
+        CHECK( t, same( f.out(), o ) );  // dt <= 0, NaN, or +Inf: held
         f.step( BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f }, 0.6f, box_filter::kRawBoxParams );
         CHECK( t, same( f.out(), BoxCWH { 50.0f, 20.0f, 30.0f, 40.0f } ) );  // a gap above max_dt restarts
         f.step( BoxCWH { 60.0f, 20.0f, 30.0f, 40.0f }, kDt, box_filter::kRawBoxParams );

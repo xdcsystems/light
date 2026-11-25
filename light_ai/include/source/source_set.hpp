@@ -94,6 +94,12 @@ public:
         apply_cancel();
     }
 
+    void set_wake_fd( int fd ) noexcept
+    {
+        wake_fd_ = fd;
+        apply_cancel();
+    }
+
     void set_prober_quit( const std::atomic<bool>* prober_quit ) noexcept
     {
         prober_quit_ = prober_quit;
@@ -119,7 +125,7 @@ public:
     // if any Live source lacks a pollable fd (e.g. buffered net frame or test fake).
     bool wait_any( int timeout_ms ) noexcept
     {
-        std::array<struct pollfd, N> fds {};
+        std::array<struct pollfd, N + 1> fds {};
         std::array<int, N> idx_map {};
         nfds_t nfds = 0;
         for ( int k = 0; k < n_; ++k )
@@ -136,10 +142,13 @@ public:
         }
         if ( nfds == 0 )
             return false;
-        const int rc = ::poll( fds.data(), nfds, timeout_ms );
+        nfds_t poll_cnt = nfds;
+        if ( wake_fd_ >= 0 )
+            fds[poll_cnt++] = pollfd { wake_fd_, POLLIN, 0 };
+        const int rc = ::poll( fds.data(), poll_cnt, timeout_ms );
         if ( rc < 0 )
             return errno == EINTR;
-        if ( rc == 0 )
+        if ( rc == 0 || ( wake_fd_ >= 0 && ( fds[nfds].revents & ( POLLIN | POLLERR | POLLHUP | POLLNVAL ) ) != 0 ) )
             return true;
         for ( nfds_t i = 0; i < nfds; ++i )
         {
@@ -266,7 +275,10 @@ private:
     void apply_cancel() noexcept
     {
         for ( int s = 0; s < n_; ++s )
+        {
             ch_[static_cast<std::size_t>( s )].set_cancel( stop_, prober_quit_ );
+            ch_[static_cast<std::size_t>( s )].set_wake_fd( wake_fd_ );
+        }
     }
 
 private:
@@ -275,6 +287,7 @@ private:
     std::array<uint32_t, N> eagain_cnt_ {};
     const std::atomic<bool>* stop_ = nullptr;
     const std::atomic<bool>* prober_quit_ = nullptr;
+    int wake_fd_ = -1;
     int n_ = 0;       // configured channels (<= N), fixed after configure()
     int cursor_ = 0;  // frame thread: the source of the last frame or failure
 };

@@ -8,27 +8,47 @@
 
 #pragma once
 
-#include <atomic>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <thread>
 
 class StopFlag
 {
 public:
-    StopFlag() = default;
+    using WakeFn = void ( * )( const void* ) noexcept;
+
+    StopFlag() noexcept = default;
     StopFlag( const StopFlag& ) = delete;
     StopFlag& operator=( const StopFlag& ) = delete;
     StopFlag( StopFlag&& ) = delete;
     StopFlag& operator=( StopFlag&& ) = delete;
     ~StopFlag() = default;
 
-    void request() { flag_.store( true, std::memory_order_release ); }
-    bool requested() const { return flag_.load( std::memory_order_acquire ); }
+    // Optional platform wakeup hook (e.g. eventfd owned by SignalWaiter).
+    // Must be called before worker threads start and cleared after they join.
+    void attach_wake( int fd, const void* ctx, WakeFn fn ) noexcept
+    {
+        wake_fd_ = fd;
+        wake_ctx_ = ctx;
+        wake_fn_ = fn;
+    }
+
+    void request() noexcept
+    {
+        flag_.store( true, std::memory_order_release );
+        if ( wake_fn_ != nullptr )
+            wake_fn_( wake_ctx_ );
+    }
+    bool requested() const noexcept { return flag_.load( std::memory_order_acquire ); }
     const std::atomic<bool>& raw() const noexcept { return flag_; }
+    int wake_fd() const noexcept { return wake_fd_; }
 
 private:
     std::atomic<bool> flag_ { false };
+    int wake_fd_ = -1;
+    const void* wake_ctx_ = nullptr;
+    WakeFn wake_fn_ = nullptr;
 };
 
 // A bounded wait interruptible by a stop flag: sleeps ms in 100 ms slices,

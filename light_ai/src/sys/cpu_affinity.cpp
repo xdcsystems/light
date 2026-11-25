@@ -81,11 +81,14 @@ void pin_current_thread_rt( const char* who, int cpu, int rt_prio, const Log& lo
     const bool pinned = valid_cpu && sched_setaffinity( 0, sizeof( cpuset ), &cpuset ) == 0;
 
     bool rt_ok = false;
+    int rt_err = 0;
     if ( rt_prio > 0 )
     {
         sched_param sp {};
         sp.sched_priority = rt_prio;
-        rt_ok = sched_setscheduler( 0, SCHED_FIFO, &sp ) == 0;
+        rt_ok = sched_setscheduler( 0, SCHED_FIFO | SCHED_RESET_ON_FORK, &sp ) == 0;
+        if ( !rt_ok )
+            rt_err = errno;
     }
 
     // Only the Log::Line can throw, and all it throws derives from std::exception (std::ios_base::failure,
@@ -101,7 +104,8 @@ void pin_current_thread_rt( const char* who, int cpu, int rt_prio, const Log& lo
                 log.info() << "rt: " << who << " -> SCHED_FIFO prio " << rt_prio << '\n';
                 return;
             }
-            log.warn() << "rt: " << who << " -> SCHED_FIFO prio " << rt_prio << " failed, SCHED_OTHER fallback\n";
+            log.warn() << "rt: " << who << " -> SCHED_FIFO prio " << rt_prio
+                       << " failed (" << ErrnoText { rt_err } << "), SCHED_OTHER fallback\n";
         }
     }
     catch ( const std::exception& )

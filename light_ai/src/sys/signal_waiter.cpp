@@ -1,6 +1,9 @@
 #include <pthread.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 
@@ -24,6 +27,18 @@ namespace
     // Default action of `sig` for the whole process: restore SIG_DFL,
     // unblock the signal in this thread and re-raise it -- the process ends
     // "killed by SIGINT/SIGTERM", the same status the shell saw before.
+    void signal_wake_fd( const void* ctx ) noexcept
+    {
+        if ( ctx == nullptr )
+            return;
+        const int fd = *static_cast<const int*>( ctx );
+        if ( fd >= 0 )
+        {
+            const uint64_t one = 1;
+            static_cast<void>( ::write( fd, &one, sizeof( one ) ) );
+        }
+    }
+
     [[noreturn]] void terminate_by( int sig )
     {
         struct sigaction dfl {};
@@ -43,8 +58,21 @@ namespace
     }
 }  // namespace
 
+SignalWaiter::WakeFd::WakeFd( StopFlag& s ) noexcept : stop( s ), fd( ::eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC ) )
+{
+    if ( fd >= 0 )
+        stop.attach_wake( fd, &fd, &signal_wake_fd );
+}
+
+SignalWaiter::WakeFd::~WakeFd()
+{
+    stop.attach_wake( -1, nullptr, nullptr );
+    if ( fd >= 0 )
+        ::close( fd );
+}
+
 SignalWaiter::SignalWaiter( const ProcessEnv& env, StopFlag& stop )
-  : env_( env ), stop_( stop ), owner_( pthread_self() ), thread_( &SignalWaiter::loop, this )
+  : env_( env ), stop_( stop ), wake_( stop ), owner_( pthread_self() ), thread_( &SignalWaiter::loop, this )
 {
 }
 

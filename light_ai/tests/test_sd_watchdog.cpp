@@ -93,5 +93,17 @@ void test_sd_watchdog( TestRun& t )
         CHECK_STR_EQ( t, std::string( sbuf ), "STOPPING=1" );
         ::close( abs_srv );
     }
+
+    // WATCHDOG_USEC / 2 parsing with small-value half, ERANGE, and invalid fallback.
+    {
+        const SdWatchdog wd_half( nullptr, "600000" );
+        CHECK_NEAR( t, wd_half.ping_interval_ms(), 300.0, 1e-6 );
+        const SdWatchdog wd_small( nullptr, "100000" );
+        CHECK_NEAR( t, wd_small.ping_interval_ms(), 50.0, 1e-6 );
+        const SdWatchdog wd_overflow( nullptr, "99999999999999999999999999999" );
+        CHECK_NEAR( t, wd_overflow.ping_interval_ms(), 1000.0, 1e-6 );
+        const SdWatchdog wd_bad( nullptr, "not-a-number" );
+        CHECK_NEAR( t, wd_bad.ping_interval_ms(), 1000.0, 1e-6 );
+    }
 }
 

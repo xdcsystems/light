@@ -18,26 +18,38 @@ namespace
     // SignalWaiter sets the stop flag and wakes this thread, so poll() returns
     // -1 (EINTR) immediately instead of restarting a new 2000 ms wait;
     // non-stop EINTR is retried by the pipeline loop.
-    int poll_ready( int fd, int timeout_ms )
+    int poll_ready( int fd, int wake_fd, int timeout_ms )
     {
-        pollfd pfd {};
-        pfd.fd = fd;
-        pfd.events = POLLIN;
-        const int pr = ::poll( &pfd, 1, timeout_ms );
-        if ( pr > 0 && ( pfd.revents & ( POLLERR | POLLHUP | POLLNVAL ) ) != 0 )
+        pollfd pfds[2] {};
+        pfds[0] = pollfd { fd, POLLIN, 0 };
+        nfds_t nfds = 1;
+        if ( wake_fd >= 0 )
         {
-            errno = ( pfd.revents & POLLNVAL ) != 0 ? ENODEV : EIO;
+            pfds[1] = pollfd { wake_fd, POLLIN, 0 };
+            nfds = 2;
+        }
+        const int pr = ::poll( pfds, nfds, timeout_ms );
+        if ( pr <= 0 )
+            return pr;
+        if ( nfds == 2 && ( pfds[1].revents & ( POLLIN | POLLERR | POLLHUP | POLLNVAL ) ) != 0 )
+        {
+            errno = EINTR;
             return -1;
         }
-        return pr;
+        if ( ( pfds[0].revents & ( POLLERR | POLLHUP | POLLNVAL ) ) != 0 )
+        {
+            errno = ( pfds[0].revents & POLLNVAL ) != 0 ? ENODEV : EIO;
+            return -1;
+        }
+        return ( pfds[0].revents & POLLIN ) != 0 ? 1 : 0;
     }
 
     // Returns 0 when a frame is ready to dequeue, or the errno class
     // (EAGAIN on non-blocking poll timeout, EIO on watchdog stall).
-    int poll_frame( int fd, int timeout_ms, int default_ms, const Log& log )
+    int poll_frame( int fd, int wake_fd, int timeout_ms, int default_ms, const Log& log )
     {
         const int wait_ms = timeout_ms < 0 ? default_ms : timeout_ms;
-        const int pr = poll_ready( fd, wait_ms );
+        const int pr = poll_ready( fd, wake_fd, wait_ms );
         if ( pr > 0 )
             return 0;
         if ( pr < 0 )
@@ -340,7 +352,9 @@ Status CameraV4L2::dequeue( int& index, uint32_t& size, int timeout_ms ) noexcep
     buf.memory = V4L2_MEMORY_MMAP;
     if ( const int werr = wait_clean( buf, timeout_ms ); werr != 0 )
         return dequeue_status( werr );
-    skip_to_newest( buf );
+    err_streak_ = 0;  // wait_clean() delivered a valid clean buffer
+    if ( const int serr = skip_to_newest( buf ); serr != 0 )
+        return dequeue_status( serr );
     if ( ( buf.flags & V4L2_BUF_FLAG_TIMESTAMP_MASK ) == V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC &&
          ( buf.timestamp.tv_sec > 0 || buf.timestamp.tv_usec > 0 ) )
     {
@@ -398,7 +412,7 @@ int CameraV4L2::dequeue_once( v4l2_buffer& buf, int timeout_ms )
     // stall); in multi-source non-blocking mode (timeout_ms >= 0) a
     // 0/short poll timeout returns EAGAIN so the dispatcher can
     // service other ready cameras immediately.
-    if ( const int perr = poll_frame( fd_, timeout_ms, static_cast<int>( kDequeuePollMs ), log_ ); perr != 0 )
+    if ( const int perr = poll_frame( fd_, wake_fd_, timeout_ms, static_cast<int>( kDequeuePollMs ), log_ ); perr != 0 )
         return perr;
     if ( ioctl( fd_, VIDIOC_DQBUF, &buf ) < 0 )
     {
@@ -424,25 +438,59 @@ int CameraV4L2::dequeue_once( v4l2_buffer& buf, int timeout_ms )
 }
 
 // Buffers that completed while the frame was waiting: the newest clean one
-// replaces buf (the older one is requeued); corrupt or empty ones go straight
-// back. A failed DQBUF ends the skip and keeps buf.
-void CameraV4L2::skip_to_newest( v4l2_buffer& buf )
+// replaces buf (the older one is requeued); corrupt or empty ones count toward
+// err_streak_. Propagates ENODEV/EIO (requeueing buf first) so detach is not delayed.
+// Non-blocking check + DQBUF of one already-ready buffer for skip_to_newest():
+// returns 1 if next_buf was dequeued, 0 if no more buffers are ready, or -errno on ENODEV/EIO.
+int CameraV4L2::poll_next_ready( v4l2_buffer& next_buf ) const noexcept
 {
-    for ( unsigned skip = 0; skip + 1 < kBufCount && poll_ready( fd_, 0 ) > 0; ++skip )
+    const int pr = poll_ready( fd_, -1, 0 );
+    if ( pr <= 0 )
+    {
+        const int e = ( pr < 0 ) ? errno : 0;
+        return ( e == ENODEV || e == EIO ) ? -e : 0;
+    }
+    next_buf = {};
+    next_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    next_buf.memory = V4L2_MEMORY_MMAP;
+    if ( ioctl( fd_, VIDIOC_DQBUF, &next_buf ) < 0 )
+    {
+        const int e = errno;
+        return ( e == ENODEV || e == EIO ) ? -e : 0;
+    }
+    return 1;
+}
+
+int CameraV4L2::skip_to_newest( v4l2_buffer& buf )
+{
+    for ( unsigned skip = 0; skip + 1 < kBufCount; ++skip )
     {
         v4l2_buffer next_buf {};
-        next_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        next_buf.memory = V4L2_MEMORY_MMAP;
-        if ( ioctl( fd_, VIDIOC_DQBUF, &next_buf ) < 0 )
+        const int step = poll_next_ready( next_buf );
+        if ( step < 0 )
+        {
+            requeue( static_cast<int>( buf.index ) );
+            return -step;
+        }
+        if ( step == 0 )
             break;
         if ( ( next_buf.flags & V4L2_BUF_FLAG_ERROR ) || next_buf.bytesused == 0 )
         {
             requeue( static_cast<int>( next_buf.index ) );
+            ++err_streak_;
+            if ( err_streak_ >= static_cast<int>( kBufCount ) )
+            {
+                log_.warn() << "cam: " << err_streak_ << " consecutive corrupt buffers - stall\n";
+                requeue( static_cast<int>( buf.index ) );
+                return EIO;
+            }
             continue;
         }
         requeue( static_cast<int>( buf.index ) );
         buf = next_buf;
+        err_streak_ = 0;
     }
+    return 0;
 }
 
 void CameraV4L2::requeue( int index ) noexcept  // NOLINT(readability-make-member-function-const)
