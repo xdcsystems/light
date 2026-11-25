@@ -40,6 +40,7 @@ public:
     int input_height() const noexcept { return engine_.input_height(); }
 
     TensorRef input_tensor( int slot ) const noexcept { return engine_.input_tensor( slot ); }
+    int inflight_for( int src ) const noexcept { return queue_.inflight_for( src ); }
     int try_acquire_slot() noexcept { return queue_.try_acquire_slot(); }
     bool submit( const ReidJob& job ) noexcept { return queue_.submit( job ); }
     bool poll_result( ReidResult& out ) noexcept { return queue_.poll_result( out ); }
