@@ -16,6 +16,13 @@
 
 namespace
 {
+    im_opt_t rga3_opt() noexcept
+    {
+        im_opt_t opt {};
+        opt.core = IM_SCHEDULER_RGA3_CORE0;
+        return opt;
+    }
+
     // Explicit strides: the VU plane lands at w * vstride -- exactly where
     // the DRM descriptor (EncoderFramePool) reports it.
     rga_buffer_t nv12( MppBuffer mb, const StreamLayout& lay ) noexcept
@@ -165,7 +172,9 @@ Status FrameComposer::compose_tile( int tensor_fd, const TilePlacement& tp )
 
     const rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888, model_stride_px_, model_h_ );
     const rga_buffer_t dst = rgb888( target, lay_ );
-    return rga_ok( improcess( src, dst, {}, rect( tp.src ), rect( tp.dst ), {}, 0 ), log_, "RGA tile compose" );
+    im_opt_t opt = rga3_opt();
+    return rga_ok( improcess( src, dst, {}, rect( tp.src ), rect( tp.dst ), {}, -1, nullptr, &opt, IM_SYNC ),
+                   log_, "RGA tile compose" );
 }
 
 Status FrameComposer::flush_canvas( MppBuffer out )
@@ -174,19 +183,24 @@ Status FrameComposer::flush_canvas( MppBuffer out )
         return {};
     const rga_buffer_t cvs = rgb888( canvas_.buf[0], lay_ );
     const im_rect full { 0, 0, lay_.w, lay_.h };
-    return rga_ok( improcess( cvs, nv12( out, lay_ ), {}, full, full, {}, 0 ), log_, "RGA canvas->NV12" );
+    im_opt_t opt = rga3_opt();
+    return rga_ok( improcess( cvs, nv12( out, lay_ ), {}, full, full, {}, -1, nullptr, &opt, IM_SYNC ),
+                   log_, "RGA canvas->NV12" );
 }
 
 Status FrameComposer::compose_idle( const bool* absent, int nabs, int /*slot*/, MppBuffer out )
 {
     const rga_buffer_t idl = nv12( idle_.buf[0], lay_ );
+    im_opt_t opt = rga3_opt();
     if ( lay_.nsrc <= 1 )
     {
         // Single view: the NV12 idle canvas IS the frame (direct copy into out).
         if ( out == nullptr )
             return {};
         bands_[0] = plate_band();
-        return rga_ok( imcopy( idl, nv12( out, lay_ ) ), log_, "RGA idle copy" );
+        const im_rect full { 0, 0, lay_.w, lay_.h };
+        return rga_ok( improcess( idl, nv12( out, lay_ ), {}, full, full, {}, -1, nullptr, &opt, IM_SYNC ),
+                       log_, "RGA idle copy" );
     }
     // Multi-view: convert the NV12 plate tile into every absent cell of the
     // persistent RGB888 canvas that does not hold it already; live cells keep
@@ -197,7 +211,9 @@ Status FrameComposer::compose_idle( const bool* absent, int nabs, int /*slot*/, 
         if ( !tile_absent( absent, nabs, s ) || same( bands_[s], plate_band() ) )
             continue;
         const im_rect tile = rect( cell_rect( lay_, s ) );
-        if ( const Status tst = rga_ok( improcess( idl, cvs, {}, tile, tile, {}, 0 ), log_, "RGA idle tile copy" ); !tst.ok() )
+        if ( const Status tst = rga_ok( improcess( idl, cvs, {}, tile, tile, {}, -1, nullptr, &opt, IM_SYNC ),
+                                        log_, "RGA idle tile copy" );
+             !tst.ok() )
             return tst;
         bands_[s] = plate_band();
     }

@@ -63,6 +63,20 @@ EncoderFramePool::~EncoderFramePool()
     release();
 }
 
+int EncoderFramePool::acquire_writable() noexcept
+{
+    for ( int k = 0; k < kSlots; ++k )
+    {
+        const int cand = ( cur_ + 1 + k ) % kSlots;
+        if ( av_frame_is_writable( frames_[static_cast<size_t>( cand )] ) != 0 )
+        {
+            cur_ = cand;
+            return cur_;
+        }
+    }
+    return -1;
+}
+
 void EncoderFramePool::release()
 {
     for ( AVFrame*& fr : frames_ )

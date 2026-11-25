@@ -84,18 +84,30 @@ Status NetEncoder::timed_compose( Compose&& compose, double base_ms ) noexcept
 // failed compose ends THIS session only (serve() reopens the stream path),
 // and a good one is encoded.
 template <typename Compose>
-void NetEncoder::compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose,
+bool NetEncoder::compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose,
                                      double prior_cmp_ms ) noexcept
 {
+    int slot = ring_.acquire_writable();
+    if ( slot < 0 )
+    {
+        gate_.run( epoch, [this]( const NetSessionGate::Session& s ) { codec_.drain_ready( s, queue_ ); } );
+        slot = ring_.acquire_writable();
+        if ( slot < 0 )
+        {
+            if ( prior_cmp_ms > 0.0 )
+                record_compose_ms( prior_cmp_ms );
+            return false;
+        }
+    }
     canvas_dirty_ = false;
     ts_us_ = ( ts_flag >= 0 ) ? now_us : -1;
-    const int slot = ring_.advance();
     if ( !timed_compose( [&] { return compose( slot, ring_.buf( slot ) ); }, prior_cmp_ms ).ok() )
     {
         queue_.fail( epoch );
-        return;
+        return true;
     }
     run_encoded( epoch, PerfClock::now() );
+    return true;
 }
 
 void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int src_idx, bool defer_encode,
@@ -156,12 +168,15 @@ void NetEncoder::publish( int tensor_fd, const LbGeom& band, int64_t ts_us, int 
 
     if ( do_enc )
     {
-        compose_and_encode(
-            epoch, now_us, ts_us, [this]( int /*slot*/, MppBuffer out ) { return composer_.flush_canvas( out ); },
-            tile_ms );
-        return;
+        if ( compose_and_encode(
+                 epoch, now_us, ts_us, [this]( int /*slot*/, MppBuffer out ) { return composer_.flush_canvas( out ); },
+                 tile_ms ) )
+            return;
     }
-    record_compose_ms( tile_ms );
+    else
+    {
+        record_compose_ms( tile_ms );
+    }
     if ( warm_ready )
     {
         canvas_dirty_ = true;
@@ -232,18 +247,13 @@ void NetEncoder::publish_idle( int64_t ts_us, const bool* absent, int nabs ) noe
     }
     if ( warm_ready )
         do_enc ? ++perf_.idle_admit : ++perf_.idle_skip;
-    if ( !do_enc )
-    {
-        // Held or the encode queue busy: no encode this tick. Multi-view
-        // still plates the absent cells that lack it (none after the
-        // first such tick: compose_idle skips plated cells). Untimed.
-        if ( lay.nsrc > 1 && !composer_.compose_idle( absent, nabs, ring_.current(), nullptr ).ok() )
-            queue_.fail( epoch );
+    if ( do_enc && compose_and_encode( epoch, now_us, ts_us, [&]( int slot, MppBuffer out ) {
+             return composer_.compose_idle( absent, nabs, slot, out );
+         } ) )
         return;
-    }
-    compose_and_encode( epoch, now_us, ts_us, [&]( int slot, MppBuffer out ) {
-        return composer_.compose_idle( absent, nabs, slot, out );
-    } );
+    // Held, queue busy, or all VPU slots busy: multi-view still plates absent cells.
+    if ( lay.nsrc > 1 && !composer_.compose_idle( absent, nabs, ring_.current(), nullptr ).ok() )
+        queue_.fail( epoch );
 }
 
 void NetEncoder::run_encoded( uint32_t epoch, std::chrono::steady_clock::time_point now ) noexcept

@@ -56,6 +56,8 @@ public:
     // publish time (VFR pts), < 0 = none. false = a codec error: the caller
     // fails the session.
     Status encode( AVFrame* fr, int64_t ts_us, const NetSessionGate::Session& s, PacketQueue& queue );
+    // Non-blocking drain of ready packets (call under NetSessionGate::run()) to release VPU input refs.
+    void drain_ready( const NetSessionGate::Session& s, PacketQueue& queue );
 
     uint64_t eagain_cnt() const noexcept { return eagain_cnt_; }
     uint64_t q_flush_cnt() const noexcept { return q_flush_cnt_; }

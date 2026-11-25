@@ -270,6 +270,13 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const NetSessionGate::Se
 // Shared by the EAGAIN retry and the post-send drain in encode(): the
 // pipeline thread never touches the network (av_packet_move_ref, zero
 // per-frame heap allocs).
+void H264Encoder::drain_ready( const NetSessionGate::Session& s, PacketQueue& queue )
+{
+    AVPacket* const pkt = pkt_.get();
+    while ( avcodec_receive_packet( ctx_, pkt ) == 0 )
+        enqueue( s.stream_index, prev_fpts_, queue );
+}
+
 void H264Encoder::prepare_frame_idr( const NetSessionGate::Session& s ) noexcept
 {
     if ( s.epoch != seen_epoch_ )

@@ -99,7 +99,7 @@ private:
     template <typename Compose>
     Status timed_compose( Compose&& compose, double base_ms = 0.0 ) noexcept;
     template <typename Compose>
-    void compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose,
+    bool compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose,
                              double prior_cmp_ms = 0.0 ) noexcept;
     void run_encoded( uint32_t epoch, std::chrono::steady_clock::time_point now ) noexcept;
 

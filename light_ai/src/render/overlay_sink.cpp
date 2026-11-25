@@ -249,7 +249,8 @@ void OverlaySink::draw_gpu_slot( int slot, const GpuBoxList& boxes, const Callou
     const auto tg0 = clk::now();
     drawer_->draw_slot( slot, boxes.d.data(), boxes.n, &callouts );
     const auto tg1 = clk::now();
-    drawer_->sync_cpu();
+    // Bounded wait: on fence timeout/failure we prefer a partial overlay over hanging the RT worker.
+    static_cast<void>( drawer_->sync_cpu() );
     const auto tg2 = clk::now();
     perf_.gpu_draw_ms_max = std::max( perf_.gpu_draw_ms_max, ms( tg0, tg1 ) );
     perf_.sync_cpu_ms_max = std::max( perf_.sync_cpu_ms_max, ms( tg1, tg2 ) );

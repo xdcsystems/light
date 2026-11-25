@@ -108,7 +108,7 @@ private:
         int gbm_fd = -1;  // the GBM device lives on this fd
         void *gbm_dev = nullptr;
         void *dl_gbm = nullptr;
-        bool native_fence = false;
+        EGLenum fence_type = 0;
 
         P_CreateImage create_image = nullptr;
         P_DestroyImage destroy_image = nullptr;
@@ -149,10 +149,10 @@ public:
         draw_slot( 0, boxes, n, callouts );
     }
     // Blocks until all GPU writes from draw() are visible to CPU/RGA.
-    // Native fence (EGL_ANDROID_native_fence_sync) when available, glFinish() otherwise.
-    // The fence wait is bounded (100 ms cap) with a glFinish() fallback --
-    // a wedged GPU must not hang the pipeline.
-    void sync_cpu() noexcept;
+    // Fence sync (EGL_ANDROID_native_fence_sync -> EGL_KHR_fence_sync) when available,
+    // glFinish() otherwise. Bounded to kFenceWaitNs (100 ms); returns false on fence timeout
+    // without calling unbounded glFinish() so a wedged GPU cannot hang the pipeline.
+    bool sync_cpu() noexcept;
     void release_context() const noexcept;
     // Draw -> RGA/CPU ordering is sync_cpu() only: this RGA driver
     // ignores acquire fences, so a fence fd handoff is not a valid
