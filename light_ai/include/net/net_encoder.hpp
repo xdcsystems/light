@@ -98,9 +98,11 @@ private:
     void record_compose_ms( double cmp_ms ) noexcept;
     template <typename Compose>
     Status timed_compose( Compose&& compose, double base_ms = 0.0 ) noexcept;
+    int acquire_slot_or_drain( uint32_t epoch, bool& drain_failed ) noexcept;
     template <typename Compose>
-    bool compose_and_encode( uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose,
+    void compose_and_encode( int slot, uint32_t epoch, int64_t now_us, int64_t ts_flag, Compose&& compose,
                              double prior_cmp_ms = 0.0 ) noexcept;
+    void sync_flush_backpressure( uint32_t epoch ) noexcept;
     void run_encoded( uint32_t epoch, std::chrono::steady_clock::time_point now ) noexcept;
 
 private:

@@ -35,8 +35,8 @@ void AnalyticsStage::init( const InferConfig& cfg, int model_w, int model_h, int
 void AnalyticsStage::init_box_logs( const std::string& box_log, int nsrc )
 {
     nsrc_ = std::clamp( nsrc, 1, static_cast<int>( kMaxSources ) );
-    for ( int s = 0; s < nsrc; ++s )
-        an_[s].smoother.set_log( source_box_log( box_log, s, nsrc ), log_ );
+    for ( int s = 0; s < nsrc_; ++s )
+        an_[static_cast<size_t>( s )].smoother.set_log( source_box_log( box_log, s, nsrc_ ), log_ );
 }
 
 bool AnalyticsStage::sync_attach_seq( int src, uint32_t seq ) noexcept
@@ -67,7 +67,8 @@ void AnalyticsStage::start_reid( const InferConfig& cfg, int pool_size )
 void AnalyticsStage::process( const InferResult& res, const FrameView& view, const RgaResizer& rga ) noexcept
 {
     SourceAnalytics& ss = an_[static_cast<size_t>( res.job.src_idx )];
-    ss.smoother.update( res.dets, dets_, res.job.ts_us );
+    // Preserve deterministic nominal dt when --box-log (Layer A replay) is active.
+    ss.smoother.update( res.dets, dets_, ss.smoother.has_log() ? -1 : res.job.ts_us );
     ss.smoother.log_frame( res.job.frame, res.dets, dets_ );
     // Anti-jitter stage 1: the Kalman tracker consumes RAW person detections;
     // dets_ stays the BoxSmoother output for non-person drawing and --box-log.
@@ -97,6 +98,15 @@ void AnalyticsStage::drain_reid_results() noexcept
     }
 }
 
+int AnalyticsStage::acquire_reid_slot( int src, int cam_cap ) noexcept
+{
+    // Work-conserving fairness: reserve the last free slot for peer cameras,
+    // while letting an active camera use idle slots when >= 2 slots are free.
+    if ( reid_worker_->inflight_for( src ) >= cam_cap && reid_worker_->free_slot_count() <= 1 )
+        return -1;
+    return reid_worker_->try_acquire_slot();
+}
+
 void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const RgaResizer& rga ) noexcept
 {
     if ( view.src_idx < 0 || view.src_idx >= kMaxSources )
@@ -119,12 +129,7 @@ void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const R
                                       : static_cast<int>( reid_cfg::kReidSlots );
     for ( int i = 0; i < nr; ++i )
     {
-        if ( reid_worker_->inflight_for( view.src_idx ) >= cam_cap )
-        {
-            reid_perf_.drops += static_cast<uint32_t>( nr - i );
-            break;
-        }
-        const int rslot = reid_worker_->try_acquire_slot();
+        const int rslot = acquire_reid_slot( view.src_idx, cam_cap );
         if ( rslot < 0 )
         {
             reid_perf_.drops += static_cast<uint32_t>( nr - i );

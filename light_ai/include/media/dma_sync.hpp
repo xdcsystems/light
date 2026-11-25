@@ -5,9 +5,11 @@
 
 #pragma once
 #include <cerrno>   // EINTR, EAGAIN
+#include <chrono>   // steady_clock deadline for bounded EAGAIN retry
 #include <cstddef>  // size_t
 #include <cstdint>  // uintptr_t
 #include <cstring>  // std::memset
+#include <time.h>   // nanosleep
 #include <fcntl.h>  // dma-buf sync ioctl
 #include <sys/ioctl.h>
 #include <linux/dma-buf.h>
@@ -48,12 +50,25 @@ private:
             return;
         dma_buf_sync s {};
         s.flags = flags;
-        int rc = 0;
-        int eagain_left = 64;
-        do
+        const timespec pause { 0, 100000L };  // 100 us backoff on transient EAGAIN
+        std::chrono::steady_clock::time_point deadline {};
+        bool has_deadline = false;
+        while ( ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s ) != 0 )
         {
-            rc = ::ioctl( fd_, DMA_BUF_IOCTL_SYNC, &s );
-        } while ( rc < 0 && ( errno == EINTR || ( errno == EAGAIN && --eagain_left > 0 ) ) );
+            if ( errno == EINTR )
+                continue;
+            if ( errno != EAGAIN )
+                return;
+            const auto now = std::chrono::steady_clock::now();
+            if ( !has_deadline )
+            {
+                deadline = now + std::chrono::milliseconds( 50 );
+                has_deadline = true;
+            }
+            if ( now >= deadline )
+                return;
+            ::nanosleep( &pause, nullptr );
+        }
     }
 
 private:

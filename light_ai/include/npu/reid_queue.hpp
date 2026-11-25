@@ -65,6 +65,17 @@ public:
         return inflight_[static_cast<size_t>( src )].load( std::memory_order_acquire );
     }
 
+    int free_slot_count() const noexcept
+    {
+        int n = 0;
+        for ( const auto& s : states_ )
+        {
+            if ( s.load( std::memory_order_acquire ) == ReidSlotState::Free )
+                ++n;
+        }
+        return n;
+    }
+
     // Non-blocking slot claim; returns [0..3] or -1 when all slots are in flight.
     int try_acquire_slot() noexcept
     {

@@ -61,6 +61,7 @@ public:
     // Opens the --box-log CSV (empty path: no log); a failure is reported
     // through log and disables the CSV.
     void set_log( const std::string& path, const Log& log );
+    bool has_log() const noexcept { return log_.is_open(); }
     void reset() noexcept;
     void update( const DetList& in, DetList& out, int64_t ts_us = -1 ) noexcept;
     void log_frame( int frame, const DetList& raw, const DetList& smooth );
@@ -68,8 +69,8 @@ public:
 private:
     float iou( const BoxTrack& t, const Detection& d ) const noexcept;
     int collect_pairs( const DetList& in );
-    float step_dt_s( int64_t ts_us ) noexcept;
-    void apply_matches( const DetList& in, int na, float dt_s, int64_t ts_us );
+    float track_dt_s( int64_t prev_us, int64_t ts_us ) const noexcept;
+    void apply_matches( const DetList& in, int na, int64_t ts_us );
     void expire( int64_t ts_us );
     void emit( const DetList& in, const DetTrack& det_trk, DetList& out, int64_t ts_us );
     void emit_coast( DetList& out ) const;
@@ -85,7 +86,6 @@ private:
     const float kFrameDtS = 0.05f;  // nominal fallback when ts_us < 0 (deterministic replay)
     const float kMinDtS = 0.005f;
     const float kMaxDtS = 1.0f;  // > kRawBoxParams.max_dt_s (0.5 s) so long gaps reset BoxFilter
-    int64_t last_ts_us_ = -1;
 
     // Preallocated member: the ~48 KB matching array used to live on
     // update()'s stack, once per call.

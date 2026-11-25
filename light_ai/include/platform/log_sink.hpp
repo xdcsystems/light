@@ -54,7 +54,7 @@ public:
     {
         kCapacity = 512,
         kMask = kCapacity - 1,
-        kMaxLineBytes = 512
+        kMaxLineBytes = 504  // 8 B header + 504 B payload = 512 B (exact 8 cache lines)
     };
     static_assert( ( kCapacity & kMask ) == 0, "AsyncLogSink::kCapacity must be power of two" );
 

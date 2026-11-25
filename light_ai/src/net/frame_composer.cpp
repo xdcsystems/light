@@ -9,6 +9,7 @@
 
 #include "core/idle_plate.hpp"
 #include "core/log.hpp"
+#include "core/rga_limits.hpp"
 #include "core/throw_on.hpp"
 #include "media/dma_sync.hpp"
 #include "net/encoder_frame_pool.hpp"
@@ -173,6 +174,8 @@ Status FrameComposer::compose_tile( int tensor_fd, const TilePlacement& tp )
     const rga_buffer_t src = wrapbuffer_fd( tensor_fd, model_w_, model_h_, RK_FORMAT_RGB_888, model_stride_px_, model_h_ );
     const rga_buffer_t dst = rgb888( target, lay_ );
     im_opt_t opt = rga3_opt();
+    if ( !rga_limits::rga3_size_ok( tp.src.w, tp.src.h ) || !rga_limits::rga3_size_ok( tp.dst.w, tp.dst.h ) )
+        opt.core = IM_SCHEDULER_RGA2_CORE0;
     return rga_ok( improcess( src, dst, {}, rect( tp.src ), rect( tp.dst ), {}, -1, nullptr, &opt, IM_SYNC ),
                    log_, "RGA tile compose" );
 }

@@ -195,26 +195,29 @@ namespace
         CHECK( t, vfr.admit( 24900000, EncodePacer::kLowDepth, 1 ) );
         CHECK_EQ( t, vfr.backpressure_level(), 0 );
 
-        // Gradual step-down with 200 ms hold / 500 ms cooldown and immediate flush escalation.
+        // Gradual step-down with 80 ms hold / 250 ms cooldown and immediate flush escalation.
         EncodePacer mp( 2, 0 );
         CHECK( t, mp.admit( 0, 0, 1 ) );
-        CHECK( t, mp.admit( 100000, EncodePacer::kBusyDepth, 1 ) );    // transient < 200 ms
+        CHECK( t, mp.admit( 100000, EncodePacer::kBusyDepth, 1 ) );    // transient < 80 ms
         CHECK_EQ( t, mp.backpressure_level(), 0 );
-        CHECK( t, mp.admit( 300000, EncodePacer::kBusyDepth, 1 ) );    // sustained >= 200 ms -> level 1
+        CHECK( t, mp.admit( 180000, EncodePacer::kBusyDepth, 1 ) );    // sustained >= 80 ms -> level 1
         CHECK_EQ( t, mp.backpressure_level(), 1 );
-        CHECK( t, mp.admit( 600000, EncodePacer::kHeavyDepth, 1 ) );   // cooldown < 500 ms
+        CHECK( t, mp.admit( 350000, EncodePacer::kHeavyDepth, 1 ) );   // cooldown < 250 ms
         CHECK_EQ( t, mp.backpressure_level(), 1 );
-        CHECK( t, mp.admit( 800000, EncodePacer::kHeavyDepth, 1 ) );   // sustained >= 200 ms + cooldown >= 500 ms -> level 2
+        CHECK( t, mp.admit( 430000, EncodePacer::kHeavyDepth, 1 ) );   // sustained >= 80 ms + cooldown >= 250 ms -> level 2
         CHECK_EQ( t, mp.backpressure_level(), 2 );
-        mp.observe_flush( 850000, 1 );
+        mp.observe_flush( 480000, 1 );
         CHECK_EQ( t, mp.backpressure_level(), 3 );
+        // admit_idle respects bp_level_ floor (150 ms at level 3).
+        CHECK( t, !mp.admit_idle( 520000, 0, 1 ) );
+        CHECK( t, mp.admit_idle( 580000, 0, 1 ) );
 
         // Age-driven backpressure works even at low depth (e.g. throttled FPS before 300 ms qflush).
         EncodePacer age_p( 2, 0 );
         CHECK( t, age_p.admit( 0, 0, 1, 0 ) );
         CHECK( t, age_p.admit( 100000, 2, 1, EncodePacer::kBusyAgeUs ) );  // seeds hold timer
         CHECK_EQ( t, age_p.backpressure_level(), 0 );
-        CHECK( t, age_p.admit( 300000, 2, 1, EncodePacer::kBusyAgeUs ) );  // >= 200 ms -> level 1
+        CHECK( t, age_p.admit( 180000, 2, 1, EncodePacer::kBusyAgeUs ) );  // >= 80 ms -> level 1
         CHECK_EQ( t, age_p.backpressure_level(), 1 );
         CHECK( t, !age_p.admit_idle( 350000, 1, 1, EncodePacer::kBusyAgeUs ) );  // idle skipped on busy age
         CHECK( t, !age_p.admit( 400000, 2, 1, EncodePacer::kPauseAgeUs ) );      // pauses before 300 ms qflush

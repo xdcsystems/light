@@ -21,18 +21,13 @@ void BoxSmoother::set_log( const std::string& path, const Log& log )
 void BoxSmoother::reset() noexcept
 {
     tracks_ = {};
-    last_ts_us_ = -1;
 }
 
-float BoxSmoother::step_dt_s( int64_t ts_us ) noexcept
+float BoxSmoother::track_dt_s( int64_t prev_us, int64_t ts_us ) const noexcept
 {
-    if ( ts_us < 0 )
+    if ( ts_us < 0 || prev_us < 0 || ts_us <= prev_us )
         return kFrameDtS;
-    float dt_s = kFrameDtS;
-    if ( last_ts_us_ >= 0 && ts_us > last_ts_us_ )
-        dt_s = std::clamp( static_cast<float>( ts_us - last_ts_us_ ) * 1e-6f, kMinDtS, kMaxDtS );
-    last_ts_us_ = ts_us;
-    return dt_s;
+    return std::clamp( static_cast<float>( ts_us - prev_us ) * 1e-6f, kMinDtS, kMaxDtS );
 }
 
 void BoxSmoother::update( const DetList& in, DetList& out, int64_t ts_us ) noexcept
@@ -41,7 +36,6 @@ void BoxSmoother::update( const DetList& in, DetList& out, int64_t ts_us ) noexc
     for ( auto& t : tracks_ )
         t.matched = false;
 
-    const float dt_s = step_dt_s( ts_us );
     const int np = collect_pairs( in );
     // Shared greedy matcher (box_math.hpp): same deterministic order
     // (IoU desc, then det, then track) as before. trk_taken mirrors the
@@ -52,7 +46,7 @@ void BoxSmoother::update( const DetList& in, DetList& out, int64_t ts_us ) noexc
     std::array<unsigned char, kTrackCount> trk_taken {};
     const size_t na = greedy_iou_match( pairs_.data(), static_cast<size_t>( np ),
                                         det_trk.data(), trk_taken.data() );
-    apply_matches( in, static_cast<int>( na ), dt_s, ts_us );
+    apply_matches( in, static_cast<int>( na ), ts_us );
     expire( ts_us );
     emit( in, det_trk, out, ts_us );
 }
@@ -83,13 +77,14 @@ int BoxSmoother::collect_pairs( const DetList& in )
 }
 
 // The filter step of every accepted pair (pairs_[0 .. na), compacted by the matcher).
-void BoxSmoother::apply_matches( const DetList& in, int na, float dt_s, int64_t ts_us )
+void BoxSmoother::apply_matches( const DetList& in, int na, int64_t ts_us )
 {
     for ( int p = 0; p < na; ++p )
     {
         const Pair& pr = pairs_[p];
         BoxTrack& t = tracks_[pr.trk];
         const Detection& d = in.d[pr.det];
+        const float dt_s = track_dt_s( t.last_seen_us, ts_us );
         t.filt.step( BoxCWH { d.x + 0.5f * d.w, d.y + 0.5f * d.h, d.w, d.h }, dt_s, box_filter::kRawBoxParams );
         const BoxCWH o = t.filt.out();
         t.x = o.cx - 0.5f * o.w;

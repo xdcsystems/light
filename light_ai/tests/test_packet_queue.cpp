@@ -286,6 +286,14 @@ namespace
         // Non-monotonic now_us clamps age to 0.
         const Queue::Backlog b3 = q_bl.backlog( 150000 );
         CHECK( t, b3.depth == 2 && b3.head_age_us == 0 );
+        // Pop clears wait_key_ and advances head (wrap-around coverage).
+        FakePkt bout;
+        CHECK( t, q_bl.pop( bout ).what == Pop::Packet && bout.seq == 2 );
+        const Queue::Backlog b4 = q_bl.backlog( 340000 );
+        CHECK( t, b4.depth == 1 && b4.head_age_us == 100000 );
+        q_bl.close();
+        const Queue::Backlog b5 = q_bl.backlog( 400000 );
+        CHECK( t, b5.depth == 0 && b5.head_age_us == 0 );
     }
 }  // namespace
 

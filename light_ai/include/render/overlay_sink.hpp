@@ -95,6 +95,7 @@ private:
     // so drawer_ must be declared AFTER enc_ to release its EGLImage/FBO first.
     std::optional<NetEncoder> enc_ {};
     std::optional<GpuBoxDrawer> drawer_ {};
+    int gpu_sync_fail_streak_ = 0;
     BoxMapper mapper_ {};
     std::array<CalloutHistory, reid_cfg::kMaxSources> callout_hist_ {};
     std::array<TrackBoxFilters, reid_cfg::kMaxSources> track_filt_ {};

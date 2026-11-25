@@ -38,7 +38,7 @@ public:
         kHeavyDepth = 6,      // deeper backlog (~200 ms @ 30 fps): throttle VFR and resume threshold
         kPauseDepth = 8,      // critical backlog (~267 ms @ 30 fps): pause before 300 ms qflush
         kLowDepth = 2,        // clean-channel depth threshold for backpressure recovery
-        kLowAgeUs = 60000,    // 60 ms: clean-channel age threshold for recovery
+        kLowAgeUs = 85000,    // 85 ms: clean-channel age threshold for recovery (tolerates Wi-Fi jitter)
         kBusyAgeUs = 100000,  // 100 ms: mild congestion (level 1, 1/3 of 300 ms flush limit)
         kHeavyAgeUs = 180000, // 180 ms: heavy congestion (level 2) and pause-resume ceiling
         kPauseAgeUs = 240000, // 240 ms: critical congestion (level 3 + pause before 300 ms qflush)

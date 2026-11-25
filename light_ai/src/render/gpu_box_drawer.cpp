@@ -714,7 +714,8 @@ bool GpuBoxDrawer::sync_cpu() noexcept
             return false;
         }
         ++fence_tmo_cnt_;
-        log_.warn() << "drawer: eglCreateSyncKHR failed, glFinish fallback\n";
+        log_.warn() << "drawer: eglCreateSyncKHR failed, skipping glFinish\n";
+        return false;
     }
     glFinish();
     return true;

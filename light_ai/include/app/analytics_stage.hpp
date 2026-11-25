@@ -74,6 +74,7 @@ public:
 private:
     void start_reid( const InferConfig& cfg, int pool_size );
     void drain_reid_results() noexcept;
+    int acquire_reid_slot( int src, int cam_cap ) noexcept;
     void run_reid_stage( const FrameView& view, bool rga_ok, const RgaResizer& rga ) noexcept;
 
 private:
