@@ -1,102 +1,55 @@
 # `light_ai` — Zero-Copy Video Analytics on RK3588
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](#prerequisites)
+[![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](docs/development.md#prerequisites)
 [![Standard: C++17](https://img.shields.io/badge/C%2B%2B-17-orange.svg)](CMakeLists.txt)
-[![Tests: 71 suites / 10135 checks](https://img.shields.io/badge/Unit%20Tests-71%20suites%20%2F%2010135%20checks-brightgreen.svg)](#tests)
+[![Tests: 71 suites / 10135 checks](https://img.shields.io/badge/Unit%20Tests-71%20suites%20%2F%2010135%20checks-brightgreen.svg)](docs/development.md#tests)
 
 Zero-copy hardware-accelerated object detection, Kalman tracking, optional OSNet cross-camera Re-ID, and multi-camera H.264 streaming pipeline for Rockchip RK3588 (`V4L2` / HTTP MJPEG → `MPP` decode → `RGA3` letterbox & rotation → `RKNN` NPU + async Re-ID → `Mali G610` EGL/GLES box, EN/RU callout & trail overlay → `MPP` H.264 / MPEG-TS). Built in C++17 with no GStreamer, no OpenCV, no CPU pixel copies, and no virtual dispatch on the frame path.
 
-## Table of Contents
-
-- [Live Captures](#live-captures)
-- [Prerequisites](#prerequisites)
-- [Quickstart](#quickstart)
-- [Architecture & Pipeline](#architecture--pipeline)
-- [Modules & Headers](#modules--headers)
-- [Error Model & Exit Codes](#error-model--exit-codes)
-- [Build & Static Analysis](#build--static-analysis)
-- [Tests](#tests)
-- [Run & CLI Reference](#run--cli-reference)
-- [Platform Constraints](#platform-constraints)
-- [Measured Performance](#measured-performance)
-- [Scripts & Tools](#scripts--tools)
-- [Documentation & Licenses](#documentation--licenses)
-
----
+[Live Captures](#live-captures) · [Quickstart](#quickstart) · [Architecture](#architecture) · [Performance](#measured-performance) · [CLI](#run--cli-reference) · [Docs](#documentation--licenses)
 
 ## Live Captures
 
 Sample output frames captured directly from the encoded H.264 preview stream on the RK3588 board (`yolov5s_relu_int8_mmse_v5.rknn`, `GpuBoxDrawer` + Kalman `Tracker` + `TrailWindow`):
 
-| Single Camera: Seated Person & Multi-Class (`640×480`) | Single Camera: Walking Detection & Green Trail (`640×480`) |
+| Single Camera: Seated Person & Multi-Class (`640×480`) | Single Camera: Walking Detection & Trail (`640×480`) |
 |---|---|
 | ![Single camera person seated at desk facing away with red detection box, chair, and plant](docs/images/demo-single-walk.png) | ![Single camera person walking away with smooth green trail and chair box](docs/images/demo-single-trail.png) |
-| **Dual Source `2×1`: Live Tracking + `NO SIGNAL` (`1280×480`)** | **Dual Source `2×1`: Mixed V4L2 + Portrait HTTP MJPEG (`1280×480`)** |
-| ![Dual source showing NO SIGNAL idle plate on left slot and portrait live person tracking on right slot](docs/images/demo-dual-track.png) | ![Dual source side-by-side landscape USB camera and portrait HTTP MJPEG stream](docs/images/demo-dual-mixed.png) |
-| **Multi-View `2×2` Grid: `NO SIGNAL` Failover (`1280×960`)** | **Multi-View `2×2` Grid: 3 Active Mixed-Aspect Streams (`1280×960`)** |
+| **Multi-View `2×2`: `NO SIGNAL` Failover (`1280×960`)** | **Multi-View `2×2`: 3 Active Mixed-Aspect Streams (`1280×960`)** |
 | ![Four-tile 2x2 grid showing NO SIGNAL failover on slot 0 and two active portrait person detections](docs/images/demo-grid-nosignal.png) | ![Four-tile 2x2 grid with three live cameras detecting people simultaneously](docs/images/demo-grid-multi.png) |
 
----
+<details>
+<summary>🔹 <kbd>Expand</kbd> <strong>More captures: Dual Source 2×1 (1280×480)</strong></summary>
 
-## Prerequisites
+| Dual Source `2×1`: Live Tracking + `NO SIGNAL` (`1280×480`) | Dual Source `2×1`: V4L2 + Portrait HTTP MJPEG (`1280×480`) |
+|---|---|
+| ![Dual source showing NO SIGNAL idle plate on left slot and portrait live person tracking on right slot](docs/images/demo-dual-track.png) | ![Dual source side-by-side landscape USB camera and portrait HTTP MJPEG stream](docs/images/demo-dual-mixed.png) |
 
-### Hardware
-
-- **SoC:** Rockchip RK3588 or RK3588S (`aarch64`: 4× Cortex-A76 + 4× Cortex-A55, 3-core RKNPU2, RGA3/RGA2, MPP, Mali G610).
-- **Memory:** `>= 4 GB` RAM (on `>= 8 GB` boards, DMA allocations use `/dev/dma_heap/system-dma32` because RGA2 cannot map physical addresses above 4 GB).
-- **Storage:** External NVMe or USB SSD for repository checkout, builds, and `clang-tidy` cache (avoids wearing internal eMMC flash).
-- **Video Inputs:** USB V4L2 MJPEG camera and/or HTTP MJPEG streams (up to 4 concurrent sources).
-- **Cooling:** Active heatsink/fan cooling recommended for sustained 24/7 multi-core NPU + GPU + H.264 operation.
-
-### OS, Kernel & Soft-RTOS Runtime
-
-- **OS & Init:** Linux `aarch64` (verified on Debian 11 / Linaro ALIP with `5.10.226-preempt`) and `systemd`.
-- **Kernel Config (24/7 Soft-RTOS):** `CONFIG_PREEMPT=y`, `CONFIG_NO_HZ_FULL=y`, `CONFIG_RCU_NOCB_CPU=y`, `CONFIG_NVME_HWMON=y`.
-- **Kernel `bootargs`:** Clean isolation flags `isolcpus=4-7 nohz_full=4-7 rcu_nocbs=4-7 irqaffinity=0-3` (without `rcupdate.rcu_expedited=1` or `rcu_nocbs=all`).
-- **Permissions & Device Nodes:** Passwordless `sudo -n` (for RT thread pinning, `mlockall`, CPU/NPU/DDR governors, and `isolate_rt.sh`) and read/write access to `/dev/video*`, `/dev/dri/renderD*`, `/dev/dma_heap/system-dma32`, `/dev/rknpu`, and `/dev/cpu_dma_latency`.
-
-### Build & Test Dependencies
-
-- **Host-only tests (`./scripts/test.sh`):**
-  - `cmake >= 3.10`, GCC 10+ or Clang 11+ (C++17), `pthread`, `libanl` (no Rockchip/FFmpeg/EGL SDKs required).
-- **Full RK3588 build (`./scripts/build.sh`):**
-  - `pkg-config`, `rockchip_mpp`, `librga`, `egl`, `glesv2`, `libgbm`.
-  - Self-built shared `ffmpeg-rockchip` `8.1` installed in `/usr/local/lib/pkgconfig` (`FFMPEG_PKGCONF_DIR` defaults to `/usr/local/lib/pkgconfig` so distro FFmpeg 4.x headers never leak in; see [LGPL vs. GPL note](THIRD_PARTY_LICENSES.md#ffmpeg-lgpl-vs-gpl-important-for-binary-redistribution)):
-    ```bash
-    cd ~/work/ffmpeg-rockchip
-    ./configure --prefix=/usr/local --enable-gpl --enable-version3 --enable-rkmpp --enable-rkrga --enable-libdrm --enable-libx264 --enable-libx265 --enable-libvpx --enable-pic --enable-shared --disable-static
-    make -j$(nproc) && sudo make install && sudo ldconfig
-    ```
-  - RKNPU2 `2.5.0` (`rknn_api.h` and `librknnrt.so`, or override via `-DRKNN_ROOT=/path/to/rknpu2`).
-- **Optional (Gate, Benchmarks & Python Tools):**
-  - **2-pass `clang-tidy` gate:** system `clang-tidy-11` + `light_ai/venv` (`clang-tidy==23.1.4`, `clangd==22.1.1`).
-  - **Benchmarks & viewer checks:** `rt-tests` (`cyclictest`), `ffmpeg` / `ffplay`.
-  - **Python diagnostics (`scripts/`, `tools/`):** `./scripts/install_rknn.sh` (`rknn-toolkit-lite2==2.5.0`).
-
-### Models (not in Git)
-
-- `misc/yolov5s_relu_int8_mmse_v5.rknn` *(required; or pass `--model <path>`)*
-- `misc/osnet_x1_0_imagenet.rknn` *(optional, for cross-camera Re-ID)*
-
----
+</details>
 
 ## Quickstart
 
-Run from `light_ai/` inside your repository checkout on an RK3588 board *(on boards booting from eMMC with an external NVMe or USB SSD attached, keep the checkout on the external drive to avoid eMMC flash wear)*:
+**Target environment:** Rockchip RK3588 / RK3588S (`aarch64`, Debian 11 / `5.10.226-preempt`, `>= 4 GB` RAM; keep repo and builds on external NVMe / USB SSD to avoid internal eMMC wear). For full hardware, kernel `bootargs`, `ffmpeg-rockchip` 8.1, RKNPU2 `2.5.0`, and `clang-tidy` venv setup, see [`docs/development.md#prerequisites`](docs/development.md#prerequisites).
+
+**Models (not tracked in Git):** place `.rknn` weights in `misc/` (or pass `--model` / `--reid-model`):
+- `misc/yolov5s_relu_int8_mmse_v5.rknn` *(required)*
+- `misc/osnet_x1_0_imagenet.rknn` *(optional, cross-camera Re-ID)*
+
+Run from `light_ai/`:
 
 ```bash
-# 1. Build + run host unit tests (71 suites) + TSan (11 suites) + 2-pass clang-tidy
+# 1. Release build + host unit tests (71 suites / 10,135 checks) + TSan (11 suites / 6,207 checks) + 2-pass clang-tidy
 ./scripts/build.sh
 
-# 2. Run host unit tests + ThreadSanitizer suites standalone
+# 2. Host unit + TSan tests standalone (no Rockchip/FFmpeg/EGL SDKs needed)
 ./scripts/test.sh
 
-# 3. Run live inference + H.264/MPEG-TS TCP pull preview on port 1234
+# 3. Live inference + H.264/MPEG-TS TCP pull preview on port 1234
 sudo -n ./build/light_ai --device /dev/video20 --pool 3 --net --net-h264 --net-fps 0
 ```
 
-Connect a viewer from another host on the LAN:
+Connect a viewer on the LAN:
 
 ```bash
 ffplay -fflags nobuffer tcp://<board-ip>:1234
@@ -104,273 +57,26 @@ ffplay -fflags nobuffer tcp://<board-ip>:1234
 
 *(For simultaneous multi-viewer streaming on port `1236` via the on-demand A55 fan-out relay, see [`modules/ts_fanout/README.md`](../modules/ts_fanout/README.md). For Windows `mpv` configuration and latency tuning, see [`docs/viewer.md`](docs/viewer.md).)*
 
----
-
-## Architecture & Pipeline
+## Architecture
 
 ![light_ai architecture: main composes Pipeline (app/), which owns four stages -- Capture (source/, media/), Inference (npu/), Analytics (core/, render/) and the viewer-gated Output (render/, net/) -- over the platform folders (media/, sys/, config/) and the SDK-free core/](docs/images/architecture.svg)
 
-One frame's path: V4L2 or HTTP MJPEG → `MppDecoder` (dma-buf YUV) → `RgaResizer` letterbox into a pool tensor → `InferencePool` (`RknnEngine` + `YoloDecode`) → `BoxSmoother` + `Tracker` (+ optional Re-ID) → with a viewer: `OverlaySink` → `FrameComposer` → `H264Encoder` → `PacketQueue` → `MuxSession` (MPEG-TS over TCP pull or UDP).
+One frame's path: V4L2 or HTTP MJPEG → `MppDecoder` (dma-buf YUV) → `RgaResizer` letterbox into a pool tensor → `InferencePool` (`RknnEngine` + `YoloDecode`) → `BoxSmoother` + `Tracker` (+ optional Re-ID) → *(when a viewer is attached)* `OverlaySink` → `FrameComposer` → `H264Encoder` → `PacketQueue` → `MuxSession` (MPEG-TS over TCP pull or UDP).
 
-### Key Architectural Invariants
+### Output vs. Recognition State Machine
 
-- **Zero-copy `dma-buf` pipeline:** Decoded YUV frames, RGA-letterboxed RGB888 NPU input tensors, GPU box overlays, and H.264 NV12 encoder inputs stay in `dma-buf` memory. CPU reads occur only when `--dump-cal` or `--cal` explicitly dumps a calibration PPM (`DmaSync`).
-- **Output side vs. recognition gating:**
-  1. **No viewer attached:** The output path sleeps completely — no GPU/CPU box drawing, no RGA compose, no `NO SIGNAL` tile generation, and no H.264 encoding (`enc` reports `0.0 ms`).
-  2. **Recognition is viewer-independent:** Capture, MPP decode, RKNN inference, and Kalman tracking run whenever at least one source is live regardless of viewer state, and sleep (NPU/Re-ID workers parked on condition variables) when all sources are absent.
-  3. **Viewer attached:** Online sources run the full render/compose/encode path; absent or disconnected sources display the pre-rendered gray `NO SIGNAL` tile (`IdlePlate`: the DejaVu label font of the callouts, 21 px capitals, no outline).
-- **Canonical stream canvases (`NetEncoder`):**
-  - `1` source: `640×480` (letterbox band cropped 1:1 from NPU tensor).
-  - `2` sources: `1280×480` side-by-side (`2×1` of `640×480` tiles).
-  - `3–4` sources: `1280×960` grid (`2×2` of `640×480` tiles; unused 4th cell stays gray).
-  - Multi-view sessions start on a gray canvas and hold frame `0` (session IDR) until all configured tiles have refreshed or `200 ms` elapses (`SessionWarmup`).
-- **Thread & CPU affinity (`Pipeline`):** `AsyncLogSink` runs on Cortex-A55 (`cpu 0–3`), while `SourceProber` runs on a dedicated background thread spawned before `Pipeline::run()` pins the real-time threads to Cortex-A76 (`cpu 4–7`, `cpu_affinity.hpp`): `pipeline main` (`cpu 4`, `SCHED_FIFO 80`), NPU pool workers (`--pool 3`, `cpu 5–7`, `SCHED_FIFO 70`), and `StreamOutput` (`A76`, `SCHED_FIFO 60`), with `mlockall`/`mallopt` and automatic `SCHED_OTHER` fallback when unprivileged. When `--reid-model` is set, `ReidWorker` (`BasicReidQueue`) runs an additional `SCHED_OTHER` asynchronous RKNN worker thread for person crops.
-
----
-
-## Modules & Headers
-
-The codebase contains **104 headers** under [`include/`](include/) and **62 translation units** under [`src/`](src/) + [`externals/inih/ini.c`](externals/inih/ini.c).
-
-### Pipeline & Hardware Modules (`include/<folder>/`, `src/<folder>/`)
-
-Every header lives in a domain folder (Stage E, #112); a header's `.cpp` sits in the same folder under `src/`, and
-only `src/main.cpp` stays at the `src/` root. Includes spell the path from `include/` (`#include "media/rga_resizer.hpp"`).
-Folder dependencies point one way:
-
-```
-core  <-  platform, config, media  <-  sys  <-  source, npu, net  <-  render  <-  app  <-  main
-```
-
-| Folder | Header | Responsibility |
+| Sources | No viewer attached | Viewer attached |
 |---|---|---|
-| `app/` | `pipeline.hpp` | Top-level orchestration (`next_frame`, `step`, `publish_oldest`, A76 pinning, `mlockall`) |
-| `app/` | `source_supervisor.hpp`, `preprocessor.hpp`, `analytics_stage.hpp`, `stream_output.hpp` | Stage owners extracted from `Pipeline` (capture/prober, RGA+NPU dispatch, tracker/Re-ID, overlay/net publish) |
-| `app/` | `console_reporter.hpp` | Throttled detection/track reporter (`id=G(L...)` when Re-ID remaps) |
-| `source/` | `sources.hpp` | Umbrella convenience include for `source/` headers |
-| `source/` | `media_source.hpp` | Concrete `std::variant` owner of `CameraV4L2` and `NetMjpegSource` (static dispatch) |
-| `source/` | `camera_v4l2.hpp` | USB MJPEG V4L2 capture (`S_FMT`/`G_FMT`, mmap `DQBUF`/`QBUF`, hot-replug recovery) |
-| `source/` | `net_mjpeg_source.hpp` | HTTP `multipart/x-mixed-replace` MJPEG pull client |
-| `media/` | `mpp_decoder.hpp`, `rkmpp_drm_pool.hpp` | Rockchip MPP MJPEG → YUV422SP/YUV420SP decoder and external DRM `dma-buf` pool |
-| `media/` | `rga_resizer.hpp`, `dma_sync.hpp` | RGA3 `im2d` letterbox/rotation (`--src-rot`), per-call RGA2 `crop_resize` (RGB888 Re-ID crops), and `DMA_BUF_IOCTL_SYNC` guard |
-| `npu/` | `rknn_engine.hpp` | RKNN zero-copy NPU engine (multi-slot `setup_io`, `bind_input_slot`, `sync_output`, native or INT8→FP16 outputs, move-only) |
-| `npu/` | `inference_pool.hpp`, `infer_slot.hpp` | Multi-core NPU worker pool (`--pool 1` / `3`), ordered FIFO, bounded `5 s` wait & `Abandoned` slot handoff |
-| `npu/` | `reid_worker.hpp`, `reid_queue.hpp` | Asynchronous Re-ID embedding runner (`RknnEngine` with 4 zero-copy slots + `BasicReidQueue` thread) |
-| `npu/` | `yolo_postprocess.hpp`, `coco_names.hpp` | Worker-local `YoloDecode` wrapper and 80-class COCO label lookup table |
-| `npu/` | `cal_dumper.hpp` | `--dump-cal` / `--cal` PPM writer |
-| `render/` | `box_smoother.hpp` | 32-slot matcher / coaster for non-person boxes (`cls != 0`, display-filtered by `BoxFilter`) |
-| `render/` | `box_mapper.hpp`, `overlay_sink.hpp` | Maps tracks, trails, EN/RU callouts, and non-person boxes; owns GPU/CPU draw parity + network output |
-| `render/` | `gpu_box_drawer.hpp` | Mali G610 EGL/GBM + GLES2/3 batched box, trail & `GL_LUMINANCE_ALPHA` callout label renderer (outline + fill pass; CPU fallback in `core/overlay_raster.hpp`) |
-| `net/` | `net_encoder.hpp`, `net_preview.hpp` | `h264_rkmpp` MPEG-TS encoder facade (`= default` dtor) and raw RGB24 NUT preview server |
-| `net/` | `tcp_avio.hpp`, `av_common.hpp`, `muxer_teardown.hpp` | FFmpeg AVIO binding over `TcpPullServer`, FFmpeg helpers, RAII muxer teardown |
-| `platform/` | `joining_thread.hpp`, `buffered_socket.hpp`, `tcp_pull_server.hpp`, `log_sink.hpp`, `pi_mutex.hpp` | POSIX/C++17 OS helpers: RAII thread, non-blocking buffered socket, single-viewer TCP pull transport (`TCP_NODELAY`, `TCP_NOTSENT_LOWAT`, `SO_SNDBUF`, `POLLOUT` send loop in `src/platform/tcp_send.cpp`), lock-free `AsyncLogSink`, `PiMutex` / `PiCondVar` |
-| `sys/` | `cpu_affinity.hpp`, `process_env.hpp`, `signal_waiter.hpp`, `sd_watchdog.hpp` | Cortex-A76 affinity pinning & RT setup, signal mask + `SIGPIPE` setup, `sigtimedwait` → `StopFlag` bridge, systemd `NOTIFY_SOCKET` watchdog client |
+| **`>= 1` source live** | **Recognition runs** (capture, MPP decode, RKNN inference, Kalman tracking, optional Re-ID); **output sleeps completely** — no GPU/CPU draw, no RGA compose, no `NO SIGNAL` tiles, no H.264 encode (`enc` = `0.0 ms`). | **Full pipeline:** live sources run draw/compose/encode; disconnected slots show the pre-rendered gray `NO SIGNAL` tile (`IdlePlate`: DejaVu label font, 21 px capitals, no outline). |
+| **All sources absent** | **Recognition sleeps** (NPU/Re-ID workers parked on condition variables); **output sleeps** (`enc` = `0.0 ms`). | **Recognition sleeps** (workers parked); output serves the pre-rendered gray `NO SIGNAL` tile (`IdlePlate`). |
 
-### SDK-Free Pure-Logic Core (`include/core/`, `src/core/`)
+### Key Invariants
 
-`core/` depends only on the C++17 standard library (and `core/*`), allowing all pure logic to build and run on any host without Rockchip or FFmpeg headers:
+- **Zero-copy `dma-buf` pipeline:** Decoded YUV frames, RGA-letterboxed RGB888 NPU tensors, Mali G610 overlays, and H.264 NV12 encoder inputs stay in `dma-buf` memory. CPU reads occur only when `--dump-cal` or `--cal` dumps a calibration PPM (`DmaSync`).
+- **Canonical stream canvases (`NetEncoder`):** `1` source → `640×480` (letterbox band cropped 1:1 from NPU tensor); `2` sources → `1280×480` (`2×1`); `3–4` sources → `1280×960` (`2×2`, unused 4th cell stays gray). Multi-view sessions start on a gray canvas and hold frame `0` (IDR) until all configured tiles refresh or `200 ms` elapses (`SessionWarmup`).
+- **Thread & CPU affinity (`Pipeline`):** `AsyncLogSink` runs on Cortex-A55 (`cpu 0–3`), `SourceProber` runs on a dedicated background thread spawned before `Pipeline::run()` pins RT threads to Cortex-A76 (`cpu 4–7`, `cpu_affinity.hpp`): `pipeline main` (`cpu 4`, `SCHED_FIFO 80`), NPU pool workers (`--pool 3`, `cpu 5–7`, `SCHED_FIFO 70`), and `StreamOutput` (`A76`, `SCHED_FIFO 60`), with `mlockall`/`mallopt` and automatic `SCHED_OTHER` fallback when unprivileged. With `--reid-model`, `ReidWorker` (`BasicReidQueue`) runs an additional `SCHED_OTHER` async RKNN thread for person crops.
 
-- **Primitives & Errors:** `status.hpp` (`Status`, `Errc`, `Sys`, `ErrnoText`), `log.hpp` (`Log`, thread-safe RAII `Line`), `stop_flag.hpp` (`StopFlag`, `sleep_interruptible`), `fixed_fmt.hpp`, `line_scan.hpp`, `perf_clock.hpp` (`ms_between`, `MaxMs`, `CounterDelta`, `Lap`), `perf_reporter.hpp` (`PerfReporter`: the source-side window and the `[perf] src`, `[perf] enc`, `[perf] rt`, and `[perf] reid` lines; byte-pinned format), `net_perf.hpp` (`SourcePerfWindow`, `EncPerfWindow`, `ReidPerfWindow`: the zero-heap 5 s windows behind those lines).
-- **Geometry & Detection:** `geometry.hpp` (`LbGeom`, `band_geom`), `rga_limits.hpp` (the RK3588 RGA limits as pure functions: 68 px minimum side, 8× per pass, 16-aligned RGB888 stride; `needs_two_pass` and the aux sizing shared by `RgaResizer`, `SourceChannel`, `Pipeline` and `RknnEngine`), `detection.hpp` (`Detection`, `DetList`), `frame_view.hpp` (`TensorRef` with `stride_bytes`, `TensorSet`, `FrameView`), `fp16.hpp` (`fp16_to_float`), `box_math.hpp` (`box_iou`, `box_iou_corners`, `greedy_iou_match`), `yolo_decoder.hpp` (`YoloDecoder`, `yolo_head_shape`, `Box::seq` NMS ordering).
-- **Tracking, Re-ID & Overlay:** `track.hpp` (`TrackLife`, `TrajPoint`, `TrackState`, `TrajList`), `kalman_axis.hpp`, `associator.hpp`, `trail_window.hpp`, `box_filter.hpp` (`BoxFilter` One-Euro + backlash dead zone, `TrackBoxFilters`: the one display filter of every drawn box), `gpu_box.hpp` (`GpuBox`, `GpuBoxList`), `glyph_font.hpp` (proportional DejaVu Sans, 147 glyphs: digits, Latin, Cyrillic, label punctuation; a `256×296` atlas of two 8-bit planes, fill and the baked 2 px dark outline (`151,552` bytes), baked at 22 px by `tools/gen_glyph_font.py`, sampled bilinearly; `for_each_glyph` / `raster_text`: the one glyph walk of every renderer; zero-heap UTF-8), `glyph_font_table.hpp` (the atlas and glyph table behind `glyph_font.hpp`, generated by `tools/gen_glyph_font.py`: do not edit), `callout.hpp` (`compute_callouts` with per-camera `CalloutHistory` hysteresis; plate-free white labels with a dark outline; `callout_text_scale` gives every source the same letter size on its output tile), `overlay_raster.hpp` (`draw_boxes_cpu`, `draw_callouts_cpu`: the CPU twin of `GpuBoxDrawer`, the `--cpu-draw` / no-GPU fallback), `auto_orient.hpp` (`AutoOrient` EXIF + 4-angle scoring), `global_track.hpp` (`GlobalTrackTable`, crop scheduler).
-- **Containers, Tracker & Timing:** `pod_list.hpp`, `pod_ring.hpp` (zero-heap fixed-capacity `PodList<T, N>`, `PodRing<T, N>`), `throw_on.hpp` (startup `Status` → exception bridge), `tracker.hpp` (16-slot Kalman + greedy IoU tracker: `kMaxTracks = 16`, `kMaxMiss = 6`, `global_id`, `gen`), `timings.hpp`, `frame_trace.hpp` (per-stage `avg/60` + `TOTAL` timing accumulator).
-- **HTTP/MJPEG Parsing:** `byte_window.hpp`, `http_url.hpp`, `http_head.hpp`, `multipart_reader.hpp`, `jpeg_probe.hpp` (JPEG `SOFn` + EXIF `Orientation` probe).
-- **Encoder/Stream State:** `encoder_config.hpp`, `param_set_cache.hpp`, `pts_clock.hpp` (`PtsClock`, `SessionPtsFilter`), `encode_pacer.hpp` (4-level transport backpressure hysteresis, Stage 10), `session_warmup.hpp`, `idle_plate.hpp`, `packet_queue.hpp`, `session_gate.hpp`, `preview_ring.hpp` (`PreviewRing`: the 2-slot drop-oldest hand-off from the pipeline thread to the preview serve thread, sized once at startup).
-
-### Configuration, Source & Network Building Blocks
-
-- **`include/config/`, `src/config/`:** `config.hpp` (`Config`, `InferConfig`, `CalConfig`, `StreamConfig`, `LabelLang`), `option_registry.hpp` (28-entry `std::array` registry), `cli.hpp`, `config_file.hpp` (`inih`-backed INI loader).
-- **`include/source/`, `src/source/`:** `source_types.hpp` (`SourceKind`, `SourceEndpoint` with `rot_deg`/`rot_auto`, `SourceGeom`), `source_channel.hpp` (`NeverAttached` / `Detached` / `Live`, `quarter_turn`, `needs_aux`), `source_set.hpp` (round-robin + `::poll(2)` `wait_any()` + `2 s` stall detection), `source_prober.hpp` (`2 s` background re-attach), `usb_node_locator.hpp` (USB + `device_caps` capture filtering), `mjpeg_slot_pool.hpp`.
-- **`include/net/`, `src/net/`:** `network_init.hpp`, `encoder_frame_pool.hpp` (4-slot NV12 DRM ring), `frame_composer.hpp` (RGA tile/band compositor), `h264_encoder.hpp` (`h264_rkmpp` wrapper), `av_packet.hpp`, `av_packet_queue.hpp`, `mux_session.hpp`.
-
----
-
-## Error Model & Exit Codes
-
-- **Recoverable errors (`Status`):** Modules return [`Status`](include/core/status.hpp) (`Errc`: `Ok`, `Absent`, `Lost`, `Busy`, `Timeout`, `Unsupported`, `NoMemory`, `Invalid`, `Failed`, plus string-literal reason and optional `errno`/SDK code) and write outputs to reference parameters. Multi-branch outcomes (`FrameStatus`, `SourceChannel::Attach`, `HttpHead::Parse`) embed `Status` in their failure variant.
-- **Startup-only exceptions:** [`throw_on`](include/core/throw_on.hpp) converts non-OK `Status` into `std::runtime_error` only during initialization (constructors and `Pipeline` setup).
-- **`noexcept` frame path & thread bodies:** No exceptions are thrown or caught on the frame path (`bugprone-exception-escape` clean).
-- **Thread-safe logging (`Log`):** `const Log&` is injected from `main.cpp` (info → `stdout`, warn/error → `stderr`); in production each line is formatted into a fixed stack buffer and passed lock-free to `AsyncLogSink` (zero heap, zero mutex on the frame path), with `std::recursive_mutex` used only in tests and early CLI parsing.
-
-| Exit Code | Meaning | Source |
-|---|---|---|
-| `0` | Clean exit (`--help`/`-h`, completed `--frames N`, or `SIGINT`/`SIGTERM` graceful drain) | [`src/main.cpp`](src/main.cpp) |
-| `1` | Runtime fatal error (`Pipeline::run()` returned a non-OK `Status`) | [`src/main.cpp`](src/main.cpp) |
-| `2` | Invalid CLI flag, config file error, or bad test-runner option | [`src/main.cpp`](src/main.cpp), [`tests/suite_runner.hpp`](tests/suite_runner.hpp) |
-| `3` | Startup failure (`std::exception` caught in `main()`: missing model, bad YOLOv5 head shape, hardware init failure) | [`src/main.cpp`](src/main.cpp) |
-
----
-
-## Build & Static Analysis
-
-```bash
-./scripts/build.sh
-```
-
-`scripts/build.sh` runs three gates in sequence and fails on the first error:
-1. **Release CMake build** (`build/light_ai`, C++17, `-O3 -Wall -Wextra`).
-2. **Host unit tests + ThreadSanitizer** (`scripts/test.sh`; skip tests with `SKIP_TESTS=1`, skip only TSan with `SKIP_TSAN=1`).
-3. **Two-pass `clang-tidy` gate** (`scripts/tidy_run.sh`; skip with `SKIP_TIDY=1`).
-
-### CMake Options & CPU Flags
-
-- **CPU tuning (`TARGET_CPU_FLAGS` in [`CMakeLists.txt`](CMakeLists.txt)):**
-  - GCC default: `-mcpu=cortex-a76+dotprod+crypto -mtune=cortex-a76.cortex-a55`
-  - Clang default: `-mcpu=cortex-a76+crypto+dotprod` (Clang rejects GCC's dotted `-mtune` syntax)
-  - Override via `cmake -DTARGET_CPU_FLAGS="..." ..`.
-- **FFmpeg (`FFMPEG_PKGCONF_DIR`):** Defaults to `/usr/local/lib/pkgconfig` (self-built `ffmpeg-rockchip` 8.1, `libavcodec.so.62`), preventing Debian 11's distro FFmpeg 4.x (`so.58`) headers from leaking into the build.
-- **RKNN SDK (`RKNN_ROOT`):** Locate `rknn_api.h` and `librknnrt.so` via `-DRKNN_ROOT=/path/to/rknpu2` or standard `/usr/local`, `/usr` paths.
-
-### Two-Pass `clang-tidy` Gate (`scripts/tidy_run.sh`)
-
-Checks all translation units under `src/` and `tests/` (with [`tests/.clang-tidy`](tests/.clang-tidy) relaxing only function-size limits for table-driven test suites):
-
-0. **Rules self-test and lint (#93):** the `rules` pass runs on the fixtures in [`tests/tidy_probe/`](tests/tidy_probe) and must hit exactly the sites (`<fixture>:<line> <check>`) of [`expected_rules.txt`](tests/tidy_probe/expected_rules.txt) (no hit on the near misses that must stay silent); [`scripts/rules_lint.sh`](scripts/rules_lint.sh) runs on `tests/tidy_probe/lint/` and must print exactly [`expected_lint.txt`](tests/tidy_probe/expected_lint.txt). Any mismatch fails the gate, so a misspelt matcher, a dead rule or a matcher that drifts to another construct cannot pass green. `clang-tidy --verify-config` on `scripts/tidy_rules.yaml` (#94) must report nothing but the `custom-*` glob it cannot resolve: clang-tidy ignores a mistyped option key silently, and the probe cannot see a typo whose default equals the intended value; the step proves itself on [`tests/tidy_probe/verify_typo.yaml`](tests/tidy_probe/verify_typo.yaml). Then `rules_lint.sh` runs over the whole tree.
-1. **`main` pass:** system `clang-tidy-11` using [`.clang-tidy`](.clang-tidy) (all enabled checks).
-2. **`rules` pass** (named `cognitive` before #93): pinned PyPI `clang-tidy==23.1.4` inside `light_ai/venv` using [`scripts/tidy_rules.yaml`](scripts/tidy_rules.yaml) with `--experimental-custom-checks`. It runs `readability-function-cognitive-complexity` (`Threshold: 20`), `misc-const-correctness` (#94: `const` locals, pointees and read-only reference / pointer parameters of free functions; every option written out, `WarnPointersAsValues` off; CONTRIBUTING, `const` by default, lists what it does not see) and 16 clang-query `custom-*` checks for the project rules: no statics, globals or `thread_local`; no virtuals or inheritance; no `new`/`delete`, `malloc` family or smart pointers; no `const_cast`; no C stdio output; no `std::cout`/`cerr`/`clog` (or `w` forms) outside `src/main.cpp`; no `catch (...)` except the allowlisted sites; no `if` / `else if` ladders (`if constexpr` too), no loop with an empty body, no loop without a real exit condition (`for (;;)`, `while (true)`).
-
-`rules_lint.sh` checks what AST matchers cannot see: lines of 140 columns at most, `.hpp` headers only (no `.h`), include order, no GStreamer/OpenCV, SDK-free `core/` includes, and NOLINT accounting. Every NOLINT that switches a `custom-*` check or `misc-const-correctness` off (by name or glob, every NOLINT of a line) needs `: <reason>` and a line in [`scripts/rules_allow.txt`](scripts/rules_allow.txt); only `NOLINT` and `NOLINTNEXTLINE` can be allowed: a `NOLINTBEGIN` / `NOLINTEND` range for either or a bare one, and a blanket `NOLINT` (clang-tidy honours one anywhere in a line), always fail, and no allowlist line can allow them; an allowlist line that matches nothing fails.
-
-One-time venv setup from `light_ai/` on the target board (`clangd` is for the editor only, see below):
-
-```bash
-python3 -m venv venv && venv/bin/pip install --no-cache-dir clang-tidy==23.1.4 clangd==22.1.1
-```
-
-- **Logs & hangs:** `build/tidy/{src,tests}/<path>.log`, `build/tidy/rules/{src,tests}/<path>.log`, `build/tidy/selftest/` (self-test and lint), `build/tidy/HANGS.txt`.
-- **Cache & parallelism:** Result cache in `build/tidy-cache` (`scripts/tidy_cache.py`; disable with `TIDY_NO_CACHE=1`), parallel jobs via `TIDY_JOBS=N` (defaults to `min(nproc, MemAvailable / 400 MB)`).
-- **Subset run (`TIDY_FILES`):** `TIDY_FILES="src/a.cpp tests/b.cpp" bash scripts/tidy_run.sh` runs the self-test, the lint and both passes on only those translation units (`src/**/*.cpp`, `tests/*.cpp`; a header or a missing file exits with `2`), with the same cache, compile DBs and log paths; only their logs are replaced. It is a quick check while editing, not the gate: `scripts/build.sh` always runs every TU.
-- **Function-size limits (`src/`):** lines 90, statements 60, nesting 4, parameters 20, **variables 20** and **branches 15**. The last two were raised in #93 (from 14 and 11): every `const` local counts as a variable, which forced artificial structs such as `GlyphQuad`; cognitive complexity 20 is the real limit and is not relaxed. `tests/.clang-tidy` relaxes lines / statements / variables / nesting for table-driven suites and pins branches at 11.
-
-### Editor Diagnostics (`clangd`)
-
-[`.clangd`](.clangd) configures `clangd` 22.1.1 from `light_ai/venv`: it uses both compile DBs (`build/`, `build/tests/`), strips `-mtune`/`-mcpu`, skips the background index (RAM), adds `readability-function-cognitive-complexity` (`Threshold: 20`) and `misc-const-correctness` (the options of the gate; `FastCheckFilter: None`, since clangd 22 skips a check it rates slow otherwise) (the experimental `custom-*` rules do not run in clangd, `TIDY_FILES` covers them), and removes the LLVM 12+ checks that the `clang-tidy-11` gate does not have. A quick command-line check of one file: `venv/bin/clangd --check=src/a.cpp`. Editor diagnostics are hints only; the gate stays the authority (one known difference: LLVM 22 counts constructor initializers as statements, so `Pipeline::Pipeline` shows up at 67 > 60 in the editor only).
-
-### Storage Layout & Models
-
-- All build outputs, test binaries, tidy caches, logs, and calibration dumps stay inside `build/` or `dataset*/` (both git-ignored). On boards with internal eMMC, [`scripts/storage_guard.sh`](scripts/storage_guard.sh) emits a non-fatal warning if build outputs land on `/dev/mmcblk*` or `/` instead of external storage (such as NVMe or USB SSD) to avoid unnecessary flash wear.
-- **Models (`*.rknn`) are not tracked by Git:** place `.rknn` models in `./misc/` (default: `./misc/yolov5s_relu_int8_mmse_v5.rknn`), or specify `--model <path>`.
-- **RKNNLite Python wheel (for `scripts/` and `tools/`):** install from GitHub Releases (`rknn-toolkit-lite2-v2.5.0`) with SHA-256 verification via `./scripts/install_rknn.sh`.
-
----
-
-## Tests
-
-```bash
-./scripts/test.sh
-```
-
-[`tests/CMakeLists.txt`](tests/CMakeLists.txt) is an independent host CMake project requiring only a C++17 compiler and `pthread` (zero Rockchip/FFmpeg/EGL dependencies — runs identically on the board and on x86_64/arm64 hosts).
-
-- **Unit binary (`build/tests/light_ai_tests`):** **71 suites, 10,135 checks**.
-- **ThreadSanitizer binary (`build/tests/light_ai_tests_tsan`, `-fsanitize=thread`):** **11 threaded suites, 6,207 checks** (`source_threads`, `source_prober_threads`, `preview_ring_threads`, `packet_queue_threads`, `session_gate_threads`, `reid_worker_tsan`, `pi_mutex`, `async_log_sink_threads`, `infer_slot_threads`, `stream_output_threads`, `tcp_pull_threads`).
-- **Custom runner options ([`tests/suite_runner.hpp`](tests/suite_runner.hpp)):**
-  ```bash
-  ./build/tests/light_ai_tests [substr...] [--repeat N]
-  ./build/tests/light_ai_tests_tsan --repeat 200 packet_queue_threads
-  ```
-  Exits `0` on pass, `1` on check failure, `2` on invalid runner argument.
-
-### Covered Test Suites (71 Total in `tests/test_main.cpp`)
-
-- **Core & Containers:** `check_harness`, `pod_containers`, `geometry`, `fp16`, `box_math`, `rga_limits`, `fixed_fmt`, `status`, `stop_flag`, `log`, `async_log_sink_threads` *(TSan)*, `timings`, `perf_clock`, `perf_reporter`
-- **Detection, Tracking, Labels, Re-ID & Reference:** `yolo_decoder`, `yolo_head_shape`, `box_filter`, `box_smoother`, `kalman_axis`, `associator`, `auto_orient`, `trail_window`, `tracker`, `glyph_font`, `callout_layout`, `overlay_raster`, `box_mapper`, `global_track`, `reid_worker_tsan` *(TSan)*, `reference_chain` (Layer B golden check; see [`tests/data/README`](tests/data/README))
-- **Config, CLI, Signals, Affinity & Platform:** `config`, `signals`, `cpu_affinity`, `pi_mutex` *(TSan)*, `sd_watchdog`, `console_reporter`, `cal_dumper`
-- **Inference Pool & Output:** `inference_pool`, `infer_slot_threads` *(TSan)*, `stream_output_threads` *(TSan)*
-- **Sources & HTTP MJPEG:** `jpeg_probe`, `byte_window`, `http_url`, `http_head`, `multipart_reader`, `line_scan`, `buffered_socket`, `mjpeg_slot_pool`, `net_mjpeg_source`, `usb_node_locator`, `source_channel`, `source_threads` *(TSan)*, `source_set`, `source_prober`, `source_prober_threads` *(TSan)*
-- **Encoder, Session & Transport:** `tcp_retry`, `tcp_send`, `tcp_pull_threads` *(TSan)*, `encoder_config`, `param_set_cache`, `pts_clock`, `encode_pacer`, `session_warmup`, `idle_plate`, `preview_ring`, `preview_ring_threads` *(TSan)*, `packet_queue`, `packet_queue_threads` *(TSan)*, `session_gate`, `session_gate_threads` *(TSan)*
-
-**Not unit-tested (verified by live hardware runs & Layer A replay):** V4L2 capture, MPP MJPEG decode, RGA3 resize/compose, RKNN NPU execution, Mali EGL/GLES2 drawing, and `h264_rkmpp` encoding.
-
----
-
-## Run & CLI Reference
-
-### Common Commands
-
-```bash
-# Single USB camera, H.264 TCP pull on port 1234, follow-source VFR pacing, 3-core NPU pool
-sudo -n ./build/light_ai --device /dev/video20 --pool 3 --net --net-h264 --net-fps 0 --frames 3000
-
-# Multi-camera (up to 4 sources) with RGA rotation, Russian callouts, and cross-camera OSNet Re-ID
-sudo -n ./build/light_ai \
-    --device /dev/video20 \
-    --net-src http://<cam1-host>:8080/video \
-    --net-src http://<phone-host>:8080/video --src-rot 270 \
-    --reid-model ./misc/osnet_x1_0_imagenet.rknn --reid-thr 0.62 \
-    --label-lang ru --pool 3 --net --net-h264 --net-fps 0 --net-bitrate 3000 --frames 3000
-
-# Production profile via INI config (copy template once; CLI flags override INI):
-cp scripts/light_ai.ini.example build/light_ai.ini
-./scripts/run.sh
-./scripts/run.sh --log-level warn --frames 600
-
-# Viewers (direct single-viewer on :1234, or multi-viewer via modules/ts_fanout on :1236):
-ffplay -fflags nobuffer tcp://<board-ip>:1234
-ffplay -fflags nobuffer tcp://<board-ip>:1236
-# Legacy UDP push viewer (explicit IPv4 bind required on Windows):
-ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -analyzeduration 0 -vf setpts=0 -f mpegts udp://0.0.0.0:1234
-```
-
-### CLI Options (`src/config/option_registry.cpp`)
-
-All **28 options** (plus `--help` / `-h`) are shared between the CLI parser and `--config` INI files (up to **4** video sources across `1×1`, `2×1`, or `2×2` grid). INI files (`key = value`) are applied **before** CLI flags so CLI flags always override. Missing camera nodes fall back via `UsbNodeLocator`; busy nodes stay `Detached` and are retried every `2 s` by `SourceProber`.
-
-| Flag | Argument | Default | Description |
-|---|---|---|---|
-| `--help`, `-h` | — | — | Print generated option list and exit `0` |
-| `--config` | `<path>` | *(none)* | Load flat `key = value` INI config before CLI flags |
-| `--device` | `<path>` | `/dev/video20` | V4L2 camera device (repeatable up to 4 total sources; accumulates into `Config::sources`) |
-| `--net-src` | `<url>` | *(none)* | HTTP MJPEG pull source (`http://host:port/path`; repeatable up to 4 total sources). A numeric IPv4 host needs no DNS; a hostname is resolved on every (re)connect without blocking the prober for long: the lookup is bounded to `5 s` (then up to `5 s` more for the TCP connect) and abandoned within `100 ms` on stop. A lookup glibc cannot cancel is waited for at exit, at most the resolver's own timeout (`/etc/resolv.conf` `timeout` × `attempts` per nameserver) |
-| `--src-rot` | `0\|90\|180\|270` | `auto` | Override automatic source orientation detection (`0`, `90`, `180`, `270` degrees via RGA) |
-| `--model` | `<path>` | `./misc/yolov5s_relu_int8_mmse_v5.rknn` | RKNN model path |
-| `--reid-model` | `<path>` | `./misc/osnet_x1_0_imagenet.rknn` | Re-ID RKNN model path for cross-camera global IDs (`none` or `off` disables). Re-ID crops the detector input in one RGA pass: a detector input over `8×` the Re-ID input on a side (e.g. `1280` into OSNet `128×256`) logs one error and leaves Re-ID off, recognition runs on |
-| `--reid-thr` | `0.0..1.0` | `0.62` | Re-ID cosine similarity threshold |
-| `--label-lang` | `en\|ru` | `en` | Callout label language (`Person #N` vs. `Человек #N`) |
-| `--label-scale` | `1..4` | `1` | Callout text size: `11 px` font (about `8 px` capitals) per step on the output tile, the same on every source (the tile scale of `place_tile` is compensated); `3..4` magnify the 22 px atlas, so the text is soft |
-| `--log-level` | `debug\|info\|warn\|error\|off` | `info` | Diagnostic log threshold (`debug`/`info` on `stdout`, `warn`/`error` on `stderr`) |
-| `--conf` | `0.0..1.0` | `0.25` | Detection confidence threshold |
-| `--iou` | `0.0..1.0` | `0.45` | NMS IoU threshold |
-| `--core` | `0\|1\|2\|3\|4\|7` | `0` | NPU core mask (`0` auto, `1/2/4` = core 0/1/2, `3` = 0+1, `7` = 0+1+2; ignored when `--pool > 1`) |
-| `--pool` | `0\|1\|3` | `0` | NPU context pool (`0\|1` = single context, `3` = 3 parallel engines across cores 0–2) |
-| `--frames` | `>= 1` | `0` *(until signal)* | Stop cleanly after `N` frames (`0` = run until `SIGINT`/`SIGTERM`) |
-| `--net` | — | `false` | Enable network preview server (raw RGB24 NUT unless `--net-h264`) |
-| `--net-h264` | — | `false` | Encode preview with `h264_rkmpp` inside MPEG-TS |
-| `--net-port` | `1..65535` | `1234` | Preview TCP listen port (or UDP destination port) |
-| `--net-host` | `<ip/host>` | `""` *(TCP pull)* | Optional UDP push destination (H.264 push); unset = TCP pull server |
-| `--net-fps` | `0..120` | `25` | Preview stream FPS (`0` = VFR follow-source timestamps) |
-| `--net-gop` | `0..300` | `0` *(auto 1s)* | H.264 GOP size in frames (`0` = auto 1 s at configured/nominal FPS) |
-| `--net-bitrate` | `1000..100000` | `12000` | H.264 encoder CBR bitrate in kbps (`1500–3000` is plenty for `640×480`) |
-| `--cpu-draw` | — | `false` | Force CPU box/trail/callout drawing (`A/B` baseline vs. Mali GPU drawer) |
-| `--cal` | `1..10000` | `0` *(off)* | Save up to `N` model-input frames (`cal_%04d.ppm`) for INT8 calibration |
-| `--cal-interval` | `1..10000` | `15` | Calibration sampling stride (saves frames `0, K, 2K, ...`) |
-| `--cal-dir` | `<path>` | `dataset/` & `build/` | Redirect directory for `--cal` series and `--dump-cal` (requires `--cal` or `--dump-cal`) |
-| `--dump-cal` | — | `false` | Dump first eligible model-input frame to `build/cal.ppm` (or `<cal-dir>/cal.ppm`) |
-| `--box-log` | `<path>` | `""` *(off)* | Write per-frame raw vs. smoothed bounding-box CSV (`A/B` / Layer A) |
-
-### Runtime Behavior Notes
-
-- **Busy port resilience:** If TCP port `--net-port` is already in use, `retry_listen()` logs one warning and retries every `2 s` while recognition continues uninterrupted.
-- **Source size change:** A source that comes back at another resolution (an MJPEG server or phone app restarted at another size, a camera replugged in another mode) re-attaches at the new size: `SourceChannel` re-initializes its decoder (`source sN: geometry changed A -> B, re-initializing the decoder`) and the source's tracks and orientation start over.
-- **Graceful shutdown:** `ProcessEnv` + `SignalWaiter` handle `SIGINT`/`SIGTERM` without globals during `Pipeline::run()`, draining the pool, printing `TOTAL` timings, flushing `h264_rkmpp`, and calling `STREAMOFF`.
-- **File ownership after `sudo`:** A `sudo` run creates `build/cal.ppm` / `dataset/` files owned by `root`; restore ownership with `sudo -n chown -R "$(id -un):" build dataset`.
-
----
-
-## Platform Constraints
-
-### Verified Hardware & SDK Constraints
-
-- **VFR encoder pitfall:** Passing `framerate = 0/1` to `h264_rkmpp` triggers MPP's `65535` auto marker and collapses CBR bit allocation (`~83 kbps`). Follow-source (`--net-fps 0`) keeps nominal `25` fps on the encoder rate controller while stamping per-dequeue `pts` (`1/90000` ticks).
-- **MPP alignment & logging:** Decoder output buffer heights must be aligned to `16` (`1080 -> 1088`), and `mpp_buffer_group_get` must receive a non-null caller string (`__FUNCTION__`).
-- **RGA3 vs. RGA2:** RGA3 scales at most `1/8` per axis (checked by multiplication; `1920×1080 -> 224×224` and `90°`/`270°` rotated portrait sources downscaled along a diagonal axis use 2-pass via `aux_fd`). Decoder NV12/letterbox/rotation jobs alternate across both RGA3 cores (`IM_SCHEDULER_RGA3_CORE0` / `IM_SCHEDULER_RGA3_CORE1` via `RgaResizer::next_rga3_core()`) because RGA2 cannot map physical addresses above 4 GB (`"RGA_MMU unsupported memory larger than 4G!"`). By contrast, `RgaResizer::crop_resize()` (RGB888 NPU tensor sub-rect → `128×256` Re-ID tensor) uses `IM_SCHEDULER_RGA3_CORE0` when within RGA3 size limits (`can_use_rga3`) and falls back to `IM_SCHEDULER_RGA2_CORE0` for small crops.
-- **RGA fill prohibited:** RGA hardware rectangle fill is unsupported on RGA3/RGA2E RGB888 and an `imfill` probe crashed the kernel (`Oops: 96000005`). Box/trail drawing uses Mali G610 (`GpuBoxDrawer`) or CPU fallback (`--cpu-draw` / invalid tensor pitch `0x3003` fallback).
-- **USB2 camera firmware pacing:** Tested Canyon CNS-CWC5 (`1bcf:2283`, USB2 `480M`) delivers discrete `{20, 25, 30}` FPS firmware states unaffected by UVC `exposure_absolute` or `get-parm`; treat `20 FPS` as the reliable camera baseline.
-- **NPU multi-core behavior:** A single RKNN context does not parallelize layers across NPU cores (`--core 7` vs `1` buys `<= 2.5 ms`). Multi-core throughput comes from parallel contexts via `--pool 3` (one engine per core).
-- **YOLOv5s RKNN semantics:** `yolov5s_relu` outputs (`255` channels across `80×80`, `40×40`, `20×20` heads) are already post-sigmoid (`0..1`). INT8 models (`v2`–`v5`) rewrite output `attr` to `FLOAT16` via `rknn_set_io_mem` for runtime per-channel dequantization.
-- **Zero-copy H.264 input:** `h264_rkmpp` must receive `DRM_PRIME` descriptors with `16`-aligned vertical stride in both RGA destination and descriptor; system-memory frames force `av_hwframe_transfer_data` copies and cause `enc` latency drift (`1.8 -> 15 ms`).
-
----
+For the full module & header map (104 headers / 62 translation units), error model & exit codes, and verified RK3588 hardware/SDK constraints, see [`docs/architecture.md`](docs/architecture.md).
 
 ## Measured Performance
 
@@ -385,40 +91,84 @@ All **28 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 | Live 3-cam `2×2` + Re-ID + `--src-rot 270` | `USB + 2× HTTP MJPEG`, `--label-lang ru`, H.264 | async Re-ID off critical path | `66.102 FPS` combined |
 | Pure NPU (`tools/bench_npu`) | `yolov5s_relu_int8`, `performance` governors | `15.4 ms` (`3` cores), `18.1 ms` (`2` cores), `22.0 ms` (`1` core) | `~65 FPS` pure NPU ceiling |
 
----
+## Run & CLI Reference
 
-## Scripts & Tools
+```bash
+# Multi-camera (up to 4 sources) with RGA rotation, Russian callouts, and cross-camera OSNet Re-ID
+sudo -n ./build/light_ai \
+    --device /dev/video20 \
+    --net-src http://<cam1-host>:8080/video \
+    --net-src http://<phone-host>:8080/video --src-rot 270 \
+    --reid-model ./misc/osnet_x1_0_imagenet.rknn --reid-thr 0.62 \
+    --label-lang ru --pool 3 --net --net-h264 --net-fps 0 --net-bitrate 3000 --frames 3000
 
-- **Build, test & system (`scripts/`):**
-  - [`scripts/build.sh`](scripts/build.sh) — full release build + unit/TSan tests + 2-pass clang-tidy gate.
-  - [`scripts/test.sh`](scripts/test.sh) — host-side `light_ai_tests` + `light_ai_tests_tsan`.
-  - [`scripts/tidy_run.sh`](scripts/tidy_run.sh), [`scripts/tidy_cache.py`](scripts/tidy_cache.py), [`scripts/tidy_rules.yaml`](scripts/tidy_rules.yaml), [`scripts/rules_lint.sh`](scripts/rules_lint.sh), [`scripts/rules_allow.txt`](scripts/rules_allow.txt) — 2-pass `clang-tidy` runner & cache, the project-rule checks, their lint and allowlist (self-test fixtures: `tests/tidy_probe/`).
-  - [`scripts/storage_guard.sh`](scripts/storage_guard.sh) — warns (non-fatally) if build output targets `/` or internal eMMC (`/dev/mmcblk*`) to help protect flash endurance on eMMC boards.
-  - [`scripts/install_rknn.sh`](scripts/install_rknn.sh) — downloads & verifies `rknn_toolkit_lite2==2.5.0` wheel.
-  - [`scripts/run.sh`](scripts/run.sh), [`scripts/light_ai.ini.example`](scripts/light_ai.ini.example), [`scripts/light_ai.service.example`](scripts/light_ai.service.example) — wrapper launcher (loads `build/light_ai.ini` by default), INI profile template, and hardened `systemd` unit template.
-  - [`scripts/isolate_rt.sh`](scripts/isolate_rt.sh), [`scripts/run_bench.sh`](scripts/run_bench.sh) — IRQ affinity isolation (`CPU 0–3` A55) and isolated `cyclictest` + loopback latency benchmark.
-  - [`scripts/set_governors.sh`](scripts/set_governors.sh) — pins CPU/NPU/DDR governors to `performance` (`sudo`).
-  - [`scripts/usb_replug.sh`](scripts/usb_replug.sh) — sysfs USB camera power-cycle helper (installed at `/usr/local/sbin/light-usb-replug`).
-  - [`scripts/collect_state.sh`](scripts/collect_state.sh), [`scripts/collect_project.sh`](scripts/collect_project.sh) — collects board state / source snapshots under `build/`.
-  - [`scripts/probe_yolo.py`](scripts/probe_yolo.py), [`scripts/test_inference.py`](scripts/test_inference.py), [`scripts/diag_zero_out.py`](scripts/diag_zero_out.py), [`scripts/compare_night.py`](scripts/compare_night.py), [`scripts/split_mjpeg.py`](scripts/split_mjpeg.py) — RKNNLite Python diagnostics and offline MJPEG comparison helpers (run with `venv/bin/python`).
-- **Replay, verification & benchmarks (`tools/`):**
-  - [`tools/ref_replay.sh`](tools/ref_replay.sh) + [`tools/mjpeg_replay.py`](tools/mjpeg_replay.py) — Layer A drop-free MJPEG regression replay (`reference/ref_evening.csv`).
-  - [`tools/oracle_check.py`](tools/oracle_check.py) — C++ `--box-log` vs. Python RKNNLite parity verifier over `--cal` PPM dumps.
-  - [`tools/ab_run.py`](tools/ab_run.py), [`tools/compare.py`](tools/compare.py), [`tools/list_missed.py`](tools/list_missed.py) — offline model A/B comparison scripts.
-  - [`tools/bench_npu.c`](tools/bench_npu.c), [`tools/bench_npu_pool.cpp`](tools/bench_npu_pool.cpp) — pure NPU throughput microbenchmarks.
+# Production profile via INI config (copy template once; CLI flags override INI):
+cp scripts/light_ai.ini.example build/light_ai.ini
+./scripts/run.sh --log-level warn --frames 600
 
----
+# Legacy UDP push viewer (explicit IPv4 bind required on Windows):
+ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -analyzeduration 0 -vf setpts=0 -f mpegts udp://0.0.0.0:1234
+```
+
+**Runtime notes:**
+- **Busy port resilience:** If `--net-port` is in use, `retry_listen()` logs one warning and retries every `2 s` while recognition continues uninterrupted.
+- **Source size change:** If a source reconnects at another resolution, `SourceChannel` re-initializes its decoder (`source sN: geometry changed A -> B, re-initializing the decoder`) and resets that source's tracks and orientation.
+- **Graceful shutdown:** `ProcessEnv` + `SignalWaiter` handle `SIGINT`/`SIGTERM` without globals during `Pipeline::run()`, draining the pool, printing `TOTAL` timings, flushing `h264_rkmpp`, and calling `STREAMOFF`.
+- **File ownership after `sudo`:** Restore ownership of `build/cal.ppm` / `dataset/` created under `sudo` with `sudo -n chown -R "$(id -un):" build dataset`.
+
+<details>
+<summary>🔹 <kbd>Expand</kbd> <strong>Full CLI &amp; INI option reference (28 options + <code>--help</code> in <code>src/config/option_registry.cpp</code>)</strong></summary>
+
+All **28 options** (plus `--help` / `-h`) are shared between the CLI parser and `--config` INI files (up to **4** video sources across `1×1`, `2×1`, or `2×2` grid). INI files (`key = value`) are applied **before** CLI flags so CLI flags always override. Missing camera nodes fall back via `UsbNodeLocator`; busy nodes stay `Detached` and are retried every `2 s` by `SourceProber`.
+
+| Flag&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Description & Default |
+|---|---|
+| `--help`,&nbsp;`-h` | Print generated option list and exit `0`. |
+| `--config` | `<path>` — Load flat `key = value` INI config before CLI flags *(default: none)*. |
+| `--device` | `<path>` — V4L2 camera device, repeatable up to 4 total sources into `Config::sources` *(default: `/dev/video20`)*. |
+| `--net-src` | `<url>` — HTTP MJPEG pull source (`http://host:port/path`), repeatable up to 4 total sources *(default: none; see DNS note below)*. |
+| `--src-rot` | `0\|90\|180\|270` — Override automatic source orientation detection via RGA *(default: `auto`)*. |
+| `--model` | `<path>` — RKNN detector model path *(default: `./misc/yolov5s_relu_int8_mmse_v5.rknn`)*. |
+| `--reid-model` | `<path>` — Re-ID RKNN model path for cross-camera global IDs; `none` or `off` disables *(default: `./misc/osnet_x1_0_imagenet.rknn`; see RGA crop note below)*. |
+| `--reid-thr` | `0.0..1.0` — Re-ID cosine similarity threshold *(default: `0.62`)*. |
+| `--label-lang` | `en\|ru` — Callout label language: `Person #N` vs. `Человек #N` *(default: `en`)*. |
+| `--label-scale` | `1..4` — Callout text size: `11 px` font (~`8 px` capitals) per step on output tile; `place_tile` scale compensated; `3..4` magnify the 22 px atlas *(default: `1`)*. |
+| `--log-level` | `debug\|info\|warn\|error\|off` — Diagnostic log threshold: `debug`/`info` on `stdout`, `warn`/`error` on `stderr` *(default: `info`)*. |
+| `--conf` | `0.0..1.0` — Detection confidence threshold *(default: `0.25`)*. |
+| `--iou` | `0.0..1.0` — NMS IoU threshold *(default: `0.45`)*. |
+| `--core` | `0\|1\|2\|3\|4\|7` — NPU core mask (`0` auto, `1/2/4` = core 0/1/2, `3` = 0+1, `7` = 0+1+2; ignored when `--pool > 1`) *(default: `0`)*. |
+| `--pool` | `0\|1\|3` — NPU context pool (`0\|1` = single context, `3` = 3 parallel engines across cores 0–2) *(default: `0`)*. |
+| `--frames` | `>= 1` — Stop cleanly after `N` frames; `0` runs until `SIGINT`/`SIGTERM` *(default: `0`)*. |
+| `--net` | Enable network preview server (raw RGB24 NUT unless `--net-h264`) *(default: `false`)*. |
+| `--net-h264` | Encode preview with `h264_rkmpp` inside MPEG-TS *(default: `false`)*. |
+| `--net-port` | `1..65535` — Preview TCP listen port or UDP destination port *(default: `1234`)*. |
+| `--net-host` | `<ip/host>` — Optional UDP push destination (H.264 push); unset = TCP pull server *(default: `""`)*. |
+| `--net-fps` | `0..120` — Preview stream FPS; `0` = VFR follow-source timestamps *(default: `25`)*. |
+| `--net-gop` | `0..300` — H.264 GOP size in frames; `0` = auto 1 s at configured/nominal FPS *(default: `0`)*. |
+| `--net-bitrate` | `1000..100000` — H.264 encoder CBR bitrate in kbps (`1500–3000` is plenty for `640×480`) *(default: `12000`)*. |
+| `--cpu-draw` | Force CPU box/trail/callout drawing (`A/B` baseline vs. Mali GPU drawer) *(default: `false`)*. |
+| `--cal` | `1..10000` — Save up to `N` model-input frames (`cal_%04d.ppm`) for INT8 calibration *(default: `0`, off)*. |
+| `--cal-interval` | `1..10000` — Calibration sampling stride (saves frames `0, K, 2K, ...`) *(default: `15`)*. |
+| `--cal-dir` | `<path>` — Redirect directory for `--cal` series and `--dump-cal` (requires `--cal` or `--dump-cal`) *(default: `dataset/` & `build/`)*. |
+| `--dump-cal` | Dump first eligible model-input frame to `build/cal.ppm` (or `<cal-dir>/cal.ppm`) *(default: `false`)*. |
+| `--box-log` | `<path>` — Write per-frame raw vs. smoothed bounding-box CSV (`A/B` / Layer A) *(default: `""`, off)*. |
+
+- **`--net-src` DNS resolution:** A numeric IPv4 host needs no DNS; a hostname is resolved on every (re)connect without blocking the prober for long — lookup is bounded to `5 s` (plus up to `5 s` for TCP connect) and abandoned within `100 ms` on stop. A lookup glibc cannot cancel is waited for at exit, at most the resolver's own timeout (`/etc/resolv.conf` `timeout` × `attempts` per nameserver).
+- **`--reid-model` RGA crop limit:** Re-ID crops the detector input in one RGA pass; a detector input over `8×` the Re-ID input on a side (e.g. `1280` into OSNet `128×256`) logs one error and leaves Re-ID off while recognition continues.
+
+</details>
 
 ## Documentation & Licenses
 
-- **Project Docs:**
-  - [`CONTRIBUTING.md`](CONTRIBUTING.md) — coding rules, error/exception policy, comment style, and PR gate checklist.
-  - [`CLAUDE.md`](CLAUDE.md) — on-board developer workflow, USB replug commands, and completed `fix/audit-p0` (0–7) + `fix/audit-p1` (1–6) stages.
-  - [`docs/roadmap.md`](docs/roadmap.md) — historical milestone tracker (`M1–M3.10`, `M5.1–M5.4`, `M6`), refactoring stages `0–7`, and `fix/audit-p1` stages `1–6`.
-  - [`docs/state.md`](docs/state.md) — INT8 quantization lineage (`v1–v5`), A/B validation logs, engineering notes, and `fix/audit-p0` / `fix/audit-p1` summaries.
-  - [`docs/viewer.md`](docs/viewer.md) — legacy Windows laptop `mpv` viewer guide and latency notes.
-  - [`reference/README.md`](reference/README.md) & [`tests/data/README`](tests/data/README) — Layer A & Layer B reference detection contracts.
-  - [`misc/README.md`](misc/README.md) — local untracked YOLOv5s + OSNet Re-ID models and artifact inventory.
-- **Licensing:**
-  - `light_ai` source code is licensed under the **[MIT License](LICENSE)**.
-  - Third-party dependencies (`inih` BSD-3-Clause, DejaVu Sans glyph data (Bitstream Vera license), `rockchip_mpp`/`librga` Apache-2.0, `FFmpeg` LGPL-2.1+/GPL note, `librknnrt.so` proprietary Rockchip runtime, and untracked `YOLOv5` / `OSNet` `.rknn` models) are detailed in **[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)**.
+| Document | Scope |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | 104-header / 62-TU module map, `core/` pure-logic inventory, error model & exit codes, and verified RK3588 hardware/SDK constraints. |
+| [`docs/development.md`](docs/development.md) | Hardware/kernel/SDK prerequisites, `ffmpeg-rockchip` 8.1 build, CMake flags, `clang-tidy` / `clangd` operations, 71 test suites, and `scripts/` + `tools/` index. |
+| [`../modules/ts_fanout/README.md`](../modules/ts_fanout/README.md) | Standalone A55 MPEG-TS multi-viewer TCP fan-out relay (`:1234 → :1236`). |
+| [`docs/viewer.md`](docs/viewer.md) | Legacy Windows laptop `mpv` viewer guide and latency notes. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Coding rules (`gate` vs `review`), error/exception policy, comment style, and PR verification gate. |
+| [`CLAUDE.md`](CLAUDE.md) | On-board developer workflow, USB replug commands, and audit stage notes. |
+| [`docs/roadmap.md`](docs/roadmap.md) & [`docs/state.md`](docs/state.md) | Milestone tracker (`M1–M3.10`, `M5`, `M6`), INT8 quantization lineage (`v1–v5`), and A/B validation logs. |
+| [`reference/README.md`](reference/README.md), [`tests/data/README`](tests/data/README), [`misc/README.md`](misc/README.md) | Layer A / Layer B reference detection contracts and local model inventory. |
+
+**Licensing:** `light_ai` source code is licensed under the **[MIT License](LICENSE)**. Third-party dependencies (`inih` BSD-3-Clause, DejaVu Sans glyph data (Bitstream Vera license), `rockchip_mpp`/`librga` Apache-2.0, `FFmpeg` LGPL-2.1+/GPL note, `librknnrt.so` proprietary Rockchip runtime, and untracked `YOLOv5` / `OSNet` `.rknn` models) are detailed in **[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)**.

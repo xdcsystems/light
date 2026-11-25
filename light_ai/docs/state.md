@@ -3,7 +3,7 @@
 The accumulating engineering record that used to live at the end of `README.md`:
 INT8 build history, INT8 vs. FP32 validation, night-session findings (incl. the dataset map),
 and refactoring verification logs. Section links map to
-[Platform constraints](../README.md#requirements--platform-constraints),
+[Platform constraints](architecture.md#verified-hardware--sdk-constraints),
 [INT8 build history](#int8-build-history-rknn-toolkit2-250-colab), and [roadmap.md](roadmap.md).
 
 ## INT8 build history (rknn-toolkit2 2.5.0, Colab)
@@ -431,7 +431,7 @@ to scene coordinates and matches the box-log "raw" lines of the SAME run.
 Calibration chain (each link verified independently):
 - feed recipe: raw uint8 + img[None], NO data_format kwarg (the
   save_board_csv.py path); RKNNLite silently returns None on a 3-dim
-  input or a rejected kwarg — see [Platform constraints](../README.md#requirements--platform-constraints),
+  input or a rejected kwarg — see [Platform constraints](architecture.md#verified-hardware--sdk-constraints),
   RKNNLite note.
 - harness anchor: the CAL variant (v2 + gamma 2.0 on a dataset_mix
   frame) reproduces misc/board_preds.csv to the 4th decimal

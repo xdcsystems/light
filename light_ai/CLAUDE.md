@@ -92,7 +92,7 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   rules; `cognitive` before #93).
   Per-file logs: `build/tidy/{src,tests}/<path>.log` and `build/tidy/rules/{src,tests}/<path>.log`;
   self-test and lint: `build/tidy/selftest/`.
-  Result cache: `build/tidy-cache` (`TIDY_NO_CACHE=1` disables it). See [README.md](README.md#build--static-analysis).
+  Result cache: `build/tidy-cache` (`TIDY_NO_CACHE=1` disables it). See [docs/development.md](docs/development.md#build--static-analysis).
 - Quick tidy on changed files (#93): the main session may run it itself on 1-3 changed TUs and print only
   the findings, never the full output:
       TIDY_FILES="src/a.cpp tests/b.cpp" bash scripts/tidy_run.sh > build/tidy-files.log 2>&1; echo rc=$?

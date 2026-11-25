@@ -1,7 +1,7 @@
 # Roadmap (light_ai)
 
 The milestone plan and the closed-milestone history that used to live
-under `README.md`. References map to [Platform constraints](../README.md#requirements--platform-constraints),
+under `README.md`. References map to [Platform constraints](architecture.md#verified-hardware--sdk-constraints),
 [Run & CLI Reference](../README.md#run--cli-reference), and [Windows Viewer Notes](viewer.md).
 
 ## Roadmap
