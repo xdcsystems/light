@@ -55,8 +55,8 @@ class Tracker
                                // period with margin; a tent without a
                                // single confirmation never outlives 1 s
         kDtMaxMs = 500,     // dt clamp, ms
-        kQAccel = 2000,     // process noise, px/s^2 (tuning knob)
-        kRMeas = 25,        // measurement noise, px^2 (tuning knob)
+        kQAccel = 4000,     // process noise, px/s^2 (tuning knob)
+        kRMeas = 10,        // measurement noise, px^2 (tuning knob)
         kVClampPxs = 500,   // |v| clamp, px/s: a single wild
                             // measurement must not give the filter
                             // an unphysical speed

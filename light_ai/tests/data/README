@@ -31,12 +31,20 @@ ref_evening_golden.txt -- the output of test_reference_chain.cpp: the clip segme
     cmake -S tests -B build/tests && cmake --build build/tests --target light_ai_tests
     cd build/tests && LIGHT_AI_WRITE_GOLDEN=1 ./light_ai_tests
     Rewrite it only for a deliberate behavior change of BoxSmoother, Tracker or the
-    box mapper -- never in a refactoring (re-baselined in Stage 4 for `BoxSmoother` skipping `cls == 0`, `Tracker` `kMaxMiss=6` / `P2-9`, and `YoloDecoder` `stable_sort` NMS; re-baselined on `feat/callout-2x-box-stabilize` for `BoxSmoother` interval-envelope locking, confirmed coasting, and weak-flash hysteresis; re-baselined on `fix/audit-p2-pr3` (#91 item 4) for the `BoxFilter` display filter in `BoxSmoother`: only the non-person `s` and `b` lines changed, every `t` line, person box and trail dot stayed byte-identical).
+    box mapper -- never in a refactoring (re-baselined in Stage 4 for `BoxSmoother` skipping `cls == 0`, `Tracker` `kMaxMiss=6` / `P2-9`, and `YoloDecoder` `stable_sort` NMS; re-baselined on `feat/callout-2x-box-stabilize` for `BoxSmoother` interval-envelope locking, confirmed coasting, and weak-flash hysteresis; re-baselined on `fix/audit-p2-pr3` (#91 item 4) for the `BoxFilter` display filter in `BoxSmoother`: only the non-person `s` and `b` lines changed, every `t` line, person box and trail dot stayed byte-identical; re-baselined on
+    `feat/tracker-optuna-params` (2026-11-27) for lower person-box lag: `Tracker` `kQAccel` 2000 -> 4000 and `kRMeas` 25 -> 10
+    (also the initial position variance of a new track), from `tracker_optuna_report.json`. Every `s` line, every track id and
+    state and every track `bw` / `bh` are unchanged; track positions (up to 32.04 px), velocities (up to 205.8 px/s) and trail
+    point counts changed, and with them the `b` lines (trail dots 4177 -> 4128, other boxes 709 as before) and the `n_boxes`
+    of the `f` lines. The same report's `box_filter::kTrackBoxParams` (2.245 Hz, 0.35, 4.259 Hz, 0.004, 1.185 px) are not
+    covered here (post == trajs): test_box_filter.cpp checks them, tools/person_jitter.cpp measures them. On
+    reference/ref_evening.csv, both together: lag_p90 18.349 -> 11.304 px, median box jitter 5.590 -> 5.712 px, standing
+    person mean 1.12 -> 1.20 px. The fit used this one clip; no second clip has validated it).
     Tolerances (test_reference_chain.cpp): 1e-2 px for positions / sizes, 1e-1 px/s
     for velocities, 1e-4 for confidences; ids, states, counts, classes, colors, alpha
     exact. Measured (2026-11-15): the same code built with -ffp-contract=off (no fused
     multiply-add, as on an x86 host; GCC 13.3 x86_64 gives the same) deviates by at
     most 1e-4 px and 4e-4 px/s. Each of these local edits fails the test: the Tracker
-    kQAccel 2000 -> 2100 (11.4 px, 6.6 px/s), round 2 of Tracker::associate switched
+    kQAccel 4000 -> 4200 (9.9 px, 5.6 px/s; measured 2026-11-27), round 2 of Tracker::associate switched
     off (the "weak" scenario: the track dies, a new id spawns), greedy_iou_match
     worst-first (the "crossing" segment, 30.5 px, 62.7 px/s).

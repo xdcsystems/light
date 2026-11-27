@@ -69,8 +69,10 @@ namespace box_filter
     constexpr BoxFilterParams kRawBoxParams { 0.5f, 0.01f, 1.0f, 0.02f, 2.0f, 0.5f };
     // OverlaySink, person boxes from the Kalman posterior, already smooth in
     // position: a higher still cutoff and speed gain than the raw boxes keep the box
-    // on a walking person (the dead zone still holds a standing one still).
-    constexpr BoxFilterParams kTrackBoxParams { 2.5f, 0.15f, 4.0f, 0.008f, 1.5f, 0.5f };
+    // on a walking person (the dead zone still holds a standing one still). Values:
+    // the Optuna fit on reference/ref_evening.csv, together with Tracker's kQAccel /
+    // kRMeas (tests/data/README); one clip only, not validated on a second one.
+    constexpr BoxFilterParams kTrackBoxParams { 2.245f, 0.35f, 4.259f, 0.004f, 1.185f, 0.5f };
 
     // One axis of the One-Euro filter.
     struct Axis

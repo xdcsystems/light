@@ -16,6 +16,15 @@
 // A person pair counts as still when the posterior speed of the later frame is
 // below kStillPxS.
 //
+// Two more figures for tuning the Kalman and display filters, over the CONF
+// tracks:
+//   - the median (nearest rank) of the jitter above, and of the frame-to-frame
+//     step of the displayed centre;
+//   - the lag p90 (nearest rank; also the median): the distance from the
+//     displayed centre to the centre of the raw person box of the same frame
+//     with the highest IoU (> kLagMinIou) with the posterior box; a track with
+//     no such box in the frame (coasting) gives no sample.
+//
 // Timestamps: frame * kStepUs, the clip's frame period (as Layer B). Host only,
 // no SDK, not in the gate. Disposable probe: tools/ is exempt from the statics
 // rule and owns its std::cout.
@@ -45,6 +54,7 @@ namespace
 {
     constexpr int64_t kStepUs = 47037;  // the clip's frame period: 1063 frames in 50 s (reference/README.md)
     constexpr float kStillPxS = 20.0f;  // a still person: posterior speed below 20 px/s (~0.9 px per frame)
+    constexpr float kLagMinIou = 0.3f;  // a raw box below this IoU with the posterior is not the track's
 
     struct Frame
     {
@@ -64,15 +74,17 @@ namespace
                 s += v;
             return d.empty() ? 0.0f : static_cast<float>( s / static_cast<double>( d.size() ) );
         }
-        float p90() const  // nearest rank
+        float quantile( double q ) const  // nearest rank
         {
             if ( d.empty() )
                 return 0.0f;
             std::vector<float> v = d;
             std::sort( v.begin(), v.end() );
-            const auto rank = static_cast<std::size_t>( std::ceil( 0.9 * static_cast<double>( v.size() ) ) );
+            const auto rank = static_cast<std::size_t>( std::ceil( q * static_cast<double>( v.size() ) ) );
             return v[std::max<std::size_t>( rank, 1 ) - 1];
         }
+        float median() const { return quantile( 0.5 ); }
+        float p90() const { return quantile( 0.9 ); }
         int frozen() const  // pairs with no visible change at all
         {
             return static_cast<int>( std::count_if( d.begin(), d.end(), []( float v ) { return v < 1e-3f; } ) );
@@ -208,7 +220,42 @@ namespace
         Stats post_all;
         Stats pre_still;
         Stats post_still;
+        Stats centre_step;
+        Stats lag;
     };
+
+    // IoU of the track box (centre + size) with a top-left detection box.
+    float iou( const TrackState& a, const Detection& d )
+    {
+        const float ix = std::max( 0.0f, std::min( a.cx + 0.5f * a.bw, d.x + d.w ) - std::max( a.cx - 0.5f * a.bw, d.x ) );
+        const float iy = std::max( 0.0f, std::min( a.cy + 0.5f * a.bh, d.y + d.h ) - std::max( a.cy - 0.5f * a.bh, d.y ) );
+        const float inter = ix * iy;
+        const float uni = a.bw * a.bh + d.w * d.h - inter;
+        return uni > 0.0f ? inter / uni : 0.0f;
+    }
+
+    // One lag sample per CONF track of this frame that has a raw person box.
+    void add_lag( const TrajList& trajs, const TrajList& disp, const std::vector<Detection>& raw, Stats& lag )
+    {
+        for ( int k = 0; k < disp.n; ++k )
+        {
+            const TrackState& pre = trajs.d[k];
+            if ( pre.state != TRACK_CONF )
+                continue;
+            const Detection* hit = nullptr;
+            float best = kLagMinIou;
+            for ( const Detection& d : raw )
+            {
+                const float o = d.cls == 0 ? iou( pre, d ) : 0.0f;
+                if ( o <= best )
+                    continue;
+                best = o;
+                hit = &d;
+            }
+            if ( hit != nullptr )
+                lag.add( std::hypot( disp.d[k].cx - hit->x - 0.5f * hit->w, disp.d[k].cy - hit->y - 0.5f * hit->h ) );
+        }
+    }
 
     // The CONF tracks of this frame that were CONF in the previous one: one pair each.
     void add_pairs( const TrajList& trajs, const TrajList& disp, const TrajList& prev_trajs, const TrajList& prev_disp,
@@ -228,6 +275,7 @@ namespace
             const float d_post = track_delta( *a_post, b_post );
             st.pre_all.add( d_pre );
             st.post_all.add( d_post );
+            st.centre_step.add( std::hypot( disp.d[k].cx - a_post->cx, disp.d[k].cy - a_post->cy ) );
             if ( std::hypot( b_pre.vx, b_pre.vy ) >= kStillPxS )
                 continue;
             st.pre_still.add( d_pre );
@@ -255,6 +303,7 @@ namespace
             tracker.update( raw, ts, trajs );
             disp = trajs;
             filt.apply( disp, ts, box_filter::kTrackBoxParams );
+            add_lag( trajs, disp, f.raw, st.lag );
             if ( f.frame == prev_frame + 1 )
                 add_pairs( trajs, disp, prev_trajs, prev_disp, st );
             prev_trajs = trajs;
@@ -266,6 +315,10 @@ namespace
         std::printf( "  still: posterior speed < %.0f px/s\n", static_cast<double>( kStillPxS ) );
         print( "person CONF still, posterior (pre)", st.pre_still );
         print( "person CONF still, displayed (post)", st.post_still );
+        std::printf( "  jitter median, displayed: box (max over x, y, w, h) %.3f px, centre %.3f px\n",
+                     static_cast<double>( st.post_all.median() ), static_cast<double>( st.centre_step.median() ) );
+        std::printf( "  lag, displayed centre to raw centre: median %.3f px, lag_p90 %.3f px (samples %zu)\n",
+                     static_cast<double>( st.lag.median() ), static_cast<double>( st.lag.p90() ), st.lag.d.size() );
     }
 }  // namespace
 
