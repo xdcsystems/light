@@ -60,6 +60,50 @@ namespace
         CHECK_NEAR( t, settled.cy, truth.cy, box_filter::dead_zone( 1, tc, p ) + 1.0f );
     }
 
+    // Jitter wider than the dead zone holds: the box may creep, but never by max_step in one frame, and
+    // it stays within one dead zone (+ 1 px) of the true box.
+    void bounded_under_jitter( TestRun& t, const BoxFilterParams& p, float w, float h, float amp, float max_step )
+    {
+        Noise n;
+        BoxFilter f;
+        const BoxCWH truth { 400.0f, 300.0f, w, h };
+        f.reset( truth );
+        const float tc[BoxFilter::kAxes] = { truth.cx, truth.cy, truth.w, truth.h };
+        float worst_step = 0.0f;
+        float worst_dx = 0.0f;
+        float worst_dy = 0.0f;
+        for ( int k = 0; k < 660; ++k )
+        {
+            const BoxCWH before = f.out();
+            f.step( BoxCWH { truth.cx + n.next( amp ), truth.cy + n.next( amp ), truth.w + n.next( amp ), truth.h + n.next( amp ) },
+                    kDt, p );
+            if ( k < 60 )  // warm-up
+                continue;
+            const BoxCWH o = f.out();
+            worst_step = std::fmax( worst_step, std::fmax( std::fabs( o.cx - before.cx ), std::fabs( o.cy - before.cy ) ) );
+            worst_step = std::fmax( worst_step, std::fmax( std::fabs( o.w - before.w ), std::fabs( o.h - before.h ) ) );
+            worst_dx = std::fmax( worst_dx, std::fabs( o.cx - truth.cx ) );
+            worst_dy = std::fmax( worst_dy, std::fabs( o.cy - truth.cy ) );
+        }
+        CHECK( t, worst_step < max_step );
+        CHECK( t, worst_dx <= box_filter::dead_zone( 0, tc, p ) + 1.0f );
+        CHECK( t, worst_dy <= box_filter::dead_zone( 1, tc, p ) + 1.0f );
+    }
+
+    // A person box walking at spd px/frame: after warm-up the output trails the input by less than max_lag.
+    void walk_lag( TestRun& t, const BoxFilterParams& p, float spd, float max_lag )
+    {
+        BoxFilter f;
+        f.reset( BoxCWH { 400.0f, 300.0f, 330.0f, 600.0f } );
+        float x_true = 400.0f;
+        for ( int k = 1; k <= 80; ++k )
+        {
+            x_true = 400.0f + spd * static_cast<float>( k );
+            f.step( BoxCWH { x_true, 300.0f, 330.0f, 600.0f }, kDt, p );
+        }
+        CHECK( t, x_true - f.out().cx < max_lag );
+    }
+
     // A box steps 60 px to the right: converges, never overshoots, never steps back.
     void step_response( TestRun& t, const BoxFilterParams& p )
     {
@@ -259,8 +303,11 @@ void test_box_filter( TestRun& t )
     still_under_jitter( t, box_filter::kRawBoxParams, 200.0f, 300.0f, 1.0f );    // a chair: dz 4 / 6 px
     still_under_jitter( t, box_filter::kRawBoxParams, 200.0f, 300.0f, 3.0f );
     still_under_jitter( t, box_filter::kRawBoxParams, 40.0f, 60.0f, 1.5f );      // a bottle: dz 2 px (the floor)
-    still_under_jitter( t, box_filter::kTrackBoxParams, 330.0f, 600.0f, 1.0f );  // a person: dz 2.64 / 4.8 px
-    still_under_jitter( t, box_filter::kTrackBoxParams, 330.0f, 600.0f, 2.0f );
+    still_under_jitter( t, box_filter::kTrackBoxParams, 330.0f, 600.0f, 1.0f );  // a person: dz 1.32 / 2.4 px
+    still_under_jitter( t, box_filter::kTrackBoxParams, 330.0f, 600.0f, 1.25f );
+    bounded_under_jitter( t, box_filter::kTrackBoxParams, 330.0f, 600.0f, 2.0f, 1.0f );  // wider than dz 1.32 px
+    walk_lag( t, box_filter::kTrackBoxParams, 2.0f, 2.5f );  // slow, brisk walk: ~1.7 px (old set 3.3-3.5)
+    walk_lag( t, box_filter::kTrackBoxParams, 10.0f, 2.5f );
     step_response( t, box_filter::kRawBoxParams );
     step_response( t, box_filter::kTrackBoxParams );
     const float speeds[5] = { 0.2f, 0.5f, 1.0f, 2.0f, 5.0f };

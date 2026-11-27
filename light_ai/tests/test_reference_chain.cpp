@@ -23,7 +23,7 @@
 // the x86 baseline does not, so the same code differs in the last bits between
 // the board and an x86 host. The tolerances sit well above the measured
 // spread (tests/data/README) and well below a real change: the kQAccel
-// 2000 -> 2100 nudge, round 2 switched off and a worst-first greedy order each
+// 4000 -> 4200 nudge, round 2 switched off and a worst-first greedy order each
 // fail this test.
 //
 // Timestamps: fixed, kStepUs per frame block (the synthetic segments: frame x kStepUs); where the fixture's frame numbers
