@@ -31,9 +31,14 @@ void AvPacketOps::move( AVPacket*& dst, AVPacket*& src )
     av_packet_move_ref( dst, src );
 }
 
-bool AvPacketOps::is_key( AVPacket* const& p ) const
+bool is_key_av_packet( const AVPacket* p ) noexcept
 {
     if ( p == nullptr || p->data == nullptr || p->size <= 0 )
         return false;
     return annexb::is_idr( p->data, static_cast<size_t>( p->size ) );
+}
+
+bool AvPacketOps::is_key( AVPacket* const& p ) const
+{
+    return is_key_av_packet( p );
 }

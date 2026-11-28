@@ -13,6 +13,10 @@
 
 class Log;
 
+// The request NetMjpegSource sends: GET path with the Host field of host:port. A bare IPv6 literal goes into Host in
+// brackets (RFC 3986 IP-literal); an already bracketed one and any other host stay as written.
+std::string mjpeg_get_request( const std::string& host, int port, const std::string& path );
+
 // HTTP MJPEG pull source (any multipart/x-mixed-replace server, e.g. IP Webcam).
 // Frames stay JPEG end-to-end: the MPP decoder consumes them like the USB
 // camera's MJPEG buffers -- no transcode. Only cost vs V4L2 is one memcpy

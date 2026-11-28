@@ -4,7 +4,7 @@ Deep technical reference for [`light_ai`](../README.md): module/header layout, e
 
 ## Modules & Headers
 
-The codebase contains **104 headers** under [`include/`](../include/) and **62 translation units** under [`src/`](../src/) + [`externals/inih/ini.c`](../externals/inih/ini.c).
+The codebase contains **106 headers** under [`include/`](../include/) and **62 translation units** under [`src/`](../src/) + [`externals/inih/ini.c`](../externals/inih/ini.c).
 
 ### Pipeline & Hardware Modules (`include/<folder>/`, `src/<folder>/`)
 
@@ -53,7 +53,7 @@ core  <-  platform, config, media  <-  sys  <-  source, npu, net  <-  render  <-
 
 - **`include/config/`, `src/config/`:** `config.hpp` (`Config`, `InferConfig`, `CalConfig`, `StreamConfig`, `LabelLang`), `option_registry.hpp` (28-entry `std::array` registry), `cli.hpp`, `config_file.hpp` (`inih`-backed INI loader).
 - **`include/source/`, `src/source/`:** `source_types.hpp` (`SourceKind`, `SourceEndpoint` with `rot_deg`/`rot_auto`, `SourceGeom`), `source_channel.hpp` (`NeverAttached` / `Detached` / `Live`, `quarter_turn`, `needs_aux`), `source_set.hpp` (round-robin + `::poll(2)` `wait_any()` + `2 s` stall detection), `source_prober.hpp` (`2 s` background re-attach), `usb_node_locator.hpp` (USB + `device_caps` capture filtering), `mjpeg_slot_pool.hpp`.
-- **`include/net/`, `src/net/`:** `network_init.hpp`, `encoder_frame_pool.hpp` (4-slot NV12 DRM ring), `frame_composer.hpp` (RGA tile/band compositor), `h264_encoder.hpp` (`h264_rkmpp` wrapper), `av_packet.hpp`, `av_packet_queue.hpp`, `mux_session.hpp`.
+- **`include/net/`, `src/net/`:** `network_init.hpp` (one instance, held by `OverlaySink` for `NetEncoder` and `NetPreview`), `encoder_frame_pool.hpp` (4-slot NV12 DRM ring), `frame_composer.hpp` (RGA tile/band compositor), `h264_encoder.hpp` (`h264_rkmpp` wrapper), `av_packet.hpp`, `av_packet_queue.hpp`, `mux_session.hpp`.
 
 ## Error Model & Exit Codes
 

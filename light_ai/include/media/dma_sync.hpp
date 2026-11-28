@@ -88,8 +88,8 @@ static_assert( DMA_BUF_SYNC_RW == ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_WRITE ),
 // non-coherent DMA readers (RGA crop, NPU, next-frame RGA rewrite)
 // is to clean the lines ourselves.
 // AArch64 permits userspace DC CVAC (clean by VA to the point of coherency).
-// 64 is the AArch64 cache-line size (CLIDR_EL1 = 64 on every RK3588 core);
-// no named constant: project magic-number policy.
+// The 64-byte step is the smallest data cache line (CTR_EL0.DminLine) of the RK3588 cores, Cortex-A76 and
+// Cortex-A55; no named constant: project magic-number policy.
 
 inline void cache_clean( const void* p, size_t len )
 {

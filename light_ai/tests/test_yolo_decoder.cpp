@@ -335,6 +335,9 @@ namespace
         dets.push( Detection { 1, 2, 3, 4, 5, 0.5f } );
         dec.decode( heads, 0, landscape(), dets );
         CHECK( t, dets.n == 0 && err.str().empty() );
+        dets.push( Detection { 1, 2, 3, 4, 5, 0.5f } );
+        dec.decode( heads, -1, landscape(), dets );
+        CHECK( t, dets.n == 0 && err.str().empty() );
 
         constexpr float inf = std::numeric_limits<float>::infinity();
         constexpr float nan = std::numeric_limits<float>::quiet_NaN();

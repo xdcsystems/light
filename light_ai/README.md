@@ -76,7 +76,7 @@ One frame's path: V4L2 or HTTP MJPEG → `MppDecoder` (dma-buf YUV) → `RgaResi
 - **Canonical stream canvases (`NetEncoder`):** `1` source → `640×480` (letterbox band cropped 1:1 from NPU tensor); `2` sources → `1280×480` (`2×1`); `3–4` sources → `1280×960` (`2×2`, unused 4th cell stays gray). Multi-view sessions start on a gray canvas and hold frame `0` (IDR) until all configured tiles refresh or `200 ms` elapses (`SessionWarmup`).
 - **Thread & CPU affinity (`Pipeline`):** `AsyncLogSink` runs on Cortex-A55 (`cpu 0–3`), `SourceProber` runs on a dedicated background thread spawned before `Pipeline::run()` pins RT threads to Cortex-A76 (`cpu 4–7`, `cpu_affinity.hpp`): `pipeline main` (`cpu 4`, `SCHED_FIFO 80`), NPU pool workers (`--pool 3`, `cpu 5–7`, `SCHED_FIFO 70`), and `StreamOutput` (`A76`, `SCHED_FIFO 60`), with `mlockall`/`mallopt` and automatic `SCHED_OTHER` fallback when unprivileged. With `--reid-model`, `ReidWorker` (`BasicReidQueue`) runs an additional `SCHED_OTHER` async RKNN thread for person crops.
 
-For the full module & header map (104 headers / 62 translation units), error model & exit codes, and verified RK3588 hardware/SDK constraints, see [`docs/architecture.md`](docs/architecture.md).
+For the full module & header map (106 headers / 62 translation units), error model & exit codes, and verified RK3588 hardware/SDK constraints, see [`docs/architecture.md`](docs/architecture.md).
 
 ## Measured Performance
 

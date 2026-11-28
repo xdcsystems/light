@@ -57,6 +57,9 @@ namespace
         std::atomic<int> runs { 0 };
         std::atomic<int> run_rc { 0 };
         int setup_io_rc = 0;           // read on the constructing thread only
+        int setup_io_shared_rc = 0;    // ditto
+        int next_id = 0;               // ditto: FakeEngine instances, in construction order
+        std::vector<int> destroyed;    // ditto: their ids, in destruction order
         std::vector<unsigned> masks;   // ditto
         int next_fd = 100;             // ditto
 
@@ -74,7 +77,10 @@ namespace
     class FakeEngine
     {
     public:
-        explicit FakeEngine( FakeNpu* npu ) : npu_( npu ) {}
+        explicit FakeEngine( FakeNpu* npu ) : npu_( npu ), id_( npu->next_id++ ) {}
+        FakeEngine( const FakeEngine& ) = default;  // never runs: the pool reserves before it emplaces
+        FakeEngine& operator=( const FakeEngine& ) = delete;
+        ~FakeEngine() { npu_->destroyed.push_back( id_ ); }
 
         Status setup_io( bool = false, int input_slots = 1 )
         {
@@ -88,7 +94,7 @@ namespace
         }
         Status setup_io_shared( const TensorSet& shared_inputs, bool = false )
         {
-            if ( npu_->setup_io_rc != 0 )
+            if ( npu_->setup_io_shared_rc != 0 )
                 return make_status( Errc::Failed, "fake setup_io_shared failure" );
             slots_.clear();
             for ( int s = 0; s < shared_inputs.n; ++s )
@@ -126,6 +132,7 @@ namespace
 
     private:
         FakeNpu* npu_;
+        int id_;
         std::vector<TensorRef> slots_;
         int bound_slot_ = 0;
     };
@@ -299,6 +306,37 @@ namespace
                 threw = true;
             }
             CHECK( t, threw );
+        }
+    }
+
+    // The importers die before the owner of the shared tensors: after a normal run and after a constructor that throws.
+    void engines_die_in_reverse( TestRun& t )
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        const std::vector<int> reverse { 2, 1, 0 };
+        {
+            FakeNpu npu;
+            {
+                const Pool p( pool_cfg( 3 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
+                CHECK( t, npu.destroyed.empty() );
+            }
+            CHECK( t, npu.destroyed == reverse );
+        }
+        {
+            FakeNpu npu;
+            npu.setup_io_shared_rc = -1;
+            bool threw = false;
+            try
+            {
+                const Pool p( pool_cfg( 3 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
+            }
+            catch ( const std::runtime_error& )
+            {
+                threw = true;
+            }
+            CHECK( t, threw && npu.destroyed == reverse );
         }
     }
 
@@ -525,6 +563,7 @@ namespace
 void test_inference_pool( TestRun& t )
 {
     modes_and_masks( t );
+    engines_die_in_reverse( t );
     in_order_results( t );
     per_source_fifo( t );
     lb_affinity_and_rotation( t );

@@ -346,7 +346,11 @@ run_pass() {
   export P_TAG
   export TIDY_BIN_VER_FILE="$TIDY_PP_CACHE_DIR/tidy_$name.ver"
   "$P_TIDY" --version > "$TIDY_BIN_VER_FILE" || TIDY_BIN_VER_FILE=""
-  echo "==== tidy pass: $name ($("$P_TIDY" --version | awk '/LLVM version/ {print "LLVM " $3}')${P_ARGS:+, $P_ARGS}) ===="
+  local banner=""
+  if [ -n "$TIDY_BIN_VER_FILE" ]; then   # guarded: awk with an empty file name would read stdin and hang
+    banner=$(awk '/LLVM version/ {print "LLVM " $3}' "$TIDY_BIN_VER_FILE")
+  fi
+  echo "==== tidy pass: $name (${banner}${P_ARGS:+, $P_ARGS}) ===="
   files=$(order_tus "$P_TIMES")
   t0=$(date +%s)
   printf '%s\n' $files | xargs -r -P "$JOBS" -n 1 bash -c 'tidy_one "$1"' _

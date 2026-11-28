@@ -27,6 +27,7 @@ constexpr int kSendBufSize = 65536;
 constexpr int kNotsentLowat = 16384;
 constexpr int kRetryIntervalMs = 250;
 constexpr int kAcceptBackoffMs = 100;  // listener parked after fd / buffer exhaustion in accept4()
+constexpr int kMaxDroppedInRow = 16;   // failed pending connections in a row before accept4() yields to epoll
 constexpr int64_t kConnectTimeoutMs = 3000;  // upstream connect() still in EINPROGRESS: give up, retry
 constexpr int kMaxEpollEvents = 32;
 constexpr int kMaxReadIters = 8;
@@ -396,6 +397,7 @@ struct Relay {
             if (!quiet) {
                 std::fprintf(stderr, "[ts_fanout] upstream closed (%s)\n", reason);
             }
+            try_rearm_listen(now_ms());  // a descriptor is free again
         }
         up_state = UpstreamState::Disconnected;
         idle_deadline_ms = 0;
@@ -466,7 +468,27 @@ struct Relay {
         return nullptr;
     }
 
+    // accept4() errors that belong to the one pending connection: ECONNABORTED and the network errors that Linux
+    // passes through from the new socket (accept(2), "Error handling").
+    static bool is_dropped_connection_error(int err) noexcept {
+        switch (err) {
+        case ECONNABORTED:
+        case ENETDOWN:
+        case EPROTO:
+        case ENOPROTOOPT:
+        case EHOSTDOWN:
+        case ENONET:
+        case EHOSTUNREACH:
+        case EOPNOTSUPP:
+        case ENETUNREACH:
+            return true;
+        default:
+            return false;
+        }
+    }
+
     void handle_accept() noexcept {
+        int dropped_in_row = 0;
         while (listen_armed) {
             sockaddr_in peer{};
             socklen_t peer_len = sizeof(peer);
@@ -474,8 +496,13 @@ struct Relay {
                                       SOCK_NONBLOCK | SOCK_CLOEXEC);
             if (cfd < 0) {
                 const int err = errno;
-                if (err == EINTR || err == ECONNABORTED || err == EPROTO) {
-                    continue;  // this connection is gone, the queue may hold more (accept(2))
+                if (err == EINTR) {
+                    continue;
+                }
+                // This connection is gone, the queue may hold more (accept(2)). Bounded: an error that stays (EOPNOTSUPP
+                // can also name the listener itself) must not keep the loop away from the other descriptors.
+                if (is_dropped_connection_error(err) && ++dropped_in_row < kMaxDroppedInRow) {
+                    continue;
                 }
                 if (err == EMFILE || err == ENFILE || err == ENOBUFS || err == ENOMEM) {
                     // The connection stays queued: a level-triggered listen_fd left in epfd would busy-spin.
@@ -487,6 +514,7 @@ struct Relay {
                 }
                 break;  // EAGAIN: the queue is drained; any other error: back to epoll
             }
+            dropped_in_row = 0;
             if (active_clients >= cfg.max_clients) {
                 std::fprintf(stderr, "[ts_fanout] max clients (%zu) reached, rejecting fd=%d\n",
                              cfg.max_clients, cfd);

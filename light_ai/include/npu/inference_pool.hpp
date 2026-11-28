@@ -50,6 +50,18 @@ struct PoolOptions
     std::chrono::milliseconds result_timeout { 2000 };
 };
 
+namespace inference_pool_detail
+{
+    // engines[0] owns the shared input dma-bufs: destroy the importers first, so their
+    // rknn_destroy_mem() runs while the owner is still alive (vector's own order is front to back).
+    template <typename Engine>
+    void destroy_in_reverse( std::vector<Engine>& engines ) noexcept
+    {
+        while ( !engines.empty() )
+            engines.pop_back();
+    }
+}  // namespace inference_pool_detail
+
 template <typename Engine, typename Decode>
 class InferencePool : private NonMovable<InferencePool<Engine, Decode>>
 {
@@ -78,6 +90,8 @@ public:
         for ( int s = 0; s < n_slots_; ++s )
             slots_[static_cast<size_t>( s )].set_free_signal( &free_mx_, &free_cv_ );
 
+        // A throw below skips the destructor body: the guard keeps its reverse destruction order.
+        ReverseEnginesGuard guard( engines_ );
         engines_.reserve( static_cast<size_t>( n_workers_ ) );  // never reallocates after: &engines_[w] stays valid
         for ( int w = 0; w < n_workers_; ++w )
             engines_.emplace_back( engine_args... );
@@ -87,15 +101,13 @@ public:
             throw_on( engines_[static_cast<size_t>( w )].setup_io_shared( shared, false ), "rknn setup_io_shared" );
         set_core_masks( cfg.core );
         start_workers();  // last: nothing below may throw with workers running
+        guard.release();
     }
 
     ~InferencePool()
     {
         stop_workers();
-        // engines_[0] owns the shared input dma-bufs: destroy the importers first, so their
-        // rknn_destroy_mem() runs while the owner is still alive (vector's own order is front to back).
-        while ( !engines_.empty() )
-            engines_.pop_back();
+        inference_pool_detail::destroy_in_reverse( engines_ );
     }
 
     int size() const { return n_slots_; }
@@ -231,6 +243,22 @@ public:
     }
 
 private:
+    // The destructor's order for a constructor that throws: destroys the engines in reverse unless released.
+    class ReverseEnginesGuard : private NonMovable<ReverseEnginesGuard>
+    {
+    public:
+        explicit ReverseEnginesGuard( std::vector<Engine>& engines ) noexcept : engines_( &engines ) {}
+        ~ReverseEnginesGuard()
+        {
+            if ( engines_ != nullptr )
+                inference_pool_detail::destroy_in_reverse( *engines_ );
+        }
+        void release() noexcept { engines_ = nullptr; }
+
+    private:
+        std::vector<Engine>* engines_;
+    };
+
     bool same_lb( const LbGeom& a, const LbGeom& b ) const noexcept
     {
         return a.left == b.left && a.w == b.w && a.top == b.top && a.h == b.h;

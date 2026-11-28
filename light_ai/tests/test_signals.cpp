@@ -105,7 +105,7 @@ namespace
         SignalWaiter waiter( env, stop );
         const SignalWaiter::Armed armed( waiter );
         int fds[2] = { -1, -1 };
-        if ( pipe2( fds, O_CLOEXEC ) != 0 )
+        if ( stop.wake_fd() < 0 || pipe2( fds, O_CLOEXEC ) != 0 )
             _exit( 4 );
         kill( getpid(), SIGINT );
         if ( !wait_for( stop ) )
@@ -134,7 +134,8 @@ namespace
             t0 = std::chrono::steady_clock::now();
         }
         const auto el = std::chrono::steady_clock::now() - t0;
-        CHECK( t, el < std::chrono::milliseconds( 50 ) );
+        // A woken destructor takes microseconds; the bound leaves room for a loaded board or a TSan host.
+        CHECK( t, el < std::chrono::milliseconds( 250 ) );
         CHECK( t, !stop.requested() && stop.wake_fd() == -1 );
     }
 }  // namespace

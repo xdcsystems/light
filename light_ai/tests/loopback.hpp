@@ -19,7 +19,7 @@ namespace loopback
 class Listener
 {
 public:
-    Listener()
+    explicit Listener( int backlog = 4 )
     {
         fd_ = ::socket( AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0 );
         if ( fd_ < 0 )
@@ -29,7 +29,7 @@ public:
         a.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
         a.sin_port = 0;
         socklen_t len = sizeof( a );
-        if ( ::bind( fd_, reinterpret_cast<sockaddr*>( &a ), sizeof( a ) ) != 0 || ::listen( fd_, 4 ) != 0 ||
+        if ( ::bind( fd_, reinterpret_cast<sockaddr*>( &a ), sizeof( a ) ) != 0 || ::listen( fd_, backlog ) != 0 ||
              ::getsockname( fd_, reinterpret_cast<sockaddr*>( &a ), &len ) != 0 )
         {
             close();

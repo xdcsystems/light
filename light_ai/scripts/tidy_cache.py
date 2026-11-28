@@ -109,9 +109,11 @@ def memo_lookup(memo):
     try:
         with open(memo, encoding="utf-8") as f:
             saved = json.load(f)
+        if not isinstance(saved, dict) or not isinstance(saved["stamps"], dict) or not isinstance(saved["digest"], str):
+            return None
         if all(file_stamp(path) == stamp for path, stamp in saved["stamps"].items()):
             return saved["digest"]
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         pass
     return None
 
@@ -131,7 +133,9 @@ def pp_digest(db_dir, source, entry, clangxx):
     memo_dir = os.environ.get("TIDY_PP_CACHE_DIR")
     memo = None
     if memo_dir:
-        name = hashlib.sha256("\0".join((db_dir, source, clangxx)).encode()).hexdigest()
+        # the compile command is part of the name: a memo made for other flags is never read
+        key = (db_dir, source, clangxx, json.dumps(entry, sort_keys=True))
+        name = hashlib.sha256("\0".join(key).encode()).hexdigest()
         memo = os.path.join(memo_dir, name + ".pp")
         digest = memo_lookup(memo)
         if digest is not None:

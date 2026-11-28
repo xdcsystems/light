@@ -55,6 +55,18 @@ namespace
         return Polled::Ready;
     }
 
+    // Frees the address list of a lookup when connect() leaves, by return or by exception.
+    struct AddrList : private NonMovable<AddrList>
+    {
+        AddrList() = default;
+        ~AddrList()
+        {
+            if ( head != nullptr )
+                ::freeaddrinfo( head );
+        }
+        addrinfo* head = nullptr;
+    };
+
     // A numeric IPv4 host: resolved in place, no DNS. Not numeric: false.
     bool resolve_numeric( const std::string& host, const std::string& port_str, addrinfo*& res ) noexcept
     {
@@ -94,10 +106,11 @@ bool BufferedSocket::wake_signalled() const noexcept
     return ::poll( &p, 1, 0 ) > 0 && ( p.revents & kWakeEvents ) != 0;
 }
 
-Status BufferedSocket::wait_connect( std::chrono::steady_clock::time_point deadline ) noexcept
+Status BufferedSocket::wait_connect( std::chrono::steady_clock::time_point deadline ) const noexcept
 {
     using clk = std::chrono::steady_clock;
-    while ( !is_cancelled() )
+    // The flags only: poll_with_wake() below watches wake_fd_ itself.
+    while ( !cancelled() )
     {
         const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>( deadline - clk::now() ).count();
         if ( rem <= 0 )
@@ -123,7 +136,8 @@ Status BufferedSocket::wait_connect( std::chrono::steady_clock::time_point deadl
 Status BufferedSocket::wait_writable( std::chrono::steady_clock::time_point deadline ) const noexcept
 {
     using clk = std::chrono::steady_clock;
-    while ( !is_cancelled() )
+    // The flags only: poll_with_wake() below watches wake_fd_ itself.
+    while ( !cancelled() )
     {
         const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>( deadline - clk::now() ).count();
         if ( rem <= 0 )
@@ -276,28 +290,21 @@ Status BufferedSocket::connect( const std::string& host, int port )
     if ( is_cancelled() )
         return make_status( Errc::Timeout, "connect: cancelled" );
     const std::string port_str = std::to_string( port );
-    addrinfo* res = nullptr;
-    if ( Status rst = resolve( host, port_str, res ); !rst.ok() )
+    AddrList res;
+    if ( Status rst = resolve( host, port_str, res.head ); !rst.ok() )
         return rst;
     // One deadline for every address of the lookup.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds( kConnectMs );
     Status last_err = make_status( Errc::Absent, "addr resolution failed" );
-    for ( const addrinfo* ai = res; ai != nullptr; ai = ai->ai_next )
+    for ( const addrinfo* ai = res.head; ai != nullptr; ai = ai->ai_next )
     {
         if ( is_cancelled() )
-        {
-            freeaddrinfo( res );
             return make_status( Errc::Timeout, "connect: cancelled" );
-        }
         const Status st = connect_one( *ai, deadline );
         if ( st.ok() || st.code() == Errc::Timeout )
-        {
-            freeaddrinfo( res );
             return st;
-        }
         last_err = st;
     }
-    freeaddrinfo( res );
     return last_err;
 }
 

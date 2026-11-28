@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # a76_slot.sh: run one single-threaded build job on a free Cortex-A76 core (BUILD_ON_A76=1: build.sh, test.sh,
 # tidy_run.sh). isolcpus=4-7 takes these cores out of the scheduler's load balancing: a mask of several of them does
 # not spread jobs, so each job is pinned to exactly one core.
@@ -21,7 +21,7 @@ if [ "$1" = "--check" ]; then
         exit 1
     fi
     # list-units, not is-active: the systemd of Debian 11 does not expand a glob there
-    if ! active_units=$(systemctl list-units --type=service --state=active,activating --no-legend --no-pager \
+    if ! active_units=$(systemctl list-units --type=service --state=active,activating,reloading,deactivating --no-legend --no-pager \
                         'light_ai*.service' 2> /dev/null); then
         echo "a76_slot: systemctl list-units failed, cannot tell whether a light_ai service runs" >&2
         exit 1
@@ -55,7 +55,8 @@ while :; do
         flock -n "$fd"
         rc=$?
         if [ "$rc" -eq 0 ]; then
-            exec taskset -c "$cpu" "$@"
+            # "--" before the CPU list: taskset of util-linux 2.36 takes one after it as the command to run
+            exec taskset -c -- "$cpu" "$@"
         fi
         exec {fd}>&-   # a busy slot: close at once, or the waiting loop runs out of descriptors
         if [ "$rc" -ne 1 ]; then   # 1: the lock is held; anything else will not get better by waiting

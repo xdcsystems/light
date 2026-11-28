@@ -12,8 +12,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <sched.h>
 
 class Log;
+
+// The policy pin_current_thread_rt() sets. SCHED_RESET_ON_FORK is required: threads created by a real-time caller (the
+// libanl workers of BufferedSocket::connect) then start as SCHED_OTHER.
+constexpr int kRtSchedPolicy = SCHED_FIFO | SCHED_RESET_ON_FORK;
 
 enum
 {

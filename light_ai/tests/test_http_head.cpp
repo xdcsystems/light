@@ -119,6 +119,14 @@ namespace
         CHECK( t, error_is( parse( head( ct + "\r\nTransfer-Encoding: chunked" ) ), why ) );
         CHECK( t, error_is( parse( head( "TRANSFER-ENCODING: Chunked\r\n" + ct ) ), why ) );
         CHECK( t, error_is( parse( head( ct + "\nTransfer-Encoding: gzip, chunked", "\n" ) ), why ) );
+        // The coding name is a whole list element: OWS and ',' delimit it, parameters may follow it.
+        CHECK( t, error_is( parse( head( ct + "\r\nTransfer-Encoding:chunked" ) ), why ) );
+        CHECK( t, error_is( parse( head( ct + "\r\nTransfer-Encoding: \tchunked\t, gzip" ) ), why ) );
+        CHECK( t, error_is( parse( head( ct + "\r\nTransfer-Encoding: gzip,chunked ;x=1" ) ), why ) );
+        CHECK( t, boundary_is( parse( head( ct + "\r\nTransfer-Encoding: x-chunked" ) ), "frame" ) );
+        CHECK( t, boundary_is( parse( head( ct + "\r\nTransfer-Encoding: chunkedx, gzip" ) ), "frame" ) );
+        CHECK( t, boundary_is( parse( head( ct + "\r\nTransfer-Encoding: gzip;q=chunked" ) ), "frame" ) );
+        CHECK( t, boundary_is( parse( head( ct + "\r\nTransfer-Encoding: " ) ), "frame" ) );
         // Another coding, or the word in another field, is no reason to reject.
         CHECK( t, boundary_is( parse( head( ct + "\r\nTransfer-Encoding: identity" ) ), "frame" ) );
         CHECK( t, boundary_is( parse( head( ct + "\r\nX-Note: chunked" ) ), "frame" ) );

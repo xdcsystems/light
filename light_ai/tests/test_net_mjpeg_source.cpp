@@ -114,6 +114,18 @@ namespace
         NetMjpegSource src;
     };
 
+    // The Host field of the request (a pure function: the socket is IPv4 only, so an IPv6 host cannot be dialled).
+    void get_request_host_field( TestRun& t )
+    {
+        const std::string tail = "\r\nConnection: keep-alive\r\nAccept: multipart/x-mixed-replace, image/jpeg"
+                                 "\r\nUser-Agent: light_ai/1.0\r\n\r\n";
+        CHECK_STR_EQ( t, mjpeg_get_request( "127.0.0.1", 8080, "/video" ), "GET /video HTTP/1.1\r\nHost: 127.0.0.1:8080" + tail );
+        CHECK_STR_EQ( t, mjpeg_get_request( "cam.local", 80, "/" ), "GET / HTTP/1.1\r\nHost: cam.local:80" + tail );
+        CHECK_STR_EQ( t, mjpeg_get_request( "::1", 8080, "/v" ), "GET /v HTTP/1.1\r\nHost: [::1]:8080" + tail );
+        CHECK_STR_EQ( t, mjpeg_get_request( "fe80::2:3", 81, "/v" ), "GET /v HTTP/1.1\r\nHost: [fe80::2:3]:81" + tail );
+        CHECK_STR_EQ( t, mjpeg_get_request( "[::1]", 8080, "/v" ), "GET /v HTTP/1.1\r\nHost: [::1]:8080" + tail );
+    }
+
     void connect_and_frames( TestRun& t, const Bytes& a )
     {
         const Bytes v1 = variant( a, 0x11 );
@@ -690,6 +702,7 @@ void test_net_mjpeg_source( TestRun& t )
     CHECK( t, a.size() > 100 && wide.size() > 100 );
     if ( a.size() <= 100 || wide.size() <= 100 )
         return;
+    get_request_host_field( t );
     connect_and_frames( t, a );
     corrupt_streak( t, a );
     burst_bad_tail( t, a );

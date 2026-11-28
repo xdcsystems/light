@@ -25,7 +25,7 @@ namespace
 // logs), the queue, the gate, the serve session. The body starts the serve
 // thread last, once everything it reaches is built; a throw anywhere
 // before unwinds the members that exist, in reverse order.
-NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
+NetEncoder::NetEncoder( const NetworkInit& net, const EncoderConfig& cfg, const Log& log )
   : cfg_( cfg )
   , ring_( cfg.layout )
   , composer_( cfg, log )
@@ -34,6 +34,7 @@ NetEncoder::NetEncoder( const EncoderConfig& cfg, const Log& log )
   , warmup_( cfg.layout.nsrc )
   , session_( cfg, queue_, gate_, log )
 {
+    static_cast<void>( net );
     session_.start();
 }
 

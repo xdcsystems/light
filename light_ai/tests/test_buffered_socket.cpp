@@ -186,8 +186,101 @@ namespace
         CHECK( t, sent.code() == Errc::Timeout && status_text( sent ) == "send: cancelled" );
         const Status again = s.connect( "127.0.0.1", l.port() );
         CHECK( t, again.code() == Errc::Timeout && status_text( again ) == "connect: cancelled" && !s.is_open() );
+        s.set_wake_fd( -1 );  // the socket drops its non-owning copy before the descriptor is closed
         ::close( efd );
         ::close( srv );
+    }
+
+    // Small kernel buffers: a peer that never reads is full after a few writes.
+    void shrink_buffer( int fd, int option )
+    {
+        const int bytes = 4096;
+        static_cast<void>( ::setsockopt( fd, SOL_SOCKET, option, &bytes, sizeof( bytes ) ) );
+    }
+
+    // Fills the buffers of both ends without blocking, until the kernel takes no more.
+    bool fill_send_buffers( int fd )
+    {
+        const std::vector<char> chunk( 64 * 1024, 'f' );
+        bool filled = false;
+        for ( int i = 0; i < 512 && !filled; ++i )
+        {
+            const ssize_t r = ::send( fd, chunk.data(), chunk.size(), MSG_DONTWAIT | MSG_NOSIGNAL );
+            filled = r < 0 && ( errno == EAGAIN || errno == EWOULDBLOCK );
+        }
+        return filled;
+    }
+
+    // Writes the eventfd after delay_ms, from a thread joined by the destructor.
+    class DelayedWake
+    {
+    public:
+        DelayedWake( int efd, int delay_ms )
+          : thread_( [efd, delay_ms] {
+              std::this_thread::sleep_for( std::chrono::milliseconds( delay_ms ) );
+              const uint64_t one = 1;
+              static_cast<void>( ::write( efd, &one, sizeof( one ) ) );
+          } )
+        {
+        }
+        ~DelayedWake() { thread_.join(); }
+        DelayedWake( const DelayedWake& ) = delete;
+        DelayedWake& operator=( const DelayedWake& ) = delete;
+
+    private:
+        std::thread thread_;
+    };
+
+    long long ms_since( std::chrono::steady_clock::time_point t0 )
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - t0 ).count();
+    }
+
+    void wake_fd_ends_blocked_send( TestRun& t )
+    {
+        // The wake fd alone, signalled while send_all() waits in poll() for a full socket.
+        const int efd = ::eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
+        CHECK( t, efd >= 0 );
+        {
+            Listener l;
+            BufferedSocket s;
+            s.set_wake_fd( efd );
+            CHECK( t, s.connect( "127.0.0.1", l.port() ).ok() );
+            const int srv = l.accept();
+            CHECK( t, srv >= 0 );
+            shrink_buffer( s.fd(), SO_SNDBUF );
+            shrink_buffer( srv, SO_RCVBUF );
+            CHECK( t, fill_send_buffers( s.fd() ) );
+            const auto t0 = std::chrono::steady_clock::now();
+            const DelayedWake waker( efd, 150 );
+            const Status st = s.send_all( std::string( 64 * 1024, 'a' ) );
+            const long long el = ms_since( t0 );
+            CHECK( t, st.code() == Errc::Timeout && status_text( st ) == "send: cancelled" );
+            CHECK( t, el >= 100 && el < 1500 );
+            ::close( srv );
+        }
+        ::close( efd );  // after the socket's destructor
+    }
+
+    void wake_fd_ends_blocked_connect( TestRun& t )
+    {
+        // A listener whose accept queue is full drops the next SYN, so connect() stays in poll() until woken.
+        const int efd = ::eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
+        CHECK( t, efd >= 0 );
+        {
+            Listener l( 0 );  // backlog 0: one connection fits into the queue
+            BufferedSocket first;
+            CHECK( t, first.connect( "127.0.0.1", l.port() ).ok() );  // never accepted
+            BufferedSocket s;
+            s.set_wake_fd( efd );
+            const auto t0 = std::chrono::steady_clock::now();
+            const DelayedWake waker( efd, 150 );
+            const Status st = s.connect( "127.0.0.1", l.port() );
+            const long long el = ms_since( t0 );
+            CHECK( t, st.code() == Errc::Timeout && status_text( st ) == "connect: cancelled" && !s.is_open() );
+            CHECK( t, el >= 100 && el < 1500 );
+        }
+        ::close( efd );  // after the sockets' destructors
     }
 
     void cancel_flag( TestRun& t )
@@ -226,15 +319,9 @@ namespace
         CHECK( t, s.connect( "127.0.0.1", l.port() ).ok() );
         const int srv = l.accept();
         CHECK( t, srv >= 0 );
-        // Pre-fill the buffers of both ends without blocking, until the kernel takes no more.
-        const std::vector<char> chunk( 64 * 1024, 'f' );
-        bool filled = false;
-        for ( int i = 0; i < 512 && !filled; ++i )
-        {
-            const ssize_t r = ::send( s.fd(), chunk.data(), chunk.size(), MSG_DONTWAIT | MSG_NOSIGNAL );
-            filled = r < 0 && ( errno == EAGAIN || errno == EWOULDBLOCK );
-        }
-        CHECK( t, filled );
+        shrink_buffer( s.fd(), SO_SNDBUF );
+        shrink_buffer( srv, SO_RCVBUF );
+        CHECK( t, fill_send_buffers( s.fd() ) );
         std::thread waker( [&stop] {
             std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
             stop.store( true, std::memory_order_release );
@@ -293,6 +380,8 @@ void test_buffered_socket( TestRun& t )
     connect_failures( t );
     interrupted( t );
     wake_fd_interrupts_fill( t );
+    wake_fd_ends_blocked_send( t );
+    wake_fd_ends_blocked_connect( t );
     cancel_flag( t );
     send_cancel( t );
     hostname_lookup( t );

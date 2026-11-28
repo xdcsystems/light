@@ -230,6 +230,9 @@ namespace
 
 bool GpuBoxDrawer::make_current() noexcept  // NOLINT(readability-make-member-function-const)
 {
+    // Without a context the comparison below would match a thread that has none current and report success.
+    if ( st_.ctx == EGL_NO_CONTEXT )
+        return false;
     // Same-context eglMakeCurrent is not free in libmali; skip it when
     // the context is already current (the common case in the hot path).
     if ( eglGetCurrentContext() == st_.ctx )

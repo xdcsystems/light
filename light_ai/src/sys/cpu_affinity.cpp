@@ -91,7 +91,7 @@ void pin_current_thread_rt( const char* who, int cpu, int rt_prio, const Log& lo
             eff_prio = std::clamp( rt_prio, pmin, pmax );
         sched_param sp {};
         sp.sched_priority = eff_prio;
-        rt_ok = sched_setscheduler( 0, SCHED_FIFO | SCHED_RESET_ON_FORK, &sp ) == 0;
+        rt_ok = sched_setscheduler( 0, kRtSchedPolicy, &sp ) == 0;
         if ( !rt_ok )
             rt_err = errno;
     }
