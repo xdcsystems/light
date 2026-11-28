@@ -156,8 +156,12 @@ Status RgaResizer::crop_resize( const CropImage& src_img, LbGeom crop_roi, const
         return make_status( Errc::Invalid, "RGA crop: exceeds 8x upscale limit" );
 
     const bool two_pass = cw > rga_limits::kMaxRatio * w_dst || ch > rga_limits::kMaxRatio * h_dst;
+    const bool rga3 = can_use_rga3( cw, ch, w_dst, h_dst, two_pass, w_aux, h_aux );
+    // RGA2 maps only physical memory < 4 GiB (Rockchip RGA FAQ A1.9); aux has no dma32 guarantee.
+    if ( !rga3 && ( !src_img.dma32 || !dst_img.dma32 || two_pass ) )
+        return make_status( Errc::Failed, "RGA2 requires DMA32 buffer (< 4 GiB)" );
     im_opt_t opt {};
-    opt.core = can_use_rga3( cw, ch, w_dst, h_dst, two_pass, w_aux, h_aux ) ? IM_SCHEDULER_RGA3_CORE0 : IM_SCHEDULER_RGA2_CORE0;
+    opt.core = rga3 ? IM_SCHEDULER_RGA3_CORE0 : IM_SCHEDULER_RGA2_CORE0;
 
     im_rect sr { cx, cy, cw, ch };
     if ( two_pass )

@@ -127,11 +127,14 @@ inline int parse_exif_orient( const uint8_t* seg, size_t seglen )
     if ( !le && !be )
         return -1;
     const size_t ifd_off = exif_u32( tiff + 4, le );
-    if ( ifd_off + 2 > tiff_len )
+    // Bounds by subtraction: no offset from the file is added before it is checked (CERT INT30-C).
+    if ( tiff_len < 2 || ifd_off > tiff_len - 2 )
         return -1;
     const size_t n_ent = exif_u16( tiff + ifd_off, le );
     const size_t entries_start = ifd_off + 2;
-    for ( size_t i = 0; i < n_ent && entries_start + ( i + 1 ) * 12 <= tiff_len; ++i )
+    const size_t avail = tiff_len - entries_start;
+    const size_t max_ent = avail / 12;
+    for ( size_t i = 0; i < n_ent && i < max_ent; ++i )
     {
         const uint8_t* e = tiff + entries_start + i * 12;
         if ( exif_u16( e, le ) == 0x0112 && exif_u16( e + 2, le ) == 3 && exif_u32( e + 4, le ) == 1 )
@@ -167,6 +170,8 @@ inline bool take_segment( const uint8_t* data, size_t len, size_t& pos, uint8_t 
 
 inline bool probe_jpeg_sof( const uint8_t* data, size_t len, JpegSofInfo& out )
 {
+    if ( data == nullptr )
+        return false;
     if ( len < 4 || data[0] != 0xFF || data[1] != 0xD8 )
         return false;
     bool seen_sof = false;
@@ -194,6 +199,8 @@ inline bool probe_jpeg_sof( const uint8_t* data, size_t len, JpegSofInfo& out )
 // (the caller's corrupt-frame streak). info: the SOF geometry when true.
 inline bool jpeg_frame_check( const uint8_t* data, uint32_t& size, JpegSofInfo& info )
 {
+    if ( data == nullptr )
+        return false;
     uint32_t sz = size;
     while ( sz > 2 && ( data[sz - 1] == '\r' || data[sz - 1] == '\n' || data[sz - 1] == ' ' ) )
         --sz;

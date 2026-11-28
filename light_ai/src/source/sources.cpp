@@ -28,7 +28,8 @@ namespace
         static_assert( V4L2_CAP_VIDEO_CAPTURE == 0x00000001u, "V4L2_CAP_VIDEO_CAPTURE drift" );
         static_assert( V4L2_CAP_STREAMING == 0x04000000u, "V4L2_CAP_STREAMING drift" );
         static_assert( V4L2_CAP_DEVICE_CAPS == 0x80000000u, "V4L2_CAP_DEVICE_CAPS drift" );
-        const int fd = ::open( path.c_str(), O_RDONLY | O_CLOEXEC );
+        // V4L2 open() wants O_RDWR; O_NONBLOCK keeps the probe from waiting on a busy or wedged driver.
+        const int fd = ::open( path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC );
         if ( fd < 0 )
             return false;
         v4l2_capability cap {};

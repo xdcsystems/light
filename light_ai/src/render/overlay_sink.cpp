@@ -247,15 +247,15 @@ void OverlaySink::prepare_overlay( const FrameView& frame,
 void OverlaySink::draw_gpu_slot( int slot, const GpuBoxList& boxes, const CalloutList& callouts ) noexcept
 {
     const auto tg0 = clk::now();
-    drawer_->draw_slot( slot, boxes.d.data(), boxes.n, &callouts );
+    const bool drawn = drawer_->draw_slot( slot, boxes.d.data(), boxes.n, &callouts );
     const auto tg1 = clk::now();
-    const bool synced = drawer_->sync_cpu();
+    const bool synced = drawn && drawer_->sync_cpu();
     const auto tg2 = clk::now();
     perf_.gpu_draw_ms_max = std::max( perf_.gpu_draw_ms_max, ms( tg0, tg1 ) );
     perf_.sync_cpu_ms_max = std::max( perf_.sync_cpu_ms_max, ms( tg1, tg2 ) );
     if ( !synced )
     {
-        log_.error() << "overlay: GPU fence failed/timed out - switching to CPU fallback\n";
+        log_.error() << "overlay: GPU draw or fence failed/timed out - switching to CPU fallback\n";
         gpu_disabled_ = true;
     }
 }

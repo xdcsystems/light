@@ -200,6 +200,16 @@ namespace
         append_text_pass( qt, c, 255, 255 );
     }
 
+    // Bounded clear of prior GL errors: the next glGetError() then reports only what follows.
+    void drain_gl_errors() noexcept
+    {
+        for ( int i = 0; i < 16; ++i )
+        {
+            if ( glGetError() == GL_NO_ERROR )
+                break;
+        }
+    }
+
     // Compile/link diagnostics: libmali returns non-zero handles even for
     // failed shaders — without these checks a broken program degrades
     // silently into "nothing is drawn".
@@ -218,12 +228,16 @@ namespace
 
 }  // anonymous namespace
 
-void GpuBoxDrawer::make_current()  // NOLINT(readability-make-member-function-const)
+bool GpuBoxDrawer::make_current() noexcept  // NOLINT(readability-make-member-function-const)
 {
     // Same-context eglMakeCurrent is not free in libmali; skip it when
     // the context is already current (the common case in the hot path).
-    if ( eglGetCurrentContext() != st_.ctx )
-        eglMakeCurrent( st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, st_.ctx );
+    if ( eglGetCurrentContext() == st_.ctx )
+        return true;
+    if ( eglMakeCurrent( st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, st_.ctx ) == EGL_TRUE )
+        return true;
+    log_.warn() << "drawer: eglMakeCurrent failed (0x" << std::hex << eglGetError() << std::dec << ")\n";
+    return false;
 }
 
 bool GpuBoxDrawer::make_program()
@@ -557,7 +571,8 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     State::SlotImg& si = st_.slot[slot];
     if ( si.img != EGL_NO_IMAGE_KHR )
         return {};  // idempotent: the pool attaches each slot once
-    make_current();
+    if ( !make_current() )
+        return make_status( Errc::Failed, "drawer: eglMakeCurrent failed" );
     const EglUnbind unbind { st_.dpy };
 
     EGLint iattr[] = { 
@@ -582,11 +597,7 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
         log_.warn() << "drawer: import tensor failed (slot " << slot << ", 0x" << std::hex << eglGetError() << std::dec << ")\n";
         return make_status( Errc::Failed, "drawer: import tensor failed" );
     }
-    for ( int i = 0; i < 16; ++i )  // bounded clear of prior GL errors
-    {
-        if ( glGetError() == GL_NO_ERROR )
-            break;
-    }
+    drain_gl_errors();
     glGenTextures( 1, &si.tex );
     glBindTexture( GL_TEXTURE_2D, si.tex );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
@@ -634,16 +645,17 @@ Status GpuBoxDrawer::attach_slot( int slot, int tensor_dma_fd, int w, int h, uin
     return {};
 }
 
-void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts ) noexcept
+bool GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts ) noexcept
 {
     const bool have_boxes = boxes != nullptr && n > 0;
     const bool have_callouts = callouts != nullptr && callouts->n > 0;
     if ( !ready_ || ( !have_boxes && !have_callouts ) )
-        return;
+        return true;
     if ( slot < 0 || slot >= State::kSlots || st_.slot[slot].fbo == 0 )
-        return;
+        return true;
     n = have_boxes ? std::min( n, static_cast<int>( GpuBoxList::cap ) ) : 0;
-    make_current();
+    if ( !make_current() )
+        return false;
 
     // Batched quads in tensor coordinates. The viewport clips anything
     // outside the tensor, matching the CPU-path clamping.
@@ -666,7 +678,7 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const Callou
     const int cnt = qt.cnt;
     const BatchVert* v = qt.v;
     if ( cnt == 0 )
-        return;
+        return true;
 
     if ( st_.es3 )
         st_.bind_vao( st_.vao );
@@ -694,13 +706,15 @@ void GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const Callou
     glDrawArrays( GL_TRIANGLES, 0, cnt );
     glBindFramebuffer( GL_FRAMEBUFFER, 0 );
     glFlush();
+    return true;
 }
 
 bool GpuBoxDrawer::sync_cpu() noexcept
 {
     if ( st_.dpy == EGL_NO_DISPLAY )
         return true;
-    make_current();
+    if ( !make_current() )
+        return false;
     if ( st_.fence_type != 0 )
     {
         EGLSyncKHR sync = st_.create_sync( st_.dpy, st_.fence_type, nullptr );
@@ -723,12 +737,12 @@ bool GpuBoxDrawer::sync_cpu() noexcept
     return true;
 }
 
-void GpuBoxDrawer::release_slot( int slot )
+void GpuBoxDrawer::release_slot( int slot, bool gl_current )
 {
     State::SlotImg& si = st_.slot[slot];
-    if ( si.fbo )
+    if ( gl_current && si.fbo )
         glDeleteFramebuffers( 1, &si.fbo );
-    if ( si.tex )
+    if ( gl_current && si.tex )
         glDeleteTextures( 1, &si.tex );
     if ( si.img != EGL_NO_IMAGE_KHR && st_.destroy_image )
         st_.destroy_image( st_.dpy, si.img );
@@ -742,25 +756,33 @@ void GpuBoxDrawer::release_context() const noexcept
     eglReleaseThread();
 }
 
+void GpuBoxDrawer::delete_gl_objects()
+{
+    if ( st_.atlas_tex )
+        glDeleteTextures( 1, &st_.atlas_tex );
+    if ( st_.vbo )
+        glDeleteBuffers( 1, &st_.vbo );
+    if ( st_.prog )
+        glDeleteProgram( st_.prog );
+    if ( st_.vao && st_.del_vao )
+        st_.del_vao( 1, &st_.vao );
+}
+
 void GpuBoxDrawer::done()
 {
     if ( st_.dpy != EGL_NO_DISPLAY )
     {
-        make_current();
-        if ( st_.atlas_tex )
-            glDeleteTextures( 1, &st_.atlas_tex );
+        // Without a current context no GL call is made; the context and display
+        // teardown below still runs and takes the GL objects with it.
+        const bool current = make_current();
+        if ( current )
+            delete_gl_objects();
         st_.atlas_tex = 0;
-        if ( st_.vbo )
-            glDeleteBuffers( 1, &st_.vbo );
         st_.vbo = 0;
-        if ( st_.prog )
-            glDeleteProgram( st_.prog );
         st_.prog = 0;
-        if ( st_.vao && st_.del_vao )
-            st_.del_vao( 1, &st_.vao );
         st_.vao = 0;
         for ( int i = 0; i < State::kSlots; ++i )
-            release_slot( i );
+            release_slot( i, current );
         if ( st_.ctx )
         {
             eglMakeCurrent( st_.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );

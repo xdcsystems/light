@@ -28,12 +28,14 @@ public:
     TcpPullServer( int port, int sndbuf_bytes, int sndtimeo_sec );
     ~TcpPullServer();
 
-    // Opens, binds (SO_REUSEADDR) and listens on port_. Status: Busy
-    // (EADDRINUSE), Failed (any other socket/bind/listen errno).
+    // Opens, binds (SO_REUSEADDR) and listens on port_; clears an earlier
+    // abort_client(). Status: Busy (EADDRINUSE), Failed (any other
+    // socket/bind/listen errno).
     Status listen();
 
     // Polls lfd_ until a viewer connects or quit is set; applies
-    // TCP_NODELAY, SO_SNDBUF and TCP_NOTSENT_LOWAT on the accepted socket.
+    // TCP_NODELAY, SO_SNDBUF and TCP_NOTSENT_LOWAT on the accepted socket
+    // before publishing it. ECONNABORTED / EPROTO keep the poll going.
     // Status: Ok (client accepted), Timeout (quit / no viewer),
     // Failed (poll/accept errno), Invalid (no listening socket).
     Status accept_client( const std::atomic<bool>& quit );

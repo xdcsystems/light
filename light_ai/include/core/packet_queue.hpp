@@ -112,38 +112,18 @@ public:
     template <typename OnFlush>
     Pushed push( Pkt& src, int64_t now_us, OnFlush&& on_flush )
     {
-        const std::lock_guard<Mutex> lk( mx_ );
-        if ( !open_ )
+        Pushed res {};
         {
-            ops_.unref( src );
-            return Pushed { 0, drops_ };
-        }
-        int flushed = 0;
-        bool need_flush = is_flush_needed_locked( now_us );
-        if ( need_flush && wait_key_ )
-        {
-            while ( !ring_.empty() && !ops_.is_key( ring_.front() ) )
+            const std::lock_guard<Mutex> lk( mx_ );
+            if ( !open_ )
             {
-                ops_.unref( ring_.front() );
-                ring_.pop();
+                ops_.unref( src );
+                return Pushed { 0, drops_ };
             }
-            need_flush = is_flush_needed_locked( now_us );
+            res = push_locked( src, now_us, on_flush );
         }
-        if ( need_flush )
-        {
-            flushed = ring_.n;
-            clear_locked();
-            wait_key_ = true;
-            ++drops_;
-            if ( flushed > 0 )
-                on_flush( src, flushed );
-        }
-        push_us_[( ring_.head + ring_.n ) % N] = now_us;
-        ops_.move( ring_.push_slot(), src );  // !full() guaranteed above
-        if ( ring_.n > max_depth_ )
-            max_depth_ = ring_.n;
-        cv_.notify_one();
-        return Pushed { flushed, drops_ };
+        cv_.notify_one();  // outside mx_: the woken consumer does not run into the held lock
+        return res;
     }
 
     Pushed push( Pkt& src, int64_t now_us = packet_queue_now_us() )
@@ -188,10 +168,12 @@ public:
     // Producer: an encode-side error in session `epoch`.
     void fail( uint32_t epoch )
     {
-        const std::lock_guard<Mutex> lk( mx_ );
-        if ( !open_ || epoch != epoch_ )
-            return;
-        failed_ = true;
+        {
+            const std::lock_guard<Mutex> lk( mx_ );
+            if ( !open_ || epoch != epoch_ )
+                return;
+            failed_ = true;
+        }
         cv_.notify_all();
     }
 
@@ -243,12 +225,45 @@ public:
     // Owner: wakes the consumer for good.
     void stop()
     {
-        const std::lock_guard<Mutex> lk( mx_ );
-        stopped_ = true;
+        {
+            const std::lock_guard<Mutex> lk( mx_ );
+            stopped_ = true;
+        }
         cv_.notify_all();
     }
 
 private:
+    // push() on an open queue: the overflow / age flush, then src into the ring.
+    template <typename OnFlush>
+    Pushed push_locked( Pkt& src, int64_t now_us, OnFlush& on_flush )
+    {
+        int flushed = 0;
+        bool need_flush = is_flush_needed_locked( now_us );
+        if ( need_flush && wait_key_ )
+        {
+            while ( !ring_.empty() && !ops_.is_key( ring_.front() ) )
+            {
+                ops_.unref( ring_.front() );
+                ring_.pop();
+            }
+            need_flush = is_flush_needed_locked( now_us );
+        }
+        if ( need_flush )
+        {
+            flushed = ring_.n;
+            clear_locked();
+            wait_key_ = true;
+            ++drops_;
+            if ( flushed > 0 )
+                on_flush( src, flushed );
+        }
+        push_us_[( ring_.head + ring_.n ) % N] = now_us;
+        ops_.move( ring_.push_slot(), src );  // !full() guaranteed above
+        if ( ring_.n > max_depth_ )
+            max_depth_ = ring_.n;
+        return Pushed { flushed, drops_ };
+    }
+
     bool is_flush_needed_locked( int64_t now_us ) const noexcept
     {
         if ( ring_.full() )

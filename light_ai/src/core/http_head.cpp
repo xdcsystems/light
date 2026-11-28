@@ -15,6 +15,12 @@ namespace
         return h;
     }
 
+    // A Transfer-Encoding field line v[0, n) that names the chunked coding.
+    bool chunked_coding_line( const uint8_t* v, size_t n )
+    {
+        return line_scan::starts_with_ci( v, n, "transfer-encoding:" ) && line_scan::find_ci( v, n, "chunked" ) != kNpos;
+    }
+
     // The boundary parameter inside one Content-Type line value v[0, n).
     // RFC 7230 BWS around "=" and RFC 2046 quoted-string: many cameras emit
     // boundary="xyz" (some with a blank after the '='); the closing quote is
@@ -64,6 +70,7 @@ HttpHead parse_http_head( const uint8_t* p, size_t n )
     size_t ct = kNpos;          // start / content end of the first Content-Type line
     size_t ct_end = 0;
     size_t head_len = kNpos;
+    bool chunked = false;
     for ( size_t s = 0; head_len == kNpos; )
     {
         const size_t lf = line_scan::find_lf( p, s, n );
@@ -87,6 +94,7 @@ HttpHead parse_http_head( const uint8_t* p, size_t n )
             ct = line;
             ct_end = ce;
         }
+        chunked = chunked || chunked_coding_line( p + line, ce - line );
     }
     if ( head_len == kNpos )
     {
@@ -96,6 +104,9 @@ HttpHead parse_http_head( const uint8_t* p, size_t n )
     }
     if ( line_scan::find_ci( p, status_end, " 200 " ) == kNpos )
         return error( "server did not answer 200" );
+    // The multipart reader takes the body bytes as they come: chunk-size lines would land inside the frames.
+    if ( chunked )
+        return error( "chunked Transfer-Encoding is not supported" );
     if ( ct == kNpos )
         return error( "no multipart boundary in Content-Type" );
     HttpHead h = take_boundary( p + ct, ct_end - ct );

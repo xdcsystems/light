@@ -367,7 +367,7 @@ Status CameraV4L2::dequeue( int& index, uint32_t& size, int timeout_ms ) noexcep
                            std::chrono::steady_clock::now().time_since_epoch() )
                            .count();
     }
-    err_streak_ = 0;  // clean buffer resets the streak
+    // No streak reset here: corrupt buffers that skip_to_newest() saw after its last clean one stay counted.
     size = buf.bytesused;
     index = static_cast<int>( buf.index );
     return {};

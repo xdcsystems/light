@@ -53,20 +53,27 @@ public:
         };
 
     public:
-        // Sync mode (os != nullptr): holds mx_ until destruction.
-        Line( std::ostream* os, std::recursive_mutex& mx ) : os_( os )
+        // Sync mode (os != nullptr): holds mx_ until destruction; the stream's format
+        // flags (std::hex, ...) are restored there, so one line cannot leak them into the next.
+        // buf_ stays uninitialized on purpose (the member-init checks are off here): only buf_[0, len_) is ever read.
+        Line( std::ostream* os, std::recursive_mutex& mx ) : os_( os )  // NOLINT(cppcoreguidelines-pro-type-member-init,hicpp-member-init)
         {
             if ( os_ )
+            {
                 lk_ = std::unique_lock<std::recursive_mutex>( mx );
+                flags_ = os_->flags();
+            }
         }
         // Lock-free async mode: formats into stack buf_ and flushes in ~Line().
-        Line( LogSinkFn sink, bool is_err, bool active ) noexcept
+        Line( LogSinkFn sink, bool is_err, bool active ) noexcept  // NOLINT(cppcoreguidelines-pro-type-member-init,hicpp-member-init)
           : sink_( active ? sink : LogSinkFn {} ), is_err_( is_err )
         {
         }
 
         ~Line()
         {
+            if ( os_ )
+                os_->flags( flags_ );  // lk_ is still held
             if ( sink_.write != nullptr && len_ > 0 )
                 sink_.write( sink_.ctx, is_err_, buf_.data(), len_ );
         }
@@ -341,11 +348,12 @@ public:
     private:
         std::ostream* os_ = nullptr;
         std::unique_lock<std::recursive_mutex> lk_;
+        std::ios_base::fmtflags flags_ {};
         LogSinkFn sink_ {};
         bool is_err_ = false;
         bool hex_ = false;
         std::size_t len_ = 0;
-        std::array<char, kBufSize> buf_ {};
+        std::array<char, kBufSize> buf_;
     };
 
     // out/err must outlive the Log. min_level: lines below it are dropped.

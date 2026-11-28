@@ -12,6 +12,61 @@
 #include "suites.hpp"
 #include "sys/sd_watchdog.hpp"
 
+namespace
+{
+    // The next datagram on the non-blocking server socket; empty = none queued.
+    std::string next_datagram( int srv )
+    {
+        char buf[64] {};
+        const ssize_t n = ::recv( srv, buf, sizeof( buf ) - 1, 0 );
+        return n > 0 ? std::string( buf, static_cast<std::size_t>( n ) ) : std::string();
+    }
+
+    // READY=1 / STOPPING=1 need only the socket; WATCHDOG=1 needs a positive
+    // WATCHDOG_USEC and, when WATCHDOG_PID is set, this process's pid.
+    void check_keepalive_case( TestRun& t, int srv, const std::string& name, const char* usec, const char* pid,
+                               bool expect_ping )
+    {
+        SdWatchdog wd( name.c_str(), usec, pid );
+        CHECK( t, wd.active() );
+        CHECK_EQ( t, wd.pinging(), expect_ping );
+        wd.notify_ready();
+        CHECK_STR_EQ( t, next_datagram( srv ), "READY=1" );
+        const auto t0 = PerfClock::now();
+        wd.ping_now( t0 );
+        CHECK_STR_EQ( t, next_datagram( srv ), expect_ping ? "WATCHDOG=1" : "" );
+        wd.ping_if_due( t0 + std::chrono::milliseconds( 5000 ) );
+        CHECK_STR_EQ( t, next_datagram( srv ), expect_ping ? "WATCHDOG=1" : "" );
+        wd.notify_stopping();
+        CHECK_STR_EQ( t, next_datagram( srv ), "STOPPING=1" );
+    }
+
+    void check_keepalive_gating( TestRun& t )
+    {
+        const std::string name = "@light_ai_wd_gate_" + std::to_string( ::getpid() );
+        const int srv = ::socket( AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK, 0 );
+        CHECK( t, srv >= 0 );
+        sockaddr_un addr {};
+        addr.sun_family = AF_UNIX;
+        std::memcpy( addr.sun_path, name.data(), name.size() );
+        addr.sun_path[0] = '\0';
+        const socklen_t len = static_cast<socklen_t>( offsetof( sockaddr_un, sun_path ) + name.size() );
+        CHECK_EQ( t, ::bind( srv, reinterpret_cast<const sockaddr*>( &addr ), len ), 0 );
+
+        const std::string own_pid = std::to_string( ::getpid() );
+        const std::string other_pid = std::to_string( ::getpid() + 1 );
+        check_keepalive_case( t, srv, name, nullptr, nullptr, false );
+        check_keepalive_case( t, srv, name, "", nullptr, false );
+        check_keepalive_case( t, srv, name, "0", nullptr, false );
+        check_keepalive_case( t, srv, name, "2000000", nullptr, true );
+        check_keepalive_case( t, srv, name, "2000000", "", true );
+        check_keepalive_case( t, srv, name, "2000000", own_pid.c_str(), true );
+        check_keepalive_case( t, srv, name, "2000000", other_pid.c_str(), false );
+        check_keepalive_case( t, srv, name, "2000000", "not-a-pid", false );
+        ::close( srv );
+    }
+}  // namespace
+
 void test_sd_watchdog( TestRun& t )
 {
     // Disabled when socket path is empty or null.
@@ -36,8 +91,9 @@ void test_sd_watchdog( TestRun& t )
     CHECK_EQ( t, bind_rc, 0 );
 
     {
-        SdWatchdog wd( sock_path.c_str() );
+        SdWatchdog wd( sock_path.c_str(), "2000000" );
         CHECK( t, wd.active() );
+        CHECK( t, wd.pinging() );
         const auto t0 = PerfClock::now();
         wd.ping_if_due( t0 );
         wd.ping_if_due( t0 + std::chrono::milliseconds( 200 ) );  // throttled
@@ -72,7 +128,7 @@ void test_sd_watchdog( TestRun& t )
         const socklen_t abs_len = static_cast<socklen_t>( offsetof( sockaddr_un, sun_path ) + abs_name.size() );
         CHECK_EQ( t, ::bind( abs_srv, reinterpret_cast<const sockaddr*>( &abs_addr ), abs_len ), 0 );
 
-        SdWatchdog wd( abs_name.c_str() );
+        SdWatchdog wd( abs_name.c_str(), "2000000" );
         CHECK( t, wd.active() );
         wd.notify_ready();
         char rbuf[32] {};
@@ -105,5 +161,7 @@ void test_sd_watchdog( TestRun& t )
         const SdWatchdog wd_bad( nullptr, "not-a-number" );
         CHECK_NEAR( t, wd_bad.ping_interval_ms(), 1000.0, 1e-6 );
     }
+
+    check_keepalive_gating( t );
 }
 

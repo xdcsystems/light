@@ -1,16 +1,18 @@
-// BasicPreviewRing: pre-allocated 2-slot drop-oldest ring for decoupling
-// NetPreview::publish() (pipeline thread) from av_write_frame()/avio_flush()
+// BasicPreviewRing: pre-allocated 2-slot drop-oldest ring (single producer, single consumer) for decoupling
+// NetPreview::publish() (output thread, StreamOutput) from av_write_frame()/avio_flush()
 // (preview serve thread).
 //
-// Thread rule (every member is guarded by mx_):
-//   pipeline thread (producer): push(), push_rows(), drops();
+// Thread rule (every member is guarded by mx_, except write_buf_: the one
+// producer thread owns it and fills it unlocked):
+//   output thread (producer, StreamOutput): push(), push_rows(), drops();
 //   serve thread (consumer):    open(), close(), pop();
 //   the owner's destructor:     stop() (wakes a blocked pop for good).
 //
-// Startup-only allocation: both ring slots are sized once to frame_bytes in
-// the constructor, and the consumer owns a pre-allocated send_buf_ of the same
-// size swapped via std::vector::swap() in O(1) under mx_. Zero per-frame heap
-// allocations and zero socket-I/O lock hold on the pipeline thread.
+// Startup-only allocation: both ring slots and the producer's write buffer are
+// sized once to frame_bytes in the constructor, and the consumer owns a
+// pre-allocated send_buf_ of the same size. Buffers change hands by
+// std::vector::swap() in O(1) under mx_. Zero per-frame heap allocations, and
+// neither the frame copy nor socket I/O happens under the lock.
 //
 // Production instantiation: BasicPreviewRing<PiMutex, PiCondVar> in
 // net/net_preview.hpp; host tests use PreviewRing = BasicPreviewRing<>.
@@ -31,7 +33,7 @@ template <class Mutex = std::mutex, class CondVar = std::condition_variable>
 class BasicPreviewRing : private NonMovable<BasicPreviewRing<Mutex, CondVar>>
 {
 public:
-    explicit BasicPreviewRing( size_t frame_bytes ) : frame_bytes_( frame_bytes )
+    explicit BasicPreviewRing( size_t frame_bytes ) : frame_bytes_( frame_bytes ), write_buf_( frame_bytes )
     {
         if ( frame_bytes_ > 0 )
         {
@@ -74,7 +76,7 @@ public:
         cv_.notify_all();
     }
 
-    // Producer (pipeline thread): copies frame_bytes_ into the ring, dropping
+    // Producer (one thread): copies frame_bytes_ into the ring, dropping
     // the oldest unread slot if full. Returns false when closed/stopped/empty.
     bool push( const uint8_t* data ) noexcept
     {
@@ -89,10 +91,17 @@ public:
     {
         if ( data == nullptr || frame_bytes_ == 0 || row_bytes == 0 || frame_bytes_ % row_bytes != 0 || src_stride < row_bytes )
             return false;
+        if ( !accepting() )
+            return false;  // no viewer: nothing is copied
+        if ( src_stride == row_bytes )
+            std::memcpy( write_buf_.data(), data, frame_bytes_ );
+        else
+            for ( size_t off = 0, src = 0; off < frame_bytes_; off += row_bytes, src += src_stride )
+                std::memcpy( write_buf_.data() + off, data + src, row_bytes );
         {
             const std::lock_guard<Mutex> lk( mx_ );
             if ( !open_ || stopped_ )
-                return false;
+                return false;  // closed or stopped during the copy
             size_t idx = 0;
             if ( count_ == 2 )
             {
@@ -105,11 +114,7 @@ public:
                 idx = ( head_ + count_ ) & 1;
                 ++count_;
             }
-            if ( src_stride == row_bytes )
-                std::memcpy( slots_[idx].data(), data, frame_bytes_ );
-            else
-                for ( size_t off = 0, src = 0; off < frame_bytes_; off += row_bytes, src += src_stride )
-                    std::memcpy( slots_[idx].data() + off, data + src, row_bytes );
+            slots_[idx].swap( write_buf_ );  // both hold at least frame_bytes_
         }
         cv_.notify_one();
         return true;
@@ -140,10 +145,18 @@ public:
     }
 
 private:
+    bool accepting() const noexcept
+    {
+        const std::lock_guard<Mutex> lk( mx_ );
+        return open_ && !stopped_;
+    }
+
+private:
     const size_t frame_bytes_;
     mutable Mutex mx_;
     CondVar cv_;
     std::array<std::vector<uint8_t>, 2> slots_ {};
+    std::vector<uint8_t> write_buf_;  // producer only, outside mx_; sized in the constructor, never resized
     size_t head_ = 0;
     size_t count_ = 0;
     uint64_t drops_ = 0;

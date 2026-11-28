@@ -142,15 +142,17 @@ public:
     // Async GPU draw: 1-px pixel-snapped outlines for all boxes + callouts in ONE draw call
     // (batched VBO, per-vertex color), alpha-blended
     // (Porter-Duff over; the trail fade of BoxMapper is the alpha source).
-    void draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept;
-    void draw( const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept
+    // false: the context could not be made current, nothing was drawn.
+    bool draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept;
+    bool draw( const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept
     {
-        draw_slot( 0, boxes, n, callouts );
+        return draw_slot( 0, boxes, n, callouts );
     }
     // Blocks until all GPU writes from draw() are visible to CPU/RGA.
     // Fence sync (EGL_ANDROID_native_fence_sync -> EGL_KHR_fence_sync) when available,
     // glFinish() otherwise. Bounded to kFenceWaitNs (100 ms); returns false on fence timeout
     // without calling unbounded glFinish() so a wedged GPU cannot hang the pipeline.
+    // false as well when the context cannot be made current.
     bool sync_cpu() noexcept;
     void release_context() const noexcept;
     // Draw -> RGA/CPU ordering is sync_cpu() only: this RGA driver
@@ -177,8 +179,12 @@ private:
     void destroy_gbm_device( void *dev ) const;
 
     void done();
-    void release_slot( int slot );
-    void make_current();
+    // The program, VBO, VAO and atlas texture. The context must be current.
+    void delete_gl_objects();
+    // gl_current = false: only the EGLImage is destroyed (no GL calls without a current context).
+    void release_slot( int slot, bool gl_current = true );
+    // Makes st_.ctx current unless it already is; false (logged) when EGL refuses.
+    bool make_current() noexcept;
     bool make_program();
     // Attribute setup for the batched vertex layout: recorded once into
     // the VAO (ES3 path) or re-applied per draw() (GLES2 path).

@@ -34,8 +34,9 @@ namespace
 // Declaration order is the lifetime contract (destruction runs in reverse):
 // the Log first (the parse already reports through it), then the parsed
 // options, then -- inside the try block -- env (before any thread), the
-// flag, the waiter and the Pipeline; the Armed scope ends before the
-// Pipeline is destroyed.
+// async sink and its Log, the flag, the waiter and the Pipeline; the Armed
+// scope ends before the Pipeline is destroyed. A throw unwinds all of them
+// (the sink drains) before the handler reports through the synchronous log.
 int main( int argc, char** argv )
 {
     // Diagnostics: info/debug -> stdout, warnings/errors -> stderr.
@@ -56,24 +57,23 @@ int main( int argc, char** argv )
             break;
     }
 
-    const ProcessEnv env;
-    light_ai::platform::AsyncLogSink async_sink( std::cout, std::cerr );
-    const Log log( async_sink.sink_fn(), cli.config().log_level );
-
     try
     {
-        configure_rt_allocator( log );
-        lock_process_memory( log );
+        const ProcessEnv env;
+        configure_rt_allocator( cli_log );  // mallopt is MT-Unsafe: before the first thread (the sink's drainer)
+        light_ai::platform::AsyncLogSink async_sink( std::cout, std::cerr );
+        const Log log( async_sink.sink_fn(), cli.config().log_level );
         StopFlag stop;
         SignalWaiter waiter( env, stop );
         Pipeline p( cli.config(), stop, log );
+        lock_process_memory( log );  // after the loads (freed heap stays mapped: no trim); the NPU pool workers sleep until run()
         const SignalWaiter::Armed armed( waiter );
         const Status rst = p.run();
         return rst.ok() ? 0 : 1;  // a runtime fatal -> 1; a clean end (even zero frames) -> 0
     }
     catch ( const std::exception& e )
     {
-        log.error() << "Fatal: " << e.what() << '\n';
+        cli_log.error() << "Fatal: " << e.what() << '\n';
         return 3;  // startup failure; the CLI rejections above keep their 2
     }
 }

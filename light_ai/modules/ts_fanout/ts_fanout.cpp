@@ -178,7 +178,7 @@ struct Client {
     std::size_t head = 0;
     std::size_t len = 0;
     std::size_t sync_len = 0;
-    std::array<uint8_t, 3 * kTsPacketSize> sync_buf{};
+    std::array<uint8_t, 4 * kTsPacketSize> sync_buf{};
     std::array<uint8_t, kClientBufSize> buf{};
 
     bool push_bytes(const uint8_t* data, std::size_t n) noexcept {
@@ -259,26 +259,18 @@ std::size_t find_ts_sync(const uint8_t* data, std::size_t n) noexcept {
             }
         }
     }
-    if (n > kTsPacketSize) {
-        const std::size_t limit2 = n - kTsPacketSize;
-        for (std::size_t i = 0; i < limit2; ++i) {
-            if (data[i] == kTsSyncByte && data[i + kTsPacketSize] == kTsSyncByte) {
-                return i;
-            }
-        }
-    }
     return n;
 }
 
 bool feed_client_sync(Client& c, const uint8_t* data, std::size_t n) noexcept {
-    if (c.sync_len == 0 && n > kTsPacketSize) {
+    if (c.sync_len == 0 && n > 2 * kTsPacketSize) {
         const std::size_t off = find_ts_sync(data, n);
         if (off < n) {
             c.synced = true;
             return enqueue_client_data(c, data + off, n - off);
         }
     }
-    // Accumulate small or unaligned chunks until >= 2 consecutive 0x47 sync bytes appear.
+    // Accumulate small or unaligned chunks until 3 consecutive 0x47 sync bytes, 188 B apart, appear.
     const std::size_t cap = c.sync_buf.size();
     std::size_t pos = 0;
     while (pos < n) {
@@ -381,9 +373,13 @@ struct Relay {
         }
         up_state = UpstreamState::Disconnected;
         idle_deadline_ms = 0;
+        // The next upstream session starts mid-packet: drop what is still queued and realign every client.
         for (auto& c : clients) {
+            c.head = 0;
+            c.len = 0;
             c.synced = false;
             c.sync_len = 0;
+            update_client_epoll(c);
         }
     }
 

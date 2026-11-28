@@ -119,6 +119,7 @@ void RknnEngine::release_io()
             ::close( b.fd );
     }
     in_dma_.clear();
+    in_is_dma32_.clear();
     for ( auto* m : out_mems_ )
     {
         if ( m )
@@ -298,6 +299,7 @@ Status RknnEngine::setup_io( bool keep_native_outputs, int input_slots )
 
     in_mems_.assign( static_cast<size_t>( input_slots ), nullptr );
     in_dma_.reserve( static_cast<size_t>( input_slots ) );
+    in_is_dma32_.assign( static_cast<size_t>( input_slots ), 0 );
     bool warned_fallback = false;
     for ( int s = 0; s < input_slots; ++s )
     {
@@ -327,6 +329,7 @@ Status RknnEngine::setup_io_shared( const TensorSet& shared_inputs, bool keep_na
     // Engines[1..n-1] import dma-buf fds owned by engines_[0] without taking
     // ownership of in_dma_ (release_io destroys only this context's mem handles).
     in_mems_.assign( static_cast<size_t>( shared_inputs.n ), nullptr );
+    in_is_dma32_.assign( static_cast<size_t>( shared_inputs.n ), 0 );
     for ( int s = 0; s < shared_inputs.n; ++s )
     {
         const TensorRef& t = shared_inputs.d[s];
@@ -344,6 +347,7 @@ Status RknnEngine::setup_io_shared( const TensorSet& shared_inputs, bool keep_na
             return make_status( Errc::NoMemory, "rknn_create_mem_from_fd failed" );
         }
         in_mems_[static_cast<size_t>( s )] = mem;
+        in_is_dma32_[static_cast<size_t>( s )] = t.dma32 ? 1 : 0;
     }
 
     return finish_setup_io( keep_native_outputs, row_bytes );
@@ -366,6 +370,7 @@ Status RknnEngine::alloc_input_slot( int slot, uint32_t in_size, bool& warned_fa
         }
         in_dma_.push_back( Dma32Buf { fd, ptr, aligned } );
         in_mems_[static_cast<size_t>( slot )] = mem;
+        in_is_dma32_[static_cast<size_t>( slot )] = 1;
         return {};
     }
     if ( !warned_fallback )
@@ -395,7 +400,8 @@ TensorRef RknnEngine::input_tensor( int slot ) const noexcept
 {
     if ( slot < 0 || slot >= static_cast<int>( in_mems_.size() ) || !in_mems_[slot] )
         return {};
-    return { in_mems_[slot]->fd, in_mems_[slot]->virt_addr, in_mems_[slot]->size, in_stride_bytes_ };
+    const bool dma32 = static_cast<size_t>( slot ) < in_is_dma32_.size() && in_is_dma32_[static_cast<size_t>( slot )] != 0;
+    return { in_mems_[slot]->fd, in_mems_[slot]->virt_addr, in_mems_[slot]->size, in_stride_bytes_, dma32 };
 }
 
 void RknnEngine::sync_output( size_t i ) const noexcept

@@ -18,6 +18,7 @@ struct TensorRef
     void* data = nullptr;        // CPU mapping (CPU box drawing, raw preview)
     uint32_t size = 0;           // bytes, including any row stride
     uint32_t stride_bytes = 0;   // row stride in bytes (w_stride * c or w * c)
+    bool dma32 = false;          // from the system-dma32 heap (< 4 GiB physical, what RGA2 can map)
 };
 
 // The pool's tensors in slot order: tensor k belongs to pool slot k.

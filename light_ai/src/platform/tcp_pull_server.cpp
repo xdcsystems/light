@@ -64,6 +64,10 @@ TcpPullServer::~TcpPullServer()
 Status TcpPullServer::listen()
 {
     close_all();
+    {
+        const std::lock_guard<std::mutex> lk( cfd_mx_ );
+        aborted_ = false;  // an abort_client() of an earlier listener must not reject the new one's viewers
+    }
     const int fd = ::socket( AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0 );
     if ( fd < 0 )
         return errno_status( Errc::Failed, "socket", errno );
@@ -106,11 +110,14 @@ Status TcpPullServer::accept_client( const std::atomic<bool>& quit )
         const int cfd = ::accept4( lfd_, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC );
         if ( cfd >= 0 )
         {
+            // Before adopt_client(): once published, abort_client() may shut the socket down from another thread.
+            configure_client_socket( cfd, sndbuf_bytes_ );
             if ( !adopt_client( cfd ) )
                 return make_status( Errc::Timeout, "no viewer" );
             break;
         }
-        if ( errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR )
+        // ECONNABORTED / EPROTO: that connection died in the backlog; the listener is fine (accept(2)).
+        if ( errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR && errno != ECONNABORTED && errno != EPROTO )
             return errno_status( Errc::Failed, "accept", errno );
     }
     const int cfd = write_ctx_.cfd.load( std::memory_order_acquire );
@@ -119,8 +126,6 @@ Status TcpPullServer::accept_client( const std::atomic<bool>& quit )
         close_client();
         return make_status( Errc::Timeout, "no viewer" );
     }
-
-    configure_client_socket( cfd, sndbuf_bytes_ );
     return {};
 }
 
