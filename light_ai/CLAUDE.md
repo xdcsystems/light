@@ -45,7 +45,7 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   `librga/include`, no `rga/` subdir). Headers and library match (1.10.6). The distro `/usr/include/rga/` (2.2.0,
   different `im2d_version.h` / `rga.h`) is reachable through the default `/usr/include`: harmless while RGA is
   included as `<im2d.h>` / `<rga.h>` (resolved in `/usr/local/include`, searched first; today only
-  `src/media/rga_resizer.cpp` and `src/net/frame_composer.cpp`), but `#include <rga/im2d.h>` would pick the 2.2.0 headers
+  `include/media/rga_status.hpp`, `src/media/rga_resizer.cpp` and `src/net/frame_composer.cpp`), but `#include <rga/im2d.h>` would pick the 2.2.0 headers
   against the 1.10.6 library.
 - Include paths: of the pkg-config `MPP` / `RGA` / `AV` sets, only `AV_INCLUDE_DIRS` reaches
   `target_include_directories` (`CMakeLists.txt`; `MPP_INCLUDE_DIRS` / `RGA_INCLUDE_DIRS` are not passed, only their
