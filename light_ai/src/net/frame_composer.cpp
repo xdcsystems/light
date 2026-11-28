@@ -12,6 +12,7 @@
 #include "core/rga_limits.hpp"
 #include "core/throw_on.hpp"
 #include "media/dma_sync.hpp"
+#include "media/rga_status.hpp"
 #include "net/encoder_frame_pool.hpp"
 #include "net/frame_composer.hpp"
 
@@ -99,14 +100,6 @@ namespace
         plate.draw( Plane8 { py, lay.w, lay.vstride }, lay );
         dma::cache_clean( py, mpp_buffer_get_size( mb ) );
     }
-
-    Status rga_ok( IM_STATUS st, const Log& log, const char* what )
-    {
-        if ( static_cast<int>( st ) > 0 )
-            return {};
-        log.error() << "enc: " << what << " failed: " << imStrError( st ) << "\n";
-        return make_status( Errc::Failed, what );  // the imStrError detail is in the log line above
-    }
 }  // namespace
 
 FrameComposer::FrameComposer( const EncoderConfig& cfg, const Log& log )
@@ -176,8 +169,8 @@ Status FrameComposer::compose_tile( int tensor_fd, const TilePlacement& tp )
     im_opt_t opt = rga3_opt();
     if ( !rga_limits::rga3_size_ok( tp.src.w, tp.src.h ) || !rga_limits::rga3_size_ok( tp.dst.w, tp.dst.h ) )
         opt.core = IM_SCHEDULER_RGA2_CORE0;
-    return rga_ok( improcess( src, dst, {}, rect( tp.src ), rect( tp.dst ), {}, -1, nullptr, &opt, IM_SYNC ),
-                   log_, "RGA tile compose" );
+    return rga_check( improcess( src, dst, {}, rect( tp.src ), rect( tp.dst ), {}, -1, nullptr, &opt, IM_SYNC ),
+                      log_, "enc: RGA tile compose failed" );
 }
 
 Status FrameComposer::flush_canvas( MppBuffer out )
@@ -187,8 +180,8 @@ Status FrameComposer::flush_canvas( MppBuffer out )
     const rga_buffer_t cvs = rgb888( canvas_.buf[0], lay_ );
     const im_rect full { 0, 0, lay_.w, lay_.h };
     im_opt_t opt = rga3_opt();
-    return rga_ok( improcess( cvs, nv12( out, lay_ ), {}, full, full, {}, -1, nullptr, &opt, IM_SYNC ),
-                   log_, "RGA canvas->NV12" );
+    return rga_check( improcess( cvs, nv12( out, lay_ ), {}, full, full, {}, -1, nullptr, &opt, IM_SYNC ),
+                      log_, "enc: RGA canvas->NV12 failed" );
 }
 
 Status FrameComposer::compose_idle( const bool* absent, int nabs, int /*slot*/, MppBuffer out )
@@ -202,8 +195,8 @@ Status FrameComposer::compose_idle( const bool* absent, int nabs, int /*slot*/, 
             return {};
         bands_[0] = plate_band();
         const im_rect full { 0, 0, lay_.w, lay_.h };
-        return rga_ok( improcess( idl, nv12( out, lay_ ), {}, full, full, {}, -1, nullptr, &opt, IM_SYNC ),
-                       log_, "RGA idle copy" );
+        return rga_check( improcess( idl, nv12( out, lay_ ), {}, full, full, {}, -1, nullptr, &opt, IM_SYNC ),
+                          log_, "enc: RGA idle copy failed" );
     }
     // Multi-view: convert the NV12 plate tile into every absent cell of the
     // persistent RGB888 canvas that does not hold it already; live cells keep
@@ -214,8 +207,8 @@ Status FrameComposer::compose_idle( const bool* absent, int nabs, int /*slot*/, 
         if ( !tile_absent( absent, nabs, s ) || same( bands_[s], plate_band() ) )
             continue;
         const im_rect tile = rect( cell_rect( lay_, s ) );
-        if ( const Status tst = rga_ok( improcess( idl, cvs, {}, tile, tile, {}, -1, nullptr, &opt, IM_SYNC ),
-                                        log_, "RGA idle tile copy" );
+        if ( const Status tst = rga_check( improcess( idl, cvs, {}, tile, tile, {}, -1, nullptr, &opt, IM_SYNC ),
+                                           log_, "enc: RGA idle tile copy failed" );
              !tst.ok() )
             return tst;
         bands_[s] = plate_band();
