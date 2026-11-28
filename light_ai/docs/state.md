@@ -1748,3 +1748,9 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
   - `custom-no-inheritance` allows only these two, `private` and non-virtual; every other base is still a finding, and so is a specialization or a look-alike of the two names.
   - A type-trait comparison before / after (47 classes: size, alignment, 18 traits) differs only in `is_aggregate` of `MuxSession::FcGuard` (got an explicit constructor) and `RkmppDrmPool<N>` (only a default-initialized member).
   - Full gate on the PR branch: `light_ai_tests` `72` suites, `10,210/10,210`, `light_ai_tests_tsan` `6,207/6,207`, `rules_lint.sh` PASS (`245` files, `0` findings), 2-pass `clang-tidy` `0` findings; Layer A cmp-identical (`dcdd7d98869860f8`).
+- **Audit PR-Hotfix 1 — 4 P0 defects:**
+  - `BasicSourceSet::stalled()` now fills `out.src`: a stall seen through a silent `poll_fd()` named channel `-1` (or the previous frame's channel). `SourceSupervisor::handle_failure()` turns an index outside `[0, size())` into a fatal `Failed`.
+  - `MppDecoder::decode()` stops when `make_packet()` built no packet (bad input, no SOI/EOI): `submit_input()` is no longer reached with `pkt_ == nullptr`.
+  - `ts_fanout`: `EMFILE` / `ENFILE` / `ENOBUFS` / `ENOMEM` in `accept4()` take the listener out of `epoll` for `100 ms` (or until a client is dropped); `ECONNABORTED` / `EPROTO` are retried. Loopback check with `RLIMIT_NOFILE=7`: `3.00 s` CPU per `3 s` before, `0.00 s` after, the waiting client accepted once a descriptor was freed. Not installed, service not restarted.
+  - `BufferedSocket::send_all()`: `poll(POLLOUT)` in `100 ms` slices + `MSG_DONTWAIT`, one `5 s` deadline (`kSendMs`), observes `cancelled()`.
+  - Full gate on the PR branch: `light_ai_tests` `72` suites, `10,218/10,218`, `light_ai_tests_tsan` `6,207/6,207`, `rules_lint.sh` PASS (`245` files, `0` findings), 2-pass `clang-tidy` `0` findings. Both new tests fail on the old code. No live camera run.
