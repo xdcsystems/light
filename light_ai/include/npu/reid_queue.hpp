@@ -3,10 +3,8 @@
 
 #pragma once
 
-#include <algorithm>
 #include <array>
 #include <atomic>
-#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <utility>

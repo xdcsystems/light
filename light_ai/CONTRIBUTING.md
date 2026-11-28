@@ -28,7 +28,7 @@ Each rule is marked **(gate)**, **(review)** or both. **(gate)** means `scripts/
 
 - **`Status` ([`include/core/status.hpp`](include/core/status.hpp))** (review)**:** Operations that can fail for a runtime reason return `Status` (`Errc`, string-literal `what`, optional `Sys::Errno` / `Sys::Sdk` code); results go to out-parameters. Outcome enums (e.g. `FrameStatus`, `SourceChannel::Attach`, `HttpHead::Parse`) carry `Status` in their failure arm.
 - **Startup-only exceptions** (review)**:** `std::runtime_error` (via [`throw_on`](include/core/throw_on.hpp) when wrapping a `Status`) is permitted only on the startup path (constructors and `Pipeline` initialization).
-- **`noexcept` frame path & threads** (`catch (...)`: gate, `custom-no-catch-all`; the rest: review)**:** Frame processing and thread bodies are `noexcept`: no exceptions are thrown and there is no `catch (...)` in the frame path. Exactly two `catch (...)` exist, both startup thread-launch rethrows (`InferencePool::start_workers`, `NetPreview` ctor), each allowlisted with `NOLINT(custom-no-catch-all): <reason>`.
+- **`noexcept` frame path & threads** (`catch (...)`: gate, `custom-no-catch-all`; the rest: review)**:** Frame processing and thread bodies are `noexcept`: no exceptions are thrown and there is no `catch (...)` in the frame path. Exactly one `catch (...)` exists, a startup thread-launch rethrow (`InferencePool::start_workers`), allowlisted with `NOLINT(custom-no-catch-all): <reason>`.
 
   Legitimate `catch (const std::exception&)` sites outside the frame path:
   - [`src/main.cpp`](src/main.cpp): top-level startup `try`/`catch` logs `Fatal:` and returns exit code `3`.
@@ -59,7 +59,7 @@ Every PR targeting `master` must pass the full board gate:
 
 This runs:
 1. Release CMake build (`light_ai`).
-2. Host unit tests (`light_ai_tests` — 71 suites, 10,135 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 11 suites, 6,207 checks).
+2. Host unit tests (`light_ai_tests` — 71 suites, 10,208 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 11 suites, 6,207 checks).
 3. Two-pass `clang-tidy` gate ([`scripts/tidy_run.sh`](scripts/tidy_run.sh)):
    - **self-test + lint:** the rules pass on [`tests/tidy_probe/`](tests/tidy_probe) and [`scripts/rules_lint.sh`](scripts/rules_lint.sh) on its fixture tree must give exactly the expected hits, and `--verify-config` must know every check option key of `scripts/tidy_rules.yaml`; then `rules_lint.sh` over the tree.
    - **main:** system `clang-tidy-11` against [`.clang-tidy`](.clang-tidy) (`tests/` uses [`tests/.clang-tidy`](tests/.clang-tidy)).

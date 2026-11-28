@@ -5,13 +5,14 @@
 
 #include "core/preview_ring.hpp"
 #include "core/status.hpp"
+#include "net/av_packet.hpp"
+#include "net/network_init.hpp"
 #include "platform/joining_thread.hpp"
 #include "platform/pi_mutex.hpp"
 
 // Opaque ffmpeg types, forward-declared: the header compiles without
 // the libav* include paths; the real includes stay in the .cpp.
 struct AVFormatContext;
-struct AVPacket;
 struct AVStream;
 class Log;
 class TcpAvio;
@@ -70,6 +71,8 @@ private:
 
     light_ai::platform::PiMutex tcp_mx_;
     TcpPullServer* active_tcp_ = nullptr;
-    AVPacket* pkt_ = nullptr;  // allocated once, used only on serve() thread
-    JoiningThread thread_;     // last: joined before members above die
+    // Destruction order: thread_, pkt_, net_.
+    NetworkInit net_;       // the network layer outlives the packet and the thread
+    AvPacket pkt_;          // allocated once, used only on serve() thread
+    JoiningThread thread_;  // last: joined before members above die
 };

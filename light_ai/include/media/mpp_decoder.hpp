@@ -79,10 +79,8 @@ private:
     // Allocates/grows the persistent pkt_buf_ to at least `size` bytes.
     Status ensure_pkt_buf( size_t size );
 
-    // One-shot teardown of the objects created before a failed init step:
-    // the same release order as the dtor, but only the members that may
-    // exist at that point.
-    void cleanup_failed();
+    // The one release path (dtor, re-init, a failed init() step): releases
+    // what exists and resets the decoder state; a no-op without a ctx_.
     void teardown() noexcept;
     void update_strides( MppFrame f ) noexcept;
 

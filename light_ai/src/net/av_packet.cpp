@@ -10,7 +10,7 @@ extern "C"
 AvPacket::AvPacket() : p_( av_packet_alloc() )
 {
     if ( !p_ )
-        throw std::runtime_error( "net encoder: av_packet_alloc failed" );
+        throw std::runtime_error( "av_packet_alloc failed" );
 }
 
 AvPacket::~AvPacket()

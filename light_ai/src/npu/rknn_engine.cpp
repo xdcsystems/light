@@ -10,6 +10,28 @@
 #include "npu/rknn_engine.hpp"
 #include "core/rga_limits.hpp"  // rgb888_stride_ok: the input rows every consumer reads
 
+namespace
+{
+    // Ctor only (a throwing ctor runs no dtor): destroys the context of a
+    // successful rknn_init unless release() hands it over to ~RknnEngine().
+    class RknnCtxGuard
+    {
+    public:
+        explicit RknnCtxGuard( rknn_context ctx ) noexcept : ctx_( ctx ) {}
+        ~RknnCtxGuard()
+        {
+            if ( ctx_ )
+                rknn_destroy( ctx_ );
+        }
+        RknnCtxGuard( const RknnCtxGuard& ) = delete;
+        RknnCtxGuard& operator=( const RknnCtxGuard& ) = delete;
+        void release() noexcept { ctx_ = 0; }
+
+    private:
+        rknn_context ctx_;
+    };
+}  // namespace
+
 RknnEngine::RknnEngine( const char* model_path, const Log& log ) : log_( log )
 {
     log_.info() << "loading model: " << model_path << '\n';
@@ -21,23 +43,16 @@ RknnEngine::RknnEngine( const char* model_path, const Log& log ) : log_( log )
         ctx_ = 0;
         throw std::runtime_error( std::string( "rknn_init failed for " ) + model_path );
     }
+    RknnCtxGuard ctx_guard( ctx_ );
 
     rknn_input_output_num io_num {};
     if ( rknn_query( ctx_, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof( io_num ) ) != RKNN_SUCC || io_num.n_input < 1 || io_num.n_output < 1 )
-    {
-        rknn_destroy( ctx_ );
-        ctx_ = 0;
         throw std::runtime_error( "rknn_query IN_OUT_NUM failed" );
-    }
 
     in_attr_ = {};
     in_attr_.index = 0;
     if ( rknn_query( ctx_, RKNN_QUERY_INPUT_ATTR, &in_attr_, sizeof( in_attr_ ) ) != RKNN_SUCC )
-    {
-        rknn_destroy( ctx_ );
-        ctx_ = 0;
         throw std::runtime_error( "rknn_query INPUT_ATTR failed" );
-    }
     parse_input_dims();
 
     out_attrs_.resize( io_num.n_output );
@@ -46,12 +61,9 @@ RknnEngine::RknnEngine( const char* model_path, const Log& log ) : log_( log )
         out_attrs_[i] = {};
         out_attrs_[i].index = i;
         if ( rknn_query( ctx_, RKNN_QUERY_OUTPUT_ATTR, &out_attrs_[i], sizeof( out_attrs_[i] ) ) != RKNN_SUCC )
-        {
-            rknn_destroy( ctx_ );
-            ctx_ = 0;
             throw std::runtime_error( "rknn_query OUTPUT_ATTR[" + std::to_string( i ) + "] failed" );
-        }
     }
+    ctx_guard.release();
 }
 
 RknnEngine::~RknnEngine()

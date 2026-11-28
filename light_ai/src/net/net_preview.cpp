@@ -1,6 +1,5 @@
 #include <chrono>
 #include <cstddef>
-#include <stdexcept>
 
 extern "C"
 {
@@ -63,23 +62,7 @@ NetPreview::NetPreview( int w, int h, int stride, int fps, int port, const Log& 
   , ring_( frame_byte_size( h, w * 3 ) )
   , send_buf_( frame_byte_size( h, w * 3 ) )
 {
-    avformat_network_init();
-    pkt_ = av_packet_alloc();
-    if ( !pkt_ )
-    {
-        avformat_network_deinit();
-        throw std::runtime_error( "net_preview: av_packet_alloc failed" );
-    }
-    try
-    {
-        thread_.start( &NetPreview::serve, this );
-    }
-    catch ( ... )  // NOLINT(custom-no-catch-all): startup (ctor), a failed std::thread start; frees, then rethrows
-    {
-        av_packet_free( &pkt_ );
-        avformat_network_deinit();
-        throw;
-    }
+    thread_.start( &NetPreview::serve, this );
 }
 
 NetPreview::~NetPreview()
@@ -92,9 +75,6 @@ NetPreview::~NetPreview()
     }
     ring_.stop();
     thread_.join();
-    if ( pkt_ )
-        av_packet_free( &pkt_ );
-    avformat_network_deinit();
 }
 
 void NetPreview::serve() noexcept
@@ -198,20 +178,21 @@ uint32_t NetPreview::session_epoch() const noexcept
 bool NetPreview::drain_session( AVFormatContext* fc, AVStream* st, uint64_t frame_step ) noexcept
 {
     uint64_t pts = 0;
+    AVPacket* const pkt = pkt_.get();
     while ( !quit_.load( std::memory_order_relaxed ) && ring_.pop( send_buf_ ) )
     {
-        pkt_->buf = nullptr;
-        pkt_->data = send_buf_.data();
-        pkt_->size = static_cast<int>( send_buf_.size() );
-        pkt_->stream_index = st->index;
-        pkt_->pts = pkt_->dts = static_cast<int64_t>( pts * frame_step );
-        pkt_->duration = static_cast<int64_t>( frame_step );
-        pkt_->flags |= AV_PKT_FLAG_KEY;
+        pkt->buf = nullptr;
+        pkt->data = send_buf_.data();
+        pkt->size = static_cast<int>( send_buf_.size() );
+        pkt->stream_index = st->index;
+        pkt->pts = pkt->dts = static_cast<int64_t>( pts * frame_step );
+        pkt->duration = static_cast<int64_t>( frame_step );
+        pkt->flags |= AV_PKT_FLAG_KEY;
         ++pts;
 
-        const int ret = av_write_frame( fc, pkt_ );
-        pkt_->data = nullptr;
-        pkt_->size = 0;
+        const int ret = av_write_frame( fc, pkt );
+        pkt->data = nullptr;
+        pkt->size = 0;
         if ( ret < 0 )
         {
             log_.warn() << "net: write failed: " << av_err_str( ret ) << '\n';

@@ -7,6 +7,7 @@
 #include "media/rga_resizer.hpp"
 #include "core/log.hpp"
 #include "core/rga_limits.hpp"
+#include "media/rga_status.hpp"
 
 namespace
 {
@@ -30,9 +31,6 @@ namespace
         return pass1_ok && ( !two_pass || rga_limits::rga3_size_ok( w_aux, h_aux ) );
     }
 
-    // The only expansion of imStrError: an im2d status <= 0 is a failure,
-    // logged as "<what>: <the SDK's text>" and returned as Failed with the
-    // raw IM_STATUS in sys().
     int rga_rot_usage( int rot_deg ) noexcept
     {
         switch ( rot_deg )
@@ -46,14 +44,6 @@ namespace
             default:
                 return 0;
         }
-    }
-
-    Status rga_check( IM_STATUS st, const Log& log, const char* what )
-    {
-        if ( static_cast<int>( st ) > 0 )
-            return {};
-        log.error() << what << ": " << imStrError( st ) << '\n';
-        return sdk_status( Errc::Failed, what, static_cast<int>( st ) );
     }
 }  // namespace
 
