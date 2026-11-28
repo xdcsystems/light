@@ -27,6 +27,7 @@ constexpr int kSendBufSize = 65536;
 constexpr int kNotsentLowat = 16384;
 constexpr int kRetryIntervalMs = 250;
 constexpr int kAcceptBackoffMs = 100;  // listener parked after fd / buffer exhaustion in accept4()
+constexpr int64_t kConnectTimeoutMs = 3000;  // upstream connect() still in EINPROGRESS: give up, retry
 constexpr int kMaxEpollEvents = 32;
 constexpr int kMaxReadIters = 8;
 
@@ -137,7 +138,14 @@ bool parse_args(int argc, char** argv, Config& cfg) noexcept {
     return true;
 }
 
-void configure_low_latency_tcp(int fd) noexcept {
+// The upstream socket only receives: no send-side tuning.
+void configure_upstream_tcp(int fd) noexcept {
+    const int one = 1;
+    (void)::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+}
+
+// A viewer socket: a short kernel send queue, so a slow viewer shows up in its own ring.
+void configure_client_tcp(int fd) noexcept {
     const int one = 1;
     (void)::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
     const int sndbuf = kSendBufSize;
@@ -170,7 +178,9 @@ void epoll_del_close(int epfd, int& fd) noexcept {
     }
 }
 
+// One slot of the fixed pool: allocated once, reused in place (the 256 KiB ring never moves).
 struct Client {
+    bool active = false;
     uint64_t id = 0;
     int fd = -1;
     bool synced = false;
@@ -301,6 +311,11 @@ bool feed_client_sync(Client& c, const uint8_t* data, std::size_t n) noexcept {
     return true;
 }
 
+// deadline < 0: none yet.
+int64_t earlier_deadline(int64_t deadline, int64_t candidate) noexcept {
+    return (deadline < 0) ? candidate : std::min(deadline, candidate);
+}
+
 enum class UpstreamState {
     Disconnected,
     Connecting,
@@ -320,10 +335,12 @@ struct Relay {
     UpstreamState up_state = UpstreamState::Disconnected;
     int64_t next_retry_ms = 0;
     int64_t idle_deadline_ms = 0;
+    int64_t connect_deadline_ms = 0;  // set while Connecting
     int64_t last_connect_err_log_ms = 0;
     bool listen_armed = false;  // listen_fd is registered in epfd
     int64_t accept_resume_ms = 0;
-    std::vector<Client> clients{};
+    std::vector<Client> clients{};  // cfg.max_clients slots, sized once in main()
+    std::size_t active_clients = 0;
 
     // Puts a parked listener back into epfd; on failure tries again after the backoff.
     void try_rearm_listen(int64_t now) noexcept {
@@ -350,16 +367,25 @@ struct Relay {
     }
 
     void drop_client_at(std::size_t idx, const char* reason) noexcept {
-        const int fd = clients[idx].fd;
-        epoll_del_close(epfd, clients[idx].fd);
-        if (idx + 1 < clients.size()) {
-            clients[idx] = std::move(clients.back());
+        if (idx >= clients.size() || !clients[idx].active) {
+            return;
         }
-        clients.pop_back();
+        Client& c = clients[idx];
+        const int fd = c.fd;
+        epoll_del_close(epfd, c.fd);
+        c.active = false;
+        c.id = 0;
+        c.fd = -1;
+        c.len = 0;
+        c.head = 0;
+        c.synced = false;
+        c.sync_len = 0;
+        c.epoll_out = false;
+        --active_clients;
         std::fprintf(stderr, "[ts_fanout] client fd=%d disconnected (%s), active=%zu\n",
-                     fd, reason, clients.size());
+                     fd, reason, active_clients);
         try_rearm_listen(now_ms());  // a descriptor is free again
-        if (clients.empty() && up_state != UpstreamState::Disconnected) {
+        if (active_clients == 0 && up_state != UpstreamState::Disconnected) {
             idle_deadline_ms = now_ms() + cfg.idle_grace_ms;
         }
     }
@@ -373,8 +399,12 @@ struct Relay {
         }
         up_state = UpstreamState::Disconnected;
         idle_deadline_ms = 0;
+        connect_deadline_ms = 0;
         // The next upstream session starts mid-packet: drop what is still queued and realign every client.
         for (auto& c : clients) {
+            if (!c.active) {
+                continue;
+            }
             c.head = 0;
             c.len = 0;
             c.synced = false;
@@ -392,7 +422,7 @@ struct Relay {
             next_retry_ms = now + kRetryIntervalMs;
             return;
         }
-        configure_low_latency_tcp(fd);
+        configure_upstream_tcp(fd);
         const uint64_t token = next_token++;
         const int rc = ::connect(fd, reinterpret_cast<const sockaddr*>(&cfg.upstream.addr),
                                  sizeof(cfg.upstream.addr));
@@ -405,6 +435,7 @@ struct Relay {
             upstream_fd = fd;
             upstream_token = token;
             up_state = UpstreamState::Connected;
+            connect_deadline_ms = 0;
             std::fprintf(stderr, "[ts_fanout] upstream connected to %s:%u\n",
                          cfg.upstream.host.c_str(), cfg.upstream.port);
             return;
@@ -418,10 +449,21 @@ struct Relay {
             upstream_fd = fd;
             upstream_token = token;
             up_state = UpstreamState::Connecting;
+            connect_deadline_ms = now + kConnectTimeoutMs;
             return;
         }
         ::close(fd);
         next_retry_ms = now + kRetryIntervalMs;
+    }
+
+    // The first inactive slot, nullptr when the pool is full.
+    Client* free_slot() noexcept {
+        for (auto& c : clients) {
+            if (!c.active) {
+                return &c;
+            }
+        }
+        return nullptr;
     }
 
     void handle_accept() noexcept {
@@ -445,27 +487,38 @@ struct Relay {
                 }
                 break;  // EAGAIN: the queue is drained; any other error: back to epoll
             }
-            if (clients.size() >= cfg.max_clients) {
+            if (active_clients >= cfg.max_clients) {
                 std::fprintf(stderr, "[ts_fanout] max clients (%zu) reached, rejecting fd=%d\n",
                              cfg.max_clients, cfd);
                 ::close(cfd);
                 continue;
             }
-            configure_low_latency_tcp(cfd);
+            Client* const slot = free_slot();
+            if (slot == nullptr) {
+                ::close(cfd);
+                continue;
+            }
+            configure_client_tcp(cfd);
             const uint64_t cid = next_token++;
             if (!epoll_add(epfd, cfd, EPOLLIN | EPOLLRDHUP, cid)) {
                 ::close(cfd);
                 continue;
             }
-            clients.emplace_back();
-            clients.back().id = cid;
-            clients.back().fd = cfd;
+            slot->active = true;
+            slot->id = cid;
+            slot->fd = cfd;
+            slot->synced = false;
+            slot->epoll_out = false;
+            slot->head = 0;
+            slot->len = 0;
+            slot->sync_len = 0;
+            ++active_clients;
             idle_deadline_ms = 0;
 
             char ip_buf[INET_ADDRSTRLEN]{};
             ::inet_ntop(AF_INET, &peer.sin_addr, ip_buf, sizeof(ip_buf));
             std::fprintf(stderr, "[ts_fanout] client fd=%d connected from %s:%u, active=%zu\n",
-                         cfd, ip_buf, ntohs(peer.sin_port), clients.size());
+                         cfd, ip_buf, ntohs(peer.sin_port), active_clients);
 
             if (up_state == UpstreamState::Disconnected) {
                 start_upstream_connect(now_ms());
@@ -499,6 +552,7 @@ struct Relay {
                 return;
             }
             up_state = UpstreamState::Connected;
+            connect_deadline_ms = 0;
             last_connect_err_log_ms = 0;
             std::fprintf(stderr, "[ts_fanout] upstream connected to %s:%u\n",
                          cfg.upstream.host.c_str(), cfg.upstream.port);
@@ -515,12 +569,15 @@ struct Relay {
         for (int iter = 0; iter < kMaxReadIters; ++iter) {
             const ssize_t n = ::recv(upstream_fd, chunk.data(), chunk.size(), MSG_DONTWAIT);
             if (n > 0) {
-                if (clients.empty()) {
+                if (active_clients == 0) {
                     continue;  // Drain upstream during idle grace without blocking
                 }
                 const std::size_t un = static_cast<std::size_t>(n);
-                for (std::size_t i = 0; i < clients.size();) {
+                for (std::size_t i = 0; i < clients.size(); ++i) {
                     Client& c = clients[i];
+                    if (!c.active) {
+                        continue;
+                    }
                     const bool ok = c.synced
                         ? enqueue_client_data(c, chunk.data(), un)
                         : feed_client_sync(c, chunk.data(), un);
@@ -529,7 +586,6 @@ struct Relay {
                         continue;
                     }
                     update_client_epoll(c);
-                    ++i;
                 }
             } else if (n == 0) {
                 close_upstream("EOF");
@@ -552,7 +608,7 @@ struct Relay {
     void handle_client_event(uint64_t id, uint32_t events) noexcept {
         std::size_t idx = clients.size();
         for (std::size_t i = 0; i < clients.size(); ++i) {
-            if (clients[i].id == id) {
+            if (clients[i].active && clients[i].id == id) {
                 idx = i;
                 break;
             }
@@ -582,15 +638,21 @@ struct Relay {
         }
     }
 
+    // The epoll wait up to the earliest active deadline, -1 = none. They are independent: with no
+    // client left during a connect, the idle grace and the connect timeout both run.
     int compute_timeout_ms(int64_t now) const noexcept {
         int64_t deadline = -1;
-        if (!clients.empty() && up_state == UpstreamState::Disconnected) {
-            deadline = next_retry_ms;
-        } else if (clients.empty() && up_state != UpstreamState::Disconnected && idle_deadline_ms > 0) {
-            deadline = idle_deadline_ms;
+        if (active_clients > 0 && up_state == UpstreamState::Disconnected) {
+            deadline = earlier_deadline(deadline, next_retry_ms);
+        }
+        if (active_clients == 0 && up_state != UpstreamState::Disconnected && idle_deadline_ms > 0) {
+            deadline = earlier_deadline(deadline, idle_deadline_ms);
+        }
+        if (up_state == UpstreamState::Connecting && connect_deadline_ms > 0) {
+            deadline = earlier_deadline(deadline, connect_deadline_ms);
         }
         if (!listen_armed && accept_resume_ms > 0) {
-            deadline = (deadline < 0) ? accept_resume_ms : std::min(deadline, accept_resume_ms);
+            deadline = earlier_deadline(deadline, accept_resume_ms);
         }
         if (deadline < 0) {
             return -1;
@@ -642,10 +704,15 @@ struct Relay {
         std::array<epoll_event, kMaxEpollEvents> events{};
         while (g_stop == 0) {
             const int64_t now = now_ms();
-            if (!clients.empty() && up_state == UpstreamState::Disconnected && now >= next_retry_ms) {
+            // Before the retry branch: a timed-out attempt waits kRetryIntervalMs like any failed one.
+            if (up_state == UpstreamState::Connecting && connect_deadline_ms > 0 && now >= connect_deadline_ms) {
+                close_upstream("connect timeout");
+                next_retry_ms = now + kRetryIntervalMs;
+            }
+            if (active_clients > 0 && up_state == UpstreamState::Disconnected && now >= next_retry_ms) {
                 start_upstream_connect(now);
             }
-            if (clients.empty() && up_state != UpstreamState::Disconnected &&
+            if (active_clients == 0 && up_state != UpstreamState::Disconnected &&
                 idle_deadline_ms > 0 && now >= idle_deadline_ms) {
                 close_upstream("idle grace expired");
             }
@@ -677,9 +744,12 @@ struct Relay {
         }
 
         std::fprintf(stderr, "[ts_fanout] shutting down\n");
-        while (!clients.empty()) {
-            epoll_del_close(epfd, clients.back().fd);
-            clients.pop_back();
+        for (std::size_t i = 0; i < clients.size(); ++i) {
+            if (clients[i].active) {
+                epoll_del_close(epfd, clients[i].fd);
+                clients[i].active = false;
+                --active_clients;
+            }
         }
         close_upstream("shutdown");
         epoll_del_close(epfd, listen_fd);
@@ -716,6 +786,6 @@ int main(int argc, char** argv) {
     if (!parse_args(argc, argv, relay.cfg)) {
         return 1;
     }
-    relay.clients.reserve(relay.cfg.max_clients);
+    relay.clients.resize(relay.cfg.max_clients);
     return relay.run();
 }

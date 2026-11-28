@@ -187,6 +187,62 @@ namespace
         CHECK( t, r.dequeue( 1000, err, f ) >= 0 && f == a );
     }
 
+    // Bad frames behind the delivered one in the same burst stay in the streak; a good one after them clears it.
+    void burst_bad_tail( TestRun& t, const Bytes& a )
+    {
+        const Bytes no_eoi( a.begin(), a.end() - 2 );
+        const Bytes v1 = variant( a, 0x66 );
+        const Bytes v2 = variant( a, 0x77 );
+        Rig r;
+        std::string why;
+        CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+        r.src.start();
+        int err = -1;
+        Bytes f;
+        r.src.requeue( r.dequeue( 1000, err, f ) );
+
+        // { good, 4 x bad }: the good frame is delivered, the streak of 4 makes the next call EIO.
+        r.send( parts( { v1, no_eoi, no_eoi, no_eoi, no_eoi }, true ) );
+        int idx = r.dequeue( 1000, err, f );
+        CHECK( t, idx >= 0 && err == 0 && f == v1 );
+        r.src.requeue( idx );
+        CHECK( t, r.dequeue( 1000, err, f ) == -1 && err == EIO );
+
+        // { bad, bad, good }: the good frame at the end clears the streak: 3 more bad ones are EAGAIN, the 4th EIO.
+        CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+        r.src.start();
+        r.src.requeue( r.dequeue( 1000, err, f ) );
+        r.send( parts( { no_eoi, no_eoi, v2 }, true ) );
+        idx = r.dequeue( 1000, err, f );
+        CHECK( t, idx >= 0 && err == 0 && f == v2 );
+        r.src.requeue( idx );
+        for ( int i = 1; i <= 4; ++i )
+        {
+            r.send( parts( { no_eoi }, true ) );
+            CHECK( t, r.dequeue( 1000, err, f ) == -1 && err == ( i < 4 ? EAGAIN : EIO ) );
+        }
+
+        // { good, 2 x bad }: a streak of 2, then 2 more bad calls reach 4.
+        CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+        r.src.start();
+        r.src.requeue( r.dequeue( 1000, err, f ) );
+        r.send( parts( { v1, no_eoi, no_eoi }, true ) );
+        idx = r.dequeue( 1000, err, f );
+        CHECK( t, idx >= 0 && f == v1 );
+        r.src.requeue( idx );
+        r.send( parts( { no_eoi }, true ) );
+        CHECK( t, r.dequeue( 1000, err, f ) == -1 && err == EAGAIN );
+        r.send( parts( { no_eoi }, true ) );
+        CHECK( t, r.dequeue( 1000, err, f ) == -1 && err == EIO );
+
+        // No good frame at all: every part of the burst counts, the first call is EIO.
+        CHECK( t, r.open( kHead + parts( { a }, false ), why ) == 0 );
+        r.src.start();
+        r.src.requeue( r.dequeue( 1000, err, f ) );
+        r.send( parts( { no_eoi, no_eoi, no_eoi, no_eoi }, true ) );
+        CHECK( t, r.dequeue( 1000, err, f ) == -1 && err == EIO );
+    }
+
     void desync_recovers( TestRun& t, const Bytes& a )
     {
         // Garbage past the 256 KiB window without a delimiter: the window is
@@ -636,6 +692,7 @@ void test_net_mjpeg_source( TestRun& t )
         return;
     connect_and_frames( t, a );
     corrupt_streak( t, a );
+    burst_bad_tail( t, a );
     desync_recovers( t, a );
     large_jpeg_nonblocking( t, a );
     oversized_part_recovers( t, a );

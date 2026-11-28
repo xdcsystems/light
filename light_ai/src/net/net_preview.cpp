@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cstddef>
+#include <thread>
 
 extern "C"
 {
@@ -48,6 +49,14 @@ namespace
         if ( h <= 0 || stride <= 0 )
             return 0;
         return static_cast<size_t>( stride ) * static_cast<size_t>( h );
+    }
+
+    // 200 ms between failed sessions, so a persistent accept / open error cannot spin a core; ends early on quit.
+    void retry_backoff( const std::atomic<bool>& quit ) noexcept
+    {
+        constexpr int steps = 10;
+        for ( int i = 0; i < steps && !quit.load( std::memory_order_relaxed ); ++i )
+            std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) );
     }
 }  // namespace
 
@@ -105,13 +114,17 @@ void NetPreview::serve() noexcept
     while ( !quit_.load() )
     {
         if ( const Status ast = tcp.accept_client( quit_ ); !ast.ok() )
+        {
+            retry_backoff( quit_ );
             continue;
+        }
 
         NutSessionGuard s( tcp );
         AVStream* st = nullptr;
         if ( const Status ost = open_session( tcp, s.avio, s.fc, st ); !ost.ok() )
         {
             log_.error() << "net: " << ost << '\n';
+            retry_backoff( quit_ );
             continue;
         }
         const uint64_t frame_step = compute_frame_step( st );
@@ -193,6 +206,7 @@ bool NetPreview::drain_session( AVFormatContext* fc, AVStream* st, uint64_t fram
         const int ret = av_write_frame( fc, pkt );
         pkt->data = nullptr;
         pkt->size = 0;
+        av_packet_unref( pkt );  // side data and properties do not carry over to the next frame
         if ( ret < 0 )
         {
             log_.warn() << "net: write failed: " << av_err_str( ret ) << '\n';

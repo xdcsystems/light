@@ -13,6 +13,7 @@ extern "C"
 
 #include "net/av_common.hpp"  // av_err_str
 #include "core/log.hpp"
+#include "core/param_set_cache.hpp"  // annexb::is_idr
 #include "net/h264_encoder.hpp"
 
 namespace
@@ -195,15 +196,18 @@ Status H264Encoder::encode( AVFrame* fr, int64_t ts_us, const NetSessionGate::Se
     fr->pts = pts_.next_frame_pts( ts_us, frames_sent_, fpts, forcing_idr );
 
     // Force an IDR frame through standard FFmpeg AVFrame::pict_type
-    // (handled directly by h264_rkmpp via MPP_ENC_SET_IDR_FRAME).
+    // (handled directly by h264_rkmpp via MPP_ENC_SET_IDR_FRAME), with the
+    // matching AV_FRAME_FLAG_KEY. fr is reused: both are cleared otherwise.
     if ( force_idr_ )
     {
         force_idr_ = false;
         fr->pict_type = AV_PICTURE_TYPE_I;
+        fr->flags |= AV_FRAME_FLAG_KEY;
     }
     else
     {
         fr->pict_type = AV_PICTURE_TYPE_NONE;
+        fr->flags &= ~AV_FRAME_FLAG_KEY;
     }
 
     // EAGAIN from send = the rkmpp input queue is temporarily full
@@ -321,7 +325,8 @@ void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
     int64_t ts = 0;
     const bool has_pts = ( pkt->pts != AV_NOPTS_VALUE );
     const int64_t raw_pkt_pts = pkt->pts;
-    const bool is_key = ( pkt->flags & AV_PKT_FLAG_KEY ) != 0;
+    // The same definition of a key packet as the queue's gate (AvPacketOps::is_key): an IDR in the bitstream.
+    const bool is_key = ( pkt->data != nullptr && pkt->size > 0 && annexb::is_idr( pkt->data, static_cast<size_t>( pkt->size ) ) );
     if ( !pts_.stamp_packet( has_pts, raw_pkt_pts, is_key, fpts, ts ) )
     {
         av_packet_unref( pkt );

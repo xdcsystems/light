@@ -272,8 +272,9 @@ namespace
         const char* dir = "light_ai_tests_cal_rejected";
         std::error_code ec;
         std::filesystem::remove( dir, ec );
-        CHECK( t, rejected( { "--dump-cal", "--cal-dir", dir, "--device", "/dev/video0", "--device", "/dev/video1", "--device",
-                              "/dev/video2", "--device", "/dev/video3", "--device", "/dev/video4" } ) );
+        CHECK( t, error_text( { "--dump-cal", "--cal-dir", dir, "--device", "a", "--device", "b", "--device", "c", "--device", "d",
+                                "--device", "e" },
+                              "too many video sources (5): at most 4 sources are supported (2x2 grid max)\n" ) );
         CHECK( t, !std::filesystem::exists( dir ) );
     }
 

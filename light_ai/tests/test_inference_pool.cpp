@@ -434,6 +434,23 @@ namespace
         CHECK( t, p.submit( 0, job( 3 ) ) && p.collect( r ) && r.npu_ok && r.dets.n == 1 );
     }
 
+    // An index outside [0, size()): refused and logged, nothing queued.
+    void submit_bad_slot( TestRun& t )
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        FakeNpu npu;
+        Pool p( pool_cfg( 1 ), FakeDecode {}, log, fast_opts(), engine_arg( npu ) );
+        CHECK( t, !p.submit( -1, job( 5 ) ) );
+        CHECK( t, !p.submit( p.size(), job( 6 ) ) );
+        CHECK( t, p.empty() && npu.runs.load() == 0 );
+        CHECK( t, err.str() == "pool: invalid slot -1, frame 5 dropped\npool: invalid slot " + std::to_string( p.size() )
+                                   + ", frame 6 dropped\n" );
+        InferResult r;
+        CHECK( t, p.submit( 0, job( 7 ) ) && p.collect( r ) && r.job.frame == 7 );
+    }
+
     void wedged_engine( TestRun& t )
     {
         std::ostringstream out;
@@ -512,6 +529,7 @@ void test_inference_pool( TestRun& t )
     per_source_fifo( t );
     lb_affinity_and_rotation( t );
     skip_and_failure( t );
+    submit_bad_slot( t );
     wedged_engine( t );
     discard_by_source( t );
     shutdown_with_work_in_flight( t );
