@@ -75,6 +75,30 @@ Status BufferedSocket::wait_connect() noexcept
     return make_status( Errc::Timeout, "connect: cancelled" );
 }
 
+Status BufferedSocket::wait_writable( std::chrono::steady_clock::time_point deadline ) const noexcept
+{
+    using clk = std::chrono::steady_clock;
+    while ( !cancelled() )
+    {
+        const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>( deadline - clk::now() ).count();
+        if ( rem <= 0 )
+            return make_status( Errc::Timeout, "send: timeout" );
+        const int slice = static_cast<int>( std::min<long long>( rem, kConnectSliceMs ) );
+        pollfd p { fd_, POLLOUT, 0 };
+        const int pr = ::poll( &p, 1, slice );
+        if ( pr == 0 || ( pr < 0 && errno == EINTR ) )
+            continue;
+        if ( pr < 0 )
+            return errno_status( Errc::Lost, "send: poll", errno );
+        if ( ( p.revents & POLLNVAL ) != 0 )
+            return make_status( Errc::Lost, "send: bad fd" );
+        if ( ( p.revents & ( POLLERR | POLLHUP ) ) != 0 && ( p.revents & POLLOUT ) == 0 )
+            return make_status( Errc::Lost, "send: peer closed" );
+        return {};
+    }
+    return make_status( Errc::Timeout, "send: cancelled" );
+}
+
 int BufferedSocket::await_lookup( std::chrono::steady_clock::time_point deadline, bool bounded ) noexcept
 {
     using clk = std::chrono::steady_clock;
@@ -213,19 +237,24 @@ Status BufferedSocket::send_all( const std::string& bytes ) const
 {
     if ( fd_ < 0 )
         return make_status( Errc::Failed, "send: not connected" );
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds( kSendMs );
     size_t off = 0;
     while ( off < bytes.size() )
     {
+        if ( Status wst = wait_writable( deadline ); !wst.ok() )
+            return wst;
+        // MSG_DONTWAIT: a peer that stopped reading (rwnd 0, half-open TCP) must not
+        // hold send() until tcp_retries2 gives up; the bounded wait is the poll above.
         // MSG_NOSIGNAL: a mid-send disconnect must not raise SIGPIPE; the
         // flag keeps this call self-contained even if the global ignore is
         // ever removed.
-        const ssize_t w = ::send( fd_, bytes.data() + off, bytes.size() - off, MSG_NOSIGNAL );
-        if ( w < 0 && errno == EINTR )
+        const ssize_t w = ::send( fd_, bytes.data() + off, bytes.size() - off, MSG_NOSIGNAL | MSG_DONTWAIT );
+        if ( w < 0 && ( errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK ) )
             continue;
         if ( w <= 0 )
         {
-            // w == 0 on a blocking socket cannot happen for a nonzero
-            // buffer, but errno is only set on failure: reading it after a
+            // w == 0 cannot happen for a nonzero buffer on a stream
+            // socket, but errno is only set on failure: reading it after a
             // zero return would report a stale value from an unrelated call.
             return w < 0 ? errno_status( Errc::Lost, "send", errno ) : make_status( Errc::Lost, "send: peer closed, 0 bytes sent" );
         }
