@@ -36,7 +36,7 @@ core  <-  platform, config, media  <-  sys  <-  source, npu, net  <-  render  <-
 | `net/` | `net_encoder.hpp`, `net_preview.hpp` | `h264_rkmpp` MPEG-TS encoder facade (`= default` dtor) and raw RGB24 NUT preview server |
 | `net/` | `tcp_avio.hpp`, `av_common.hpp`, `muxer_teardown.hpp` | FFmpeg AVIO binding over `TcpPullServer`, FFmpeg helpers, RAII muxer teardown |
 | `platform/` | `joining_thread.hpp`, `buffered_socket.hpp`, `tcp_pull_server.hpp`, `log_sink.hpp`, `pi_mutex.hpp` | POSIX/C++17 OS helpers: RAII thread, non-blocking buffered socket, single-viewer TCP pull transport (`TCP_NODELAY`, `TCP_NOTSENT_LOWAT`, `SO_SNDBUF`, `POLLOUT` send loop in `src/platform/tcp_send.cpp`), lock-free `AsyncLogSink`, `PiMutex` / `PiCondVar` |
-| `sys/` | `cpu_affinity.hpp`, `process_env.hpp`, `signal_waiter.hpp`, `sd_watchdog.hpp` | Cortex-A76 affinity pinning & RT setup, signal mask + `SIGPIPE` setup, `sigtimedwait` → `StopFlag` bridge, systemd `NOTIFY_SOCKET` watchdog client |
+| `sys/` | `cpu_affinity.hpp`, `process_env.hpp`, `signal_waiter.hpp`, `sd_watchdog.hpp` | Cortex-A76 affinity pinning & RT setup, signal mask + `SIGPIPE` setup, `signalfd` + `eventfd` → `StopFlag` bridge, systemd `NOTIFY_SOCKET` watchdog client |
 
 ### SDK-Free Pure-Logic Core (`include/core/`, `src/core/`)
 

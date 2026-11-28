@@ -2,11 +2,13 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <thread>
 #include <vector>
 #include <pthread.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -150,6 +152,44 @@ namespace
         ::close( srv );
     }
 
+    void wake_fd_interrupts_fill( TestRun& t )
+    {
+        // The wake fd alone, no stop flag: level-triggered and never read by the socket.
+        const int efd = ::eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
+        CHECK( t, efd >= 0 );
+        Listener l;
+        BufferedSocket s;
+        s.set_wake_fd( efd );
+        CHECK( t, s.connect( "127.0.0.1", l.port() ).ok() );
+        const int srv = l.accept();
+        CHECK( t, srv >= 0 );
+        // Signalled during the wait: poll() returns at once.
+        std::thread waker( [efd] {
+            std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
+            const uint64_t one = 1;
+            static_cast<void>( ::write( efd, &one, sizeof( one ) ) );
+        } );
+        const auto t0 = std::chrono::steady_clock::now();
+        const Fill during = s.fill( 5000 );
+        const auto el = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - t0 ).count();
+        waker.join();
+        CHECK( t, during == Fill::Interrupted && el < 1000 );
+        // Signalled before the wait: no lost wakeup, and fill_until() leaves instead of spinning to its deadline.
+        const auto t1 = std::chrono::steady_clock::now();
+        const Fill before = s.fill( 5000 );
+        const Fill bounded = s.fill_until( 2000, 50 );
+        const auto el1 = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - t1 ).count();
+        CHECK( t, before == Fill::Interrupted && bounded == Fill::Interrupted && el1 < 200 );
+        CHECK( t, s.is_open() && !s.cancelled() );
+        // send_all() and connect() are cancelled by it too.
+        const Status sent = s.send_all( "x" );
+        CHECK( t, sent.code() == Errc::Timeout && status_text( sent ) == "send: cancelled" );
+        const Status again = s.connect( "127.0.0.1", l.port() );
+        CHECK( t, again.code() == Errc::Timeout && status_text( again ) == "connect: cancelled" && !s.is_open() );
+        ::close( efd );
+        ::close( srv );
+    }
+
     void cancel_flag( TestRun& t )
     {
         // Pre-cancelled connect fails immediately; cancel during fill_until wakes promptly.
@@ -252,6 +292,7 @@ void test_buffered_socket( TestRun& t )
     full_window( t );
     connect_failures( t );
     interrupted( t );
+    wake_fd_interrupts_fill( t );
     cancel_flag( t );
     send_cancel( t );
     hostname_lookup( t );

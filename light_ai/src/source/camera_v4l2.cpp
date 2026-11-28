@@ -14,10 +14,10 @@
 
 namespace
 {
-    // Single poll(2) call without an internal EINTR loop: on SIGINT/SIGTERM
-    // SignalWaiter sets the stop flag and wakes this thread, so poll() returns
-    // -1 (EINTR) immediately instead of restarting a new 2000 ms wait;
-    // non-stop EINTR is retried by the pipeline loop.
+    // Single poll(2) call without an internal EINTR loop. A signalled wake_fd
+    // (StopFlag::request() on SIGINT/SIGTERM) is reported as -1 with errno
+    // EINTR, at once instead of after the rest of the wait; any EINTR is retried
+    // by the pipeline loop, which checks the stop flag first.
     int poll_ready( int fd, int wake_fd, int timeout_ms )
     {
         pollfd pfds[2] {};
