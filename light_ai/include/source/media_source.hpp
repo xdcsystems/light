@@ -39,6 +39,8 @@ public:
     {
         if ( auto* cam = std::get_if<CameraV4L2>( &src_ ) )
             cam->set_wake_fd( fd );
+        if ( auto* net = std::get_if<NetMjpegSource>( &src_ ) )
+            net->set_wake_fd( fd );
     }
 
     // Starts streaming from id, tearing down whatever was open:

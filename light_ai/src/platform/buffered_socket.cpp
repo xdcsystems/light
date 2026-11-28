@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <ctime>
 #include <string>
 #include <fcntl.h>
@@ -24,6 +25,34 @@ namespace
     {
         const bool absent = e == ECONNREFUSED || e == EHOSTUNREACH || e == ENETUNREACH || e == EHOSTDOWN;
         return errno_status( absent ? Errc::Absent : Errc::Failed, "connect", e );
+    }
+
+    constexpr short kWakeEvents = POLLIN | POLLERR | POLLHUP | POLLNVAL;
+
+    // One poll() of poll_with_wake():
+    enum class Polled : uint8_t
+    {
+        Ready,    // out: the events of fd
+        Timeout,
+        Wake,     // the wake fd is readable or broken; it wins over fd
+        Intr,     // EINTR
+        Error     // errno says why
+    };
+
+    // poll() on fd and, if wake_fd >= 0, on the level-triggered wake_fd, which is never read.
+    Polled poll_with_wake( int fd, short events, int wake_fd, int timeout_ms, pollfd& out ) noexcept
+    {
+        pollfd pfds[2] = { { fd, events, 0 }, { wake_fd, POLLIN, 0 } };
+        const nfds_t cnt = wake_fd >= 0 ? 2 : 1;
+        const int pr = ::poll( pfds, cnt, timeout_ms );
+        if ( pr < 0 )
+            return errno == EINTR ? Polled::Intr : Polled::Error;
+        if ( pr == 0 )
+            return Polled::Timeout;
+        if ( cnt == 2 && ( pfds[1].revents & kWakeEvents ) != 0 )
+            return Polled::Wake;
+        out = pfds[0];
+        return Polled::Ready;
     }
 
     // A numeric IPv4 host: resolved in place, no DNS. Not numeric: false.
@@ -50,21 +79,31 @@ bool BufferedSocket::cancelled() const noexcept
            ( prober_quit_ != nullptr && prober_quit_->load( std::memory_order_acquire ) );
 }
 
+bool BufferedSocket::wake_signalled() const noexcept
+{
+    if ( wake_fd_ < 0 )
+        return false;
+    pollfd p { wake_fd_, POLLIN, 0 };
+    return ::poll( &p, 1, 0 ) > 0 && ( p.revents & kWakeEvents ) != 0;
+}
+
 Status BufferedSocket::wait_connect() noexcept
 {
     using clk = std::chrono::steady_clock;
     const auto deadline = clk::now() + std::chrono::milliseconds( kConnectMs );
-    while ( !cancelled() )
+    while ( !is_cancelled() )
     {
         const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>( deadline - clk::now() ).count();
         if ( rem <= 0 )
             return make_status( Errc::Timeout, "connect: timeout" );
         const int slice = static_cast<int>( std::min<long long>( rem, kConnectSliceMs ) );
-        pollfd p { fd_, POLLOUT, 0 };
-        const int pr = ::poll( &p, 1, slice );
-        if ( pr == 0 || ( pr < 0 && errno == EINTR ) )
+        pollfd p {};
+        const Polled pr = poll_with_wake( fd_, POLLOUT, wake_fd_, slice, p );
+        if ( pr == Polled::Timeout || pr == Polled::Intr )
             continue;
-        if ( pr < 0 )
+        if ( pr == Polled::Wake )
+            break;
+        if ( pr == Polled::Error )
             return errno_status( Errc::Failed, "connect: poll", errno );
         int so_err = 0;
         socklen_t slen = sizeof( so_err );
@@ -78,17 +117,19 @@ Status BufferedSocket::wait_connect() noexcept
 Status BufferedSocket::wait_writable( std::chrono::steady_clock::time_point deadline ) const noexcept
 {
     using clk = std::chrono::steady_clock;
-    while ( !cancelled() )
+    while ( !is_cancelled() )
     {
         const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>( deadline - clk::now() ).count();
         if ( rem <= 0 )
             return make_status( Errc::Timeout, "send: timeout" );
         const int slice = static_cast<int>( std::min<long long>( rem, kConnectSliceMs ) );
-        pollfd p { fd_, POLLOUT, 0 };
-        const int pr = ::poll( &p, 1, slice );
-        if ( pr == 0 || ( pr < 0 && errno == EINTR ) )
+        pollfd p {};
+        const Polled pr = poll_with_wake( fd_, POLLOUT, wake_fd_, slice, p );
+        if ( pr == Polled::Timeout || pr == Polled::Intr )
             continue;
-        if ( pr < 0 )
+        if ( pr == Polled::Wake )
+            break;
+        if ( pr == Polled::Error )
             return errno_status( Errc::Lost, "send: poll", errno );
         if ( ( p.revents & POLLNVAL ) != 0 )
             return make_status( Errc::Lost, "send: bad fd" );
@@ -104,7 +145,7 @@ int BufferedSocket::await_lookup( std::chrono::steady_clock::time_point deadline
     using clk = std::chrono::steady_clock;
     const gaicb* const list[1] = { &lookup_.cb };
     int e = ::gai_error( &lookup_.cb );
-    while ( e == EAI_INPROGRESS && ( !bounded || !cancelled() ) )
+    while ( e == EAI_INPROGRESS && ( !bounded || !is_cancelled() ) )
     {
         long long slice = kConnectSliceMs;
         if ( bounded )
@@ -142,7 +183,7 @@ Status BufferedSocket::resolve( const std::string& host, const std::string& port
     if ( lookup_.pending )
     {
         if ( await_lookup( deadline, true ) == EAI_INPROGRESS )
-            return make_status( Errc::Timeout, cancelled() ? "addr resolution: cancelled" : "addr resolution: timeout" );
+            return make_status( Errc::Timeout, is_cancelled() ? "addr resolution: cancelled" : "addr resolution: timeout" );
         reap_lookup();
     }
     lookup_.name = host;
@@ -165,7 +206,7 @@ Status BufferedSocket::resolve( const std::string& host, const std::string& port
         // EAI_NOTCANCELED: glibc still runs it -- lookup_ stays pending.
         if ( ::gai_cancel( &lookup_.cb ) != EAI_NOTCANCELED )
             reap_lookup();
-        return make_status( Errc::Timeout, cancelled() ? "addr resolution: cancelled" : "addr resolution: timeout" );
+        return make_status( Errc::Timeout, is_cancelled() ? "addr resolution: cancelled" : "addr resolution: timeout" );
     }
     if ( e == 0 && lookup_.cb.ar_result != nullptr )
     {
@@ -179,7 +220,7 @@ Status BufferedSocket::resolve( const std::string& host, const std::string& port
 Status BufferedSocket::connect( const std::string& host, int port )
 {
     close();
-    if ( cancelled() )
+    if ( is_cancelled() )
         return make_status( Errc::Timeout, "connect: cancelled" );
     const std::string port_str = std::to_string( port );
     addrinfo* res = nullptr;
@@ -270,11 +311,13 @@ BufferedSocket::Fill BufferedSocket::fill( int timeout_ms )
     uint8_t* const dst = win_.tail();  // compacts the unconsumed bytes to the front
     if ( win_.room() == 0 )
         return Fill::Full;
-    pollfd p { fd_, POLLIN, 0 };
-    const int pr = ::poll( &p, 1, timeout_ms >= 0 ? timeout_ms : 0 );
-    if ( pr < 0 )
-        return errno == EINTR ? Fill::Interrupted : Fill::Closed;
-    if ( pr == 0 )
+    pollfd p {};
+    const Polled pr = poll_with_wake( fd_, POLLIN, wake_fd_, timeout_ms >= 0 ? timeout_ms : 0, p );
+    if ( pr == Polled::Intr || pr == Polled::Wake )
+        return Fill::Interrupted;
+    if ( pr == Polled::Error )
+        return Fill::Closed;
+    if ( pr == Polled::Timeout )
         return Fill::Timeout;
     if ( ( p.revents & POLLNVAL ) != 0 )
         return Fill::Closed;
@@ -301,7 +344,7 @@ BufferedSocket::Fill BufferedSocket::fill_until( int total_ms, int slice_ms )
     using clk = std::chrono::steady_clock;
     const auto deadline = clk::now() + std::chrono::milliseconds( total_ms );
     const int step_ms = slice_ms > 0 ? slice_ms : 200;
-    while ( !cancelled() )
+    while ( !is_cancelled() )
     {
         const auto rem = std::chrono::duration_cast<std::chrono::milliseconds>( deadline - clk::now() ).count();
         if ( rem <= 0 )
@@ -311,7 +354,7 @@ BufferedSocket::Fill BufferedSocket::fill_until( int total_ms, int slice_ms )
             continue;
         if ( r == Fill::Interrupted )
         {
-            if ( cancelled() )
+            if ( is_cancelled() )
                 return Fill::Interrupted;
             continue;
         }

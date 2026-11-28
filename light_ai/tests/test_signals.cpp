@@ -64,6 +64,79 @@ namespace
     {
         return WIFSIGNALED( status ) && WTERMSIG( status ) == sig;
     }
+
+    bool exited_ok( int status )
+    {
+        return WIFEXITED( status ) && WEXITSTATUS( status ) == 0;
+    }
+
+    // Child body: an armed stop ends a blocking poll() on a stalled source that watches the wake fd next to
+    // its own: without the wake it would sit out the whole 5 s timeout. Exit code 0 = as expected.
+    void wake_fd_ends_blocked_poll()
+    {
+        const ProcessEnv env;
+        StopFlag stop;
+        SignalWaiter waiter( env, stop );
+        const SignalWaiter::Armed armed( waiter );
+        int fds[2] = { -1, -1 };
+        if ( stop.wake_fd() < 0 || pipe2( fds, O_CLOEXEC ) != 0 )
+            _exit( 4 );
+        std::thread sender( [] {
+            std::this_thread::sleep_for( std::chrono::milliseconds( 200 ) );
+            kill( getpid(), SIGINT );
+        } );
+        pollfd pfds[2] = { { fds[0], POLLIN, 0 }, { stop.wake_fd(), POLLIN, 0 } };
+        const auto t0 = std::chrono::steady_clock::now();
+        const int pr = poll( pfds, 2, 5000 );
+        const auto waited = std::chrono::steady_clock::now() - t0;
+        sender.join();
+        const bool ok = pr > 0 && ( pfds[1].revents & POLLIN ) != 0 && stop.requested() && waited < std::chrono::seconds( 2 );
+        close( fds[0] );
+        close( fds[1] );
+        if ( !ok )
+            _exit( 5 );
+    }
+
+    // Child body: the signal is taken BEFORE poll() starts; the wake fd is level-triggered, so nothing is lost.
+    void wake_fd_keeps_early_stop()
+    {
+        const ProcessEnv env;
+        StopFlag stop;
+        SignalWaiter waiter( env, stop );
+        const SignalWaiter::Armed armed( waiter );
+        int fds[2] = { -1, -1 };
+        if ( pipe2( fds, O_CLOEXEC ) != 0 )
+            _exit( 4 );
+        kill( getpid(), SIGINT );
+        if ( !wait_for( stop ) )
+            _exit( 3 );
+        // request() sets the flag first and writes the eventfd right after: poll() may start in between.
+        pollfd pfds[2] = { { fds[0], POLLIN, 0 }, { stop.wake_fd(), POLLIN, 0 } };
+        const auto t0 = std::chrono::steady_clock::now();
+        const int pr = poll( pfds, 2, 5000 );
+        const auto waited = std::chrono::steady_clock::now() - t0;
+        const bool ok = pr > 0 && ( pfds[1].revents & POLLIN ) != 0 && waited < std::chrono::milliseconds( 500 );
+        close( fds[0] );
+        close( fds[1] );
+        if ( !ok )
+            _exit( 5 );
+    }
+
+    // No signal: the destructor wakes the thread out of its untimed poll() at once.
+    void fast_destructor( TestRun& t )
+    {
+        const ProcessEnv env;
+        StopFlag stop;
+        std::chrono::steady_clock::time_point t0;
+        {
+            const SignalWaiter waiter( env, stop );
+            std::this_thread::sleep_for( std::chrono::milliseconds( 30 ) );  // the thread is in poll() by now
+            t0 = std::chrono::steady_clock::now();
+        }
+        const auto el = std::chrono::steady_clock::now() - t0;
+        CHECK( t, el < std::chrono::milliseconds( 50 ) );
+        CHECK( t, !stop.requested() && stop.wake_fd() == -1 );
+    }
 }  // namespace
 
 void test_signals( TestRun& t )
@@ -110,34 +183,10 @@ void test_signals( TestRun& t )
         CHECK( t, WIFEXITED( status ) && WEXITSTATUS( status ) == 0 );
     }
 
-    // Armed stop interrupts a blocking poll() on the owner thread: without
-    // the wake it would sit out the whole 5 s timeout (a stalled source).
-    {
-        const int status = in_child( [] {
-            const ProcessEnv env;
-            StopFlag stop;
-            SignalWaiter waiter( env, stop );
-            const SignalWaiter::Armed armed( waiter );
-            int fds[2] = { -1, -1 };
-            if ( pipe2( fds, O_CLOEXEC ) != 0 )
-                _exit( 4 );
-            std::thread sender( [] {
-                std::this_thread::sleep_for( std::chrono::milliseconds( 200 ) );
-                kill( getpid(), SIGINT );
-            } );
-            pollfd pfd {};
-            pfd.fd = fds[0];
-            pfd.events = POLLIN;
-            const auto t0 = std::chrono::steady_clock::now();
-            const int pr = poll( &pfd, 1, 5000 );
-            const int perr = errno;
-            const auto waited = std::chrono::steady_clock::now() - t0;
-            sender.join();
-            const bool ok = pr == -1 && perr == EINTR && stop.requested() && waited < std::chrono::seconds( 2 );
-            _exit( ok ? 0 : 5 );
-        } );
-        CHECK( t, WIFEXITED( status ) && WEXITSTATUS( status ) == 0 );
-    }
+    // Armed stop and a poll() that watches the wake fd: signal during the wait, and before it.
+    CHECK( t, exited_ok( in_child( [] { wake_fd_ends_blocked_poll(); } ) ) );
+    CHECK( t, exited_ok( in_child( [] { wake_fd_keeps_early_stop(); } ) ) );
+    fast_destructor( t );
 
     // In-process: ProcessEnv sets and restores the disposition.
     CHECK( t, !blocked_now( SIGINT ) && !blocked_now( SIGTERM ) && !sigpipe_ignored() );

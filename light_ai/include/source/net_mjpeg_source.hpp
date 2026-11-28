@@ -72,13 +72,14 @@ public:
     explicit NetMjpegSource( const Log& log ) : log_( log ) {}
     ~NetMjpegSource() = default;  // the socket closes, the pool unmaps
 
-    // Full connect path for an http://host[:port]/path URL. Non-throwing: not
-    // ok tears down and says why (the url, connect, send, head and first-frame
-    // reasons; Absent = nobody there, so the prober retries).
     void set_cancel( const std::atomic<bool>* stop, const std::atomic<bool>* prober_quit = nullptr ) noexcept
     {
         sock_.set_cancel( stop, prober_quit );
     }
+    void set_wake_fd( int fd ) noexcept { sock_.set_wake_fd( fd ); }
+    // Full connect path for an http://host[:port]/path URL. Non-throwing: not
+    // ok tears down and says why (the url, connect, send, head and first-frame
+    // reasons; Absent = nobody there, so the prober retries).
     Status setup_device( const std::string& url );
     void teardown() noexcept;
     // Drains frames accumulated in the TCP socket during Pipeline init
