@@ -2,6 +2,7 @@
 // avformat_network_deinit() in its destructor. NetEncoder declares it as
 // its first member: the network layer is up before any other member is
 // built and goes down after all of them (the serve thread included).
+// NetPreview declares it before its packet and thread: both die before it.
 
 #pragma once
 
