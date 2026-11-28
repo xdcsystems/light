@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.10)
 project(light_ai C CXX)
 
+# The launcher of scripts/a76_slot.sh (BUILD_ON_A76=1). CMake reads no variable of this name: forward it to the global
+# property. Unlike CMAKE_CXX_COMPILER_LAUNCHER, the property stays out of compile_commands.json (tidy and its cache).
+if(CMAKE_RULE_LAUNCH_COMPILE)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CMAKE_RULE_LAUNCH_COMPILE}")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
