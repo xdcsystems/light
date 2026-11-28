@@ -13,6 +13,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "core/non_copyable.hpp"
 #include "core/perf_clock.hpp"
 
 namespace sd_watchdog_detail
@@ -31,7 +32,7 @@ inline double parse_ping_interval_ms( const char* watchdog_usec, double fallback
 }
 }  // namespace sd_watchdog_detail
 
-class SdWatchdog
+class SdWatchdog : private NonMovable<SdWatchdog>
 {
 public:
     enum
@@ -68,11 +69,6 @@ public:
         if ( fd_ >= 0 )
             ::close( fd_ );
     }
-
-    SdWatchdog( const SdWatchdog& ) = delete;
-    SdWatchdog& operator=( const SdWatchdog& ) = delete;
-    SdWatchdog( SdWatchdog&& ) = delete;
-    SdWatchdog& operator=( SdWatchdog&& ) = delete;
 
     bool active() const noexcept { return fd_ >= 0; }
     double ping_interval_ms() const noexcept { return ping_interval_ms_; }

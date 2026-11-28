@@ -35,6 +35,7 @@
 #include <mutex>
 #include <stdexcept>
 
+#include "core/non_copyable.hpp"
 #include "core/pod_ring.hpp"
 
 inline int64_t packet_queue_now_us() noexcept
@@ -45,7 +46,7 @@ inline int64_t packet_queue_now_us() noexcept
 }
 
 template <class Pkt, class Ops, int N, class Mutex = std::mutex, class CondVar = std::condition_variable>
-class BasicPacketQueue
+class BasicPacketQueue : private NonMovable<BasicPacketQueue<Pkt, Ops, N, Mutex, CondVar>>
 {
 public:
     enum class Pop : uint8_t
@@ -102,9 +103,6 @@ public:
         for ( Pkt& p : ring_.d )
             ops_.release( p );
     }
-
-    BasicPacketQueue( const BasicPacketQueue& ) = delete;
-    BasicPacketQueue& operator=( const BasicPacketQueue& ) = delete;
 
     // Producer: moves src's payload into the queue (src is left empty).
     // An overflow or age-limit breach flushes the queue first (Pushed::flushed > 0):

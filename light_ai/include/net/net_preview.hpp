@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "core/non_copyable.hpp"
 #include "core/preview_ring.hpp"
 #include "core/status.hpp"
 #include "net/av_packet.hpp"
@@ -28,14 +29,12 @@ class TcpPullServer;
 // thread and communicate through the pre-allocated 2-slot drop-oldest PreviewRing.
 // A stalled viewer drops frames in the ring without blocking the pipeline thread.
 
-class NetPreview
+class NetPreview : private NonMovable<NetPreview>
 {
 public:
     // log: diagnostics, also from the preview thread (must outlive this object).
     NetPreview( int w, int h, int stride, int fps, int port, const Log& log );
     ~NetPreview();
-    NetPreview( const NetPreview& ) = delete;
-    NetPreview& operator=( const NetPreview& ) = delete;
 
     // True while a TCP viewer is attached. The pipeline gates GPU box
     // drawing on it: no viewer - no draw.

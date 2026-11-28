@@ -14,6 +14,7 @@
 #include "core/geometry.hpp"
 #include "core/global_track.hpp"
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "core/perf_reporter.hpp"
 #include "core/status.hpp"
 #include "core/stop_flag.hpp"
@@ -23,7 +24,7 @@
 #include "npu/infer_slot.hpp"
 #include "source/sources.hpp"
 
-class Preprocessor
+class Preprocessor : private NonMovable<Preprocessor>
 {
 public:
     enum
@@ -52,10 +53,6 @@ private:
 public:
     explicit Preprocessor( const Log& log );
     ~Preprocessor() = default;
-    Preprocessor( const Preprocessor& ) = delete;
-    Preprocessor& operator=( const Preprocessor& ) = delete;
-    Preprocessor( Preprocessor&& ) = delete;
-    Preprocessor& operator=( Preprocessor&& ) = delete;
 
     // Initializes model dimensions, fills gray letterbox bars on every pooled
     // tensor, sets up CalDumper, and ensures dataset/ exists when required.

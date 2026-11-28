@@ -23,11 +23,12 @@
 #include <rockchip/rk_mpi.h>
 
 #include "core/encoder_config.hpp"
+#include "core/non_copyable.hpp"
 #include "media/rkmpp_drm_pool.hpp"
 
 struct AVFrame;
 
-class EncoderFramePool
+class EncoderFramePool : private NonMovable<EncoderFramePool>
 {
 public:
     enum
@@ -38,8 +39,6 @@ public:
 public:
     explicit EncoderFramePool( const StreamLayout& layout );
     ~EncoderFramePool();
-    EncoderFramePool( const EncoderFramePool& ) = delete;
-    EncoderFramePool& operator=( const EncoderFramePool& ) = delete;
 
     // Steps the ring to the next writable slot (not referenced by the VPU) or returns -1.
     int acquire_writable() noexcept;

@@ -6,6 +6,7 @@
 #include <string>
 
 #include "core/multipart_reader.hpp"
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 #include "platform/buffered_socket.hpp"
 #include "source/mjpeg_slot_pool.hpp"
@@ -44,7 +45,7 @@ class Log;
 // in flight" is unreachable. Even if a caller broke the contract, the only
 // slot-0 reader is the frame thread itself inside dequeue().
 
-class NetMjpegSource
+class NetMjpegSource : private NonMovable<NetMjpegSource>
 {
     enum
     {
@@ -70,10 +71,6 @@ public:
     // startup path only (MediaSource::use_net <- SourceChannel::configure).
     explicit NetMjpegSource( const Log& log ) : log_( log ) {}
     ~NetMjpegSource() = default;  // the socket closes, the pool unmaps
-    NetMjpegSource( const NetMjpegSource& ) = delete;
-    NetMjpegSource& operator=( const NetMjpegSource& ) = delete;
-    NetMjpegSource( NetMjpegSource&& ) = delete;
-    NetMjpegSource& operator=( NetMjpegSource&& ) = delete;
 
     // Full connect path for an http://host[:port]/path URL. Non-throwing: not
     // ok tears down and says why (the url, connect, send, head and first-frame

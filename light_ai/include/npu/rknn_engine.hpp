@@ -9,23 +9,22 @@
 
 #include "core/frame_view.hpp"
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 
-class RknnEngine
+class RknnEngine : private NonCopyable<RknnEngine>
 {
 public:
     // log: the diagnostics sink (the model / attribute lines, the io-mem and core-mask failures).
     RknnEngine( const char* model_path, const Log& log );
     ~RknnEngine();
 
-    // Non-copyable by design:
+    // Non-copyable by design (the NonCopyable base):
     // rknn_context and the io-mem pointers are runtime-owned handles;
     // a copy would destroy them twice and invalidate the InferencePool engine references.
     // The pool reserves vector capacity up front and never reallocates;
-    // these deletions turn any violation of that contract into a compile-time error
+    // the missing copy turns any violation of that contract into a compile-time error
     // instead of a silent NPU handle corruption.
-    RknnEngine( const RknnEngine& ) = delete;
-    RknnEngine& operator=( const RknnEngine& ) = delete;
     // Move-only: vector<RknnEngine> requires MoveInsertable for reserve().
     // The move transfers the rknn handles; the moved-from engine becomes
     // an inert shell (ctx_ == 0 makes the dtor and every method a no-op),

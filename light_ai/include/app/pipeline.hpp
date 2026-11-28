@@ -9,6 +9,7 @@
 #include "app/stream_output.hpp"
 #include "config/config.hpp"
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "core/perf_reporter.hpp"
 #include "core/status.hpp"
 #include "core/stop_flag.hpp"
@@ -19,7 +20,7 @@
 #include "render/overlay_sink.hpp"
 #include "sys/sd_watchdog.hpp"
 
-class Pipeline
+class Pipeline : private NonMovable<Pipeline>
 {
     using NpuPool = InferencePool<RknnEngine, YoloDecode>;
 
@@ -37,10 +38,6 @@ public:
     // Both are owned by main() and outlive the Pipeline.
     Pipeline( const Config& cfg, const StopFlag& stop, const Log& log );
     ~Pipeline() = default;  // pool_ joins its workers before its engines die
-    Pipeline( const Pipeline& ) = delete;
-    Pipeline& operator=( const Pipeline& ) = delete;
-    Pipeline( Pipeline&& ) = delete;
-    Pipeline& operator=( Pipeline&& ) = delete;
 
     // Exits the frame loop through the normal drain/summary path once
     // the stop flag is set (graceful shutdown, P1-6). Status: Failed on a

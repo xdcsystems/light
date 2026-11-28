@@ -5,15 +5,15 @@
 
 #pragma once
 
+#include "core/non_copyable.hpp"
+
 struct AVPacket;
 
-class AvPacket
+class AvPacket : private NonMovable<AvPacket>
 {
 public:
     AvPacket();
     ~AvPacket();
-    AvPacket( const AvPacket& ) = delete;
-    AvPacket& operator=( const AvPacket& ) = delete;
 
     AVPacket* get() const { return p_; }
     // For PacketQueue::pop( Pkt& ): the queue moves a payload into the

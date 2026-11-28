@@ -15,6 +15,7 @@
 #include "core/global_track.hpp"
 #include "core/net_perf.hpp"
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "core/track.hpp"
 #include "core/tracker.hpp"
 #include "media/rga_resizer.hpp"
@@ -22,7 +23,7 @@
 #include "npu/reid_worker.hpp"
 #include "render/box_smoother.hpp"
 
-class AnalyticsStage
+class AnalyticsStage : private NonMovable<AnalyticsStage>
 {
 public:
     enum
@@ -42,10 +43,6 @@ private:
 public:
     explicit AnalyticsStage( const Log& log );
     ~AnalyticsStage() = default;
-    AnalyticsStage( const AnalyticsStage& ) = delete;
-    AnalyticsStage& operator=( const AnalyticsStage& ) = delete;
-    AnalyticsStage( AnalyticsStage&& ) = delete;
-    AnalyticsStage& operator=( AnalyticsStage&& ) = delete;
 
     // Configures model dimensions, global track similarity threshold, and
     // starts the optional Re-ID worker when enabled and within RGA limits.

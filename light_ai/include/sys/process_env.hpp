@@ -29,15 +29,13 @@
 
 #include <csignal>
 
-class ProcessEnv
+#include "core/non_copyable.hpp"
+
+class ProcessEnv : private NonMovable<ProcessEnv>
 {
 public:
     ProcessEnv();  // throws std::runtime_error if the mask or action cannot be set
     ~ProcessEnv();
-    ProcessEnv( const ProcessEnv& ) = delete;
-    ProcessEnv& operator=( const ProcessEnv& ) = delete;
-    ProcessEnv( ProcessEnv&& ) = delete;
-    ProcessEnv& operator=( ProcessEnv&& ) = delete;
 
     // Interrupts a blocking syscall in `thread` (EINTR); no other effect.
     void wake( pthread_t thread ) const;

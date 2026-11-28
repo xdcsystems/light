@@ -25,8 +25,10 @@
 #include <mutex>
 #include <vector>
 
+#include "core/non_copyable.hpp"
+
 template <class Mutex = std::mutex, class CondVar = std::condition_variable>
-class BasicPreviewRing
+class BasicPreviewRing : private NonMovable<BasicPreviewRing<Mutex, CondVar>>
 {
 public:
     explicit BasicPreviewRing( size_t frame_bytes ) : frame_bytes_( frame_bytes )
@@ -37,9 +39,6 @@ public:
             slots_[1].resize( frame_bytes_ );
         }
     }
-
-    BasicPreviewRing( const BasicPreviewRing& ) = delete;
-    BasicPreviewRing& operator=( const BasicPreviewRing& ) = delete;
 
     void open() noexcept
     {

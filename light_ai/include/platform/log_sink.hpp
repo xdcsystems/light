@@ -17,6 +17,7 @@
 #include <thread>
 
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "platform/joining_thread.hpp"
 
 namespace light_ai
@@ -47,7 +48,7 @@ inline void cpu_relax() noexcept
 }
 }  // namespace detail
 
-class AsyncLogSink
+class AsyncLogSink : private NonMovable<AsyncLogSink>
 {
 public:
     enum
@@ -72,11 +73,6 @@ public:
         stop_.store( true, std::memory_order_release );
         drainer_.join();
     }
-
-    AsyncLogSink( const AsyncLogSink& ) = delete;
-    AsyncLogSink& operator=( const AsyncLogSink& ) = delete;
-    AsyncLogSink( AsyncLogSink&& ) = delete;
-    AsyncLogSink& operator=( AsyncLogSink&& ) = delete;
 
     LogSinkFn sink_fn() noexcept;
 

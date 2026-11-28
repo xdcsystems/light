@@ -21,7 +21,9 @@
 #include <cstddef>
 #include <cstdint>
 
-class MjpegSlotPool
+#include "core/non_copyable.hpp"
+
+class MjpegSlotPool : private NonMovable<MjpegSlotPool>
 {
 public:
     enum
@@ -33,10 +35,6 @@ public:
 public:
     MjpegSlotPool();
     ~MjpegSlotPool();
-    MjpegSlotPool( const MjpegSlotPool& ) = delete;
-    MjpegSlotPool& operator=( const MjpegSlotPool& ) = delete;
-    MjpegSlotPool( MjpegSlotPool&& ) = delete;
-    MjpegSlotPool& operator=( MjpegSlotPool&& ) = delete;
 
     // i in [0, kSlots): the caller's contract (the indices come from this pool).
     uint8_t* data( int i ) const { return slot_[i]; }

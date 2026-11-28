@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "core/global_track.hpp"
+#include "core/non_copyable.hpp"
 #include "core/pod_ring.hpp"
 #include "platform/joining_thread.hpp"
 #include "platform/pi_mutex.hpp"
@@ -28,7 +29,7 @@ struct ReidNoopStart
 };
 
 template <class Runner, class OnStart = ReidNoopStart>
-class BasicReidQueue
+class BasicReidQueue : private NonMovable<BasicReidQueue<Runner, OnStart>>
 {
 public:
     explicit BasicReidQueue( Runner runner, OnStart on_start = OnStart {} )
@@ -51,11 +52,6 @@ public:
         cv_.notify_all();
         worker_.join();
     }
-
-    BasicReidQueue( const BasicReidQueue& ) = delete;
-    BasicReidQueue& operator=( const BasicReidQueue& ) = delete;
-    BasicReidQueue( BasicReidQueue&& ) = delete;
-    BasicReidQueue& operator=( BasicReidQueue&& ) = delete;
 
     int inflight_for( int src ) const noexcept
     {

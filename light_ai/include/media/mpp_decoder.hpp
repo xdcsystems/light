@@ -7,11 +7,12 @@
 #include <rockchip/mpp_frame.h>
 #include <rockchip/mpp_packet.h>
 
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 
 class Log;
 
-class MppDecoder
+class MppDecoder : private NonMovable<MppDecoder>
 {
     // Bounded MPP polls: a wedged decoder must not hang the pipeline
     // thread forever -- camera recovery cannot help a thread that is
@@ -28,8 +29,6 @@ public:
     // Diagnostics go to log: the chroma switch to its `out` stream, the rest to `err`.
     explicit MppDecoder( const Log& log ) : log_( log ) {}
     ~MppDecoder();
-    MppDecoder( const MppDecoder& ) = delete;
-    MppDecoder& operator=( const MppDecoder& ) = delete;
 
     // One-shot setup for the source geometry: Ok, or the failing SDK step
     // (Failed / NoMemory); the failing call is logged inside.

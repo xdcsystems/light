@@ -13,16 +13,14 @@
 #include <chrono>
 #include <thread>
 
-class StopFlag
+#include "core/non_copyable.hpp"
+
+class StopFlag : private NonMovable<StopFlag>
 {
 public:
     using WakeFn = void ( * )( const void* ) noexcept;
 
     StopFlag() noexcept = default;
-    StopFlag( const StopFlag& ) = delete;
-    StopFlag& operator=( const StopFlag& ) = delete;
-    StopFlag( StopFlag&& ) = delete;
-    StopFlag& operator=( StopFlag&& ) = delete;
     ~StopFlag() = default;
 
     // Optional platform wakeup hook (e.g. eventfd owned by SignalWaiter).

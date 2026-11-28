@@ -34,6 +34,7 @@
 
 #include "config/config.hpp"  // SourceEndpoint, SourceKind
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "source/source_types.hpp"
 
 namespace source_detail
@@ -47,7 +48,7 @@ namespace source_detail
 }  // namespace source_detail
 
 template <class Chan, std::size_t N>
-class BasicSourceSet
+class BasicSourceSet : private NonMovable<BasicSourceSet<Chan, N>>
 {
     using clk = std::chrono::steady_clock;
 
@@ -63,10 +64,6 @@ public:
     {
     }
     ~BasicSourceSet() = default;
-    BasicSourceSet( const BasicSourceSet& ) = delete;
-    BasicSourceSet& operator=( const BasicSourceSet& ) = delete;
-    BasicSourceSet( BasicSourceSet&& ) = delete;
-    BasicSourceSet& operator=( BasicSourceSet&& ) = delete;
 
     // The Pipeline ctor, once: one channel per endpoint, in order; no device is
     // opened. Throws when there are more endpoints than channels. An empty list

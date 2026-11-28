@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 
 class Log;
@@ -12,7 +13,7 @@ struct v4l2_buffer;  // <linux/videodev2.h>, included by the .cpp only
 // an argument, the class owns only the fd/buffer machinery. Identity
 // ("which node am I on") and node discovery live with the owner --
 // SourceChannel::node() and UsbNodeLocator (source/).
-class CameraV4L2
+class CameraV4L2 : private NonMovable<CameraV4L2>
 {
     struct Buffer
     {
@@ -31,8 +32,6 @@ class CameraV4L2
 public:
     explicit CameraV4L2( const Log& log ) : log_( log ) {}
     ~CameraV4L2();
-    CameraV4L2( const CameraV4L2& ) = delete;
-    CameraV4L2& operator=( const CameraV4L2& ) = delete;
 
     // Full open+verify path for a node:
     // open, S_FMT, G_FMT verification, REQBUFS, mmap, QBUF.
