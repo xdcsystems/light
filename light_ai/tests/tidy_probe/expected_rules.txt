@@ -1,7 +1,7 @@
 # expected_rules.txt: the rules-pass self-test of scripts/tidy_run.sh (#93): "<fixture>:<line> <check>", one line per
 # hit (a line with two hits of one check: two lines), in any order (tidy_run.sh sorts both sides). The per-line
 # comments of the fixtures say the same in prose. A fixture line not listed must have no hit at all: the near misses
-# at the end of violations.cpp, and tidy_probe/src/main.cpp (the std::cout owner).
+# of violations.cpp (the users of an allowed base too), and tidy_probe/src/main.cpp (the std::cout owner).
 tests/tidy_probe/tests/harness.cpp:9 custom-no-static-local
 tests/tidy_probe/violations.cpp:19 custom-no-global-var
 tests/tidy_probe/violations.cpp:20 custom-no-file-static
@@ -82,3 +82,13 @@ tests/tidy_probe/violations.cpp:245 misc-const-correctness
 tests/tidy_probe/violations.cpp:246 misc-const-correctness
 tests/tidy_probe/violations.cpp:247 misc-const-correctness
 tests/tidy_probe/violations.cpp:253 misc-const-correctness
+tests/tidy_probe/violations.cpp:370 custom-no-inheritance
+tests/tidy_probe/violations.cpp:373 custom-no-inheritance
+tests/tidy_probe/violations.cpp:376 custom-no-inheritance
+tests/tidy_probe/violations.cpp:379 custom-no-inheritance
+tests/tidy_probe/lookalike.cpp:7 custom-no-inheritance
+tests/tidy_probe/lookalike.cpp:11 custom-no-inheritance
+tests/tidy_probe/lookalike.cpp:22 custom-no-inheritance
+tests/tidy_probe/violations.cpp:382 custom-no-inheritance
+tests/tidy_probe/violations.cpp:388 custom-no-inheritance
+tests/tidy_probe/violations.cpp:394 custom-no-inheritance

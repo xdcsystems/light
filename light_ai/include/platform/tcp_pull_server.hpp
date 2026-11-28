@@ -8,10 +8,11 @@
 #include <mutex>
 
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 #include "core/stop_flag.hpp"
 
-class TcpPullServer
+class TcpPullServer : private NonMovable<TcpPullServer>
 {
 public:
     struct WriteCtx
@@ -26,8 +27,6 @@ public:
 
     TcpPullServer( int port, int sndbuf_bytes, int sndtimeo_sec );
     ~TcpPullServer();
-    TcpPullServer( const TcpPullServer& ) = delete;
-    TcpPullServer& operator=( const TcpPullServer& ) = delete;
 
     // Opens, binds (SO_REUSEADDR) and listens on port_. Status: Busy
     // (EADDRINUSE), Failed (any other socket/bind/listen errno).

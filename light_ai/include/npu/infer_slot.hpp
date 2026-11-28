@@ -29,6 +29,7 @@
 #include "core/detection.hpp"  // DetList
 #include "core/frame_trace.hpp"
 #include "core/geometry.hpp"   // LbGeom
+#include "core/non_copyable.hpp"
 #include "platform/pi_mutex.hpp"
 
 // What the pipeline thread hands to a worker with one frame. RGA has written
@@ -63,7 +64,7 @@ struct InferResult
     int slot = -1;         // the tensor slot that ran the job
 };
 
-class InferSlot
+class InferSlot : private NonMovable<InferSlot>
 {
 public:
     enum class State : uint8_t
@@ -76,10 +77,6 @@ public:
 
     InferSlot() = default;
     ~InferSlot() = default;
-    InferSlot( const InferSlot& ) = delete;
-    InferSlot& operator=( const InferSlot& ) = delete;
-    InferSlot( InferSlot&& ) = delete;
-    InferSlot& operator=( InferSlot&& ) = delete;
 
     void set_free_signal( light_ai::platform::PiMutex* mx, light_ai::platform::PiCondVar* cv ) noexcept
     {

@@ -19,9 +19,10 @@
 #include <netdb.h>
 
 #include "core/byte_window.hpp"
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 
-class BufferedSocket
+class BufferedSocket : private NonMovable<BufferedSocket>
 {
 public:
     enum
@@ -44,10 +45,6 @@ public:
     // Closes the socket, then waits for a hostname lookup that glibc could not
     // cancel (see connect()): its request lives in this object.
     ~BufferedSocket();
-    BufferedSocket( const BufferedSocket& ) = delete;
-    BufferedSocket& operator=( const BufferedSocket& ) = delete;
-    BufferedSocket( BufferedSocket&& ) = delete;
-    BufferedSocket& operator=( BufferedSocket&& ) = delete;
 
     // Closes what was open, then connects to host:port (IPv4). A numeric host
     // resolves in place (AI_NUMERICHOST, no DNS); a hostname goes through

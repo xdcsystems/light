@@ -11,6 +11,7 @@
 #include "config/config.hpp"
 #include "core/global_track.hpp"
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 #include "core/stop_flag.hpp"
 #include "source/source_prober.hpp"
@@ -18,7 +19,7 @@
 #include "source/source_types.hpp"
 #include "source/sources.hpp"
 
-class SourceSupervisor
+class SourceSupervisor : private NonMovable<SourceSupervisor>
 {
 public:
     enum
@@ -31,10 +32,6 @@ public:
 public:
     SourceSupervisor( const StopFlag& stop, const Log& log );
     ~SourceSupervisor() = default;
-    SourceSupervisor( const SourceSupervisor& ) = delete;
-    SourceSupervisor& operator=( const SourceSupervisor& ) = delete;
-    SourceSupervisor( SourceSupervisor&& ) = delete;
-    SourceSupervisor& operator=( SourceSupervisor&& ) = delete;
 
     void configure( const std::vector<SourceEndpoint>& sources, int model_w, int model_h );
     void attach_initial( int model_w, int model_h );

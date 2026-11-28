@@ -26,43 +26,34 @@
 
 #include <atomic>
 
+#include "core/non_copyable.hpp"
 #include "core/stop_flag.hpp"
 #include "platform/joining_thread.hpp"
 #include "sys/process_env.hpp"
 
-class SignalWaiter
+class SignalWaiter : private NonMovable<SignalWaiter>
 {
 public:
     SignalWaiter( const ProcessEnv& env, StopFlag& stop );
     ~SignalWaiter();
-    SignalWaiter( const SignalWaiter& ) = delete;
-    SignalWaiter& operator=( const SignalWaiter& ) = delete;
-    SignalWaiter( SignalWaiter&& ) = delete;
-    SignalWaiter& operator=( SignalWaiter&& ) = delete;
 
     // RAII scope of the armed mode: armed for its lifetime, unarmed after,
     // including unwinding from an exception.
-    class Armed
+    class Armed : private NonMovable<Armed>
     {
     public:
         explicit Armed( SignalWaiter& waiter );
         ~Armed();
-        Armed( const Armed& ) = delete;
-        Armed& operator=( const Armed& ) = delete;
-        Armed( Armed&& ) = delete;
-        Armed& operator=( Armed&& ) = delete;
 
     private:
         SignalWaiter& waiter_;
     };
 
 private:
-    struct WakeFd
+    struct WakeFd : private NonMovable<WakeFd>
     {
         explicit WakeFd( StopFlag& s ) noexcept;
         ~WakeFd();
-        WakeFd( const WakeFd& ) = delete;
-        WakeFd& operator=( const WakeFd& ) = delete;
         StopFlag& stop;
         int fd = -1;
     };

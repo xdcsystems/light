@@ -18,19 +18,18 @@
 // header sets redefine the same MppFrame enums (build failure).
 #include <rockchip/rk_mpi.h>
 
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 #include "media/dma_sync.hpp"
 
 template <int N>
-struct RkmppDrmPool
+struct RkmppDrmPool : private NonMovable<RkmppDrmPool<N>>
 {
     RkmppDrmPool() = default;
     ~RkmppDrmPool()
     {
         release_all();
     }
-    RkmppDrmPool( const RkmppDrmPool& ) = delete;
-    RkmppDrmPool& operator=( const RkmppDrmPool& ) = delete;
 
     // Allocate all N buffers of `bytes` each and gray-fill them:
     // the 16-aligned tail columns must not show stale frames at session start.

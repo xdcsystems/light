@@ -5,21 +5,18 @@
 
 #include <cstdint>
 
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 
 class TcpPullServer;
 struct AVFormatContext;
 struct AVIOContext;
 
-class TcpAvio
+class TcpAvio : private NonMovable<TcpAvio>
 {
 public:
     TcpAvio() noexcept = default;
     ~TcpAvio() { close(); }
-    TcpAvio( const TcpAvio& ) = delete;
-    TcpAvio& operator=( const TcpAvio& ) = delete;
-    TcpAvio( TcpAvio&& ) = delete;
-    TcpAvio& operator=( TcpAvio&& ) = delete;
 
     // Allocates a 32 KiB custom AVIOContext over tcp's accepted client socket
     // and attaches it to fc->pb (sets AVFMT_FLAG_CUSTOM_IO).

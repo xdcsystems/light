@@ -31,6 +31,7 @@
 #include "config/config.hpp"  // InferConfig
 #include "core/frame_view.hpp"  // TensorRef, TensorSet
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "core/pod_list.hpp"
 #include "core/pod_ring.hpp"
 #include "core/throw_on.hpp"
@@ -50,7 +51,7 @@ struct PoolOptions
 };
 
 template <typename Engine, typename Decode>
-class InferencePool
+class InferencePool : private NonMovable<InferencePool<Engine, Decode>>
 {
 public:
     enum
@@ -89,11 +90,6 @@ public:
     }
 
     ~InferencePool() { stop_workers(); }
-
-    InferencePool( const InferencePool& ) = delete;
-    InferencePool& operator=( const InferencePool& ) = delete;
-    InferencePool( InferencePool&& ) = delete;
-    InferencePool& operator=( InferencePool&& ) = delete;
 
     int size() const { return n_slots_; }
     int workers_count() const { return n_workers_; }

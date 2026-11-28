@@ -25,6 +25,7 @@ int main( int argc, char** argv )
         { "status", &test_status },
         { "stop_flag", &test_stop_flag },
         { "joining_thread", &test_joining_thread },
+        { "non_copyable", &test_non_copyable },
         { "tcp_retry", &test_tcp_retry },
         { "tcp_send", &test_tcp_send },
         { "tcp_pull_threads", &test_tcp_pull_threads },

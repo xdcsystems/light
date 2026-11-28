@@ -8,7 +8,9 @@
 #include <type_traits>
 #include <utility>
 
-class JoiningThread
+#include "core/non_copyable.hpp"
+
+class JoiningThread : private NonCopyable<JoiningThread>
 {
 public:
     JoiningThread() noexcept = default;
@@ -21,9 +23,6 @@ public:
     }
 
     ~JoiningThread() { join(); }
-
-    JoiningThread( const JoiningThread& ) = delete;
-    JoiningThread& operator=( const JoiningThread& ) = delete;
 
     JoiningThread( JoiningThread&& other ) noexcept : th_( std::move( other.th_ ) ) {}
 

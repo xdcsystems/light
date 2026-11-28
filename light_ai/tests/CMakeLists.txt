@@ -32,6 +32,7 @@ add_executable(light_ai_tests
     test_status.cpp
     test_stop_flag.cpp
     test_joining_thread.cpp
+    test_non_copyable.cpp
     test_tcp_retry.cpp
     test_tcp_send.cpp
     test_tcp_pull_threads.cpp

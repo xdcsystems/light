@@ -23,6 +23,7 @@
 #include "core/gpu_box.hpp"
 #include "core/log.hpp"
 #include "core/net_perf.hpp"
+#include "core/non_copyable.hpp"
 #include "core/perf_reporter.hpp"
 #include "core/track.hpp"
 #include "core/tracker.hpp"
@@ -31,7 +32,7 @@
 #include "sys/cpu_affinity.hpp"
 
 template <class Sink>
-class BasicStreamOutput
+class BasicStreamOutput : private NonMovable<BasicStreamOutput<Sink>>
 {
 public:
     enum
@@ -52,11 +53,6 @@ public:
     {
         stop_worker();
     }
-
-    BasicStreamOutput( const BasicStreamOutput& ) = delete;
-    BasicStreamOutput& operator=( const BasicStreamOutput& ) = delete;
-    BasicStreamOutput( BasicStreamOutput&& ) = delete;
-    BasicStreamOutput& operator=( BasicStreamOutput&& ) = delete;
 
     void init( const StreamConfig& stream, const TensorSet& tensors, int model_w, int model_h,
                const LbGeom& enc_lb, int nsrc = 1 )

@@ -6,11 +6,11 @@
 
 #pragma once
 
-class NetworkInit
+#include "core/non_copyable.hpp"
+
+class NetworkInit : private NonMovable<NetworkInit>
 {
 public:
     NetworkInit();
     ~NetworkInit();
-    NetworkInit( const NetworkInit& ) = delete;
-    NetworkInit& operator=( const NetworkInit& ) = delete;
 };

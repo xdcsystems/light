@@ -15,6 +15,7 @@
 #include "core/encoder_config.hpp"     // EncoderConfig, StreamLayout
 #include "core/geometry.hpp"           // LbGeom: band geometry arrives as one object
 #include "core/net_perf.hpp"           // EncPerfWindow: zero-heap telemetry
+#include "core/non_copyable.hpp"       // NonMovable: no copy, no move
 #include "core/perf_clock.hpp"         // Lap, CounterDelta: the encode interval, the codec counter deltas
 #include "core/session_gate.hpp"       // NetSessionGate: the session hand-over
 #include "core/session_warmup.hpp"     // SessionWarmup: when a session's first frame is encoded
@@ -37,7 +38,7 @@ struct OverlayDrawHook
     const void* ctx = nullptr;
 };
 
-class NetEncoder
+class NetEncoder : private NonMovable<NetEncoder>
 {
 public:
     // log: the process diagnostics, owned by main(); outlives the encoder
@@ -48,8 +49,6 @@ public:
     // Trivial: every member releases its own resources, in reverse
     // declaration order (see the member block below).
     ~NetEncoder() = default;
-    NetEncoder( const NetEncoder& ) = delete;
-    NetEncoder& operator=( const NetEncoder& ) = delete;
 
     // Non-owning view of FrameComposer's persistent RGB888 output canvas
     // (imported once by OverlaySink's GpuBoxDrawer or written by CPU fallback).

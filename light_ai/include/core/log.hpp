@@ -22,6 +22,7 @@
 #include <type_traits>
 
 #include "core/fixed_fmt.hpp"
+#include "core/non_copyable.hpp"
 
 struct LogSinkFn
 {
@@ -29,7 +30,7 @@ struct LogSinkFn
     void ( *write )( void* ctx, bool is_err, const char* data, std::size_t len ) noexcept = nullptr;
 };
 
-class Log
+class Log : private NonMovable<Log>
 {
 public:
     enum class Level : uint8_t
@@ -43,7 +44,7 @@ public:
 
     // One statement's worth of output. Created only by Log; lives until the
     // end of the full expression (guaranteed copy elision: never copied or moved).
-    class Line
+    class Line : private NonMovable<Line>
     {
     public:
         enum
@@ -63,11 +64,6 @@ public:
           : sink_( active ? sink : LogSinkFn {} ), is_err_( is_err )
         {
         }
-
-        Line( const Line& ) = delete;
-        Line& operator=( const Line& ) = delete;
-        Line( Line&& ) = delete;
-        Line& operator=( Line&& ) = delete;
 
         ~Line()
         {
@@ -360,10 +356,6 @@ public:
     // Async lock-free mode: sink must outlive the Log.
     explicit Log( LogSinkFn sink, Level min_level = Level::Info ) : sink_( sink ), min_( min_level ) {}
 
-    Log( const Log& ) = delete;
-    Log& operator=( const Log& ) = delete;
-    Log( Log&& ) = delete;
-    Log& operator=( Log&& ) = delete;
     ~Log() = default;
 
     Line debug() const { return line( Level::Debug, false ); }

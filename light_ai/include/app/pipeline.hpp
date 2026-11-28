@@ -9,6 +9,7 @@
 #include "app/stream_output.hpp"
 #include "config/config.hpp"
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "core/perf_reporter.hpp"
 #include "core/status.hpp"
 #include "core/stop_flag.hpp"
@@ -19,7 +20,7 @@
 #include "render/overlay_sink.hpp"
 #include "sys/sd_watchdog.hpp"
 
-class Pipeline
+class Pipeline : private NonMovable<Pipeline>
 {
     using NpuPool = InferencePool<RknnEngine, YoloDecode>;
 
@@ -37,10 +38,6 @@ public:
     // Both are owned by main() and outlive the Pipeline.
     Pipeline( const Config& cfg, const StopFlag& stop, const Log& log );
     ~Pipeline() = default;  // pool_ joins its workers before its engines die
-    Pipeline( const Pipeline& ) = delete;
-    Pipeline& operator=( const Pipeline& ) = delete;
-    Pipeline( Pipeline&& ) = delete;
-    Pipeline& operator=( Pipeline&& ) = delete;
 
     // Exits the frame loop through the normal drain/summary path once
     // the stop flag is set (graceful shutdown, P1-6). Status: Failed on a
@@ -53,7 +50,7 @@ private:
     // st: the fatal reason, filled only on Step::Fatal (cleared at entry).
     Step step( int& ok, Status& st ) noexcept;
     // step()'s exit for a failed frame (f.st): Fatal with st filled, else Skipped after step_done_perf( t0 ).
-    Step fail_or_skip( EncodedFrame& f, PerfClock::time_point t0, Status& st ) noexcept;
+    Step fail_or_skip( const EncodedFrame& f, PerfClock::time_point t0, Status& st ) noexcept;
     // The per-step upkeep of idle_perf() and step_done_perf(): watchdog ping, RT fault sample, Re-ID perf; returns now.
     PerfClock::time_point common_perf() noexcept;
     void step_done_perf( PerfClock::time_point t0 ) noexcept;

@@ -31,6 +31,7 @@
 
 #include "core/encoder_config.hpp"
 #include "core/net_perf.hpp"
+#include "core/non_copyable.hpp"
 #include "core/param_set_cache.hpp"
 #include "core/session_gate.hpp"
 #include "core/status.hpp"
@@ -46,7 +47,7 @@ struct AVIOContext;
 struct AVPacket;
 struct AVStream;
 
-class MuxSession
+class MuxSession : private NonMovable<MuxSession>
 {
     // One viewer session's transport (TCP pull or UDP push), RAII:
     // the destructor is the single teardown point, the early-return
@@ -67,11 +68,10 @@ class MuxSession
     // -- the Transport destructor owns the avio context and closes it
     // -- then the context is freed. Declared before the Transport in
     // run_session(), so the context dies AFTER the Transport.
-    struct FcGuard
+    struct FcGuard : private NonMovable<FcGuard>
     {
+        explicit FcGuard( AVFormatContext* raw ) noexcept : p( raw ) {}
         ~FcGuard();
-        FcGuard( const FcGuard& ) = delete;
-        FcGuard& operator=( const FcGuard& ) = delete;
 
     public:
         AVFormatContext* p;
@@ -92,8 +92,6 @@ public:
     // before this session.
     MuxSession( const EncoderConfig& cfg, PacketQueue& queue, NetSessionGate& gate, const Log& log );
     ~MuxSession();
-    MuxSession( const MuxSession& ) = delete;
-    MuxSession& operator=( const MuxSession& ) = delete;
 
     void start();  // spawns the serve thread (std::system_error on failure)
     void stop();   // ends and joins it; idempotent

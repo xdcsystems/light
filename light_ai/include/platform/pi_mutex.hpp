@@ -13,6 +13,7 @@
 #include <pthread.h>
 
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 
 namespace light_ai
 {
@@ -46,7 +47,7 @@ inline timespec monotonic_deadline( const std::chrono::duration<Rep, Period>& re
 }
 }  // namespace detail
 
-class PiMutex
+class PiMutex : private NonMovable<PiMutex>
 {
 public:
     explicit PiMutex( const Log* log = nullptr ) noexcept
@@ -81,11 +82,6 @@ public:
 
     ~PiMutex() { ::pthread_mutex_destroy( &mx_ ); }
 
-    PiMutex( const PiMutex& ) = delete;
-    PiMutex& operator=( const PiMutex& ) = delete;
-    PiMutex( PiMutex&& ) = delete;
-    PiMutex& operator=( PiMutex&& ) = delete;
-
     void lock() noexcept { detail::check_pthread( ::pthread_mutex_lock( &mx_ ) ); }
     bool try_lock() noexcept { return ::pthread_mutex_trylock( &mx_ ) == 0; }
     void unlock() noexcept { detail::check_pthread( ::pthread_mutex_unlock( &mx_ ) ); }
@@ -98,7 +94,7 @@ private:
     bool pi_active_ = false;
 };
 
-class PiCondVar
+class PiCondVar : private NonMovable<PiCondVar>
 {
 public:
     PiCondVar() noexcept
@@ -111,11 +107,6 @@ public:
     }
 
     ~PiCondVar() { ::pthread_cond_destroy( &cv_ ); }
-
-    PiCondVar( const PiCondVar& ) = delete;
-    PiCondVar& operator=( const PiCondVar& ) = delete;
-    PiCondVar( PiCondVar&& ) = delete;
-    PiCondVar& operator=( PiCondVar&& ) = delete;
 
     void notify_one() noexcept { ::pthread_cond_signal( &cv_ ); }
     void notify_all() noexcept { ::pthread_cond_broadcast( &cv_ ); }

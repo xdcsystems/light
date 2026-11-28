@@ -86,7 +86,9 @@ CustomChecks:
       - BindName: d
         Message: "thread_local: no statics of any kind (CONTRIBUTING, No statics)"
         Level: Warning
-  # No virtuals or inheritance.
+  # No virtuals or inheritance. The one allowed base: ::NonCopyable<T> / ::NonMovable<T> (include/core/non_copyable.hpp),
+  # private and non-virtual. The base matcher sees names only, so the second match flags every definition of such a
+  # name outside that header: a specialization or a look-alike would be a base with state or behaviour of its own.
   - Name: no-virtual
     Query: |
       match cxxMethodDecl(isVirtual()).bind("d")
@@ -95,11 +97,20 @@ CustomChecks:
         Message: "virtual function: use composition or templates (CONTRIBUTING, No virtuals or inheritance)"
         Level: Warning
   - Name: no-inheritance
+    # Every class definition is checked on its own direct bases, so a class derived from a user of an allowed base is
+    # a hit too (no isDerivedFrom: it would hit every user of an allowed base). namedDecl: the base of a class template
+    # that is never instantiated names the class template. hasAnyName("::x") also matches an x of an anonymous
+    # namespace, hence the unless().
     Query: |
-      match cxxRecordDecl(isDefinition(), anyOf(hasDirectBase(cxxBaseSpecifier()), isDerivedFrom(anything()))).bind("d")
+      let ALLOWEDBASE cxxBaseSpecifier(isPrivate(), unless(isVirtual()), hasType(qualType(hasCanonicalType(hasDeclaration(namedDecl(hasAnyName("::NonCopyable", "::NonMovable"), unless(isInAnonymousNamespace())))))))
+      match cxxRecordDecl(isDefinition(), hasDirectBase(cxxBaseSpecifier(unless(ALLOWEDBASE)))).bind("d")
+      match cxxRecordDecl(isDefinition(), hasAnyName("::NonCopyable", "::NonMovable"), unless(isTemplateInstantiation()), unless(isExpansionInFileMatching("/include/core/non_copyable[.]hpp$"))).bind("s")
     Diagnostic:
       - BindName: d
-        Message: "class with a base: use composition of concrete members (CONTRIBUTING, No virtuals or inheritance)"
+        Message: "class with a disallowed base: only private non-virtual NonCopyable<T> / NonMovable<T> is permitted (CONTRIBUTING, No virtuals or inheritance)"
+        Level: Warning
+      - BindName: s
+        Message: "NonCopyable / NonMovable defined outside include/core/non_copyable.hpp: no specialization, no look-alike (CONTRIBUTING, No virtuals or inheritance)"
         Level: Warning
   # No manual heap allocation. C library names (here and in no-printf) count only for an extern "C" function or one
   # declared in a system header: hasAnyName("::x") also matches an x of an anonymous namespace (http_head.cpp has its

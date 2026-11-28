@@ -10,10 +10,11 @@
 #include "core/frame_view.hpp"    // TensorRef
 #include "core/global_track.hpp"  // ReidJob, ReidResult, reid_cfg
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "npu/reid_queue.hpp"
 #include "npu/rknn_engine.hpp"
 
-class ReidWorker
+class ReidWorker : private NonMovable<ReidWorker>
 {
     struct EngineRunner
     {
@@ -31,10 +32,6 @@ class ReidWorker
 public:
     ReidWorker( const char* model_path, int pool_size, int infer_core, const Log& log );
     ~ReidWorker() = default;
-    ReidWorker( const ReidWorker& ) = delete;
-    ReidWorker& operator=( const ReidWorker& ) = delete;
-    ReidWorker( ReidWorker&& ) = delete;
-    ReidWorker& operator=( ReidWorker&& ) = delete;
 
     int input_width() const noexcept { return engine_.input_width(); }
     int input_height() const noexcept { return engine_.input_height(); }

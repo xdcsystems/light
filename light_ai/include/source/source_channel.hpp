@@ -32,10 +32,11 @@
 #include "core/rga_limits.hpp"  // needs_two_pass, aux_bytes: shared with RgaResizer
 #include "core/status.hpp"
 #include "core/jpeg_probe.hpp"
+#include "core/non_copyable.hpp"
 #include "source/source_types.hpp"
 
 template <class Src, class Dec>
-class BasicSourceChannel
+class BasicSourceChannel : private NonMovable<BasicSourceChannel<Src, Dec>>
 {
     using clk = std::chrono::steady_clock;
 
@@ -68,10 +69,6 @@ public:
     {
     }
     ~BasicSourceChannel() = default;
-    BasicSourceChannel( const BasicSourceChannel& ) = delete;
-    BasicSourceChannel& operator=( const BasicSourceChannel& ) = delete;
-    BasicSourceChannel( BasicSourceChannel&& ) = delete;
-    BasicSourceChannel& operator=( BasicSourceChannel&& ) = delete;
 
     // Pipeline ctor, once, before any attach.
     void configure( int idx, const SourceEndpoint& ep, int model_w, int model_h )

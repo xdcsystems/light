@@ -32,6 +32,7 @@
 
 #include "core/encoder_config.hpp"
 #include "core/geometry.hpp"
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 #include "media/rkmpp_drm_pool.hpp"
 
@@ -49,7 +50,7 @@ struct CanvasBuffer
     uint32_t stride_bytes = 0;
 };
 
-class FrameComposer
+class FrameComposer : private NonMovable<FrameComposer>
 {
 public:
     enum
@@ -60,8 +61,6 @@ public:
 public:
     // log: the process diagnostics, owned by main(); outlives the composer.
     FrameComposer( const EncoderConfig& cfg, const Log& log );
-    FrameComposer( const FrameComposer& ) = delete;
-    FrameComposer& operator=( const FrameComposer& ) = delete;
 
     // Non-owning view of the persistent RGB888 output canvas (valid for the
     // lifetime of FrameComposer; destroyed after OverlaySink's GpuBoxDrawer).

@@ -353,3 +353,47 @@ std::string const_quiet( int seed )  // a value parameter
     std::string s = std::to_string( n + m + *cp + dependent( seed ) );
     return s;  // returned: const would turn the move into a copy
 }
+
+// custom-no-inheritance: the allowed bases (the project header), private and non-virtual only.
+#include "core/non_copyable.hpp"
+
+class GoodNc : private NonCopyable<GoodNc>
+{
+};
+class GoodNm : private NonMovable<GoodNm>
+{
+};
+template <class T>
+class GoodTplNm : private NonMovable<GoodTplNm<T>>  // a class template, never instantiated
+{
+};
+struct BadPubNm : NonMovable<BadPubNm>              // custom-no-inheritance (public: the default of a struct)
+{
+};
+class BadProtNm : protected NonMovable<BadProtNm>   // custom-no-inheritance (protected)
+{
+};
+class BadVirtNm : virtual private NonMovable<BadVirtNm>  // custom-no-inheritance (virtual)
+{
+};
+class BadSubNm : private GoodNm                     // custom-no-inheritance (a base that uses an allowed base)
+{
+};
+struct BadPubNc : NonCopyable<BadPubNc>             // custom-no-inheritance (public, NonCopyable)
+{
+};
+struct SpecTag
+{
+};
+template <>                                         // custom-no-inheritance (a specialization of an allowed base)
+class NonMovable<SpecTag>
+{
+public:
+    int state = 0;
+};
+template <class T>                                  // custom-no-inheritance (a partial specialization)
+class NonCopyable<T*>
+{
+public:
+    int state = 0;
+};

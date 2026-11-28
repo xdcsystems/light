@@ -6,6 +6,7 @@
 
 #include "source/camera_v4l2.hpp"
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "source/net_mjpeg_source.hpp"
 
 // Dispatch: the uniform per-kind methods (dequeue, requeue, buffer,
@@ -17,15 +18,11 @@
 // no-object result -- the same outcome the explicit ladders produced.
 // open()/trial() stay explicit get_if: their flows differ per kind.
 
-class MediaSource
+class MediaSource : private NonMovable<MediaSource>
 {
 public:
     explicit MediaSource( const Log& log ) : log_( log ), src_( std::in_place_type<CameraV4L2>, log ) {}
     ~MediaSource() = default;
-    MediaSource( const MediaSource& ) = delete;
-    MediaSource& operator=( const MediaSource& ) = delete;
-    MediaSource( MediaSource&& ) = delete;
-    MediaSource& operator=( MediaSource&& ) = delete;
 
     // One-time kind selection (SourceChannel::configure): constructs the
     // chosen alternative in place.

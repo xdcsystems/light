@@ -20,12 +20,13 @@
 #include <string>
 
 #include "core/log.hpp"
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 #include "platform/joining_thread.hpp"
 
 
 template <class Set, class Locator>
-class BasicSourceProber
+class BasicSourceProber : private NonMovable<BasicSourceProber<Set, Locator>>
 {
 public:
     enum
@@ -41,10 +42,6 @@ public:
     {
     }
     ~BasicSourceProber() { stop(); }
-    BasicSourceProber( const BasicSourceProber& ) = delete;
-    BasicSourceProber& operator=( const BasicSourceProber& ) = delete;
-    BasicSourceProber( BasicSourceProber&& ) = delete;
-    BasicSourceProber& operator=( BasicSourceProber&& ) = delete;
 
     // Spawns the prober thread: the first round runs at once, then one round
     // every period. No thread with no sources, or when already started.

@@ -14,6 +14,8 @@
 #include <sys/ioctl.h>
 #include <linux/dma-buf.h>
 
+#include "core/non_copyable.hpp"
+
 namespace dma
 {
 
@@ -30,15 +32,13 @@ namespace dma
 // The GPU path is unaffected: Mali writes are DMA-side, ordered by the native fence.
 // DMA_BUF_IOCTL_SYNC START/END is the kernel contract for CPU access to a dma-buf;
 // this RAII guard keeps the bracket unbreakable.
-struct DmaSync
+struct DmaSync : private NonMovable<DmaSync>
 {
     DmaSync( int fd, bool write_access ) noexcept : fd_( fd ), write_( write_access )
     {
         sync( write_ ? ( DMA_BUF_SYNC_RW | DMA_BUF_SYNC_START ) : ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_START ) );
     }
     ~DmaSync() { sync( write_ ? ( DMA_BUF_SYNC_RW | DMA_BUF_SYNC_END ) : ( DMA_BUF_SYNC_READ | DMA_BUF_SYNC_END ) ); }
-    DmaSync( const DmaSync& ) = delete;
-    DmaSync& operator=( const DmaSync& ) = delete;
 
 private:
     // Best effort, but not lost to a signal or transient fence wait:

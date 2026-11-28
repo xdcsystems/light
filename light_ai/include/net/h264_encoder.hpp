@@ -24,6 +24,7 @@
 #include <cstdint>
 
 #include "core/encoder_config.hpp"
+#include "core/non_copyable.hpp"
 #include "core/pts_clock.hpp"
 #include "core/session_gate.hpp"
 #include "net/av_packet.hpp"
@@ -35,7 +36,7 @@ struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
 
-class H264Encoder
+class H264Encoder : private NonMovable<H264Encoder>
 {
     // The receive loop of drain(): its telemetry for the summary line.
     struct DrainTally
@@ -49,8 +50,6 @@ public:
     // Opens the codec; throws std::runtime_error on failure (nothing leaks).
     H264Encoder( const EncoderConfig& cfg, const Log& log );
     ~H264Encoder();
-    H264Encoder( const H264Encoder& ) = delete;
-    H264Encoder& operator=( const H264Encoder& ) = delete;
 
     // One frame of session `s` (call under NetSessionGate::run()). ts_us: the
     // publish time (VFR pts), < 0 = none. false = a codec error: the caller

@@ -26,6 +26,7 @@
 
 #include "core/callout.hpp"  // CalloutList
 #include "core/gpu_box.hpp"  // GpuBox, GpuBoxList
+#include "core/non_copyable.hpp"
 #include "core/status.hpp"
 
 class Log;
@@ -35,7 +36,7 @@ class Log;
 // the raw NUT preview path; Mali G610 via EGL/GBM, zero CPU pixels per frame).
 // GpuBox / GpuBoxList live in core/gpu_box.hpp.
 
-class GpuBoxDrawer
+class GpuBoxDrawer : private NonMovable<GpuBoxDrawer>
 {
     // Extension entry points: never assumed to be linkable, always via
     // eglGetProcAddress with a null check (libmali does not export all of them as symbols).
@@ -125,8 +126,6 @@ private:
 public:
     explicit GpuBoxDrawer( const Log& log ) : log_( log ) {}
     ~GpuBoxDrawer();
-    GpuBoxDrawer( const GpuBoxDrawer & ) = delete;
-    GpuBoxDrawer &operator=( const GpuBoxDrawer & ) = delete;
 
     // EGL/GBM display + surfaceless GLES3 context + shader + VBO.
     // On failure everything created so far is released (done()); the cause
