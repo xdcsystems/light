@@ -44,17 +44,24 @@ public:
 
 public:
     BufferedSocket() = default;
-    // Closes the socket, then waits for a hostname lookup that glibc could not
-    // cancel (see connect()): its request lives in this object.
+    // Closes the socket, then gai_cancel()s a lookup still pending (see
+    // connect()). Canceled or already done: no wait. EAI_NOTCANCELED: waits
+    // for it, without a bound and ignoring cancel (see the definition).
     ~BufferedSocket();
 
     // Closes what was open, then connects to host:port (IPv4). A numeric host
     // resolves in place (AI_NUMERICHOST, no DNS); a hostname goes through
     // getaddrinfo_a, bounded by kConnectMs and polled in kConnectSliceMs steps
-    // that observe cancel. A lookup given up while glibc still runs it
+    // that observe cancel. A SCHED_FIFO / SCHED_RR caller submits the lookup
+    // from a short-lived SCHED_OTHER thread, so a libanl worker created for it
+    // is not real-time. A lookup given up while glibc still runs it
     // (gai_cancel: EAI_NOTCANCELED) keeps its request in this object: the next
-    // connect() first waits for it (same bound), the destructor waits for it
-    // without one. Not ok: the socket is closed and the Status says why:
+    // connect() first waits for it (same bound), the destructor without one.
+    // The addresses of the lookup are tried in order (ai_next); one kConnectMs
+    // deadline, started after the lookup, covers all of them. A Timeout (cancel
+    // included) ends the walk: an address that never answers uses up the whole
+    // deadline, only a faster failure moves on. Not ok: the socket is closed and
+    // the Status says why (of the last address tried):
     //   Absent  -- "addr resolution failed"; "connect: <errno>" refused / unreachable;
     //   Timeout -- "connect: timeout" (kConnectMs); "connect: cancelled";
     //              "addr resolution: timeout" / "addr resolution: cancelled";
@@ -111,7 +118,10 @@ private:
     // The wake fd is readable or broken (a 0 ms poll); false without one.
     bool wake_signalled() const noexcept;
     bool is_cancelled() const noexcept { return cancelled() || wake_signalled(); }
-    Status wait_connect() noexcept;
+    // One address: socket() + non-blocking connect() until deadline. Ok: fd_ is
+    // connected and blocking again. Not ok: fd_ is closed.
+    Status connect_one( const addrinfo& ai, std::chrono::steady_clock::time_point deadline );
+    Status wait_connect( std::chrono::steady_clock::time_point deadline ) noexcept;
     // Ok once fd_ is writable; the failures of send_all().
     Status wait_writable( std::chrono::steady_clock::time_point deadline ) const noexcept;
     Status resolve( const std::string& host, const std::string& port_str, addrinfo*& res );
