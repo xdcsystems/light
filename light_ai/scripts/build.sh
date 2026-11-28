@@ -17,6 +17,19 @@ echo "BUILD_DIR=$BUILD_DIR"
 . "$PROJ_ROOT/scripts/storage_guard.sh"
 storage_guard build "$BUILD_DIR"
 
+# BUILD_ON_A76=1 (only with light_ai stopped): every compile and clang-tidy run takes one of the A76 cores 4-7
+# (scripts/a76_slot.sh), 4 jobs at most (3.8 GB RAM). Exported: test.sh and tidy_run.sh follow it.
+export BUILD_ON_A76="${BUILD_ON_A76:-0}"
+if [ "$BUILD_ON_A76" = "1" ]; then
+    "$PROJ_ROOT/scripts/a76_slot.sh" --check || exit 1
+    LAUNCH="$PROJ_ROOT/scripts/a76_slot.sh"
+    JOBS=4
+else
+    LAUNCH=""   # passed to cmake anyway: it clears the value cached by an earlier BUILD_ON_A76=1 run
+    JOBS="$(nproc)"
+fi
+echo "BUILD_ON_A76=$BUILD_ON_A76 (-j$JOBS)"
+
 # Pin the libav* checks to the self-built ffmpeg (same pin as CMakeLists):
 # PKG_CONFIG_PATH prepends -- distro .pc files stay visible for
 # MPP/RGA/EGL, self-built libav* win by search order. PKG_CONFIG_LIBDIR
@@ -36,8 +49,9 @@ done
 echo "==> CMake + build:"
 # BUILD_TYPE=RelWithDebInfo scripts/build.sh  -- for gdb sessions
 BUILD_TYPE="${BUILD_TYPE:-Release}"
-cmake -S "$PROJ_ROOT" -B "$BUILD_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
-cmake --build "$BUILD_DIR" -j"$(nproc)"
+cmake -S "$PROJ_ROOT" -B "$BUILD_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+      -DCMAKE_RULE_LAUNCH_COMPILE="$LAUNCH"
+cmake --build "$BUILD_DIR" -j"$JOBS"
 
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
     echo "==> unit tests gate (SKIP_TESTS=1 to skip):"

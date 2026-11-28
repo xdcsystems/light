@@ -1762,3 +1762,21 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
   - Core: `BasicPreviewRing` copies the frame outside `mx_` into a third preallocated buffer and swaps it in; `BasicPacketQueue` notifies outside `mx_`; a synchronous `Log::Line` restores the stream flags and no longer zero-fills its buffer; the EXIF bounds checks subtract instead of adding, `probe_jpeg_sof()` / `jpeg_frame_check()` reject `nullptr`.
   - Full gate on the PR branch: `light_ai_tests` `72` suites, `10,282/10,282`, `light_ai_tests_tsan` `11` suites, `6,209/6,209`, `rules_lint.sh` PASS (`245` files, `0` findings), 2-pass `clang-tidy` `0` findings; `ts_fanout` builds without warnings; Layer A (`--pool 3`) cmp-identical (`dcdd7d98869860f8`). No live camera run; `ts_fanout` not installed, service not restarted.
   - Open (review): if the `InferencePool` constructor throws in `setup_io_shared()`, the destructor does not run and `std::vector` still destroys `engines_[0]` first (startup-failure path only). `ts_fanout` may have sent part of a TS packet before the upstream closed; the viewer's demuxer has to resync across that seam.
+- **Build acceleration — `BUILD_ON_A76=1`, tidy preprocessor memo, tests at `-O2`:**
+  - `scripts/a76_slot.sh`: preflight + 4 `flock` slots, one compile or `clang-tidy` job per core of the isolated A76 `4-7`; used by `build.sh`, `test.sh` and `tidy_run.sh` with `BUILD_ON_A76=1` (default `0`). Passed through `CMAKE_RULE_LAUNCH_COMPILE`; CMake `3.18.4` ignores that variable on its own ("Manually-specified variables were not used"), so both `CMakeLists.txt` files forward it to the global property. `a76_slot` is absent from all four compile DBs; during the build `cc1plus` and `clang-tidy` were sampled on cores `4-7` only, at most 4 at once.
+  - `tidy_cache.py`: each TU is preprocessed once per run (digest + `stat` stamps in `build/tidy/pp-cache`), `--version` once per run / pass. The key format changed, so the first run after the change misses the whole `build/tidy-cache`.
+  - Wall time on the RK3588 (one run each), objects cleaned, tidy cache warm (`264/264` hits); before = `master` `5496bc7`:
+
+    | Stage | Before | After, `BUILD_ON_A76=0` | After, `BUILD_ON_A76=1` |
+    |---|---|---|---|
+    | Main build | `73.3 s` | — | `25.6 s` |
+    | `light_ai_tests` compile + link | `155.2 s` | `114.8 s` | `39.0 s` |
+    | Unit run + TSan build and run | `53.8 s` (TSan `30 s`) | — (TSan `30 s`) | `37.2 s` (TSan `13 s`) |
+    | Tidy, all cache hits | `71.4 s` (passes `66 s`) | passes `33 s` | `18.7 s` (passes `13 s`) |
+    | **Whole gate** | `353.7 s` (sum of the stages) | `279.3 s` (one `build.sh`) | `119.8 s` (one `build.sh`; stages `120.5 s`) |
+
+  - One factor at a time: `-O2` alone takes the test compile from `155.2 s` to `114.8 s` (A55, `-j8`), the A76 slots from there to `39.0 s` (`-j4`); the memo takes the warm tidy passes from `66 s` to `33 s` (7 jobs both).
+  - `BUILD_ON_A76=1 ./scripts/build.sh`, incremental with a warm cache: `46.4 s`.
+  - Cold tidy (`TIDY_NO_CACHE=1`, so without the memo; 6 `TIDY_FILES` chunks of 22 TUs, summed): `1555 s` (`0`, 7 jobs) → `555 s` (`1`, 4 jobs), `2.8x`. First run on the new key format with `BUILD_ON_A76=1` (same chunks): `575 s` (main `524 s`, rules `51 s`).
+  - Review fix: the CMake cache keeps the launcher, so without `BUILD_ON_A76=1` in the environment `a76_slot.sh` now runs the command unpinned. Checked: a manual build of the tests with the cached launcher ran `cc1plus` on cores `0-3` only. The `119.8 s` run is after this fix, the other figures before it (it does not change what a `BUILD_ON_A76=1` job runs).
+  - Full gate in both modes: `light_ai_tests` `72` suites, `10,282/10,282`, `light_ai_tests_tsan` `11` suites, `6,209/6,209`, `rules_lint.sh` PASS (`245` files, `0` findings), 2-pass `clang-tidy` `0` findings, no TU without a cache key. `shellcheck` is not installed on the board. No live camera run.
