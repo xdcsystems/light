@@ -1,5 +1,5 @@
 // BasicPreviewRing: pre-allocated 2-slot drop-oldest ring (single producer, single consumer) for decoupling
-// NetPreview::publish() (pipeline thread) from av_write_frame()/avio_flush()
+// NetPreview::publish() (output thread, StreamOutput) from av_write_frame()/avio_flush()
 // (preview serve thread).
 //
 // Thread rule (every member is guarded by mx_, except write_buf_: the one
