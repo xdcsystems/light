@@ -81,6 +81,27 @@ namespace
         for ( std::thread& th : threads )
             th.join();
     }
+
+    // What the sink writes for one oversized line (destroying the sink drains it).
+    std::string drain_oversized_line( const std::string& line )
+    {
+        std::ostringstream out_os;
+        std::ostringstream err_os;
+        {
+            light_ai::platform::AsyncLogSink sink( out_os, err_os, false );
+            static_cast<void>( sink.push( false, line.data(), line.size() ) );
+        }
+        return out_os.str();
+    }
+
+    // A cut line keeps its newline in the last byte; a cut chunk without one gets none.
+    void check_truncation_keeps_newline( TestRun& t )
+    {
+        constexpr std::size_t k_max = light_ai::platform::AsyncLogSink::kMaxLineBytes;
+        const std::string body( k_max + 96, 'x' );
+        CHECK_STR_EQ( t, drain_oversized_line( body + '\n' ), std::string( k_max - 1, 'x' ) + '\n' );
+        CHECK_STR_EQ( t, drain_oversized_line( body ), std::string( k_max, 'x' ) );
+    }
 }  // namespace
 
 void test_async_log_sink_threads( TestRun& t )
@@ -119,4 +140,6 @@ void test_async_log_sink_threads( TestRun& t )
     CHECK_EQ( t, drained_push, accepted_push.load() );
     CHECK( t, drained_log > 0 );
     CHECK( t, err_text.find( "log: dropped " ) != std::string::npos );
+
+    check_truncation_keeps_newline( t );
 }

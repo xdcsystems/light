@@ -96,6 +96,8 @@ public:
                     slot.is_err = is_err;
                     slot.len = static_cast<uint16_t>( n );
                     std::memcpy( slot.data.data(), data, n );
+                    if ( len > n && data[len - 1] == '\n' )
+                        slot.data[n - 1] = '\n';  // a cut line still ends its line
                     slot.seq.store( pos + 1, std::memory_order_release );
                     ok = true;
                     done = true;
