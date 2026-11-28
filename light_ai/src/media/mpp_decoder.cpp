@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstring>
 #include <rockchip/mpp_log.h>
 
 #include "media/mpp_decoder.hpp"

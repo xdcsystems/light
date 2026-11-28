@@ -11,7 +11,6 @@
 
 #include <array>
 #include <cstddef>
-#include <cstring>
 
 // Same include form as mpp_decoder.hpp: <rockchip/rk_mpi.h> resolves to
 // the self-built /usr/local/include/rockchip headers. The quoted form
