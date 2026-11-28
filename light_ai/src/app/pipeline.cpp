@@ -54,10 +54,7 @@ namespace
             throw std::runtime_error( "rknn: expected 3 yolov5 heads (one per stride 8/16/32), got " +
                                       std::to_string( outs.size() ) );
     }
-}  // namespace
 
-namespace
-{
     void sample_rt_faults_if_due( PerfReporter& perf, PerfClock::time_point now ) noexcept
     {
         if ( !perf.window_due( now ) )
@@ -159,26 +156,38 @@ void Pipeline::sync_and_orient( int src, int fd_src, int& ok ) noexcept
         reset_source( src );
 }
 
-
-
-void Pipeline::idle_perf() noexcept
+PerfClock::time_point Pipeline::common_perf() noexcept
 {
     const auto now = clk::now();
     watchdog_.ping_if_due( now );
     sample_rt_faults_if_due( perf_, now );
     if ( analytics_.has_reid() )
         perf_.record_reid( analytics_.take_reid_perf() );
+    return now;
+}
+
+void Pipeline::idle_perf() noexcept
+{
+    const auto now = common_perf();
     perf_.tick( now, sources_.sources(), output_ );
 }
 
 void Pipeline::step_done_perf( PerfClock::time_point t0 ) noexcept
 {
-    const auto now = clk::now();
-    watchdog_.ping_if_due( now );
-    sample_rt_faults_if_due( perf_, now );
-    if ( analytics_.has_reid() )
-        perf_.record_reid( analytics_.take_reid_perf() );
+    const auto now = common_perf();
     perf_.step_done( t0, now, sources_.sources(), output_ );
+}
+
+Pipeline::Step Pipeline::fail_or_skip( EncodedFrame& f, PerfClock::time_point t0, Status& st ) noexcept
+{
+    const auto reset_fn = [this]( int s ) noexcept { reset_source( s ); };
+    if ( const Status hst = sources_.handle_failure( f, pool_, reset_fn ); !hst.ok() )
+    {
+        st = hst;
+        return Step::Fatal;
+    }
+    step_done_perf( t0 );
+    return Step::Skipped;
 }
 
 Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
@@ -191,20 +200,13 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
         idle_perf();
         output_.idle_tick( t0_, sources_.sources() );
     };
-    const auto reset_fn = [this]( int s ) noexcept { reset_source( s ); };
 
     const FrameStatus fs = sources_.next_frame( f, pool_, drain_fn, idle_fn );
     if ( fs != FrameStatus::Frame )
     {
         if ( fs == FrameStatus::Stopped || stop_.requested() )
             return Step::Stop;
-        if ( const Status hst = sources_.handle_failure( f, pool_, reset_fn ); !hst.ok() )
-        {
-            st = hst;
-            return Step::Fatal;
-        }
-        step_done_perf( t0 );
-        return Step::Skipped;
+        return fail_or_skip( f, t0, st );
     }
 
     const auto t1 = clk::now();
@@ -218,11 +220,7 @@ Pipeline::Step Pipeline::step( int& ok, Status& st ) noexcept
         if ( !dec_st.ok() )
         {
             f.st = dec_st;
-            if ( const Status hst = sources_.handle_failure( f, pool_, reset_fn ); !hst.ok() )
-            {
-                st = hst;
-                return Step::Fatal;
-            }
+            return fail_or_skip( f, t0, st );
         }
         step_done_perf( t0 );
         return Step::Skipped;

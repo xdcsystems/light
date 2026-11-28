@@ -334,7 +334,7 @@ CameraV4L2::~CameraV4L2()
     teardown();
 }
 
-int CameraV4L2::xioctl_r( unsigned long req, void* arg ) const
+int CameraV4L2::xioctl_r( unsigned long req, void* arg ) const noexcept
 {
     int r = 0;
     do
@@ -499,11 +499,7 @@ void CameraV4L2::requeue( int index ) noexcept  // NOLINT(readability-make-membe
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
     buf.index = index;
-    int r = 0;
-    do
-    {
-        r = ioctl( fd_, VIDIOC_QBUF, &buf );
-    } while ( r < 0 && errno == EINTR );
+    const int r = xioctl_r( VIDIOC_QBUF, &buf );
     if ( r < 0 )
     {
         // A failed QBUF silently removes the buffer from rotation;

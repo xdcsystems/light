@@ -80,17 +80,7 @@ void draw_boxes_cpu( uint8_t* rgb, int w, int h, int stride, const GpuBox* boxes
         const int y1 = std::max( y0, std::clamp( static_cast<int>( std::ceil( b.y1 ) ) - 1, 0, h - 1 ) );
         const auto put = [&]( int x, int y ) {
             uint8_t* px = rgb + static_cast<size_t>( y ) * stride + static_cast<std::ptrdiff_t>( x ) * 3;
-            const unsigned a = b.a;
-            if ( a >= 255 )
-            {
-                px[0] = b.r;
-                px[1] = b.g;
-                px[2] = b.b;
-                return;
-            }
-            px[0] = static_cast<uint8_t>( ( b.r * a + px[0] * ( 255 - a ) + 127 ) / 255 );
-            px[1] = static_cast<uint8_t>( ( b.g * a + px[1] * ( 255 - a ) + 127 ) / 255 );
-            px[2] = static_cast<uint8_t>( ( b.b * a + px[2] * ( 255 - a ) + 127 ) / 255 );
+            blend_px( px, b.r, b.g, b.b, b.a );
         };
         // Each boundary pixel is painted exactly once: Porter-Duff
         // over is not idempotent for a < 255, a double write makes

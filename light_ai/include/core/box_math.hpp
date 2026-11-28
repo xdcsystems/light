@@ -16,8 +16,9 @@
 //     zero-area candidates must not produce a division by zero in NMS
 //     (the old yolo_postprocess guard, moved here verbatim).
 
-inline float box_iou( float ax, float ay, float aw, float ah,
-                      float bx, float by, float bw, float bh ) noexcept
+// Overlap area of two xywh boxes; 0.0f when they do not overlap.
+inline float box_intersection_area( float ax, float ay, float aw, float ah,
+                                    float bx, float by, float bw, float bh ) noexcept
 {
     const float x0 = std::max( ax, bx );
     const float y0 = std::max( ay, by );
@@ -27,7 +28,15 @@ inline float box_iou( float ax, float ay, float aw, float ah,
     const float ih = y1 - y0;
     if ( iw <= 0.0f || ih <= 0.0f )
         return 0.0f;
-    const float inter = iw * ih;
+    return iw * ih;
+}
+
+inline float box_iou( float ax, float ay, float aw, float ah,
+                      float bx, float by, float bw, float bh ) noexcept
+{
+    const float inter = box_intersection_area( ax, ay, aw, ah, bx, by, bw, bh );
+    if ( inter <= 0.0f )
+        return 0.0f;
     const float uni = aw * ah + bw * bh - inter;
     return uni > 0.0f ? inter / uni : 0.0f;
 }
@@ -37,15 +46,9 @@ inline float box_iou( float ax, float ay, float aw, float ah,
 inline float box_ioa_min( float ax, float ay, float aw, float ah,
                           float bx, float by, float bw, float bh ) noexcept
 {
-    const float x0 = std::max( ax, bx );
-    const float y0 = std::max( ay, by );
-    const float x1 = std::min( ax + aw, bx + bw );
-    const float y1 = std::min( ay + ah, by + bh );
-    const float iw = x1 - x0;
-    const float ih = y1 - y0;
-    if ( iw <= 0.0f || ih <= 0.0f )
+    const float inter = box_intersection_area( ax, ay, aw, ah, bx, by, bw, bh );
+    if ( inter <= 0.0f )
         return 0.0f;
-    const float inter = iw * ih;
     const float min_a = std::min( aw * ah, bw * bh );
     return min_a > 0.0f ? inter / min_a : 0.0f;
 }
