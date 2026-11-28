@@ -45,11 +45,22 @@ Setup, static-analysis, testing, and tooling guide for [`light_ai`](../README.md
 ./scripts/build.sh
 ```
 
-> **Note (`isolcpus=4-7`):** Because boot-time `isolcpus=4-7` removes Cortex-A76 cores `4-7` from CFS load balancing until reboot, `./scripts/build.sh` runs on housekeeping Cortex-A55 cores `0-3` (broadening affinity with `taskset -c 0-7` only raises `nproc` without migrating compiler/tidy jobs onto `4-7`). If `isolate_rt.sh on` was run manually earlier, verify `./scripts/isolate_rt.sh status` (`user.slice`) before long builds.
+> **Note (`isolcpus=4-7`):** Because boot-time `isolcpus=4-7` removes Cortex-A76 cores `4-7` from CFS load balancing until reboot, a plain `./scripts/build.sh` runs on housekeeping Cortex-A55 cores `0-3`. A bare `taskset -c 0-7 ./scripts/build.sh` is still forbidden: it only raises `nproc` without migrating compiler/tidy jobs onto `4-7`. To build on the A76 cores use `BUILD_ON_A76=1` (below). If `isolate_rt.sh on` was run manually earlier, verify `./scripts/isolate_rt.sh status` (`user.slice`) before long builds.
+
+#### Building on the A76 cores (`BUILD_ON_A76=1`)
+
+```bash
+BUILD_ON_A76=1 ./scripts/build.sh
+```
+
+- **When:** on the RK3588 board, with `light_ai` stopped and boot-time `isolcpus=4-7` active.
+- **How:** [`scripts/a76_slot.sh`](../scripts/a76_slot.sh) gives every compile and `clang-tidy` job one of 4 `flock` slots (`build/.a76_slot_{4..7}`) and pins it to that core: one core per job, because the scheduler does not balance isolated cores. Builds run with `-j4` (a 4-job ceiling for `3.8 GB` RAM); tidy defaults to `min(4, MemAvailable / 400 MB)` jobs, and the wait for a slot is not part of the per-TU timeout. `scripts/test.sh` and `scripts/tidy_run.sh` accept the same variable. CMake itself, the link steps and the test binaries are not pinned (one core would weaken ThreadSanitizer).
+- **Compile database:** the launcher is passed as `-DCMAKE_RULE_LAUNCH_COMPILE=...`. CMake reads no variable of that name, so both `CMakeLists.txt` files forward it to the global property `RULE_LAUNCH_COMPILE`. The property stays out of `compile_commands.json`, so `clang-tidy` and the tidy cache see the same commands in both modes. Do not use `CMAKE_CXX_COMPILER_LAUNCHER`, which does enter the database. Without `BUILD_ON_A76=1` the scripts pass an empty value, which clears the cached one.
+- **Preflight (`a76_slot.sh --check`):** fails if a `light_ai` process or a `light_ai*.service` unit is active, if that cannot be determined, or if the cpuset blocks a core of `4-7` (`sudo -n ./scripts/isolate_rt.sh off`). It runs when a script starts, not per job: do not start `light_ai` during such a build.
 
 `scripts/build.sh` runs three gates in sequence and fails on the first error:
 1. **Release CMake build** (`build/light_ai`, C++17, `-O3 -Wall -Wextra`).
-2. **Host unit tests + ThreadSanitizer** (`scripts/test.sh`; skip tests with `SKIP_TESTS=1`, skip only TSan with `SKIP_TSAN=1`).
+2. **Host unit tests + ThreadSanitizer** (`scripts/test.sh`; `light_ai_tests` builds at `-O2`, the TSan binary at `-O1 -g`; skip tests with `SKIP_TESTS=1`, skip only TSan with `SKIP_TSAN=1`).
 3. **Two-pass `clang-tidy` gate** (`scripts/tidy_run.sh`; skip with `SKIP_TIDY=1`).
 
 ### CMake Options & CPU Flags
@@ -66,7 +77,8 @@ Setup, static-analysis, testing, and tooling guide for [`light_ai`](../README.md
 Rule definitions, function-size limits, `rules_lint.sh` checks, `tests/tidy_probe/` self-tests, and NOLINT allowlist policy (`scripts/rules_allow.txt`) are documented canonically in [`CONTRIBUTING.md`](../CONTRIBUTING.md#pre-pr-verification-gate). Operational details:
 
 - **Logs & hangs:** `build/tidy/{src,tests}/<path>.log`, `build/tidy/rules/{src,tests}/<path>.log`, `build/tidy/selftest/` (self-test and lint), `build/tidy/HANGS.txt`.
-- **Cache & parallelism:** Result cache in `build/tidy-cache` (`scripts/tidy_cache.py`; disable with `TIDY_NO_CACHE=1`), parallel jobs via `TIDY_JOBS=N` (defaults to `min(nproc, MemAvailable / 400 MB)`).
+- **Cache & parallelism:** Result cache in `build/tidy-cache` (`scripts/tidy_cache.py`; disable with `TIDY_NO_CACHE=1`), parallel jobs via `TIDY_JOBS=N` (defaults to `min(nproc, MemAvailable / 400 MB)`; `4` instead of `nproc` with `BUILD_ON_A76=1`).
+- **Per-run memo (`build/tidy/pp-cache`):** emptied at the start of every run, under the run lock. The `main` pass stores each TU's preprocessor digest and the `rules` pass reuses it instead of preprocessing again; the digest comes with the `stat` stamps of the files it read, so a file edited between the passes is preprocessed anew. The `--version` outputs are taken once per run (compiler) and once per pass (`clang-tidy`).
 - **Subset run (`TIDY_FILES`):** `TIDY_FILES="src/a.cpp tests/b.cpp" bash scripts/tidy_run.sh` runs the self-test, lint, and both passes on only those translation units (`src/**/*.cpp`, `tests/*.cpp`; a header or missing file exits with `2`), updating only their logs. Quick check while editing only — `scripts/build.sh` always runs every TU.
 - **Rules pass & config verification:** The `rules` pass invokes `venv/bin/clang-tidy` (`23.1.4`) with `--experimental-custom-checks` on `scripts/tidy_rules.yaml`, and `clang-tidy --verify-config` runs on `scripts/tidy_rules.yaml` (verified against [`tests/tidy_probe/verify_typo.yaml`](../tests/tidy_probe/verify_typo.yaml)) so mistyped option keys cannot silently pass.
 
@@ -107,6 +119,7 @@ Rule definitions, function-size limits, `rules_lint.sh` checks, `tests/tidy_prob
 - **Build, test & system (`scripts/`):**
   - [`scripts/build.sh`](../scripts/build.sh) — full release build + unit/TSan tests + 2-pass clang-tidy gate.
   - [`scripts/test.sh`](../scripts/test.sh) — host-side `light_ai_tests` + `light_ai_tests_tsan`.
+  - [`scripts/a76_slot.sh`](../scripts/a76_slot.sh) — one build job per Cortex-A76 core for `BUILD_ON_A76=1` (preflight + 4 `flock` slots).
   - [`scripts/tidy_run.sh`](../scripts/tidy_run.sh), [`scripts/tidy_cache.py`](../scripts/tidy_cache.py), [`scripts/tidy_rules.yaml`](../scripts/tidy_rules.yaml), [`scripts/rules_lint.sh`](../scripts/rules_lint.sh), [`scripts/rules_allow.txt`](../scripts/rules_allow.txt) — 2-pass `clang-tidy` runner & cache, project-rule checks, lint, and allowlist (self-test fixtures: `tests/tidy_probe/`).
   - [`scripts/storage_guard.sh`](../scripts/storage_guard.sh) — warns (non-fatally) if build output targets `/` or internal eMMC (`/dev/mmcblk*`) to help protect flash endurance on eMMC boards.
   - [`scripts/install_rknn.sh`](../scripts/install_rknn.sh) — downloads & verifies `rknn_toolkit_lite2==2.5.0` wheel.
