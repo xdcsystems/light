@@ -203,7 +203,7 @@ only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
   only from `.cpp` files, never from a project header.
 - Errors (`Status` / `noexcept`): recoverable failures return `Status` (`include/core/status.hpp`);
   exceptions (`std::runtime_error` via `throw_on`) are startup-only; frame path and thread bodies are
-  `noexcept` (no `throw`: review; no `catch (...)` outside the two allowlisted sites of CONTRIBUTING: gate).
+  `noexcept` (no `throw`: review; no `catch (...)` outside the one allowlisted site of CONTRIBUTING, `InferencePool::start_workers`: gate).
   Exit codes (review): `0` clean, `1` runtime fatal, `2` bad CLI/config, `3` startup failure.
 - Output side vs recognition (review): no viewer -> output side sleeps completely (`enc=0.0`); recognition is
   viewer-independent (runs whenever >= 1 source is live, sleeps when all sources are absent); with viewer, online

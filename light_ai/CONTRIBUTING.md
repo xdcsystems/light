@@ -28,7 +28,7 @@ Each rule is marked **(gate)**, **(review)** or both. **(gate)** means `scripts/
 
 - **`Status` ([`include/core/status.hpp`](include/core/status.hpp))** (review)**:** Operations that can fail for a runtime reason return `Status` (`Errc`, string-literal `what`, optional `Sys::Errno` / `Sys::Sdk` code); results go to out-parameters. Outcome enums (e.g. `FrameStatus`, `SourceChannel::Attach`, `HttpHead::Parse`) carry `Status` in their failure arm.
 - **Startup-only exceptions** (review)**:** `std::runtime_error` (via [`throw_on`](include/core/throw_on.hpp) when wrapping a `Status`) is permitted only on the startup path (constructors and `Pipeline` initialization).
-- **`noexcept` frame path & threads** (`catch (...)`: gate, `custom-no-catch-all`; the rest: review)**:** Frame processing and thread bodies are `noexcept`: no exceptions are thrown and there is no `catch (...)` in the frame path. Exactly two `catch (...)` exist, both startup thread-launch rethrows (`InferencePool::start_workers`, `NetPreview` ctor), each allowlisted with `NOLINT(custom-no-catch-all): <reason>`.
+- **`noexcept` frame path & threads** (`catch (...)`: gate, `custom-no-catch-all`; the rest: review)**:** Frame processing and thread bodies are `noexcept`: no exceptions are thrown and there is no `catch (...)` in the frame path. Exactly one `catch (...)` exists, a startup thread-launch rethrow (`InferencePool::start_workers`), allowlisted with `NOLINT(custom-no-catch-all): <reason>`.
 
   Legitimate `catch (const std::exception&)` sites outside the frame path:
   - [`src/main.cpp`](src/main.cpp): top-level startup `try`/`catch` logs `Fatal:` and returns exit code `3`.
