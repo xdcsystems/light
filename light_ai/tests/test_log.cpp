@@ -65,6 +65,13 @@ void test_log( TestRun& t )
         const Log log( out, err );
         log.info() << "npu: core mask 0x" << std::hex << 7 << std::dec << ' ' << 10 << std::endl;
         CHECK( t, out.str() == "npu: core mask 0x7 10\n" );
+        // A line that leaves std::hex set does not change the next one, nor the caller's stream.
+        out.str( "" );
+        const std::ios_base::fmtflags before = out.flags();
+        log.info() << std::hex << 255 << '\n';
+        log.info() << 255 << '\n';
+        CHECK( t, out.str() == "ff\n255\n" );
+        CHECK( t, out.flags() == before );
 
         int calls = 0;
         const Log off( out, err, Log::Level::Off );

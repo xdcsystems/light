@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -62,6 +63,22 @@ namespace
         put_sos( ex_be );
         JpegSofInfo info_be;
         CHECK( t, probe( ex_be, info_be ) && info_be.exif_rot_deg == 90 );
+
+        // An IFD offset far outside the segment (0xFFFFFFFF) is ignored: the frame still parses.
+        Bytes bad_ifd = ex_le;
+        // SOI(2) + marker(2) + length(2) + "Exif\0\0"(6) + byte order and magic(4)
+        std::fill_n( bad_ifd.begin() + 16, 4, static_cast<uint8_t>( 0xFF ) );
+        JpegSofInfo info_bad;
+        CHECK( t, probe( bad_ifd, info_bad ) && info_bad.exif_rot_deg == -1 && info_bad.w == 720 );
+    }
+
+    void check_null_data( TestRun& t )
+    {
+        JpegSofInfo info;
+        CHECK( t, !probe_jpeg_sof( nullptr, 64, info ) );
+        uint32_t n = 64;
+        CHECK( t, !jpeg_frame_check( nullptr, n, info ) );
+        CHECK_EQ( t, n, static_cast<uint32_t>( 64 ) );
     }
 }  // namespace
 
@@ -234,4 +251,5 @@ void test_jpeg_probe( TestRun& t )
         CHECK( t, !jpeg_frame_check( not_jpeg, n, info ) );
     }
     check_exif_orient( t );
+    check_null_data( t );
 }
