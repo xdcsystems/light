@@ -80,6 +80,8 @@ public:
 
     // Disconnect policy: Errc::Lost (ENODEV/EIO) detaches the channel for the
     // SourceProber to re-attach; any other error is fatal (returned to caller).
+    // A recoverable failure that names no channel (f.src outside [0, size())) is
+    // fatal too: Errc::Failed, nothing is discarded or detached.
     template <class Pool, class ResetFn>
     Status handle_failure( const EncodedFrame& f, Pool& pool, ResetFn&& reset_source ) noexcept
     {
@@ -87,6 +89,11 @@ public:
         log_.warn() << "source: " << f.st << ( recoverable ? " (recoverable)" : " (fatal)" ) << '\n';
         if ( !recoverable )
             return f.st;
+        if ( f.src < 0 || f.src >= srcs_.size() )
+        {
+            log_.error() << "source: invalid channel index " << f.src << " (" << srcs_.size() << " configured)\n";
+            return make_status( Errc::Failed, "source: invalid channel index" );
+        }
         pool.discard( f.src );
         ++reconnects_;
         srcs_[f.src].detach();

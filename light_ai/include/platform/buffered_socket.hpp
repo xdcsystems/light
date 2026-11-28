@@ -1,9 +1,10 @@
 // BufferedSocket: one blocking TCP client socket and its receive window
 // (core/byte_window.hpp). The connection part (resolve, a non-blocking
-// connect with a 5 s window, TCP_NODELAY, send with MSG_NOSIGNAL) and the
-// receive part (one poll + recv per fill, EINTR reported, not retried) of
-// the net MJPEG source; the parsing stays with the caller (core/http_head.hpp,
-// core/multipart_reader.hpp) over data()/size()/consume().
+// connect with a 5 s window, TCP_NODELAY, a send bounded by 5 s with
+// MSG_NOSIGNAL) and the receive part (one poll + recv per fill, EINTR
+// reported, not retried) of the net MJPEG source; the parsing stays with the
+// caller (core/http_head.hpp, core/multipart_reader.hpp) over
+// data()/size()/consume().
 //
 // POSIX only, no SDK: host-tested over a loopback listener
 // (tests/test_buffered_socket.cpp). Thread: one owner at a time (the
@@ -29,6 +30,7 @@ public:
     {
         kWindow = 256 * 1024,  // the receive window (the net source's desync limit)
         kConnectMs = 5000,
+        kSendMs = 5000,
     };
     // One fill():
     enum class Fill : uint8_t
@@ -58,10 +60,14 @@ public:
     //              "addr resolution: timeout" / "addr resolution: cancelled";
     //   Failed  -- "socket: <errno>", "connect: fcntl: <errno>", any other "connect: <errno>".
     Status connect( const std::string& host, int port );
-    // Sends every byte (EINTR retried). Not ok: Lost "send: <errno>" or
-    // "send: peer closed, 0 bytes sent"; Failed "send: not connected".
+    // Sends every byte: each non-blocking send (EINTR / EAGAIN retried) follows
+    // a poll( POLLOUT ) in kConnectSliceMs steps that observe cancelled(); one
+    // kSendMs deadline covers the whole call. Not ok: Timeout "send: timeout" /
+    // "send: cancelled"; Lost "send: <errno>", "send: poll: <errno>",
+    // "send: bad fd", "send: peer closed" or "send: peer closed, 0 bytes sent";
+    // Failed "send: not connected".
     Status send_all( const std::string& bytes ) const;
-    // Non-owning stop flags observed by connect() and fill_until().
+    // Non-owning stop flags observed by connect(), send_all() and fill_until().
     void set_cancel( const std::atomic<bool>* stop, const std::atomic<bool>* prober_quit = nullptr ) noexcept
     {
         stop_ = stop;
@@ -99,6 +105,8 @@ private:
 
 private:
     Status wait_connect() noexcept;
+    // Ok once fd_ is writable; the failures of send_all().
+    Status wait_writable( std::chrono::steady_clock::time_point deadline ) const noexcept;
     Status resolve( const std::string& host, const std::string& port_str, addrinfo*& res );
     // Waits for the pending lookup in kConnectSliceMs steps until deadline or
     // cancelled(); bounded = false: no deadline and no cancel (the destructor).

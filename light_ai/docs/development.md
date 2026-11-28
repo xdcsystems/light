@@ -82,7 +82,7 @@ Rule definitions, function-size limits, `rules_lint.sh` checks, `tests/tidy_prob
 
 [`tests/CMakeLists.txt`](../tests/CMakeLists.txt) is an independent host CMake project requiring only a C++17 compiler and `pthread` (zero Rockchip/FFmpeg/EGL dependencies — runs identically on the board and on x86_64/arm64 hosts).
 
-- **Unit binary (`build/tests/light_ai_tests`):** **72 suites, 10,210 checks**.
+- **Unit binary (`build/tests/light_ai_tests`):** **72 suites, 10,218 checks**.
 - **ThreadSanitizer binary (`build/tests/light_ai_tests_tsan`, `-fsanitize=thread`):** **11 threaded suites, 6,207 checks** (`source_threads`, `source_prober_threads`, `preview_ring_threads`, `packet_queue_threads`, `session_gate_threads`, `reid_worker_tsan`, `pi_mutex`, `async_log_sink_threads`, `infer_slot_threads`, `stream_output_threads`, `tcp_pull_threads`).
 - **Custom runner options ([`tests/suite_runner.hpp`](../tests/suite_runner.hpp)):**
   ```bash

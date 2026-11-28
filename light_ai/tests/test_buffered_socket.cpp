@@ -176,6 +176,38 @@ namespace
         ::close( srv );
     }
 
+    void send_cancel( TestRun& t )
+    {
+        // A peer that never reads: send_all() must leave on cancel instead of blocking in send().
+        std::atomic<bool> stop { false };
+        Listener l;
+        BufferedSocket s;
+        s.set_cancel( &stop );
+        CHECK( t, s.connect( "127.0.0.1", l.port() ).ok() );
+        const int srv = l.accept();
+        CHECK( t, srv >= 0 );
+        // Pre-fill the buffers of both ends without blocking, until the kernel takes no more.
+        const std::vector<char> chunk( 64 * 1024, 'f' );
+        bool filled = false;
+        for ( int i = 0; i < 512 && !filled; ++i )
+        {
+            const ssize_t r = ::send( s.fd(), chunk.data(), chunk.size(), MSG_DONTWAIT | MSG_NOSIGNAL );
+            filled = r < 0 && ( errno == EAGAIN || errno == EWOULDBLOCK );
+        }
+        CHECK( t, filled );
+        std::thread waker( [&stop] {
+            std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
+            stop.store( true, std::memory_order_release );
+        } );
+        const auto t0 = std::chrono::steady_clock::now();
+        const Status st = s.send_all( std::string( 64 * 1024, 'a' ) );
+        const auto el = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now() - t0 ).count();
+        waker.join();
+        CHECK( t, el < 1500 );
+        CHECK( t, st.code() == Errc::Timeout && status_text( st ) == "send: cancelled" );
+        ::close( srv );
+    }
+
     void hostname_lookup( TestRun& t )
     {
         // Stop already set: a hostname returns Timeout at once, no lookup started.
@@ -221,5 +253,6 @@ void test_buffered_socket( TestRun& t )
     connect_failures( t );
     interrupted( t );
     cancel_flag( t );
+    send_cancel( t );
     hostname_lookup( t );
 }

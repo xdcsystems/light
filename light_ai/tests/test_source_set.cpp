@@ -184,6 +184,25 @@ namespace
         CHECK( t, r.set.next( 0, f ) == FrameStatus::Detached && f.src == 0 && f.st.sys() == EIO );
     }
 
+    void stall_via_poll_fd( TestRun& t )
+    {
+        // A silent pollable fd: next( 0 ) skips the dequeue, and the stall it reports must still name the channel.
+        Rig r;
+        r.live( kChannels );
+        r.fail_all( EAGAIN );
+        const int efd = ::eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
+        CHECK( t, efd >= 0 );
+        r.dev[1].poll_fd = efd;
+        r.set[1].stamp_ok( clk::now() - std::chrono::seconds( 3 ) );
+        EncodedFrame f {};
+        CHECK( t, r.set.next( 0, f ) == FrameStatus::Detached && f.src == 1 && f.st.sys() == EIO && r.dev[1].dequeues == 0 );
+        // The previous frame's index must not survive in a reused frame.
+        f = {};
+        f.src = 0;
+        CHECK( t, r.set.next( 0, f ) == FrameStatus::Detached && f.src == 1 && f.st.sys() == EIO && r.dev[1].dequeues == 0 );
+        ::close( efd );
+    }
+
     void blocking( TestRun& t )
     {
         Rig r;
@@ -331,6 +350,7 @@ void test_source_set( TestRun& t )
     round_robin( t );
     errno_mapping( t );
     stall_detector( t );
+    stall_via_poll_fd( t );
     blocking( t );
     absent_mask( t );
     busy_nodes( t );
