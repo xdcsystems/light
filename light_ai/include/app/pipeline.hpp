@@ -52,6 +52,10 @@ private:
     // One frame: next_frame -> decode -> orient -> dispatch -> publish (pool 1).
     // st: the fatal reason, filled only on Step::Fatal (cleared at entry).
     Step step( int& ok, Status& st ) noexcept;
+    // step()'s exit for a failed frame (f.st): Fatal with st filled, else Skipped after step_done_perf( t0 ).
+    Step fail_or_skip( EncodedFrame& f, PerfClock::time_point t0, Status& st ) noexcept;
+    // The per-step upkeep of idle_perf() and step_done_perf(): watchdog ping, RT fault sample, Re-ID perf; returns now.
+    PerfClock::time_point common_perf() noexcept;
     void step_done_perf( PerfClock::time_point t0 ) noexcept;
     void idle_perf() noexcept;
     void sync_and_orient( int src, int fd_src, int& ok ) noexcept;
