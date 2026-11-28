@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](docs/development.md#prerequisites)
 [![Standard: C++17](https://img.shields.io/badge/C%2B%2B-17-orange.svg)](CMakeLists.txt)
-[![Tests: 72 suites / 10282 checks](https://img.shields.io/badge/Unit%20Tests-72%20suites%20%2F%2010282%20checks-brightgreen.svg)](docs/development.md#tests)
+[![Tests: 72 suites / 10293 checks](https://img.shields.io/badge/Unit%20Tests-72%20suites%20%2F%2010293%20checks-brightgreen.svg)](docs/development.md#tests)
 
 Zero-copy hardware-accelerated object detection, Kalman tracking, optional OSNet cross-camera Re-ID, and multi-camera H.264 streaming pipeline for Rockchip RK3588 (`V4L2` / HTTP MJPEG → `MPP` decode → `RGA3` letterbox & rotation → `RKNN` NPU + async Re-ID → `Mali G610` EGL/GLES box, EN/RU callout & trail overlay → `MPP` H.264 / MPEG-TS). Built in C++17 with no GStreamer, no OpenCV, no CPU pixel copies, and no virtual dispatch on the frame path.
 
@@ -39,7 +39,7 @@ Sample output frames captured directly from the encoded H.264 preview stream on 
 Run from `light_ai/`:
 
 ```bash
-# 1. Release build + host unit tests (72 suites / 10,282 checks) + TSan (11 suites / 6,209 checks) + 2-pass clang-tidy
+# 1. Release build + host unit tests (72 suites / 10,293 checks) + TSan (11 suites / 6,209 checks) + 2-pass clang-tidy
 ./scripts/build.sh
 
 # 2. Host unit + TSan tests standalone (no Rockchip/FFmpeg/EGL SDKs needed)
