@@ -178,7 +178,7 @@ void Pipeline::step_done_perf( PerfClock::time_point t0 ) noexcept
     perf_.step_done( t0, now, sources_.sources(), output_ );
 }
 
-Pipeline::Step Pipeline::fail_or_skip( EncodedFrame& f, PerfClock::time_point t0, Status& st ) noexcept
+Pipeline::Step Pipeline::fail_or_skip( const EncodedFrame& f, PerfClock::time_point t0, Status& st ) noexcept
 {
     const auto reset_fn = [this]( int s ) noexcept { reset_source( s ); };
     if ( const Status hst = sources_.handle_failure( f, pool_, reset_fn ); !hst.ok() )
