@@ -8,13 +8,10 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <poll.h>
-#include <sched.h>
 #include <sys/socket.h>
-#include <system_error>
 #include <unistd.h>
 
 #include "platform/buffered_socket.hpp"
-#include "platform/joining_thread.hpp"
 
 namespace
 {
@@ -66,35 +63,6 @@ namespace
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_flags = AI_NUMERICHOST;
         return ::getaddrinfo( host.c_str(), port_str.c_str(), &hints, &res ) == 0 && res != nullptr;
-    }
-
-    // Queues one lookup (GAI_NOWAIT): 0 or an EAI_* code. getaddrinfo_a() creates the libanl workers on demand
-    // with default thread attributes, so a worker takes its creator's scheduling policy: a SCHED_FIFO / SCHED_RR
-    // caller hands the call to a short-lived thread that drops to SCHED_OTHER first. (With SCHED_RESET_ON_FORK set,
-    // the kernel already starts that thread as SCHED_OTHER; the explicit call covers a policy set without it.)
-    int submit_lookup( gaicb* cb ) noexcept
-    {
-        gaicb* list[1] = { cb };
-        const int pol = ::sched_getscheduler( 0 );
-        // The result carries SCHED_RESET_ON_FORK when set (pin_current_thread_rt sets it): mask it off.
-        const int base_pol = pol >= 0 ? ( pol & ~SCHED_RESET_ON_FORK ) : -1;
-        if ( base_pol != SCHED_FIFO && base_pol != SCHED_RR )
-            return ::getaddrinfo_a( GAI_NOWAIT, list, 1, nullptr );
-        int rc = EAI_SYSTEM;
-        try
-        {
-            JoiningThread th( [&list, &rc]() noexcept {
-                const sched_param sp {};
-                static_cast<void>( ::sched_setscheduler( 0, SCHED_OTHER, &sp ) );
-                rc = ::getaddrinfo_a( GAI_NOWAIT, list, 1, nullptr );
-            } );
-            th.join();
-        }
-        catch ( const std::system_error& )
-        {
-            return EAI_SYSTEM;
-        }
-        return rc;
     }
 }  // namespace
 
@@ -233,7 +201,11 @@ Status BufferedSocket::resolve( const std::string& host, const std::string& port
     lookup_.cb.ar_name = lookup_.name.c_str();
     lookup_.cb.ar_service = lookup_.service.c_str();
     lookup_.cb.ar_request = &lookup_.hints;
-    if ( submit_lookup( &lookup_.cb ) != 0 )
+    // No scheduling guard around the call: libanl creates its workers with default attributes, so they inherit the
+    // caller's policy, except that threads of a SCHED_RESET_ON_FORK real-time caller start as SCHED_OTHER. The only
+    // real-time switch of this program, pin_current_thread_rt(), sets SCHED_FIFO | SCHED_RESET_ON_FORK: keep the flag.
+    gaicb* list[1] = { &lookup_.cb };
+    if ( ::getaddrinfo_a( GAI_NOWAIT, list, 1, nullptr ) != 0 )
         return make_status( Errc::Absent, "addr resolution failed" );
     lookup_.pending = true;
     const int e = await_lookup( deadline, true );

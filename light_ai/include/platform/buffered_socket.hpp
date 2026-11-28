@@ -52,9 +52,10 @@ public:
     // Closes what was open, then connects to host:port (IPv4). A numeric host
     // resolves in place (AI_NUMERICHOST, no DNS); a hostname goes through
     // getaddrinfo_a, bounded by kConnectMs and polled in kConnectSliceMs steps
-    // that observe cancel. A SCHED_FIFO / SCHED_RR caller submits the lookup
-    // from a short-lived SCHED_OTHER thread, so a libanl worker created for it
-    // is not real-time. A lookup given up while glibc still runs it
+    // that observe cancel. The lookup is submitted from the calling thread: a
+    // libanl worker created by a real-time caller starts as SCHED_OTHER only
+    // because that policy is set with SCHED_RESET_ON_FORK
+    // (pin_current_thread_rt). A lookup given up while glibc still runs it
     // (gai_cancel: EAI_NOTCANCELED) keeps its request in this object: the next
     // connect() first waits for it (same bound), the destructor without one.
     // The addresses of the lookup are tried in order (ai_next); one kConnectMs
