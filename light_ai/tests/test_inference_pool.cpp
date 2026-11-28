@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include "check.hpp"
@@ -21,6 +22,7 @@
 #include "core/detection.hpp"
 #include "core/frame_view.hpp"
 #include "core/log.hpp"
+#include "npu/dup_context_tag.hpp"
 #include "npu/infer_slot.hpp"
 #include "npu/inference_pool.hpp"
 #include "suites.hpp"
@@ -60,6 +62,8 @@ namespace
         int setup_io_shared_rc = 0;    // ditto
         int next_id = 0;               // ditto: FakeEngine instances, in construction order
         std::vector<int> destroyed;    // ditto: their ids, in destruction order
+        std::vector<int> dup_masters;  // ditto: the master's id of every duplicated engine
+        int dup_fail_at = -1;          // ditto: the duplicate with this index throws
         std::vector<unsigned> masks;   // ditto
         int next_fd = 100;             // ditto
 
@@ -129,12 +133,46 @@ namespace
             return slots_[static_cast<size_t>( slot )];
         }
         uint32_t input_stride_bytes() const noexcept { return 1984; }
+        int id() const noexcept { return id_; }
+        FakeNpu* npu() const noexcept { return npu_; }
 
     private:
         FakeNpu* npu_;
         int id_;
         std::vector<TensorRef> slots_;
         int bound_slot_ = 0;
+    };
+
+    // FakeEngine with the DupContextTag constructor: the pool must take it for every engine but the first.
+    class DupFakeEngine
+    {
+    public:
+        explicit DupFakeEngine( FakeNpu* npu ) : base_( npu ) {}
+        DupFakeEngine( DupContextTag, const DupFakeEngine& master, const Log& ) : base_( master.base_.npu() )
+        {
+            FakeNpu& npu = *base_.npu();
+            if ( static_cast<int>( npu.dup_masters.size() ) == npu.dup_fail_at )
+                throw std::runtime_error( "fake dup failure" );
+            npu.dup_masters.push_back( master.base_.id() );
+        }
+
+        Status setup_io( bool keep = false, int input_slots = 1 ) { return base_.setup_io( keep, input_slots ); }
+        Status setup_io_shared( const TensorSet& s, bool keep = false ) { return base_.setup_io_shared( s, keep ); }
+        Status bind_input_slot( int slot ) noexcept { return base_.bind_input_slot( slot ); }
+        Status set_core_mask( unsigned mask ) { return base_.set_core_mask( mask ); }
+        Status run() const { return base_.run(); }
+        TensorRef input_tensor( int slot ) const noexcept { return base_.input_tensor( slot ); }
+
+    private:
+        FakeEngine base_;
+    };
+
+    struct DupDecode
+    {
+        void operator()( const DupFakeEngine&, const InferJob& job, DetList& out ) const
+        {
+            out.push( Detection { static_cast<float>( job.frame ), 0.0f, 1.0f, 1.0f, 0, 0.9f } );
+        }
     };
 
     // One detection that echoes the job: x = frame, y = source.
@@ -337,6 +375,50 @@ namespace
                 threw = true;
             }
             CHECK( t, threw && npu.destroyed == reverse );
+        }
+    }
+
+    // An engine with a DupContextTag constructor: the first one is built from the arguments, the rest from engines_[0].
+    void duplicated_engines( TestRun& t )
+    {
+        using DupPool = InferencePool<DupFakeEngine, DupDecode>;
+        static_assert( std::is_constructible_v<DupFakeEngine, DupContextTag, const DupFakeEngine&, const Log&> );
+        static_assert( !std::is_constructible_v<FakeEngine, DupContextTag, const FakeEngine&, const Log&> );
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        {
+            FakeNpu npu;
+            {
+                DupPool p( pool_cfg( 3 ), DupDecode {}, log, fast_opts(), engine_arg( npu ) );
+                CHECK( t, npu.dup_masters == ( std::vector<int> { 0, 0 } ) && npu.next_id == 3 );
+                CHECK( t, p.workers_count() == 3 && npu.masks == ( std::vector<unsigned> { 1U, 2U, 4U } ) );
+                CHECK( t, p.submit( p.try_acquire(), job( 7 ) ) );
+                InferResult r;
+                CHECK( t, p.collect( r ) && r.npu_ok && r.dets.n == 1 && r.dets.d[0].x == 7.0f );
+            }
+            CHECK( t, npu.destroyed == ( std::vector<int> { 2, 1, 0 } ) );
+        }
+        {
+            FakeNpu npu;
+            const DupPool p( pool_cfg( 0 ), DupDecode {}, log, fast_opts(), engine_arg( npu ) );
+            CHECK( t, npu.dup_masters.empty() && npu.next_id == 1 );  // a pool of one never duplicates
+        }
+        {
+            // The second duplicate throws: the engine that exists as a whole goes before its master.
+            FakeNpu npu;
+            npu.dup_fail_at = 1;
+            bool threw = false;
+            try
+            {
+                const DupPool p( pool_cfg( 3 ), DupDecode {}, log, fast_opts(), engine_arg( npu ) );
+            }
+            catch ( const std::runtime_error& )
+            {
+                threw = true;
+            }
+            // id 2 is the half-built engine: its member dies during the unwinding of its own constructor.
+            CHECK( t, threw && npu.destroyed == ( std::vector<int> { 2, 1, 0 } ) );
         }
     }
 
@@ -564,6 +646,7 @@ void test_inference_pool( TestRun& t )
 {
     modes_and_masks( t );
     engines_die_in_reverse( t );
+    duplicated_engines( t );
     in_order_results( t );
     per_source_fifo( t );
     lb_affinity_and_rotation( t );

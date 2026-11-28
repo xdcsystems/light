@@ -4,7 +4,7 @@ Deep technical reference for [`light_ai`](../README.md): module/header layout, e
 
 ## Modules & Headers
 
-The codebase contains **106 headers** under [`include/`](../include/) and **62 translation units** under [`src/`](../src/) + [`externals/inih/ini.c`](../externals/inih/ini.c).
+The codebase contains **107 headers** under [`include/`](../include/) and **62 translation units** under [`src/`](../src/) + [`externals/inih/ini.c`](../externals/inih/ini.c).
 
 ### Pipeline & Hardware Modules (`include/<folder>/`, `src/<folder>/`)
 
@@ -25,14 +25,14 @@ core  <-  platform, config, media  <-  sys  <-  source, npu, net  <-  render  <-
 | `source/` | `net_mjpeg_source.hpp` | HTTP `multipart/x-mixed-replace` MJPEG pull client |
 | `media/` | `mpp_decoder.hpp`, `rkmpp_drm_pool.hpp` | Rockchip MPP MJPEG → YUV422SP/YUV420SP decoder and external DRM `dma-buf` pool |
 | `media/` | `rga_resizer.hpp`, `dma_sync.hpp` | RGA3 `im2d` letterbox/rotation (`--src-rot`), per-call RGA2 `crop_resize` (RGB888 Re-ID crops), and `DMA_BUF_IOCTL_SYNC` guard |
-| `npu/` | `rknn_engine.hpp` | RKNN zero-copy NPU engine (multi-slot `setup_io`, `bind_input_slot`, `sync_output`, native or INT8→FP16 outputs, move-only) |
+| `npu/` | `rknn_engine.hpp`, `dup_context_tag.hpp` | RKNN zero-copy NPU engine (multi-slot `setup_io`, `bind_input_slot`, `sync_output`, native or INT8→FP16 outputs, move-only; the SDK-free `DupContextTag` picks the `rknn_dup_context` constructor the pool uses for its 2nd and 3rd engine) |
 | `npu/` | `inference_pool.hpp`, `infer_slot.hpp` | Multi-core NPU worker pool (`--pool 1` / `3`), ordered FIFO, bounded `5 s` wait & `Abandoned` slot handoff |
 | `npu/` | `reid_worker.hpp`, `reid_queue.hpp` | Asynchronous Re-ID embedding runner (`RknnEngine` with 4 zero-copy slots + `BasicReidQueue` thread) |
 | `npu/` | `yolo_postprocess.hpp`, `coco_names.hpp` | Worker-local `YoloDecode` wrapper and 80-class COCO label lookup table |
 | `npu/` | `cal_dumper.hpp` | `--dump-cal` / `--cal` PPM writer |
 | `render/` | `box_smoother.hpp` | 32-slot matcher / coaster for non-person boxes (`cls != 0`, display-filtered by `BoxFilter`) |
 | `render/` | `box_mapper.hpp`, `overlay_sink.hpp` | Maps tracks, trails, EN/RU callouts, and non-person boxes; owns GPU/CPU draw parity + network output |
-| `render/` | `gpu_box_drawer.hpp` | Mali G610 EGL/GBM + GLES2/3 batched box, trail & `GL_LUMINANCE_ALPHA` callout label renderer (outline + fill pass; CPU fallback in `core/overlay_raster.hpp`) |
+| `render/` | `gpu_box_drawer.hpp` | Mali G610 EGL/GBM + GLES2/3 batched box, trail & `GL_LUMINANCE_ALPHA` callout label renderer (outline + fill pass; CPU fallback in `core/overlay_raster.hpp`); extensions matched as whole names, `EGL_KHR_fence_sync` preferred |
 | `net/` | `net_encoder.hpp`, `net_preview.hpp` | `h264_rkmpp` MPEG-TS encoder facade (`= default` dtor) and raw RGB24 NUT preview server |
 | `net/` | `tcp_avio.hpp`, `av_common.hpp`, `muxer_teardown.hpp` | FFmpeg AVIO binding over `TcpPullServer`, FFmpeg helpers, RAII muxer teardown |
 | `platform/` | `joining_thread.hpp`, `buffered_socket.hpp`, `tcp_pull_server.hpp`, `log_sink.hpp`, `pi_mutex.hpp` | POSIX/C++17 OS helpers: RAII thread, non-blocking buffered socket, single-viewer TCP pull transport (`TCP_NODELAY`, `TCP_NOTSENT_LOWAT`, `SO_SNDBUF`, `POLLOUT` send loop in `src/platform/tcp_send.cpp`), lock-free `AsyncLogSink`, `PiMutex` / `PiCondVar` |

@@ -26,6 +26,7 @@
 #include <ios>
 #include <mutex>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 #include "config/config.hpp"  // InferConfig
@@ -36,6 +37,7 @@
 #include "core/pod_ring.hpp"
 #include "core/throw_on.hpp"
 #include "core/timings.hpp"  // Timings::clk, ms()
+#include "npu/dup_context_tag.hpp"
 #include "npu/infer_slot.hpp"
 #include "platform/joining_thread.hpp"
 #include "platform/pi_mutex.hpp"
@@ -74,8 +76,9 @@ public:
     static_assert( static_cast<int>( kMaxSlots ) <= static_cast<int>( TensorSet::cap ), "TensorSet must cover every pool slot" );
     static_assert( kMaxSlots <= 32, "avoid_mask is a 32-bit slot bitmask" );
 
-    // Loads the engines (each constructed from engine_args...), sets up
-    // shared input tensors on engines_[0] and imports them into engines_[1..],
+    // Loads the engines: engines_[0] from engine_args..., the others as duplicates
+    // of it when Engine has a DupContextTag constructor, else from engine_args... too.
+    // Sets up shared input tensors on engines_[0] and imports them into engines_[1..],
     // pins them to NPU cores, and starts the workers.
     // Throws std::runtime_error on any failure; nothing is left running then.
     template <typename... EngineArgs>
@@ -93,8 +96,18 @@ public:
         // A throw below skips the destructor body: the guard keeps its reverse destruction order.
         ReverseEnginesGuard guard( engines_ );
         engines_.reserve( static_cast<size_t>( n_workers_ ) );  // never reallocates after: &engines_[w] stays valid
-        for ( int w = 0; w < n_workers_; ++w )
-            engines_.emplace_back( engine_args... );
+        engines_.emplace_back( engine_args... );
+        for ( int w = 1; w < n_workers_; ++w )
+        {
+            if constexpr ( std::is_constructible_v<Engine, DupContextTag, const Engine&, const Log&> )
+            {
+                engines_.emplace_back( DupContextTag {}, engines_[0], log_ );
+            }
+            else
+            {
+                engines_.emplace_back( engine_args... );
+            }
+        }
         throw_on( engines_[0].setup_io( false, n_slots_ ), "rknn setup_io" );
         const TensorSet shared = tensors();
         for ( int w = 1; w < n_workers_; ++w )

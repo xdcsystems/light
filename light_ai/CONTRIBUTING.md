@@ -59,9 +59,9 @@ Every PR targeting `master` must pass the full board gate:
 
 This runs:
 1. Release CMake build (`light_ai`).
-2. Host unit tests (`light_ai_tests` — 72 suites, 10,378 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 11 suites, 6,209 checks).
+2. Host unit tests (`light_ai_tests` — 72 suites, 10,419 checks) + ThreadSanitizer suites (`light_ai_tests_tsan` — 11 suites, 6,209 checks).
 3. Two-pass `clang-tidy` gate ([`scripts/tidy_run.sh`](scripts/tidy_run.sh)):
-   - **self-test + lint:** the rules pass on [`tests/tidy_probe/`](tests/tidy_probe) and [`scripts/rules_lint.sh`](scripts/rules_lint.sh) on its fixture tree must give exactly the expected hits, and `--verify-config` must know every check option key of `scripts/tidy_rules.yaml`; then `rules_lint.sh` over the tree (245 files).
+   - **self-test + lint:** the rules pass on [`tests/tidy_probe/`](tests/tidy_probe) and [`scripts/rules_lint.sh`](scripts/rules_lint.sh) on its fixture tree must give exactly the expected hits, and `--verify-config` must know every check option key of `scripts/tidy_rules.yaml`; then `rules_lint.sh` over the tree (246 files).
    - **main:** system `clang-tidy-11` against [`.clang-tidy`](.clang-tidy) (`tests/` uses [`tests/.clang-tidy`](tests/.clang-tidy)).
    - **rules:** `venv/bin/clang-tidy` (`23.1.4`) against [`scripts/tidy_rules.yaml`](scripts/tidy_rules.yaml): cognitive complexity (`Threshold: 20`), `misc-const-correctness` and the `custom-*` project rules marked **(gate)** above.
    - A change to a rule check goes together with its fixture and expected file in `tests/tidy_probe/`.

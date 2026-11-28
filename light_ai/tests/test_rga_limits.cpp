@@ -35,6 +35,15 @@ void test_rga_limits( TestRun& t )
     CHECK( t, reid_crop_needs_aux( 640, 648, 128, 80 ) );    // over 8x in height
     CHECK( t, reid_crop_needs_aux( 1280, 1280, 128, 256 ) ); // a 1280 detector into OSNet
 
+    // Two passes src -> aux -> dst: each one within 8x per axis, down or up.
+    CHECK( t, two_pass_ratio_ok( 1152, 2304, 512, 1024, 128, 256 ) );    // 2.25x, then 4x
+    CHECK( t, two_pass_ratio_ok( 1088, 2112, 1024, 2048, 128, 256 ) );   // exactly 8x in pass 2
+    CHECK( t, !two_pass_ratio_ok( 4104, 2048, 512, 1024, 128, 256 ) );   // pass 1 over 8x in width
+    CHECK( t, !two_pass_ratio_ok( 2048, 8200, 512, 1024, 128, 256 ) );   // pass 1 over 8x in height
+    CHECK( t, !two_pass_ratio_ok( 2048, 2048, 1032, 1024, 128, 256 ) );  // pass 2 over 8x in width
+    CHECK( t, !two_pass_ratio_ok( 2048, 4096, 512, 2056, 128, 256 ) );   // pass 2 over 8x in height
+    CHECK( t, !two_pass_ratio_ok( 1152, 2304, 0, 1024, 128, 256 ) );
+
     // Aux sides: half, rounded up to even (an odd half would break NV12).
     CHECK( t, aux_side( 1280 ) == 640 );
     CHECK( t, aux_side( 1282 ) == 642 );   // 641 -> 642

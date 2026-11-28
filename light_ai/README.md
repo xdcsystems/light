@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](docs/development.md#prerequisites)
 [![Standard: C++17](https://img.shields.io/badge/C%2B%2B-17-orange.svg)](CMakeLists.txt)
-[![Tests: 72 suites / 10378 checks](https://img.shields.io/badge/Unit%20Tests-72%20suites%20%2F%2010378%20checks-brightgreen.svg)](docs/development.md#tests)
+[![Tests: 72 suites / 10419 checks](https://img.shields.io/badge/Unit%20Tests-72%20suites%20%2F%2010419%20checks-brightgreen.svg)](docs/development.md#tests)
 
 Zero-copy hardware-accelerated object detection, Kalman tracking, optional OSNet cross-camera Re-ID, and multi-camera H.264 streaming pipeline for Rockchip RK3588 (`V4L2` / HTTP MJPEG → `MPP` decode → `RGA3` letterbox & rotation → `RKNN` NPU + async Re-ID → `Mali G610` EGL/GLES box, EN/RU callout & trail overlay → `MPP` H.264 / MPEG-TS). Built in C++17 with no GStreamer, no OpenCV, no CPU pixel copies, and no virtual dispatch on the frame path.
 
@@ -39,7 +39,7 @@ Sample output frames captured directly from the encoded H.264 preview stream on 
 Run from `light_ai/`:
 
 ```bash
-# 1. Release build + host unit tests (72 suites / 10,378 checks) + TSan (11 suites / 6,209 checks) + 2-pass clang-tidy
+# 1. Release build + host unit tests (72 suites / 10,419 checks) + TSan (11 suites / 6,209 checks) + 2-pass clang-tidy
 ./scripts/build.sh
 
 # 2. Host unit + TSan tests standalone (no Rockchip/FFmpeg/EGL SDKs needed)
@@ -76,7 +76,7 @@ One frame's path: V4L2 or HTTP MJPEG → `MppDecoder` (dma-buf YUV) → `RgaResi
 - **Canonical stream canvases (`NetEncoder`):** `1` source → `640×480` (letterbox band cropped 1:1 from NPU tensor); `2` sources → `1280×480` (`2×1`); `3–4` sources → `1280×960` (`2×2`, unused 4th cell stays gray). Multi-view sessions start on a gray canvas and hold frame `0` (IDR) until all configured tiles refresh or `200 ms` elapses (`SessionWarmup`).
 - **Thread & CPU affinity (`Pipeline`):** `AsyncLogSink` runs on Cortex-A55 (`cpu 0–3`), `SourceProber` runs on a dedicated background thread spawned before `Pipeline::run()` pins RT threads to Cortex-A76 (`cpu 4–7`, `cpu_affinity.hpp`): `pipeline main` (`cpu 4`, `SCHED_FIFO 80`), NPU pool workers (`--pool 3`, `cpu 5–7`, `SCHED_FIFO 70`), and `StreamOutput` (`A76`, `SCHED_FIFO 60`), with `mlockall`/`mallopt` and automatic `SCHED_OTHER` fallback when unprivileged. With `--reid-model`, `ReidWorker` (`BasicReidQueue`) runs an additional `SCHED_OTHER` async RKNN thread for person crops.
 
-For the full module & header map (106 headers / 62 translation units), error model & exit codes, and verified RK3588 hardware/SDK constraints, see [`docs/architecture.md`](docs/architecture.md).
+For the full module & header map (107 headers / 62 translation units), error model & exit codes, and verified RK3588 hardware/SDK constraints, see [`docs/architecture.md`](docs/architecture.md).
 
 ## Measured Performance
 

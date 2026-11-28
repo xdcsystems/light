@@ -44,7 +44,28 @@ RknnEngine::RknnEngine( const char* model_path, const Log& log ) : log_( log )
         throw std::runtime_error( std::string( "rknn_init failed for " ) + model_path );
     }
     RknnCtxGuard ctx_guard( ctx_ );
+    query_attrs();
+    ctx_guard.release();
+}
 
+RknnEngine::RknnEngine( DupContextTag, const RknnEngine& master, const Log& log ) : log_( log )
+{
+    // rknn_context is a value handle and the SDK takes a pointer to it: a copy keeps master const.
+    rknn_context src = master.ctx_;
+    if ( src == 0 )
+        throw std::runtime_error( "rknn_dup_context: no master context" );
+    if ( const int rc = rknn_dup_context( &src, &ctx_ ); rc != RKNN_SUCC )
+    {
+        ctx_ = 0;
+        throw std::runtime_error( "rknn_dup_context failed (rc " + std::to_string( rc ) + ")" );
+    }
+    RknnCtxGuard ctx_guard( ctx_ );
+    query_attrs();
+    ctx_guard.release();
+}
+
+void RknnEngine::query_attrs()
+{
     rknn_input_output_num io_num {};
     if ( rknn_query( ctx_, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof( io_num ) ) != RKNN_SUCC || io_num.n_input < 1 || io_num.n_output < 1 )
         throw std::runtime_error( "rknn_query IN_OUT_NUM failed" );
@@ -63,7 +84,6 @@ RknnEngine::RknnEngine( const char* model_path, const Log& log ) : log_( log )
         if ( rknn_query( ctx_, RKNN_QUERY_OUTPUT_ATTR, &out_attrs_[i], sizeof( out_attrs_[i] ) ) != RKNN_SUCC )
             throw std::runtime_error( "rknn_query OUTPUT_ATTR[" + std::to_string( i ) + "] failed" );
     }
-    ctx_guard.release();
 }
 
 RknnEngine::~RknnEngine()
