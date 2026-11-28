@@ -91,7 +91,7 @@ void test_sd_watchdog( TestRun& t )
     CHECK_EQ( t, bind_rc, 0 );
 
     {
-        SdWatchdog wd( sock_path.c_str(), "2000000" );
+        SdWatchdog wd( sock_path.c_str(), "2000000", nullptr );
         CHECK( t, wd.active() );
         CHECK( t, wd.pinging() );
         const auto t0 = PerfClock::now();
@@ -128,7 +128,7 @@ void test_sd_watchdog( TestRun& t )
         const socklen_t abs_len = static_cast<socklen_t>( offsetof( sockaddr_un, sun_path ) + abs_name.size() );
         CHECK_EQ( t, ::bind( abs_srv, reinterpret_cast<const sockaddr*>( &abs_addr ), abs_len ), 0 );
 
-        SdWatchdog wd( abs_name.c_str(), "2000000" );
+        SdWatchdog wd( abs_name.c_str(), "2000000", nullptr );
         CHECK( t, wd.active() );
         wd.notify_ready();
         char rbuf[32] {};
@@ -152,13 +152,13 @@ void test_sd_watchdog( TestRun& t )
 
     // WATCHDOG_USEC / 2 parsing with small-value half, ERANGE, and invalid fallback.
     {
-        const SdWatchdog wd_half( nullptr, "600000" );
+        const SdWatchdog wd_half( nullptr, "600000", nullptr );
         CHECK_NEAR( t, wd_half.ping_interval_ms(), 300.0, 1e-6 );
-        const SdWatchdog wd_small( nullptr, "100000" );
+        const SdWatchdog wd_small( nullptr, "100000", nullptr );
         CHECK_NEAR( t, wd_small.ping_interval_ms(), 50.0, 1e-6 );
-        const SdWatchdog wd_overflow( nullptr, "99999999999999999999999999999" );
+        const SdWatchdog wd_overflow( nullptr, "99999999999999999999999999999", nullptr );
         CHECK_NEAR( t, wd_overflow.ping_interval_ms(), 1000.0, 1e-6 );
-        const SdWatchdog wd_bad( nullptr, "not-a-number" );
+        const SdWatchdog wd_bad( nullptr, "not-a-number", nullptr );
         CHECK_NEAR( t, wd_bad.ping_interval_ms(), 1000.0, 1e-6 );
     }
 

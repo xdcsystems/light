@@ -28,6 +28,8 @@ void test_cpu_affinity( TestRun& t )
     const Log log( out, err, Log::Level::Debug );
 
     static_assert( noexcept( pin_current_thread_to_big_cores( "x", log ) ), "the pin is called from noexcept thread bodies" );
+    static_assert( ( kRtSchedPolicy & SCHED_RESET_ON_FORK ) != 0, "threads of an RT caller must start as SCHED_OTHER" );
+    static_assert( ( kRtSchedPolicy & ~SCHED_RESET_ON_FORK ) == SCHED_FIFO, "the RT policy is SCHED_FIFO" );
 
     // The fixture really throws: a direct stream write with the same setup.
     {

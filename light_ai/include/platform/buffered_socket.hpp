@@ -122,7 +122,7 @@ private:
     // One address: socket() + non-blocking connect() until deadline. Ok: fd_ is
     // connected and blocking again. Not ok: fd_ is closed.
     Status connect_one( const addrinfo& ai, std::chrono::steady_clock::time_point deadline );
-    Status wait_connect( std::chrono::steady_clock::time_point deadline ) noexcept;
+    Status wait_connect( std::chrono::steady_clock::time_point deadline ) const noexcept;
     // Ok once fd_ is writable; the failures of send_all().
     Status wait_writable( std::chrono::steady_clock::time_point deadline ) const noexcept;
     Status resolve( const std::string& host, const std::string& port_str, addrinfo*& res );

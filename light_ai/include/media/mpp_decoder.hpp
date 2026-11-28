@@ -61,7 +61,8 @@ private:
     // retrieval of the decoded frame.
     // A phase returns Ok with fd = -1 when the call simply has no frame
     // (bad input, no SOI, an errinfo / discard frame), and a failure
-    // Status when the decoder state is broken (Timeout / Failed / NoMemory).
+    // Status when the decoder state is broken (Timeout / Failed / NoMemory;
+    // make_packet(): NoMemory without a packet buffer, Failed on an MPP buffer or packet call).
     Status make_packet( const uint8_t* data, size_t size );
     Status submit_input();
     Status retrieve_output( int& fd );
@@ -74,6 +75,9 @@ private:
     Status take_output_task( MppTask& task );
     Status apply_info_change( MppFrame f, MppTask task );
     Status frame_fd( MppFrame f, int& fd ) const;
+
+    // The last step of make_packet(): pkt_ over pkt_buf_, whose first `size` bytes hold the frame.
+    Status wrap_pkt_buf( size_t size );
 
     // Allocates/grows the persistent pkt_buf_ to at least `size` bytes.
     Status ensure_pkt_buf( size_t size );

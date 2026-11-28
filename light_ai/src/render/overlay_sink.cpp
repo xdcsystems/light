@@ -80,7 +80,7 @@ void OverlaySink::init( const StreamConfig& stream,
         ec.model_stride_px = rga_limits::rgb888_stride_px( stride_bytes_, model_w_ );
         layout_ = ec.layout;
         tiled_ = true;
-        enc_.emplace( ec, log_ );
+        enc_.emplace( net_, ec, log_ );
         // kbps(): the rate the encoder runs at (the <= 0 fallback applied).
         if ( stream.host.empty() )
             log_.info() << "net: h264 PULL server on port " << stream.port << ", " << ec.kbps()
@@ -91,7 +91,7 @@ void OverlaySink::init( const StreamConfig& stream,
         return;
     }
 
-    preview_.emplace( model_w_, model_h_, static_cast<int>( stride_bytes_ ), stream.fps, stream.port, log_ );
+    preview_.emplace( net_, model_w_, model_h_, static_cast<int>( stride_bytes_ ), stream.fps, stream.port, log_ );
     log_.info() << "net: preview server on port " << stream.port << "\n";
     init_gpu_drawer_tensors( stream.cpu_draw, tensors );
 }

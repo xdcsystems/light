@@ -56,10 +56,11 @@ namespace
             return;
         const float max_x = static_cast<float>( w - 1 );
         const float max_y = static_cast<float>( h - 1 );
-        const int x0 = static_cast<int>( std::clamp( std::floor( b.x0 ), 0.0f, max_x ) );
-        const int y0 = static_cast<int>( std::clamp( std::floor( b.y0 ), 0.0f, max_y ) );
-        const int x1 = std::max( x0, static_cast<int>( std::clamp( std::ceil( b.x1 ) - 1.0f, 0.0f, max_x ) ) );
-        const int y1 = std::max( y0, static_cast<int>( std::clamp( std::ceil( b.y1 ) - 1.0f, 0.0f, max_y ) ) );
+        // The integer min is the final bound: above 2^24 float( w - 1 ) may round up to w.
+        const int x0 = std::min( static_cast<int>( std::clamp( std::floor( b.x0 ), 0.0f, max_x ) ), w - 1 );
+        const int y0 = std::min( static_cast<int>( std::clamp( std::floor( b.y0 ), 0.0f, max_y ) ), h - 1 );
+        const int x1 = std::max( x0, std::min( static_cast<int>( std::clamp( std::ceil( b.x1 ) - 1.0f, 0.0f, max_x ) ), w - 1 ) );
+        const int y1 = std::max( y0, std::min( static_cast<int>( std::clamp( std::ceil( b.y1 ) - 1.0f, 0.0f, max_y ) ), h - 1 ) );
         const auto put = [&]( int x, int y ) {
             uint8_t* px = rgb + static_cast<size_t>( y ) * stride + static_cast<std::ptrdiff_t>( x ) * 3;
             blend_px( px, b.r, b.g, b.b, b.a );

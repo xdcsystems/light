@@ -8,6 +8,8 @@
 set -e
 
 PROJ_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd -P)"
+# exported: the compile launcher (a76_slot.sh) reads it from the environment
+export BUILD_ON_A76="${BUILD_ON_A76:-0}"
 TEST_BUILD_DIR="$PROJ_ROOT/build/tests"
 
 # Only the compiles go to the A76 slots. The test binaries are never pinned: one core would weaken TSan.

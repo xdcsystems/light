@@ -26,6 +26,7 @@
 #include "core/tracker.hpp"
 #include "net/net_encoder.hpp"
 #include "net/net_preview.hpp"
+#include "net/network_init.hpp"
 #include "render/box_mapper.hpp"    // BoxMapper
 #include "render/gpu_box_drawer.hpp"
 
@@ -90,6 +91,7 @@ private:
 
 private:
     const Log& log_;
+    NetworkInit net_;  // before preview_ and enc_: avformat_network_deinit() runs after both are destroyed
     std::optional<NetPreview> preview_ {};
     // Declaration order matters: drawer_ imports enc_'s RGB888 canvas dma-buf,
     // so drawer_ must be declared AFTER enc_ to release its EGLImage/FBO first.

@@ -241,7 +241,8 @@ Status MppDecoder::decode( const uint8_t* data, size_t size, int& fd ) noexcept
 // Phase 1/3: validate the input and build the input packet. Returns Ok
 // (pkt_ fully initialized, not yet referenced by the decoder) or Ok with
 // pkt_ == nullptr (no frame) for a bad input / a mid-stream fragment without
-// SOI/EOI (warn logged); NoMemory on the packet buffer allocation failure.
+// SOI/EOI (warn logged); NoMemory on the packet buffer allocation failure,
+// Failed when an MPP buffer or packet call fails.
 Status MppDecoder::make_packet( const uint8_t* data, size_t size )
 {
     // Defensive deinit, before the early returns: Ok with pkt_ == nullptr is
@@ -313,7 +314,18 @@ Status MppDecoder::make_packet( const uint8_t* data, size_t size )
         std::fill_n( dst + size, kPktPad, uint8_t { 0 } );
         dma::cache_clean( dst, size + kPktPad );
     }
-    mpp_packet_init_with_buffer( &pkt_, pkt_buf_ );  // pkt_ holds its own ref while pkt_buf_ stays cached
+    return wrap_pkt_buf( size );
+}
+
+Status MppDecoder::wrap_pkt_buf( size_t size )
+{
+    // pkt_ holds its own ref while pkt_buf_ stays cached.
+    if ( const MPP_RET rp = mpp_packet_init_with_buffer( &pkt_, pkt_buf_ ); rp != MPP_OK || !pkt_ )
+    {
+        log_.error() << "dec: mpp_packet_init_with_buffer failed (" << rp << ")\n";
+        drop_packet();
+        return sdk_status( Errc::Failed, "mpp_packet_init_with_buffer failed", rp );
+    }
     mpp_packet_set_size( pkt_, size );
     mpp_packet_set_length( pkt_, size );
     mpp_packet_set_pts( pkt_, ++pts_ );

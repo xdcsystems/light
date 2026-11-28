@@ -5,6 +5,8 @@
  *   - GL writes red into memory byte2, i.e. it sees the buffer as BGR:
  *     the desired tensor R goes into the GL BLUE uniform channel.
  *   - EGL_ANDROID_native_fence_sync is available and usable.
+ * Extensions the Mali-G610 libmali lists and init() requires: EGL_KHR_surfaceless_context, EGL_KHR_image_base,
+ * EGL_EXT_image_dma_buf_import and GL_OES_EGL_image. It also lists EGL_KHR_fence_sync, which sync_cpu() prefers.
  */
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -55,7 +57,22 @@ namespace
         ~EglUnbind() { eglMakeCurrent( dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT ); }
     };
 
-    bool has( const char *exts, const char *name ) { return exts && strstr( exts, name ) != nullptr; }
+    // name is a whole entry of the space-separated extension list: a longer name that contains it does not count.
+    bool has( const char *exts, const char *name )
+    {
+        if ( exts == nullptr )
+            return false;
+        const std::string_view list( exts );
+        const std::string_view want( name );
+        for ( size_t pos = 0; pos < list.size(); )
+        {
+            const size_t end = std::min( list.find( ' ', pos ), list.size() );
+            if ( list.substr( pos, end - pos ) == want )
+                return true;
+            pos = end + 1;
+        }
+        return false;
+    }
 
     // Per-vertex color (normalized ubyte attribute) instead of the per-box
     // uniform: that is what allows all boxes to be batched into ONE draw
@@ -230,6 +247,9 @@ namespace
 
 bool GpuBoxDrawer::make_current() noexcept  // NOLINT(readability-make-member-function-const)
 {
+    // Without a context the comparison below would match a thread that has none current and report success.
+    if ( st_.ctx == EGL_NO_CONTEXT )
+        return false;
     // Same-context eglMakeCurrent is not free in libmali; skip it when
     // the context is already current (the common case in the hot path).
     if ( eglGetCurrentContext() == st_.ctx )
@@ -357,6 +377,8 @@ Status GpuBoxDrawer::init()
         return fail( "drawer: EGL entry points" );
     if ( !create_context() )
         return fail( "drawer: GLES context" );
+    if ( !check_gl_extensions() )
+        return fail( "drawer: GL extensions" );
     if ( !make_program() )
     {
         log_.warn() << "drawer: program failed\n";
@@ -442,6 +464,12 @@ bool GpuBoxDrawer::load_entry_points()
         log_.warn() << "drawer: no image import extensions\n";
         return false;
     }
+    // create_context() makes the context current without a surface.
+    if ( !has( exts, "EGL_KHR_surfaceless_context" ) )
+    {
+        log_.warn() << "drawer: no EGL_KHR_surfaceless_context\n";
+        return false;
+    }
 
     // Extension entry points: never assumed to be linkable, always via
     // eglGetProcAddress with a null check (the probe proved libmali does
@@ -462,13 +490,14 @@ bool GpuBoxDrawer::load_entry_points()
         return false;
     }
     // destroy_sync too: a fence created without it would leak one EGLSync per frame (M-10).
-    // Prefer EGL_ANDROID_native_fence_sync, fall back to EGL_KHR_fence_sync before glFinish().
+    // Prefer EGL_KHR_fence_sync (a plain fence: no fd is exported here), fall back to EGL_ANDROID_native_fence_sync
+    // before glFinish(). The later assignment wins.
     if ( st_.create_sync && st_.client_wait && st_.destroy_sync )
     {
-        if ( has( exts, "EGL_KHR_fence_sync" ) )
-            st_.fence_type = EGL_SYNC_FENCE_KHR;
         if ( has( exts, "EGL_ANDROID_native_fence_sync" ) )
             st_.fence_type = EGL_SYNC_NATIVE_FENCE_ANDROID;
+        if ( has( exts, "EGL_KHR_fence_sync" ) )
+            st_.fence_type = EGL_SYNC_FENCE_KHR;
     }
     return true;
 }
@@ -512,6 +541,16 @@ bool GpuBoxDrawer::create_context()
         return false;
     }
     return true;
+}
+
+// glEGLImageTargetTexture2DOES (the dma-buf slots) is GL_OES_EGL_image; the GL list needs the context current,
+// so this runs after create_context(). eglGetProcAddress alone does not prove an extension.
+bool GpuBoxDrawer::check_gl_extensions() const
+{
+    if ( has( reinterpret_cast<const char *>( glGetString( GL_EXTENSIONS ) ), "GL_OES_EGL_image" ) )
+        return true;
+    log_.warn() << "drawer: no GL_OES_EGL_image\n";
+    return false;
 }
 
 void GpuBoxDrawer::create_atlas()
@@ -705,7 +744,7 @@ bool GpuBoxDrawer::draw_slot( int slot, const GpuBox *boxes, int n, const Callou
     glBufferSubData( GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>( cnt ) * sizeof( BatchVert ), v );
     glDrawArrays( GL_TRIANGLES, 0, cnt );
     glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-    glFlush();
+    // No glFlush() here: sync_cpu() follows every draw and submits the commands itself.
     return true;
 }
 

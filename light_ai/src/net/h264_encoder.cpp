@@ -325,8 +325,7 @@ void H264Encoder::enqueue( int stream_index, int64_t fpts, PacketQueue& queue )
     int64_t ts = 0;
     const bool has_pts = ( pkt->pts != AV_NOPTS_VALUE );
     const int64_t raw_pkt_pts = pkt->pts;
-    // The same definition of a key packet as the queue's gate (AvPacketOps::is_key): an IDR in the bitstream.
-    const bool is_key = ( pkt->data != nullptr && pkt->size > 0 && annexb::is_idr( pkt->data, static_cast<size_t>( pkt->size ) ) );
+    const bool is_key = is_key_av_packet( pkt );
     if ( !pts_.stamp_packet( has_pts, raw_pkt_pts, is_key, fpts, ts ) )
     {
         av_packet_unref( pkt );

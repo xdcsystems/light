@@ -39,6 +39,12 @@ namespace rga_limits
         return src > 0 && dst > 0 && src <= kMaxRatio * dst && dst <= kMaxRatio * src;
     }
 
+    // A two-pass job src -> aux -> dst: each pass is within the 8x limit on each axis.
+    constexpr bool two_pass_ratio_ok( int src_w, int src_h, int aux_w, int aux_h, int dst_w, int dst_h ) noexcept
+    {
+        return ratio_ok( src_w, aux_w ) && ratio_ok( src_h, aux_h ) && ratio_ok( aux_w, dst_w ) && ratio_ok( aux_h, dst_h );
+    }
+
     // The source downscale into the dst tensor exceeds 8x on an axis (with a
     // quarter turn the source axes swap): the two-pass path through aux is needed.
     constexpr bool needs_two_pass( int w_src, int h_src, int w_dst, int h_dst, bool swap_wh ) noexcept

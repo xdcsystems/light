@@ -31,6 +31,19 @@ namespace
         return pass1_ok && ( !two_pass || rga_limits::rga3_size_ok( w_aux, h_aux ) );
     }
 
+    // The two-pass crop (cw x ch -> aux -> dst) needs an aux buffer, and the 8x limit holds for each pass on its own:
+    // an aux size far from either end is named here, not by im2d. A one-pass crop needs nothing.
+    Status check_crop_aux( bool two_pass, const RgaResizer::AuxImage& aux, int cw, int ch, int w_dst, int h_dst ) noexcept
+    {
+        if ( !two_pass )
+            return {};
+        if ( aux.fd < 0 || aux.w <= 0 || aux.h <= 0 )
+            return make_status( Errc::Failed, "RGA crop: >8x downscale without aux_fd" );
+        if ( !rga_limits::two_pass_ratio_ok( cw, ch, aux.w, aux.h, w_dst, h_dst ) )
+            return make_status( Errc::Invalid, "RGA crop: aux size outside the 8x limit of a pass" );
+        return {};
+    }
+
     int rga_rot_usage( int rot_deg ) noexcept
     {
         switch ( rot_deg )
@@ -46,18 +59,6 @@ namespace
         }
     }
 }  // namespace
-
-RgaResizer::RgaResizer( const Log& log ) : log_( log )
-{
-    // RK3588: RGA3 (own IOMMU) + RGA2 (32-bit phys addressing, cannot map
-    // dma-bufs above 4G). 1080p decoder buffers land above 4G — dmesg:
-    // "rga_mm: RGA_MMU unsupported memory larger than 4G!", scheduler fell
-    // back to RGA2 (core[4]). All jobs are pinned to RGA3 core0 for the
-    // process lifetime; RGA2 is never needed here.
-    // Best effort: an unpinned RGA still works, rga_check logs the cause.
-    static_cast<void>(
-            rga_check( imconfig( IM_CONFIG_SCHEDULER_CORE, IM_SCHEDULER_RGA3_CORE0 ), log_, "RGA: imconfig RGA3_CORE0 pin failed" ) );
-}
 
 Status RgaResizer::resize( const ResizeSrc& src_img, const CropImage& dst_img, const AuxImage& aux, int rot_deg,
                            LbGeom* geom ) const
@@ -78,13 +79,15 @@ Status RgaResizer::resize( const ResizeSrc& src_img, const CropImage& dst_img, c
                             ( swap_wh && rga_limits::needs_two_pass( w_src, h_src, w_dst, h_dst, true ) );
     if ( over_limit )
     {
-        if ( Status st = downscale_to_aux( src_img, pass_fmt, aux ); !st.ok() )
+        // One even size for both passes (NV12): pass 2 reads with the rect and the strides pass 1 wrote with.
+        const AuxImage mid { aux.fd, rga_limits::even_down( aux.w ), rga_limits::even_down( aux.h ) };
+        if ( Status st = downscale_to_aux( src_img, pass_fmt, mid ); !st.ok() )
             return st;
-        src_fd = aux.fd;
-        w_src = aux.w;
-        h_src = aux.h;
-        ws = align16( aux.w );
-        hs = align16( aux.h );
+        src_fd = mid.fd;
+        w_src = mid.w;
+        h_src = mid.h;
+        ws = align16( mid.w );
+        hs = align16( mid.h );
         pass_fmt = RK_FORMAT_YCbCr_420_SP;
     }
 
@@ -156,6 +159,9 @@ Status RgaResizer::crop_resize( const CropImage& src_img, LbGeom crop_roi, const
         return make_status( Errc::Invalid, "RGA crop: exceeds 8x upscale limit" );
 
     const bool two_pass = cw > rga_limits::kMaxRatio * w_dst || ch > rga_limits::kMaxRatio * h_dst;
+    // Before the core choice: without an aux the RGA2 test below would name the wrong cause.
+    if ( Status st = check_crop_aux( two_pass, aux, cw, ch, w_dst, h_dst ); !st.ok() )
+        return st;
     const bool rga3 = can_use_rga3( cw, ch, w_dst, h_dst, two_pass, w_aux, h_aux );
     // RGA2 maps only physical memory < 4 GiB (Rockchip RGA FAQ A1.9); aux has no dma32 guarantee.
     if ( !rga3 && ( !src_img.dma32 || !dst_img.dma32 || two_pass ) )
@@ -166,8 +172,6 @@ Status RgaResizer::crop_resize( const CropImage& src_img, LbGeom crop_roi, const
     im_rect sr { cx, cy, cw, ch };
     if ( two_pass )
     {
-        if ( aux_fd < 0 || w_aux <= 0 || h_aux <= 0 )
-            return make_status( Errc::Failed, "RGA crop: >8x downscale without aux_fd" );
         // aux is RGB888 with 16-aligned strides (see crop_resize in rga_resizer.hpp).
         if ( Status st = rga_check( improcess( wrap( cur.fd, cur.w, cur.h, cur.w_stride, cur.h, RK_FORMAT_RGB_888 ),
                                                wrap( aux_fd, w_aux, h_aux, align16( w_aux ), align16( h_aux ), RK_FORMAT_RGB_888 ),
@@ -187,7 +191,7 @@ Status RgaResizer::crop_resize( const CropImage& src_img, LbGeom crop_roi, const
                       log_, "RGA crop failed" );
 }
 
-// Pass 1 of the two-pass path: the source into the NV12 aux buffer.
+// Pass 1 of the two-pass path: the source into the NV12 aux buffer (aux.w / aux.h even, see resize()).
 Status RgaResizer::downscale_to_aux( const ResizeSrc& src_img, int src_fmt_rk, const AuxImage& aux ) const
 {
     if ( aux.fd < 0 || aux.w <= 0 || aux.h <= 0 )
@@ -198,9 +202,12 @@ Status RgaResizer::downscale_to_aux( const ResizeSrc& src_img, int src_fmt_rk, c
     const rga_buffer_t src = wrap( src_img.fd, src_img.w, src_img.h, resolve_stride( src_img.w_stride, src_img.w ),
                                    resolve_stride( src_img.h_stride, src_img.h ), src_fmt_rk );
     const rga_buffer_t mid = wrap( aux.fd, aux.w, aux.h, align16( aux.w ), align16( aux.h ), RK_FORMAT_YCbCr_420_SP );
+    // An odd source side is cropped down to even here too (the first pass reads YUV).
+    const im_rect src_rect { 0, 0, rga_limits::even_down( src_img.w ), rga_limits::even_down( src_img.h ) };
     im_opt_t opt {};
     opt.core = next_rga3_core();
-    return rga_check( improcess( src, mid, {}, {}, {}, {}, -1, nullptr, &opt, IM_SYNC ), log_, "RGA resize (pass 1) failed" );
+    return rga_check( improcess( src, mid, {}, src_rect, { 0, 0, aux.w, aux.h }, {}, -1, nullptr, &opt, IM_SYNC ),
+                      log_, "RGA resize (pass 1) failed" );
 }
 
 int RgaResizer::next_rga3_core() const noexcept

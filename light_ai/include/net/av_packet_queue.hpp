@@ -11,6 +11,10 @@
 
 struct AVPacket;
 
+// A key packet: a payload that holds an IDR access unit (annexb::is_idr). The one definition for the queue's gate
+// (AvPacketOps::is_key) and the encoder's timestamps (H264Encoder::enqueue).
+bool is_key_av_packet( const AVPacket* p ) noexcept;
+
 struct AvPacketOps
 {
     bool init( AVPacket*& p );

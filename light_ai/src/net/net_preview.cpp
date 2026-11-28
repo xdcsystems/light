@@ -60,7 +60,7 @@ namespace
     }
 }  // namespace
 
-NetPreview::NetPreview( int w, int h, int stride, int fps, int port, const Log& log )
+NetPreview::NetPreview( const NetworkInit& net, int w, int h, int stride, int fps, int port, const Log& log )
   : log_( log )
   , w_( w )
   , h_( h )
@@ -71,6 +71,7 @@ NetPreview::NetPreview( int w, int h, int stride, int fps, int port, const Log& 
   , ring_( frame_byte_size( h, w * 3 ) )
   , send_buf_( frame_byte_size( h, w * 3 ) )
 {
+    static_cast<void>( net );
     thread_.start( &NetPreview::serve, this );
 }
 
@@ -115,6 +116,8 @@ void NetPreview::serve() noexcept
     {
         if ( const Status ast = tcp.accept_client( quit_ ); !ast.ok() )
         {
+            if ( !quit_.load() )
+                log_.warn() << "net: accept failed: " << ast << '\n';
             retry_backoff( quit_ );
             continue;
         }

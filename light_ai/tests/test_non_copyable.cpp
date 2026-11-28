@@ -45,6 +45,47 @@ namespace
         Inner first;
     };
 
+    // A user-declared destructor suppresses the implicit move of a derived class: NonCopyable alone does not keep it
+    // movable.
+    class WithDtor : private NonCopyable<WithDtor>
+    {
+    public:
+        explicit WithDtor( int& count ) noexcept : count_( count ) {}
+        ~WithDtor() { ++count_; }
+
+    private:
+        int& count_;
+    };
+
+    // The same class with its own move constructor: movable, still not copyable.
+    class WithDtorAndMove : private NonCopyable<WithDtorAndMove>
+    {
+    public:
+        explicit WithDtorAndMove( int& count ) noexcept : count_( &count ) {}
+        WithDtorAndMove( WithDtorAndMove&& other ) noexcept : count_( other.count_ ) { other.count_ = nullptr; }
+        ~WithDtorAndMove()
+        {
+            if ( count_ != nullptr )
+                ++*count_;
+        }
+
+    private:
+        int* count_;
+    };
+
+    // The bases add no destructor work of their own.
+    static_assert( std::is_trivially_destructible_v<Pinned> );
+    static_assert( std::is_trivially_destructible_v<MoveOnly> );
+    static_assert( std::is_trivially_destructible_v<WithInt> );
+    static_assert( std::is_trivially_destructible_v<MoveOnlyWithInt> );
+    static_assert( std::is_trivially_destructible_v<Outer> );
+
+    static_assert( !std::is_trivially_destructible_v<WithDtor> );
+    static_assert( !std::is_copy_constructible_v<WithDtor> );
+    static_assert( !std::is_move_constructible_v<WithDtor> );
+    static_assert( std::is_nothrow_move_constructible_v<WithDtorAndMove> );
+    static_assert( !std::is_copy_constructible_v<WithDtorAndMove> );
+
     static_assert( std::is_default_constructible_v<Pinned> );
     static_assert( std::is_destructible_v<Pinned> );
     static_assert( !std::is_copy_constructible_v<Pinned> );
@@ -82,4 +123,12 @@ void test_non_copyable( TestRun& t )
     MoveOnly c { 1 };
     c = std::move( b );
     CHECK_EQ( t, c.value, 7 );
+
+    int destroyed = 0;
+    {
+        const WithDtor plain( destroyed );
+        WithDtorAndMove from( destroyed );
+        const WithDtorAndMove to( std::move( from ) );
+    }
+    CHECK_EQ( t, destroyed, 2 );  // plain and the move target; the moved-from object counts nothing
 }

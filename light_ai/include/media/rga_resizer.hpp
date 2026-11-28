@@ -52,8 +52,10 @@ public:
         int h = 0;
     };
 
-    // Pins the jobs to RGA3 core0; failures go to log (`err` stream).
-    explicit RgaResizer( const Log& log );
+    // Failures go to log. No process or thread default is set: every job names its core in im_opt_t. RGA3 (own
+    // IOMMU) takes the jobs, because RGA2 cannot map memory above 4 GiB, where 1080p decoder buffers land; the one
+    // RGA2 route is the small-crop case of crop_resize().
+    explicit RgaResizer( const Log& log ) : log_( log ) {}
     // src: YUVSP (see ResizeSrc), dst: RGB888, its w_stride the tensor row
     // in pixels (TensorRef::stride_bytes / 3; 0 = dst.w).
     // aux: the intermediate for the two-pass path when the scale ratio
@@ -79,6 +81,7 @@ public:
     // aux.w x aux.h intermediate with 16-aligned strides (RGA rejects an unaligned
     // RGB888 width stride), so the caller allocates at least
     // align16(aux.w) * align16(aux.h) * 3 bytes; without aux that case fails.
+    // Each of the two passes must stay within 8x per axis, else Invalid, no job.
     Status crop_resize( const CropImage& src, LbGeom crop_roi, const CropImage& dst, const AuxImage& aux ) const noexcept;
 
 private:

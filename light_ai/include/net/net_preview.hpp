@@ -7,7 +7,6 @@
 #include "core/preview_ring.hpp"
 #include "core/status.hpp"
 #include "net/av_packet.hpp"
-#include "net/network_init.hpp"
 #include "platform/joining_thread.hpp"
 #include "platform/pi_mutex.hpp"
 
@@ -16,6 +15,7 @@
 struct AVFormatContext;
 struct AVStream;
 class Log;
+class NetworkInit;
 class TcpAvio;
 class TcpPullServer;
 
@@ -33,7 +33,8 @@ class NetPreview : private NonMovable<NetPreview>
 {
 public:
     // log: diagnostics, also from the preview thread (must outlive this object).
-    NetPreview( int w, int h, int stride, int fps, int port, const Log& log );
+    // net: proof at compile time that the network layer is initialized and outlives the preview (not stored).
+    NetPreview( const NetworkInit& net, int w, int h, int stride, int fps, int port, const Log& log );
     ~NetPreview();
 
     // True while a TCP viewer is attached. The pipeline gates GPU box
@@ -70,8 +71,7 @@ private:
 
     light_ai::platform::PiMutex tcp_mx_;
     TcpPullServer* active_tcp_ = nullptr;
-    // Destruction order: thread_, pkt_, net_.
-    NetworkInit net_;       // the network layer outlives the packet and the thread
+    // Destruction order: thread_, pkt_.
     AvPacket pkt_;          // allocated once, used only on serve() thread
     JoiningThread thread_;  // last: joined before members above die
 };

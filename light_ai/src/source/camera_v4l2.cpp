@@ -278,7 +278,7 @@ void CameraV4L2::teardown() noexcept
     if ( fd_ >= 0 )
     {
         v4l2_buf_type t = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        ioctl( fd_, VIDIOC_STREAMOFF, &t );
+        static_cast<void>( xioctl_r( VIDIOC_STREAMOFF, &t ) );
     }
     // Unmap before close (Low §2): the mappings belong to the open file;
     // releasing them first is the V4L2 teardown order (STREAMOFF, munmap,

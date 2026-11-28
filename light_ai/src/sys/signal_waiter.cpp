@@ -119,7 +119,11 @@ void SignalWaiter::loop() noexcept
         if ( rc < 0 && errno == EINTR )
             continue;
         if ( rc < 0 )
+        {
+            // Without this thread no later signal can be seen (they stay blocked): stop the run instead.
+            stop_.request();
             break;
+        }
         if ( ( pfds[1].revents & ( POLLIN | k_bad ) ) != 0 || quit_.load( std::memory_order_acquire ) )
             break;
         if ( ( pfds[0].revents & POLLIN ) != 0 )

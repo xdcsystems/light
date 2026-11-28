@@ -31,10 +31,36 @@ namespace
         return i + 3 <= n && p[i] == '2' && p[i + 1] == '0' && p[i + 2] == '0' && ( i + 3 == n || p[i + 3] == ' ' );
     }
 
-    // A Transfer-Encoding field line v[0, n) that names the chunked coding.
+    bool is_ows( uint8_t c ) noexcept { return c == ' ' || c == '\t'; }
+
+    // One element e[0, n) of a transfer-coding list: OWS, the coding name, optional parameters after OWS or ';'.
+    bool names_chunked( const uint8_t* e, size_t n )
+    {
+        size_t s = 0;
+        while ( s < n && is_ows( e[s] ) )
+            ++s;
+        size_t end = s;
+        while ( end < n && !is_ows( e[end] ) && e[end] != ';' )
+            ++end;
+        return end - s == std::strlen( "chunked" ) && line_scan::starts_with_ci( e + s, end - s, "chunked" );
+    }
+
+    // A Transfer-Encoding field line v[0, n) whose comma-separated list names the chunked coding (RFC 9112 s. 6.1):
+    // the whole coding name, so "x-chunked" or a parameter value "chunked" is another thing.
     bool chunked_coding_line( const uint8_t* v, size_t n )
     {
-        return line_scan::starts_with_ci( v, n, "transfer-encoding:" ) && line_scan::find_ci( v, n, "chunked" ) != kNpos;
+        if ( !line_scan::starts_with_ci( v, n, "transfer-encoding:" ) )
+            return false;
+        for ( size_t s = std::strlen( "transfer-encoding:" ); s < n; )
+        {
+            size_t e = s;
+            while ( e < n && v[e] != ',' )
+                ++e;
+            if ( names_chunked( v + s, e - s ) )
+                return true;
+            s = e + 1;
+        }
+        return false;
     }
 
     // The boundary parameter inside one Content-Type line value v[0, n).

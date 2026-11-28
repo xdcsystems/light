@@ -11,12 +11,18 @@
 #include "core/log.hpp"
 #include "core/non_copyable.hpp"
 #include "core/status.hpp"
+#include "npu/dup_context_tag.hpp"
 
 class RknnEngine : private NonCopyable<RknnEngine>
 {
 public:
     // log: the diagnostics sink (the model / attribute lines, the io-mem and core-mask failures).
     RknnEngine( const char* model_path, const Log& log );
+    // A second context of master's model (rknn_dup_context): the runtime does not load the file again. Only the
+    // context is taken from master: the tensor attributes are queried on the new one, and the new engine has no IO
+    // memory until setup_io() / setup_io_shared(). master stays unchanged and must outlive the new engine (the pool
+    // destroys the engines in reverse order). Throws std::runtime_error.
+    RknnEngine( DupContextTag, const RknnEngine& master, const Log& log );
     ~RknnEngine();
 
     // Non-copyable by design (the NonCopyable base):
@@ -98,6 +104,8 @@ private:
     };
 
 private:
+    // The constructors' second step: the input / output attributes of ctx_ and the input dims. Throws.
+    void query_attrs();
     void parse_input_dims();
     void release_io();
     Status alloc_input_slot( int slot, uint32_t in_size, bool& warned_fallback );

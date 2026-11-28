@@ -145,10 +145,11 @@ inline int parse_exif_orient( const uint8_t* seg, size_t seglen )
 
 inline bool take_segment( const uint8_t* data, size_t len, size_t& pos, uint8_t m, bool& seen_sof, JpegSofInfo& out )
 {
-    if ( pos + 2 > len )
+    // Bounds by subtraction: nothing is added to pos before it is checked.
+    if ( pos > len || len - pos < 2 )
         return false;
     const size_t seglen = ( static_cast<size_t>( data[pos] ) << 8 ) | data[pos + 1];
-    if ( seglen < 2 || pos + seglen > len )
+    if ( seglen < 2 || seglen > len - pos )
         return false;
     if ( m == 0xE1 && out.exif_rot_deg < 0 )
     {

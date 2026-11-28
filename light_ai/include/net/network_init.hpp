@@ -1,8 +1,8 @@
 // NetworkInit: avformat_network_init() for the lifetime of the holder,
-// avformat_network_deinit() in its destructor. NetEncoder declares it right
-// after cfg_ (plain settings): the network layer is up before every later
-// member is built and goes down after all of them (the serve thread included).
-// NetPreview declares it before its packet and thread: both die before it.
+// avformat_network_deinit() in its destructor. OverlaySink holds the one
+// instance and declares it before preview_ and enc_: the network layer is up
+// before either is built and goes down after both (their threads included).
+// NetEncoder and NetPreview take a const reference to it as proof of that.
 
 #pragma once
 

@@ -142,6 +142,7 @@ public:
     // Async GPU draw: 1-px pixel-snapped outlines for all boxes + callouts in ONE draw call
     // (batched VBO, per-vertex color), alpha-blended
     // (Porter-Duff over; the trail fade of BoxMapper is the alpha source).
+    // The commands may still sit in the GL queue on return: sync_cpu() submits and waits for them.
     // false: the context could not be made current, nothing was drawn.
     bool draw_slot( int slot, const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept;
     bool draw( const GpuBox *boxes, int n, const CalloutList *callouts = nullptr ) noexcept
@@ -149,7 +150,7 @@ public:
         return draw_slot( 0, boxes, n, callouts );
     }
     // Blocks until all GPU writes from draw() are visible to CPU/RGA.
-    // Fence sync (EGL_ANDROID_native_fence_sync -> EGL_KHR_fence_sync) when available,
+    // Fence sync (EGL_KHR_fence_sync -> EGL_ANDROID_native_fence_sync) when available,
     // glFinish() otherwise. Bounded to kFenceWaitNs (100 ms); returns false on fence timeout
     // without calling unbounded glFinish() so a wedged GPU cannot hang the pipeline.
     // false as well when the context cannot be made current.
@@ -172,6 +173,7 @@ private:
     bool load_entry_points();
     // Config (with the fallback), ES3 context then ES2, made current.
     bool create_context();
+    bool check_gl_extensions() const;
     // Uploads the GL_LUMINANCE_ALPHA (fill, outline) glyph + solid-slot atlas texture once during init().
     void create_atlas();
     // The batch VBO, and the VAO on ES3. Cannot fail.

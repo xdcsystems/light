@@ -1798,3 +1798,102 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
   - Extra checks: ASan + UBSan (with `float-cast-overflow`) fuzz, `100,000` steps each for `us_to_90k`, `band_geom`, `draw_boxes_cpu` and the status line, and `50,000` random MJPEG bursts over loopback against a streak model: no failure. `ts_fanout` loopback scenario (slow consumer in a middle slot, slot reuse, client limit, connect timeout, idle grace during a connect, SIGTERM): `18/18`, also under ASan + UBSan without leak detection.
   - Live smoke on the USB camera: H.264 TCP, two sessions, `150` frames each, first packet an IDR, no decoder error; through the in-tree fanout the early viewer is clean and the late one reports errors only before its first IDR; NUT preview, two sessions, `100` frames each, no decoder error. The installed `light-ai-fanout.service` was neither updated nor restarted.
 
+
+## PR-Sweep + PR-P2b -- review MINORs, 4 audit P3 and the last 4 audit P2 (2026-11-28, `fix/audit-sweep-p2b`)
+
+### Commit 1: PR-Sweep (review MINORs of #149-#154, 4 audit P3)
+
+- No intended change of recognition or overlay output. One `NetworkInit` now lives in `OverlaySink` (also when no
+  encoder or preview is built).
+- Deviation: `a76_slot.sh` runs `taskset -c -- "$cpu" "$@"`. With `--` after the CPU list, `taskset` of util-linux
+  `2.36.1` runs `--` as the program, and every compile of the A76 gate failed.
+- Not taken: a tidy rule for the CRTP tag (`Tag == Derived`). An AST matcher with `equalsBoundNode` gave no false
+  positive on class templates, nested and local classes, but it reported the correct tags of `TcpAvio` and
+  `TcpPullServer`, which also have forward declarations.
+- Not covered by unit tests (SDK, EGL or fault injection needed): the `poll()` failure of `SignalWaiter`, the
+  `mpp_packet_init_with_buffer()` failure, `make_current()` without a context, the `ts_fanout` re-arm and its bound of
+  `16` failed `accept4()` calls in a row, the integer clamp of `draw_one_box_cpu` (needs `w > 2^24`), and the XSI
+  overload of `strerror_text` (not selected by this glibc).
+
+### Commit 2: PR-P2b
+
+Board: RK3588, `librknnrt` `2.5.0`, `librga` `1.10.6`, Mali-G610 `libmali` `g13p0` (EGL `1.4`, GLES `3.2`). A = the
+binary of commit 1, B = the P2b binary; input = the loopback replay of `misc/ref_evening.mjpeg` (`1063` frames,
+`--pool 3`).
+
+**1. `rknn_dup_context()` -- kept.** `engines_[1..2]` are duplicates of `engines_[0]`; each queries its own tensor
+attributes, and all duplicates are made before the first `setup_io()`. `3` runs per binary, alternating, no viewer;
+each run's value is the median of its 1 s samples after the first `10 s`; the table holds the median of the runs:
+
+| kB | A: 3x `rknn_init` | B: 1x `rknn_init` + 2x `rknn_dup_context` | B - A |
+|---|---|---|---|
+| `VmRSS` | `239,308` | `224,028` | `-15,280` |
+| `RssAnon` | `94,976` | `94,412` | `-564` |
+| drop of `MemAvailable` | `251,284` | `237,944` | `-13,340` |
+
+All `6` runs: `infer=25.2 ms`, `~24.78 FPS`, no warning or error line. The YOLO model is loaded once instead of three
+times (the Re-ID model has its own engine).
+
+Sources and what they do not settle: the call is declared in `rknn_api.h` (`librknnrt` `2.5.0` SDK:
+`int rknn_dup_context(rknn_context* context_in, rknn_context* context_out)`); the comment above it only repeats the
+`rknn_init` text. Rockchip's
+[RKNN2 SDK development guide `2.5.0`](https://github.com/airockchip/rknn-toolkit2/blob/master/doc/EN/02_RKNN2_SDK_Development_Guide_V2.5.0.pdf)
+has a section `5.3.4`, "Multi-threaded reuse RKNN context" (seen as a heading anchor only: **its text was not read**),
+and the [C API reference](https://github.com/airockchip/rknn-toolkit2/blob/master/doc/EN/05_RKNN2_Runtime_C_API_Reference_V2.5.0.pdf)
+was not readable either. **Open:** no primary-source text read here states that duplicates may run `rknn_run`
+concurrently on different NPU cores, or in which order the contexts must be destroyed. The code relies on the board
+result for the first (3 workers, Layer A byte-identical, no error in any run; a changed `librknnrt` needs the same
+check again) and destroys the duplicates before `engines_[0]`, which it already did for the shared input buffers.
+Third-party copies of older guides say that context reuse is not supported when input, output, weight or internal
+memory is allocated externally; here every duplicate is made while no context has IO memory yet.
+
+**2. RGA.** The `imconfig( IM_CONFIG_SCHEDULER_CORE, ... )` call is gone: the RGA developer guide (`librga`
+`2b32edc`, `docs/Rockchip_Developer_Guide_RGA_EN.md`) defines it as a default of the calling thread with a lower
+priority than the API parameter, and every `improcess()` passes `im_opt_t.core`. Both passes of `resize()` now use one
+even aux size, pass 1 with explicit rects; `crop_resize()` rejects an aux size beyond `8x` for either pass (its one
+caller passes no aux). Layer A does not reach the two-pass path, so it got its own A/B: `60` frames scaled to
+`5760x4320` (4:2:0), `--pool 3`, the box logs of A and B byte-identical (`fb888b8e20f2badf`), no RGA error. The 4:2:2
+form that `ffmpeg -pix_fmt yuvj422p` writes (sampling `2x2:1x2:1x2`) is rejected by MPP with binary A; 4:2:2 input
+was therefore not covered by this A/B.
+
+**3. EGL / GLES.** Read on the board (surfaceless GBM display of `/dev/dri/renderD128`): `EGL_KHR_surfaceless_context`,
+`EGL_KHR_fence_sync`, `EGL_ANDROID_native_fence_sync`, `EGL_KHR_image_base`, `EGL_EXT_image_dma_buf_import`,
+`EGL_KHR_wait_sync` and `GL_OES_EGL_image` are all listed. Extensions are matched as whole names;
+`EGL_KHR_surfaceless_context` is required before the context is created, `GL_OES_EGL_image` right after it
+([`glGetString( GL_EXTENSIONS )`](https://registry.khronos.org/OpenGL-Refpages/es3/html/glGetString.xhtml)).
+`sync_cpu()` prefers `EGL_KHR_fence_sync` (the log says `fence: khr`).
+
+`glFlush()` at the end of `draw_slot()` -- removed as redundant, not as a speed-up. `sync_cpu()` follows every draw and
+waits with `EGL_SYNC_FLUSH_COMMANDS_BIT_KHR`, which flushes the current context before blocking on an unsignaled
+sync ([`EGL_KHR_fence_sync`](https://registry.khronos.org/EGL/extensions/KHR/EGL_KHR_fence_sync.txt); the fence is
+issued in the same context), or calls `glFinish()`. `3` runs per variant, alternating, H.264 viewer attached, first perf window skipped:
+
+| ms, range over the 3 runs | with `glFlush()` | without |
+|---|---|---|
+| `ovl gpu_max`, median / max | `0.1-0.2` / `0.2` | `0.1` / `0.1-0.2` |
+| `ovl sync_max`, median / max | `0.6-0.7` / `0.6-0.7` | `0.6-0.7` / `0.6-0.9` |
+
+No difference at the `0.1 ms` resolution of the log; `0` fence timeouts and no CPU fallback in all `6` runs. A final
+viewer run of the finished binary: `gpu_max 0.1`, `sync_max` median `0.6`, max `0.7`, `24.8 FPS`.
+
+**4. `importbuffer_fd()` cache -- rejected by the ablation rule.** A stand-alone benchmark of the full `improcess()`
+time of the `resize()` job (NV12 `1920x1080` to a `640x360` band of a `640x640` RGB888 buffer, RGA3 cores alternating,
+`IM_SYNC`, alternating blocks, `1920` jobs per variant per run, `3` runs):
+
+| | `wrapbuffer_fd` | `importbuffer_fd` once + `wrapbuffer_handle` |
+|---|---|---|
+| median, ms | `1.744` / `1.762` / `1.760` | `1.746` / `1.758` / `1.755` |
+| p99, ms | `1.810` / `1.834` / `1.827` | `1.809` / `1.817` / `1.823` |
+
+The medians differ by at most `0.005 ms`, far under the `0.3 ms` per frame needed to pay for a handle cache with a
+`PiMutex` and invalidation on fd close and reuse. This closes the fourth P2 without code. (The benchmark's absolute
+time is above the `0.9-1.1 ms` of `resize()` in the pipeline log; only the A/B difference is used.)
+
+**Known anti-patterns avoided:** a process-wide or thread-default RGA core instead of the per-job one; `strstr()` over
+an extension list; `const_cast` to hand the master context to `rknn_dup_context()` (the handle is copied); a handle
+cache keyed by fd without a measured gain.
+
+**Gate (finished tree):** `light_ai_tests` `72` suites, `10,419/10,419`; `light_ai_tests_tsan` `11` suites,
+`6,209/6,209`; `rules_lint.sh` PASS (`246` files, `0` findings); 2-pass `clang-tidy` `0` findings; `ts_fanout` builds
+with `-Wall -Wextra -Werror`. Layer A: `dcdd7d98869860f8`, byte-identical to `reference/ref_evening.csv` (`1063`
+frames, `--pool 3`). Layer B is the `reference_chain` unit suite.
