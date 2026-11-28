@@ -16,6 +16,8 @@
 # Usage: bash scripts/tidy_run.sh [timeout_sec]
 # Env:   TIDY_JOBS=N      parallel jobs (default min(nproc, MemAvailable / 400 MB): one clang-tidy 11 peaks
 #                         at ~330 MB on pipeline.cpp; RAM, not the cores, is the limit on this board)
+#        BUILD_ON_A76=1   every TU (and self-test fixture) takes one of the A76 cores 4-7 (scripts/a76_slot.sh;
+#                         light_ai stopped), at most 4 jobs by default; waiting for a slot is outside the timeout
 #        TIDY_NO_CACHE=1  no cache lookup, no store
 #        TIDY_FILES="src/a.cpp tests/b.cpp"
 #                         a subset run (#93): the self-test, rules_lint.sh (the whole tree: well under 1 s) and
@@ -28,7 +30,8 @@
 #        tree under build/tidy/rules/; the self-test and rules_lint.sh: build/tidy/selftest/; HANGS.txt in build/tidy
 #        (a rules entry starts with "rules: ");
 #        cache: build/tidy-cache (one store for both passes: the key holds the binary, its version and the
-#        --config-file bytes). All inside the project (#48: nothing of the project is written outside it,
+#        --config-file bytes); build/tidy/pp-cache: this run's preprocessor digests and --version outputs (the
+#        rules pass reuses what the main pass computed). All inside the project (#48: nothing of the project is written outside it,
 #        not even to $TMPDIR or /tmp), git-ignored with build/. One run at a time (flock on $OUT/.lock; a second
 #        run waits). The output filesystem is printed first, with a warning when it is the eMMC (storage_guard.sh).
 TIDY=clang-tidy-11   # by name, not "clang-tidy": venv/bin on PATH (its clang-tidy 23, clangd) must not replace the main pass
@@ -84,12 +87,27 @@ if [ "$RULES_FOUND" != "$RULES_VERSION" ]; then
        "venv/bin/pip install --no-cache-dir clang-tidy==$RULES_VERSION"
   exit 1
 fi
+export BUILD_ON_A76="${BUILD_ON_A76:-0}"
+SLOT=()    # the command prefix of every clang-tidy job
+LAUNCH=""
+if [ "$BUILD_ON_A76" = 1 ]; then
+  "$HERE/a76_slot.sh" --check || exit 1
+  SLOT=("$HERE/a76_slot.sh")
+  LAUNCH="$HERE/a76_slot.sh"
+fi
 # Two gates at once (board-check and a manual run) would clear and write the same $OUT: the second one waits.
 exec 9> "$OUT/.lock"
 if ! flock -n 9; then
   echo "tidy: another tidy_run.sh holds $OUT/.lock -- waiting for it to end"
   flock 9
 fi
+# Per run, so cleared only under the lock: the preprocessor digests (tidy_cache.py) and the --version outputs,
+# kept as files: a $(...) would drop their trailing newline.
+export TIDY_PP_CACHE_DIR="$OUT/pp-cache"
+rm -rf "$TIDY_PP_CACHE_DIR"
+mkdir -p "$TIDY_PP_CACHE_DIR" || exit 1
+TIDY_CXX_VER_FILE="$TIDY_PP_CACHE_DIR/cxx.ver"
+"$CLANGXX" --version > "$TIDY_CXX_VER_FILE" || TIDY_CXX_VER_FILE=""   # empty: tidy_cache.py asks itself
 mkdir -p "$TDB" "$TDB_TESTS" "$OUT/st" "$OUT/rules/st" "$CACHE/times" "$CACHE/times-rules"
 # clang rejects GCC-specific big.LITTLE flags carried by the cross DB
 # (see the M6-tidy log: "the clang compiler does not support
@@ -107,10 +125,12 @@ for e in db:
     e["command"] = c
 json.dump(db, open(dst, "w"))
 PYEOF
-# The tests' DB: configure only (the same arguments as scripts/test.sh, so the two never fight over the cache).
+# The tests' DB: configure only (the same arguments as scripts/test.sh, so the two never fight over the cache; the
+# launcher too, and it never enters the DB).
 # Its copy keeps one entry per tests/*.cpp: the plain light_ai_tests one, the TSan one only for a file that has
 # no other (tsan_main.cpp); the src/ files the tests compile are checked from the main DB, not twice.
-if ! cmake -S "$PROJ_ROOT/tests" -B "$TESTS_BUILD" -DCMAKE_BUILD_TYPE=Release > "$OUT/cmake-tests.log" 2>&1; then
+if ! cmake -S "$PROJ_ROOT/tests" -B "$TESTS_BUILD" -DCMAKE_BUILD_TYPE=Release -DCMAKE_RULE_LAUNCH_COMPILE="$LAUNCH" \
+     > "$OUT/cmake-tests.log" 2>&1; then
   echo "tidy: FAIL -- configuring the tests' compile DB failed: $OUT/cmake-tests.log"
   exit 1
 fi
@@ -145,10 +165,16 @@ if [ -n "$TIDY_JOBS" ]; then
   JOBS=$TIDY_JOBS
   JOBS_WHY="TIDY_JOBS"
 else
+  if [ "$BUILD_ON_A76" = 1 ]; then
+    CORES=4
+    JOBS_WHY="min(4 A76 slots, MemAvailable / 400 MB)"
+  else
+    CORES=$(nproc)
+    JOBS_WHY="min(nproc $CORES, MemAvailable / 400 MB)"
+  fi
   JOBS=$(( MEM_MB / 400 ))
-  [ "$JOBS" -gt "$(nproc)" ] && JOBS=$(nproc)
+  [ "$JOBS" -gt "$CORES" ] && JOBS=$CORES
   [ "$JOBS" -lt 1 ] && JOBS=1
-  JOBS_WHY="min(nproc $(nproc), MemAvailable / 400 MB)"
 fi
 echo "tidy: $JOBS jobs ($JOBS_WHY), MemAvailable ${MEM_MB} MB, timeout ${TMO}s," \
      "cache $([ "${TIDY_NO_CACHE:-0}" = 1 ] && echo off || echo "$CACHE")"
@@ -167,7 +193,7 @@ PROBE_TUS="$PROBE/violations.cpp $PROBE/lookalike.cpp $PROBE/src/main.cpp $PROBE
 rm -rf "$SELF"
 mkdir -p "$SELF"
 for f in $PROBE_TUS; do
-  timeout "$TMO" "$RULES_TIDY" --experimental-custom-checks --config-file="$RULES_CFG" -quiet "$f" -- -std=c++17 \
+  "${SLOT[@]}" timeout "$TMO" "$RULES_TIDY" --experimental-custom-checks --config-file="$RULES_CFG" -quiet "$f" -- -std=c++17 \
     -I"$PROJ_ROOT/include" \
     > "$SELF/$(echo "$f" | tr / _).log" 2>&1 &
 done
@@ -237,6 +263,9 @@ cat "$SELF/project-lint.log"
 # Always exits 0: the summaries read the status files, a missing one counts as an error.
 tidy_one() {
   local f=$1 rel log key start rc secs n tag="" how=miss db=$TDB
+  # a slot first, then the timeout: the wait for a core is not part of $TMO (an array cannot be exported)
+  local -a slot=()
+  [ "$BUILD_ON_A76" = 1 ] && slot=("$HERE/a76_slot.sh")
   case $f in tests/*) db=$TDB_TESTS ;; esac
   rel=${f%.cpp}
   log=$P_OUT/$rel.log
@@ -245,7 +274,7 @@ tidy_one() {
   key=""
   # shellcheck disable=SC2086  # P_ARGS: separate words, none with blanks
   if [ "${TIDY_NO_CACHE:-0}" != 1 ]; then
-    key=$(timeout "$TMO" python3 "$HERE/tidy_cache.py" "$db" "$f" "$TMO" "$CLANGXX" -- \
+    key=$("${slot[@]}" timeout "$TMO" python3 "$HERE/tidy_cache.py" "$db" "$f" "$TMO" "$CLANGXX" -- \
           "$P_TIDY" $P_ARGS -quiet -p "$db" "$f" 2>/dev/null)
     [ -z "$key" ] && how=nokey
   fi
@@ -257,7 +286,7 @@ tidy_one() {
     how=hit
   else
     # shellcheck disable=SC2086
-    timeout "$TMO" "$P_TIDY" $P_ARGS -quiet -p "$db" "$f" > "$log" 2>&1
+    "${slot[@]}" timeout "$TMO" "$P_TIDY" $P_ARGS -quiet -p "$db" "$f" > "$log" 2>&1
     rc=$?
   fi
   secs=$(( ($(date +%s%N) - start) / 1000000 ))
@@ -283,7 +312,7 @@ tidy_one() {
   return 0
 }
 export -f tidy_one
-export CLANGXX TMO TDB TDB_TESTS CACHE HERE TIDY_NO_CACHE
+export CLANGXX TMO TDB TDB_TESTS CACHE HERE TIDY_NO_CACHE BUILD_ON_A76 TIDY_PP_CACHE_DIR TIDY_CXX_VER_FILE
 
 # find covers src/config/ too: a flat glob would silently drop
 # the config/ TU from the gate.
@@ -315,6 +344,8 @@ run_pass() {
   export P_TIDY=$2 P_ARGS=$3 P_OUT=$4 P_ST=$5 P_TIMES=$6
   if [ "$name" = main ]; then P_TAG="tidy:"; else P_TAG="tidy $name:"; fi
   export P_TAG
+  export TIDY_BIN_VER_FILE="$TIDY_PP_CACHE_DIR/tidy_$name.ver"
+  "$P_TIDY" --version > "$TIDY_BIN_VER_FILE" || TIDY_BIN_VER_FILE=""
   echo "==== tidy pass: $name ($("$P_TIDY" --version | awk '/LLVM version/ {print "LLVM " $3}')${P_ARGS:+, $P_ARGS}) ===="
   files=$(order_tus "$P_TIMES")
   t0=$(date +%s)
