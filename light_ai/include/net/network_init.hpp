@@ -1,7 +1,7 @@
 // NetworkInit: avformat_network_init() for the lifetime of the holder,
-// avformat_network_deinit() in its destructor. NetEncoder declares it as
-// its first member: the network layer is up before any other member is
-// built and goes down after all of them (the serve thread included).
+// avformat_network_deinit() in its destructor. NetEncoder declares it right
+// after cfg_ (plain settings): the network layer is up before every later
+// member is built and goes down after all of them (the serve thread included).
 // NetPreview declares it before its packet and thread: both die before it.
 
 #pragma once
