@@ -116,8 +116,8 @@ public:
     // One round over the Live channels, starting after the cursor (the source
     // of the last frame or failure). The first poll that is not NotReady wins
     // and moves the cursor. A NotReady channel without a frame for 2 s is
-    // reported as Detached with out.st = dequeue_status( EIO ) (a stall: the source still
-    // streams nothing). NotReady when the whole round had nothing.
+    // reported as Detached with out.src = that channel and out.st = dequeue_status( EIO )
+    // (a stall: the source still streams nothing). NotReady when the whole round had nothing.
     // Event-driven wait across all Live sources using poll(2). Returns false
     // if any Live source lacks a pollable fd (e.g. buffered net frame or test fake).
     bool wait_any( int timeout_ms ) noexcept
@@ -174,6 +174,7 @@ public:
         log_.warn() << "source s" << s << ": no frame in " << static_cast<int>( kStallMs )
                     << " ms - treating as recoverable stall\n";
         cursor_ = s;
+        out.src = s;
         out.st = dequeue_status( EIO );
         return true;
     }
