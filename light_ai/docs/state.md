@@ -1743,3 +1743,8 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
   - Event-driven `::poll(2)` in `SourceSet::wait_any()` cut `/dev/video20` `eagain` from `~1500/5 s` to `[0, 0, 0, 0]` (`49.07 FPS` 2-src, `88.59 FPS` 4-src); lock-free `[perf] reid` telemetry (`crops/drops/matches/ms_max`) verified live.
   - Standalone `modules/ts_fanout/ts_fanout.cpp` (`127.0.0.1:1234 -> 0.0.0.0:1236`, A55 `cpu 0-3`, `0.1%` CPU, on-demand upstream with `1500 ms` grace) verified with 2 simultaneous viewers and `enc=0.0 ms` idle sleep at 0 viewers.
   - Full gate on `master`: `light_ai_tests` `10,208/10,208`, `light_ai_tests_tsan` `6,207/6,207`, `rules_lint.sh` PASS (`243` files, `0` findings), 2-pass `clang-tidy` `0` findings.
+- **Audit PR C — `NonCopyable<T>` / `NonMovable<T>`:**
+  - `include/core/non_copyable.hpp`: two empty CRTP bases. 47 classes in `include/` moved from hand-written `= delete` members to them (45 `NonMovable`, 2 `NonCopyable`: `JoiningThread`, `RknnEngine`); 148 `= delete` lines removed.
+  - `custom-no-inheritance` allows only these two, `private` and non-virtual; every other base is still a finding.
+  - A type-trait comparison before / after (47 classes: size, alignment, 18 traits) differs only in `is_aggregate` of `MuxSession::FcGuard` (got an explicit constructor) and `RkmppDrmPool<N>` (only a default-initialized member).
+  - Full gate on the PR branch: `light_ai_tests` `72` suites, `10,210/10,210`, `light_ai_tests_tsan` `6,207/6,207`, `rules_lint.sh` PASS (`245` files, `0` findings), 2-pass `clang-tidy` `0` findings; Layer A cmp-identical (`dcdd7d98869860f8`).

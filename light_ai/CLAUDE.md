@@ -84,7 +84,7 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   that rule to `fix/audit-pN-*` for the audit's duration (as #106 did for `fix/audit-p2-*`).
 - Before a PR, the full gate must be green on this board:
       ./scripts/build.sh > build/gate.log 2>&1; echo rc=$?; tail -n 40 build/gate.log
-  (CMake build + 71 unit suites + 11 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
+  (CMake build + 72 unit suites + 11 TSan suites + 2-pass clang-tidy gate; `SKIP_TESTS=1` /
   `SKIP_TSAN=1` / `SKIP_TIDY=1` to narrow intermediate iterations). Note: under boot-time
   `isolcpus=4-7`, CFS does not load-balance builds onto A76 `4-7`; run `./scripts/build.sh` directly.
   Two-pass tidy gate: self-test + `scripts/rules_lint.sh` first, then `main` = system `clang-tidy-11`
@@ -109,7 +109,7 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   CLI check of one file: `venv/bin/clangd --check=src/a.cpp 2>&1 | grep -E '^E\[[^]]*\] \['` (diagnostics only;
   the exit code is not a verdict: `--check` also fails on refactoring tweaks it cannot apply).
   The diagnostics are hints only; the gate stays the authority.
-- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 71 suites / 10,208 checks + 11 TSan suites / 6,207 checks).
+- Unit tests alone: `bash scripts/test.sh` (host-side, no SDK; 72 suites / 10,210 checks + 11 TSan suites / 6,207 checks).
   Single suite / flake hunt: `./build/tests/light_ai_tests [substr...] [--repeat N]` (also `light_ai_tests_tsan`;
   exit 2 on bad args).
 - Live run:
@@ -184,7 +184,8 @@ glob: `*`, `cust*`, `misc-*`; every NOLINT of a line counts) only
 with `: <reason>` and a line in `scripts/rules_allow.txt` (a CONTRIBUTING-listed site), decided by the main session;
 only `NOLINT` / `NOLINTNEXTLINE`, never a `NOLINTBEGIN` / `NOLINTEND` range.
 (review) = only `commit-reviewer` can judge it.
-- C++17 (review). No virtuals or inheritance hierarchies (gate); templates for static polymorphism.
+- C++17 (review). No virtuals or inheritance hierarchies (gate); templates for static polymorphism. The only allowed base:
+  private, non-virtual `NonCopyable<T>` / `NonMovable<T>` (`include/core/non_copyable.hpp`).
 - No manual heap (`new`/`delete`, `malloc` family, `unique_ptr`/`shared_ptr`/`weak_ptr`), no statics of any
   kind, no globals, no `const_cast` (gate). Frame path: no allocation; preallocated members cleared at entry
   by the callee (review).
@@ -235,4 +236,4 @@ Full milestone history and A/B records live in [docs/roadmap.md](docs/roadmap.md
 ## Completed soft-rtos & preempt-kernel cycle (`#123`–`#131`, Sprint 1 & Sprint 2)
 - **Kernel & boot cmdline (RK3588):** transitioned to `Linux 5.10.226-preempt #7 SMP PREEMPT` with cleaned `/proc/cmdline` (`isolcpus=4-7 nohz_full=4-7 rcu_nocbs=4-7 irqaffinity=0-3`) and GPU/`rkvenc-core` IRQ offload to A55 cores `0-3` (`#130`).
 - **Soft-RTOS (`#123`–`#126`, PR `#127`):** stack prefault, `mallopt` tuning, RT page-fault/p99 telemetry (`#123`), lock-free `AsyncLogSink` + `PiMutex`/`PiCondVar` (`#124`), systemd `WatchdogSec=5s` `NOTIFY_SOCKET` client (`#125`), and `cyclictest` jitter bench (`350 us` gate in `#128`).
-- **Sprint 1 (`#131`) & Sprint 2 (`#132`):** RT hot-path/resilience fixes (`StreamOutput`, `H264Encoder`, `SdWatchdog`, `CameraV4L2`, `MuxSession`) and expanded TSan/RT coverage (`71` unit suites / `9,617` checks + `11` TSan suites / `6,188` checks at Sprint 2; `10,208` / `6,207` on current `master`).
+- **Sprint 1 (`#131`) & Sprint 2 (`#132`):** RT hot-path/resilience fixes (`StreamOutput`, `H264Encoder`, `SdWatchdog`, `CameraV4L2`, `MuxSession`) and expanded TSan/RT coverage (`71` unit suites / `9,617` checks + `11` TSan suites / `6,188` checks at Sprint 2; `72` suites, `10,210` / `6,207` on current `master`).

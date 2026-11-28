@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588%20(aarch64)-green.svg)](docs/development.md#prerequisites)
 [![Standard: C++17](https://img.shields.io/badge/C%2B%2B-17-orange.svg)](CMakeLists.txt)
-[![Tests: 71 suites / 10208 checks](https://img.shields.io/badge/Unit%20Tests-71%20suites%20%2F%2010208%20checks-brightgreen.svg)](docs/development.md#tests)
+[![Tests: 72 suites / 10210 checks](https://img.shields.io/badge/Unit%20Tests-72%20suites%20%2F%2010210%20checks-brightgreen.svg)](docs/development.md#tests)
 
 Zero-copy hardware-accelerated object detection, Kalman tracking, optional OSNet cross-camera Re-ID, and multi-camera H.264 streaming pipeline for Rockchip RK3588 (`V4L2` / HTTP MJPEG → `MPP` decode → `RGA3` letterbox & rotation → `RKNN` NPU + async Re-ID → `Mali G610` EGL/GLES box, EN/RU callout & trail overlay → `MPP` H.264 / MPEG-TS). Built in C++17 with no GStreamer, no OpenCV, no CPU pixel copies, and no virtual dispatch on the frame path.
 
@@ -39,7 +39,7 @@ Sample output frames captured directly from the encoded H.264 preview stream on 
 Run from `light_ai/`:
 
 ```bash
-# 1. Release build + host unit tests (71 suites / 10,208 checks) + TSan (11 suites / 6,207 checks) + 2-pass clang-tidy
+# 1. Release build + host unit tests (72 suites / 10,210 checks) + TSan (11 suites / 6,207 checks) + 2-pass clang-tidy
 ./scripts/build.sh
 
 # 2. Host unit + TSan tests standalone (no Rockchip/FFmpeg/EGL SDKs needed)
@@ -163,7 +163,7 @@ All **28 options** (plus `--help` / `-h`) are shared between the CLI parser and 
 | Document | Scope |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | 104-header / 62-TU module map, `core/` pure-logic inventory, error model & exit codes, and verified RK3588 hardware/SDK constraints. |
-| [`docs/development.md`](docs/development.md) | Hardware/kernel/SDK prerequisites, `ffmpeg-rockchip` 8.1 build, CMake flags, `clang-tidy` / `clangd` operations, 71 test suites, and `scripts/` + `tools/` index. |
+| [`docs/development.md`](docs/development.md) | Hardware/kernel/SDK prerequisites, `ffmpeg-rockchip` 8.1 build, CMake flags, `clang-tidy` / `clangd` operations, 72 test suites, and `scripts/` + `tools/` index. |
 | [`modules/ts_fanout/README.md`](modules/ts_fanout/README.md) | Standalone A55 MPEG-TS multi-viewer TCP fan-out relay (`:1234 → :1236`). |
 | [`docs/viewer.md`](docs/viewer.md) | Legacy Windows laptop `mpv` viewer guide and latency notes. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Coding rules (`gate` vs `review`), error/exception policy, comment style, and PR verification gate. |

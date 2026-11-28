@@ -82,7 +82,7 @@ Rule definitions, function-size limits, `rules_lint.sh` checks, `tests/tidy_prob
 
 [`tests/CMakeLists.txt`](../tests/CMakeLists.txt) is an independent host CMake project requiring only a C++17 compiler and `pthread` (zero Rockchip/FFmpeg/EGL dependencies — runs identically on the board and on x86_64/arm64 hosts).
 
-- **Unit binary (`build/tests/light_ai_tests`):** **71 suites, 10,208 checks**.
+- **Unit binary (`build/tests/light_ai_tests`):** **72 suites, 10,210 checks**.
 - **ThreadSanitizer binary (`build/tests/light_ai_tests_tsan`, `-fsanitize=thread`):** **11 threaded suites, 6,207 checks** (`source_threads`, `source_prober_threads`, `preview_ring_threads`, `packet_queue_threads`, `session_gate_threads`, `reid_worker_tsan`, `pi_mutex`, `async_log_sink_threads`, `infer_slot_threads`, `stream_output_threads`, `tcp_pull_threads`).
 - **Custom runner options ([`tests/suite_runner.hpp`](../tests/suite_runner.hpp)):**
   ```bash
@@ -91,9 +91,9 @@ Rule definitions, function-size limits, `rules_lint.sh` checks, `tests/tidy_prob
   ```
   Exits `0` on pass, `1` on check failure, `2` on invalid runner argument.
 
-### Covered Test Suites (71 Total in `tests/test_main.cpp`)
+### Covered Test Suites (72 Total in `tests/test_main.cpp`)
 
-- **Core & Containers:** `check_harness`, `pod_containers`, `geometry`, `fp16`, `box_math`, `rga_limits`, `fixed_fmt`, `status`, `stop_flag`, `log`, `async_log_sink_threads` *(TSan)*, `timings`, `perf_clock`, `perf_reporter`
+- **Core & Containers:** `check_harness`, `pod_containers`, `geometry`, `fp16`, `box_math`, `rga_limits`, `fixed_fmt`, `status`, `stop_flag`, `joining_thread`, `non_copyable`, `log`, `async_log_sink_threads` *(TSan)*, `timings`, `perf_clock`, `perf_reporter`
 - **Detection, Tracking, Labels, Re-ID & Reference:** `yolo_decoder`, `yolo_head_shape`, `box_filter`, `box_smoother`, `kalman_axis`, `associator`, `auto_orient`, `trail_window`, `tracker`, `glyph_font`, `callout_layout`, `overlay_raster`, `box_mapper`, `global_track`, `reid_worker_tsan` *(TSan)*, `reference_chain` (Layer B golden check; see [`tests/data/README`](../tests/data/README))
 - **Config, CLI, Signals, Affinity & Platform:** `config`, `signals`, `cpu_affinity`, `pi_mutex` *(TSan)*, `sd_watchdog`, `console_reporter`, `cal_dumper`
 - **Inference Pool & Output:** `inference_pool`, `infer_slot_threads` *(TSan)*, `stream_output_threads` *(TSan)*
