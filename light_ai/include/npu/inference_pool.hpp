@@ -89,7 +89,14 @@ public:
         start_workers();  // last: nothing below may throw with workers running
     }
 
-    ~InferencePool() { stop_workers(); }
+    ~InferencePool()
+    {
+        stop_workers();
+        // engines_[0] owns the shared input dma-bufs: destroy the importers first, so their
+        // rknn_destroy_mem() runs while the owner is still alive (vector's own order is front to back).
+        while ( !engines_.empty() )
+            engines_.pop_back();
+    }
 
     int size() const { return n_slots_; }
     int workers_count() const { return n_workers_; }

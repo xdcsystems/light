@@ -143,8 +143,10 @@ void AnalyticsStage::run_reid_stage( const FrameView& view, bool rga_ok, const R
             break;
         }
         const RgaResizer::CropImage src_img { view.tensor.fd, model_w_, model_h_,
-                                              rga_limits::rgb888_stride_px( view.tensor.stride_bytes, model_w_ ) };
-        const RgaResizer::CropImage dst_img { dst.fd, rw, rh, rga_limits::rgb888_stride_px( dst.stride_bytes, rw ) };
+                                              rga_limits::rgb888_stride_px( view.tensor.stride_bytes, model_w_ ),
+                                              view.tensor.dma32 };
+        const RgaResizer::CropImage dst_img { dst.fd, rw, rh, rga_limits::rgb888_stride_px( dst.stride_bytes, rw ),
+                                              dst.dma32 };
         // No aux: start_reid() keeps Re-ID off when a crop could need the two-pass path.
         if ( const Status cst = rga.crop_resize( src_img, reqs[i].srect, dst_img, {} ); !cst.ok() )
         {

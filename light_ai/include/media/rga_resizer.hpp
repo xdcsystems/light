@@ -26,6 +26,7 @@ public:
         int w = 0;
         int h = 0;
         int w_stride = 0;
+        bool dma32 = false;  // physical memory < 4 GiB (TensorRef::dma32): required by the RGA2 route
     };
 
     // The resize source: a YUV semi-planar decoder frame. w_stride / h_stride:
@@ -71,6 +72,8 @@ public:
     Status resize( const ResizeSrc& src, const CropImage& dst, const AuxImage& aux, int rot_deg, LbGeom* geom ) const;
     // Crops RGB888 sub-rect from model tensor -> dst RGB888 Re-ID tensor: routes >= 68x68
     // crops to RGA3 (IOMMU) and < 68 px crops to RGA2 (< 4G DMA32). Enforces 1/8x .. 8x scale bounds.
+    // The RGA2 route needs dma32 on both src and dst and cannot take the two-pass path
+    // (aux carries no dma32 guarantee); otherwise it fails without submitting a job.
     // src / dst carry their row strides (TensorRef::stride_bytes / 3; 0 = tight).
     // A > 8x downscale needs aux: an RGB888
     // aux.w x aux.h intermediate with 16-aligned strides (RGA rejects an unaligned

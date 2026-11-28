@@ -33,6 +33,7 @@ public:
       : ctx_( o.ctx_ )
       , in_mems_( std::move( o.in_mems_ ) )
       , in_dma_( std::move( o.in_dma_ ) )
+      , in_is_dma32_( std::move( o.in_is_dma32_ ) )
       , out_mems_( std::move( o.out_mems_ ) )
       , in_attr_( o.in_attr_ )
       , out_attrs_( std::move( o.out_attrs_ ) )
@@ -45,6 +46,7 @@ public:
         o.ctx_ = 0;
         o.in_mems_.clear();
         o.in_dma_.clear();
+        o.in_is_dma32_.clear();
         o.out_mems_.clear();
         o.in_w_ = 0;
         o.in_h_ = 0;
@@ -110,6 +112,9 @@ private:
     rknn_context ctx_ = 0;
     std::vector<rknn_tensor_mem*> in_mems_;
     std::vector<Dma32Buf> in_dma_;
+    // Per input slot (in_dma_ indices do not follow slots after a partial fallback):
+    // nonzero = the slot's buffer comes from the system-dma32 heap.
+    std::vector<uint8_t> in_is_dma32_;
     std::vector<rknn_tensor_mem*> out_mems_;
     rknn_tensor_attr in_attr_ {};
     std::vector<rknn_tensor_attr> out_attrs_;
