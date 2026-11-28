@@ -142,41 +142,10 @@ Status MppDecoder::init( int w, int h )
 
     if ( !st.ok() )
     {
-        cleanup_failed();
+        teardown();
         return st;
     }
     return {};
-}
-
-// One-shot teardown of the objects created before a failed init step:
-// the same release order as the dtor, but only the members that may
-// exist at that point.
-void MppDecoder::cleanup_failed()
-{
-    if ( out_frame_ )
-    {
-        mpp_frame_deinit( &out_frame_ );
-        out_frame_ = nullptr;
-    }
-    if ( out_group_ )
-    {
-        mpp_buffer_group_put( out_group_ );
-        out_group_ = nullptr;
-    }
-    if ( pkt_group_ )
-    {
-        mpp_buffer_group_put( pkt_group_ );
-        pkt_group_ = nullptr;
-    }
-    if ( ctx_ )
-    {
-        mpp_destroy( ctx_ );
-        ctx_ = nullptr;
-        mpi_ = nullptr;
-    }
-    hor_stride_ = 0;
-    ver_stride_ = 0;
-    ok_ = false;
 }
 
 MppDecoder::~MppDecoder()
@@ -201,7 +170,10 @@ void MppDecoder::teardown() noexcept
     // take_output_task(), where dropping them would shrink the port queues
     // for good; here it makes no difference, mpp_destroy() frees the tasks
     // with their queues.
-    reset_and_strip();
+    // Only after a complete init (ok_): a failed init step has queued no
+    // task, and after a failed mpp_init the ctx is not initialized.
+    if ( ok_ )
+        reset_and_strip();
 
     // Critical order: release every MPP object that may hold buffer
     // references (pkt_, pkt_buf_, out_frame_, aux_) BEFORE mpp_destroy().
