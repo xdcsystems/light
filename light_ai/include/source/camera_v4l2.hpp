@@ -99,7 +99,7 @@ private:
     int skip_to_newest( v4l2_buffer& buf );
 
     // Non-throwing ioctl wrapper: EINTR retry only, errno is the caller's error report.
-    int xioctl_r( unsigned long req, void* arg ) const;
+    int xioctl_r( unsigned long req, void* arg ) const noexcept;
 
 private:
     const Log& log_;
