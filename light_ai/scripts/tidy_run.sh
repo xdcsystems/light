@@ -157,7 +157,8 @@ echo "tidy: $JOBS jobs ($JOBS_WHY), MemAvailable ${MEM_MB} MB, timeout ${TMO}s,"
 
 # Self-test of the rules (#93), in both modes, before any TU: a matcher with a typo matches nothing and a broken
 # lint rule finds nothing, and the gate would stay green with the rule off. The rules pass runs on the fixtures of
-# tests/tidy_probe/ (no compile DB: -std=c++17) and must give exactly the hit sites of expected_rules.txt;
+# tests/tidy_probe/ (no compile DB: -std=c++17, -I include/ for the allowed bases) and must give exactly the hit
+# sites of expected_rules.txt;
 # rules_lint.sh runs on the fixture tree tests/tidy_probe/lint/ and must print exactly expected_lint.txt.
 # Then rules_lint.sh on the project (every file, also in a subset run: it takes well under a second).
 SELF=$OUT/selftest
@@ -167,6 +168,7 @@ rm -rf "$SELF"
 mkdir -p "$SELF"
 for f in $PROBE_TUS; do
   timeout "$TMO" "$RULES_TIDY" --experimental-custom-checks --config-file="$RULES_CFG" -quiet "$f" -- -std=c++17 \
+    -I"$PROJ_ROOT/include" \
     > "$SELF/$(echo "$f" | tr / _).log" 2>&1 &
 done
 wait
