@@ -83,8 +83,11 @@ void NetMjpegSource::teardown() noexcept
 
 Status NetMjpegSource::send_get( const std::string& host, int port, const std::string& path ) const
 {
+    // An IPv6 literal goes into Host: in brackets (RFC 3986 IP-literal).
+    const bool bare_v6 = host.find( ':' ) != std::string::npos && ( host.front() != '[' || host.back() != ']' );
+    const std::string host_field = bare_v6 ? '[' + host + ']' : host;
     // Streamed together, no printf-family (project rule 2).
-    const std::string req = "GET " + path + " HTTP/1.1\r\nHost: " + host + ":" + std::to_string( port )
+    const std::string req = "GET " + path + " HTTP/1.1\r\nHost: " + host_field + ":" + std::to_string( port )
         + "\r\nConnection: keep-alive\r\nAccept: multipart/x-mixed-replace, image/jpeg\r\nUser-Agent: light_ai/1.0\r\n\r\n";
     return sock_.send_all( req );
 }

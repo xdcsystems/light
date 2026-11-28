@@ -99,6 +99,19 @@ namespace
                             "unterminated multipart boundary" ) );
     }
 
+    // A chunked body is rejected up front, whatever the case and the field order.
+    void chunked_rejected( TestRun& t )
+    {
+        const char* const why = "chunked Transfer-Encoding is not supported";
+        const std::string ct = "Content-Type: multipart/x-mixed-replace;boundary=frame";
+        CHECK( t, error_is( parse( head( ct + "\r\nTransfer-Encoding: chunked" ) ), why ) );
+        CHECK( t, error_is( parse( head( "TRANSFER-ENCODING: Chunked\r\n" + ct ) ), why ) );
+        CHECK( t, error_is( parse( head( ct + "\nTransfer-Encoding: gzip, chunked", "\n" ) ), why ) );
+        // Another coding, or the word in another field, is no reason to reject.
+        CHECK( t, boundary_is( parse( head( ct + "\r\nTransfer-Encoding: identity" ) ), "frame" ) );
+        CHECK( t, boundary_is( parse( head( ct + "\r\nX-Note: chunked" ) ), "frame" ) );
+    }
+
     // The phone's real response head (IP Webcam), recorded once: see tests/data/README.
     void recorded( TestRun& t )
     {
@@ -129,5 +142,6 @@ void test_http_head( TestRun& t )
     heads( t );
     unquoted_boundary_ws( t );
     need_more( t );
+    chunked_rejected( t );
     recorded( t );
 }
