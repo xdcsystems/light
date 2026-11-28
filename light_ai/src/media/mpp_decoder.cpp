@@ -231,7 +231,7 @@ Status MppDecoder::decode( const uint8_t* data, size_t size, int& fd ) noexcept
 {
     fd = -1;
     ++frames_;
-    if ( Status st = make_packet( data, size ); !st.ok() )
+    if ( Status st = make_packet( data, size ); !st.ok() || !pkt_ )
         return st;
     if ( Status st = submit_input(); !st.ok() )
         return st;
@@ -240,10 +240,18 @@ Status MppDecoder::decode( const uint8_t* data, size_t size, int& fd ) noexcept
 
 // Phase 1/3: validate the input and build the input packet. Returns Ok
 // (pkt_ fully initialized, not yet referenced by the decoder) or Ok with
-// no frame for a bad input / a mid-stream fragment without SOI (warn
-// logged); NoMemory on the packet buffer allocation failure.
+// pkt_ == nullptr (no frame) for a bad input / a mid-stream fragment without
+// SOI/EOI (warn logged); NoMemory on the packet buffer allocation failure.
 Status MppDecoder::make_packet( const uint8_t* data, size_t size )
 {
+    // Defensive deinit, before the early returns: Ok with pkt_ == nullptr is
+    // how decode() learns that this input built no packet. On every normal
+    // return path the packet is already deinit'ed - its lifetime is tied to
+    // the output dequeue (see the notes at each return). This only catches
+    // paths where the decoder provably holds no reference (no enqueue has
+    // happened).
+    drop_packet();
+
     if ( !ok_ || !data || size == 0 )
     {
         log_.warn() << "dec[" << frames_ << "]: BAD INPUT ok=" << ok_ << " data=" << static_cast<const void*>( data ) << " size=" << size
@@ -284,11 +292,6 @@ Status MppDecoder::make_packet( const uint8_t* data, size_t size )
             }
         }
     }
-    // Defensive deinit: on every normal return path below the packet is
-    // already deinit'ed - its lifetime is tied to the output dequeue (see
-    // the notes at each return). This block only catches paths where the
-    // decoder provably holds no reference (no enqueue has happened).
-    drop_packet();
 
     // Safe to overwrite pkt_buf_ unconditionally: decode() is synchronous and every
     // Timeout/Failed path calls reset_and_strip() + drop_packet(), so MPP holds no ref here.
