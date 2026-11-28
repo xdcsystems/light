@@ -4,7 +4,7 @@
 //
 // Thread rule (every member is guarded by mx_, except write_buf_: the one
 // producer thread owns it and fills it unlocked):
-//   pipeline thread (producer): push(), push_rows(), drops();
+//   output thread (producer, StreamOutput): push(), push_rows(), drops();
 //   serve thread (consumer):    open(), close(), pop();
 //   the owner's destructor:     stop() (wakes a blocked pop for good).
 //
@@ -76,7 +76,7 @@ public:
         cv_.notify_all();
     }
 
-    // Producer (pipeline thread): copies frame_bytes_ into the ring, dropping
+    // Producer (one thread): copies frame_bytes_ into the ring, dropping
     // the oldest unread slot if full. Returns false when closed/stopped/empty.
     bool push( const uint8_t* data ) noexcept
     {

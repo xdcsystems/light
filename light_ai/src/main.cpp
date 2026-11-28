@@ -66,7 +66,7 @@ int main( int argc, char** argv )
         StopFlag stop;
         SignalWaiter waiter( env, stop );
         Pipeline p( cli.config(), stop, log );
-        lock_process_memory( log );  // after the load buffers are freed; the NPU pool workers sleep until run()
+        lock_process_memory( log );  // after the loads (freed heap stays mapped: no trim); the NPU pool workers sleep until run()
         const SignalWaiter::Armed armed( waiter );
         const Status rst = p.run();
         return rst.ok() ? 0 : 1;  // a runtime fatal -> 1; a clean end (even zero frames) -> 0
