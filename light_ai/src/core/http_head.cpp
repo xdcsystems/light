@@ -15,6 +15,22 @@ namespace
         return h;
     }
 
+    // The status line p[0, n) (CR LF excluded) answers 200: "HTTP/<version> 200[ <reason>]". The status code is the
+    // second field, so a "200" inside a reason phrase does not count; the reason phrase may be empty (RFC 9112 s. 4).
+    bool status_line_is_200( const uint8_t* p, size_t n ) noexcept
+    {
+        if ( !line_scan::starts_with_ci( p, n, "http/" ) )
+            return false;
+        size_t i = 5;  // past "HTTP/"
+        while ( i < n && p[i] != ' ' )
+            ++i;
+        if ( i <= 5 || i >= n )
+            return false;  // no version, or nothing after it
+        while ( i < n && p[i] == ' ' )
+            ++i;
+        return i + 3 <= n && p[i] == '2' && p[i + 1] == '0' && p[i + 2] == '0' && ( i + 3 == n || p[i + 3] == ' ' );
+    }
+
     // A Transfer-Encoding field line v[0, n) that names the chunked coding.
     bool chunked_coding_line( const uint8_t* v, size_t n )
     {
@@ -102,7 +118,7 @@ HttpHead parse_http_head( const uint8_t* p, size_t n )
             return error( "response headers oversized" );
         return HttpHead {};  // NeedMore
     }
-    if ( line_scan::find_ci( p, status_end, " 200 " ) == kNpos )
+    if ( !status_line_is_200( p, status_end ) )
         return error( "server did not answer 200" );
     // The multipart reader takes the body bytes as they come: chunk-size lines would land inside the frames.
     if ( chunked )

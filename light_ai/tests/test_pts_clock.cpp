@@ -21,6 +21,13 @@ namespace
         CHECK( t, us_to_90k( 33333 ) == 3000 );
         CHECK( t, us_to_90k( 40000 ) == 3600 );
         CHECK( t, us_to_90k( 86400000000LL ) == 7776000000LL );  // one day
+        // Large values and the int64_t limits: us * 9 would overflow, -INT64_MIN has no value.
+        CHECK( t, us_to_90k( 1000000000000000LL ) == 90000000000000LL );
+        CHECK( t, us_to_90k( -1000000000000000LL ) == -90000000000000LL );
+        CHECK( t, us_to_90k( 1000000000000050LL ) == 90000000000005LL );
+        CHECK( t, us_to_90k( -1000000000000050LL ) == -90000000000005LL );
+        CHECK( t, us_to_90k( INT64_MAX ) == 830103483316929823LL );
+        CHECK( t, us_to_90k( INT64_MIN ) == -830103483316929823LL );
     }
 
     void cfr( TestRun& t )

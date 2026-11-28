@@ -1,4 +1,5 @@
 #include <cmath>
+#include <limits>
 
 #include "check.hpp"
 #include "core/global_track.hpp"
@@ -246,6 +247,34 @@ namespace
         CHECK( t, tab.active_global_count() == 1 );
         CHECK( t, f1.d[0].global_id == 1 );
     }
+    // A NaN / Inf feature component is refused before it reaches the gallery.
+    void check_non_finite_feature( TestRun& t )
+    {
+        GlobalTrackTable tab( 0.62f );
+        TrajList cam0 {};
+        cam0.push( TrackState { 1, TRACK_CONF, 300.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 1, 180.0f } );
+        tab.sync_cam( 0, cam0, 100000 );
+        TrajList cam1 {};
+        cam1.push( TrackState { 2, TRACK_CONF, 300.0f, 300.0f, 0.0f, 0.0f, 80.0f, 180.0f, 3, 0, 2, 180.0f } );
+        tab.sync_cam( 1, cam1, 100000 );
+        for ( const float bad : { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+                                  -std::numeric_limits<float>::infinity() } )
+        {
+            ReidResult r = make_res( 0, 1, 1, 110000, 1.0f, 0.0f );
+            r.feat[3] = bad;  // the last component inside dim
+            CHECK( t, !tab.apply_result( r ) );
+            CHECK( t, tab.active_global_count() == 0 );
+        }
+        ReidResult past_dim = make_res( 0, 1, 1, 120000, 1.0f, 0.0f );
+        past_dim.feat[4] = std::numeric_limits<float>::quiet_NaN();  // not part of the feature
+        static_cast<void>( tab.apply_result( past_dim ) );
+        CHECK( t, tab.active_global_count() == 1 );
+        // The same person on cam 1: a NaN result does not bind, the clean one does.
+        ReidResult r = make_res( 1, 2, 2, 130000, 1.0f, 0.0f );
+        r.feat[0] = std::numeric_limits<float>::quiet_NaN();
+        CHECK( t, !tab.apply_result( r ) );
+        CHECK( t, tab.apply_result( make_res( 1, 2, 2, 140000, 1.0f, 0.0f ) ) );
+    }
 }  // namespace
 
 void test_global_track( TestRun& t )
@@ -362,4 +391,5 @@ void test_global_track( TestRun& t )
     check_last_seen_monotonic( t );
     check_select_crops_priority( t );
     check_refresh_global_ids_dead_track( t );
+    check_non_finite_feature( t );
 }

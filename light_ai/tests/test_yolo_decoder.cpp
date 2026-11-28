@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -317,6 +318,43 @@ namespace
         CHECK( t, err.str() == "yolo_postprocess: letterbox band x=[0, 64) y=[40, 72) does not fit model 64x64\n" );
     }
 
+    // No heads, or a model size the casts of decode() cannot take: an empty list.
+    void test_bad_frame( TestRun& t )
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        YoloDecoder dec( 0.25f, 0.45f, log );
+        Head p3( 8, 8 );
+        put_reference( p3 );
+        const YoloHead heads[1] = { p3.view() };
+        DetList dets;
+        dets.push( Detection { 1, 2, 3, 4, 5, 0.5f } );
+        dec.decode( nullptr, 1, landscape(), dets );
+        CHECK( t, dets.n == 0 );
+        dets.push( Detection { 1, 2, 3, 4, 5, 0.5f } );
+        dec.decode( heads, 0, landscape(), dets );
+        CHECK( t, dets.n == 0 && err.str().empty() );
+
+        constexpr float inf = std::numeric_limits<float>::infinity();
+        constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+        for ( const float bad : { inf, nan, -64.0f, 0.0f, 65537.0f, 1.0e30f } )
+        {
+            YoloFrame wide = landscape();
+            wide.model_w = bad;
+            dets.push( Detection { 1, 2, 3, 4, 5, 0.5f } );
+            dec.decode( heads, 1, wide, dets );
+            CHECK( t, dets.n == 0 );
+            YoloFrame tall = landscape();
+            tall.model_h = bad;
+            dec.decode( heads, 1, tall, dets );
+            CHECK( t, dets.n == 0 );
+        }
+        CHECK( t, err.str().find( "does not fit model infx64" ) != std::string::npos );
+        dec.decode( heads, 1, landscape(), dets );
+        CHECK( t, dets.n == 1 );
+    }
+
     // Edge-clipped person whose center sits slightly in the gray bar (4 px past top) with
     // visible overlap is recovered and clamped cleanly to the scene edge.
     void test_edge_tolerance( TestRun& t )
@@ -476,6 +514,7 @@ void test_yolo_decoder( TestRun& t )
     test_head_order( t );
     test_bad_heads( t );
     test_band_misfit( t );
+    test_bad_frame( t );
     test_edge_tolerance( t );
     test_det_cap_overflow( t );
     test_cap( t );

@@ -27,7 +27,8 @@ enum
 void pin_current_thread_to_big_cores( const char* who, const Log& log ) noexcept;
 
 // Pins the calling thread to a specific A76 core (`cpu >= 0`) or the full A76 cluster (`cpu < 0`) and optionally
-// switches it to SCHED_FIFO (`rt_prio > 0`). Best-effort and noexcept.
+// switches it to SCHED_FIFO (`rt_prio > 0`, clamped to the range the kernel reports; the log names the clamped
+// value). Best-effort and noexcept.
 void pin_current_thread_rt( const char* who, int cpu, int rt_prio, const Log& log ) noexcept;
 
 // Touches `bytes` of the calling thread's stack in 4096-byte page steps to avoid minor page faults on RT paths.

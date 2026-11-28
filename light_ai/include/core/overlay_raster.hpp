@@ -18,7 +18,9 @@
 // 1-px outlines of boxes[0..n), in tensor coordinates (the GPU path's geometry):
 // fully off-screen and degenerate (< 1 px) boxes are skipped, the pixel span uses
 // floor / ceil like the rasterizer, and the per-box alpha blends over the image
-// (Porter-Duff over; a == 255 is an opaque write).
+// (Porter-Duff over; a == 255 is an opaque write). A box with a non-finite
+// coordinate is skipped; rgb / boxes == nullptr, w, h or n <= 0 and
+// stride < 3 * w draw nothing.
 void draw_boxes_cpu( uint8_t* rgb, int w, int h, int stride, const GpuBox* boxes, int n ) noexcept;
 
 // Every callout of list: the connector, then the outlined white text (the GPU

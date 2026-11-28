@@ -68,6 +68,18 @@ namespace
                             "server did not answer 200" ) );
     }
 
+    // The status code is the second field of an "HTTP/<version>" line, nothing else counts as 200.
+    void status_line( TestRun& t )
+    {
+        const std::string tail = "\r\nContent-Type: multipart/x-mixed-replace;boundary=f\r\n\r\n";
+        for ( const char* ok : { "HTTP/1.1 200 OK", "HTTP/1.0 200 OK", "HTTP/1.1 200", "HTTP/1.1 200 ", "HTTP/1.1  200  OK",
+                                 "http/1.1 200 ok" } )
+            CHECK( t, boundary_is( parse( ok + tail ), "f" ) );
+        for ( const char* bad : { "HTTP/1.1 404 Error 200 OK", "HTTP/1.1 2000 OK", "HTTP/ 200 OK", "HTTP/1.1 20", "HTTP/1.1 ",
+                                  "HTTP/1.1", "HTTP/", "ICY 200 OK", " HTTP/1.1 200 OK", "HTTP/1.1 200OK", "x 200 y" } )
+            CHECK( t, error_is( parse( bad + tail ), "server did not answer 200" ) );
+    }
+
     void need_more( TestRun& t )
     {
         const std::string h = head( "Content-Type: multipart/x-mixed-replace;boundary=frame" );
@@ -140,6 +152,7 @@ namespace
 void test_http_head( TestRun& t )
 {
     heads( t );
+    status_line( t );
     unquoted_boundary_ws( t );
     need_more( t );
     chunked_rejected( t );
