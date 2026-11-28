@@ -1745,6 +1745,6 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
   - Full gate on `master`: `light_ai_tests` `10,208/10,208`, `light_ai_tests_tsan` `6,207/6,207`, `rules_lint.sh` PASS (`243` files, `0` findings), 2-pass `clang-tidy` `0` findings.
 - **Audit PR C — `NonCopyable<T>` / `NonMovable<T>`:**
   - `include/core/non_copyable.hpp`: two empty CRTP bases. 47 classes in `include/` moved from hand-written `= delete` members to them (45 `NonMovable`, 2 `NonCopyable`: `JoiningThread`, `RknnEngine`); 148 `= delete` lines removed.
-  - `custom-no-inheritance` allows only these two, `private` and non-virtual; every other base is still a finding.
+  - `custom-no-inheritance` allows only these two, `private` and non-virtual; every other base is still a finding, and so is a specialization or a look-alike of the two names.
   - A type-trait comparison before / after (47 classes: size, alignment, 18 traits) differs only in `is_aggregate` of `MuxSession::FcGuard` (got an explicit constructor) and `RkmppDrmPool<N>` (only a default-initialized member).
   - Full gate on the PR branch: `light_ai_tests` `72` suites, `10,210/10,210`, `light_ai_tests_tsan` `6,207/6,207`, `rules_lint.sh` PASS (`245` files, `0` findings), 2-pass `clang-tidy` `0` findings; Layer A cmp-identical (`dcdd7d98869860f8`).

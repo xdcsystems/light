@@ -379,3 +379,21 @@ class BadVirtNm : virtual private NonMovable<BadVirtNm>  // custom-no-inheritanc
 class BadSubNm : private GoodNm                     // custom-no-inheritance (a base that uses an allowed base)
 {
 };
+struct BadPubNc : NonCopyable<BadPubNc>             // custom-no-inheritance (public, NonCopyable)
+{
+};
+struct SpecTag
+{
+};
+template <>                                         // custom-no-inheritance (a specialization of an allowed base)
+class NonMovable<SpecTag>
+{
+public:
+    int state = 0;
+};
+template <class T>                                  // custom-no-inheritance (a partial specialization)
+class NonCopyable<T*>
+{
+public:
+    int state = 0;
+};

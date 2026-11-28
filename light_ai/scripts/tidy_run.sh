@@ -163,7 +163,7 @@ echo "tidy: $JOBS jobs ($JOBS_WHY), MemAvailable ${MEM_MB} MB, timeout ${TMO}s,"
 # Then rules_lint.sh on the project (every file, also in a subset run: it takes well under a second).
 SELF=$OUT/selftest
 PROBE=tests/tidy_probe
-PROBE_TUS="$PROBE/violations.cpp $PROBE/src/main.cpp $PROBE/tests/harness.cpp"
+PROBE_TUS="$PROBE/violations.cpp $PROBE/lookalike.cpp $PROBE/src/main.cpp $PROBE/tests/harness.cpp"
 rm -rf "$SELF"
 mkdir -p "$SELF"
 for f in $PROBE_TUS; do

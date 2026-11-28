@@ -86,3 +86,9 @@ tests/tidy_probe/violations.cpp:370 custom-no-inheritance
 tests/tidy_probe/violations.cpp:373 custom-no-inheritance
 tests/tidy_probe/violations.cpp:376 custom-no-inheritance
 tests/tidy_probe/violations.cpp:379 custom-no-inheritance
+tests/tidy_probe/lookalike.cpp:7 custom-no-inheritance
+tests/tidy_probe/lookalike.cpp:11 custom-no-inheritance
+tests/tidy_probe/lookalike.cpp:22 custom-no-inheritance
+tests/tidy_probe/violations.cpp:382 custom-no-inheritance
+tests/tidy_probe/violations.cpp:388 custom-no-inheritance
+tests/tidy_probe/violations.cpp:394 custom-no-inheritance
