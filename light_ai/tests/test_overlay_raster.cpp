@@ -4,11 +4,13 @@
 // --label-scale N label on a light / dark tile) for a visual before / after check;
 // a normal run writes nothing.
 
+#include <climits>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -218,10 +220,49 @@ namespace
         CHECK( t, tile.px( 39, 29 )[0] == 0 && tile.px( 35, 20 )[0] == 0 );
     }
 
+    // Non-finite coordinates and bad arguments draw nothing; huge finite ones are clipped.
+    void boxes_hostile( TestRun& t )
+    {
+        constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+        constexpr float inf = std::numeric_limits<float>::infinity();
+        Tile tile( 40, 30, 100 );
+        const std::vector<uint8_t> clean = tile.buf;
+        const GpuBox non_finite[] = {
+            { nan, 5.0f, 14.0f, 20.0f, 0, 0, 0, 255 }, { 4.0f, nan, 14.0f, 20.0f, 0, 0, 0, 255 },
+            { 4.0f, 5.0f, nan, 20.0f, 0, 0, 0, 255 },  { 4.0f, 5.0f, 14.0f, nan, 0, 0, 0, 255 },
+            { -inf, 5.0f, 14.0f, 20.0f, 0, 0, 0, 255 }, { 4.0f, -inf, 14.0f, 20.0f, 0, 0, 0, 255 },
+            { 4.0f, 5.0f, inf, 20.0f, 0, 0, 0, 255 },  { 4.0f, 5.0f, 14.0f, inf, 0, 0, 0, 255 },
+            { -inf, -inf, inf, inf, 0, 0, 0, 255 },
+        };
+        draw_boxes_cpu( tile.data(), tile.w, tile.h, tile.stride, non_finite, 9 );
+        CHECK( t, tile.buf == clean );
+
+        const GpuBox good { 4.0f, 5.0f, 14.0f, 20.0f, 0, 0, 0, 255 };
+        draw_boxes_cpu( nullptr, tile.w, tile.h, tile.stride, &good, 1 );
+        draw_boxes_cpu( tile.data(), tile.w, tile.h, tile.stride, nullptr, 1 );
+        draw_boxes_cpu( tile.data(), 0, tile.h, tile.stride, &good, 1 );
+        draw_boxes_cpu( tile.data(), -1, tile.h, tile.stride, &good, 1 );
+        draw_boxes_cpu( tile.data(), tile.w, 0, tile.stride, &good, 1 );
+        draw_boxes_cpu( tile.data(), tile.w, tile.h, tile.w * 3 - 1, &good, 1 );
+        draw_boxes_cpu( tile.data(), tile.w, tile.h, -tile.stride, &good, 1 );
+        draw_boxes_cpu( tile.data(), INT_MAX, tile.h, tile.stride, &good, 1 );  // 3 * w does not fit int
+        draw_boxes_cpu( tile.data(), tile.w, tile.h, tile.stride, &good, 0 );
+        draw_boxes_cpu( tile.data(), tile.w, tile.h, tile.stride, &good, -1 );
+        CHECK( t, tile.buf == clean );
+
+        // Coordinates far outside int: the outline of the whole tile.
+        const GpuBox huge { -1.0e30f, -1.0e30f, 1.0e30f, 1.0e30f, 0, 0, 0, 255 };
+        draw_boxes_cpu( tile.data(), tile.w, tile.h, tile.stride, &huge, 1 );
+        CHECK( t, tile.guard_intact() );
+        CHECK( t, tile.px( 0, 0 )[0] == 0 && tile.px( 39, 29 )[0] == 0 && tile.px( 20, 0 )[0] == 0 && tile.px( 39, 15 )[0] == 0 );
+        CHECK( t, tile.px( 1, 1 )[0] == 100 && tile.px( 38, 28 )[0] == 100 );
+    }
+
 }  // namespace
 
 void test_overlay_raster( TestRun& t )
 {
     callouts( t );
     boxes( t );
+    boxes_hostile( t );
 }

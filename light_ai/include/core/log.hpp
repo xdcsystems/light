@@ -105,12 +105,14 @@ public:
             return *this;
         }
 
+        // nullptr prints nothing in both modes (*os_ << nullptr would be UB).
         Line& operator<<( const char* v )
         {
+            if ( v == nullptr )
+                return *this;
             if ( sink_.write != nullptr )
             {
-                if ( v != nullptr )
-                    append_bytes( v, std::strlen( v ) );
+                append_bytes( v, std::strlen( v ) );
                 return *this;
             }
             if ( os_ )

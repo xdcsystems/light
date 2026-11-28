@@ -32,9 +32,14 @@ namespace
 
 // us * 90000 / 1000000 = us * 9 / 100; adding half the divisor rounds to
 // nearest, and the negative branch mirrors it (halves away from zero).
+// us = 100 q + r (r has the sign of us, |r| < 100): only r is rounded, so
+// no step overflows or negates INT64_MIN on the whole int64_t range.
 int64_t us_to_90k( int64_t us ) noexcept
 {
-    return us >= 0 ? ( us * 9 + 50 ) / 100 : -( ( -us * 9 + 50 ) / 100 );
+    const int64_t q = us / 100;
+    const int64_t r = us % 100;
+    const int64_t rem = r >= 0 ? ( r * 9 + 50 ) / 100 : -( ( -r * 9 + 50 ) / 100 );
+    return q * 9 + rem;
 }
 
 void PtsClock::restart( int64_t frame_step ) noexcept

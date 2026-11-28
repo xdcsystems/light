@@ -91,8 +91,10 @@ public:
     // EIO = recoverable stall (watchdog, hangup, corrupt-frame streak, desync),
     // ENODEV = closed by teardown, EAGAIN = no frame ready within timeout_ms.
     // Corrupt/incomplete frames are dropped with EAGAIN (or EIO once the
-    // streak reaches kErrStreakMax); the streak survives across calls and
-    // resets only on a clean frame or a successful setup_device().
+    // streak reaches kErrStreakMax); the streak survives across calls. A
+    // delivered clean frame restarts it at the number of corrupt frames that
+    // followed that frame in the same buffered burst (usually 0); a
+    // successful setup_device() clears it.
     // timeout_ms < 0: the blocking single-source mode (the 2 s watchdog).
     Status dequeue( int& index, uint32_t& size, int timeout_ms = -1 ) noexcept;
     void requeue( int index ) noexcept;
@@ -123,14 +125,17 @@ private:
     // dequeue's first frame after setup_device / start: the primed one in
     // slot 0 (primed_len_ > 0), handed out once.
     Status take_primed( int& index, uint32_t& size );
-    void skip_buffered_parts( int slot, uint32_t& n );
+    // Replaces the part in slot by the freshest good one already buffered (kSkipMax parts at most). Returns the
+    // number of corrupt parts after the last good one among those it read (all of them when none was good).
+    int skip_buffered_parts( int slot, uint32_t& n );
     // A Desync / Oversized result counts one err_streak_ step (a Desync also
     // drops the window); true for those, false for any other result.
     bool note_bad_part( Read rc );
     // One part into slot (blocking if timeout_ms < 0, non-blocking otherwise),
     // then the freshest already buffered part; a Desync / Oversized gets one
     // retry, and every bad part (the retry too) counts toward kErrStreakMax.
-    Read read_latest_part( int slot, uint32_t* size, int timeout_ms );
+    // tail_bad: skip_buffered_parts()'s count, 0 for any result but Part.
+    Read read_latest_part( int slot, uint32_t* size, int timeout_ms, int& tail_bad );
     // One part into slot (core/multipart_reader.hpp), refilling with the
     // kPollMs watchdog; the part's header lines are bounded to kPollMs from
     // their first byte, its body to kPartMs from its first byte, and the wait

@@ -359,6 +359,9 @@ bool GlobalTrackTable::apply_result( const ReidResult& res ) noexcept
     if ( !res.ok || res.src_idx < 0 || res.src_idx >= reid_cfg::kMaxSources || res.dim <= 0 ||
          res.dim > reid_cfg::kReidDimMax )
         return false;
+    // One NaN / Inf would stay in the gallery EMA and break every later similarity.
+    if ( !std::all_of( res.feat.data(), res.feat.data() + res.dim, []( float v ) { return std::isfinite( v ); } ) )
+        return false;
 
     const int lidx = find_live_idx( res.src_idx, res.local_id, res.gen );
     if ( lidx < 0 )

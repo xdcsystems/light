@@ -1,3 +1,5 @@
+#include <climits>
+
 #include "check.hpp"
 #include "core/geometry.hpp"
 #include "suites.hpp"
@@ -23,4 +25,10 @@ void test_geometry( TestRun& t )
     CHECK( t, same( band_geom( 640, 640, 640, 640 ), 0, 640, 0, 640 ) );
     // The canonical encoder band of the Pipeline ctor: 4:3 of the model input.
     CHECK( t, same( band_geom( 640, 480, 640, 640 ), 0, 640, 80, 480 ) );
+    // Sizes whose cross products overflow int: both orientations and the int limit.
+    CHECK( t, same( band_geom( 100000, 50000, 80000, 80000 ), 0, 80000, 20000, 40000 ) );
+    CHECK( t, same( band_geom( 50000, 100000, 80000, 80000 ), 20000, 40000, 0, 80000 ) );
+    CHECK( t, same( band_geom( INT_MAX, INT_MAX, INT_MAX, INT_MAX ), 0, INT_MAX, 0, INT_MAX ) );
+    CHECK( t, same( band_geom( INT_MAX, 1, 640, 640 ), 0, 640, 320, 0 ) );
+    CHECK( t, same( band_geom( 1, INT_MAX, 640, 640 ), 320, 0, 0, 640 ) );
 }

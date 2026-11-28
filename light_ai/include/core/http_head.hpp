@@ -3,7 +3,7 @@
 //
 // Grammar: lines end with LF, an optional CR before it (core/line_scan.hpp);
 // the head ends at the first empty line. Ok needs:
-//   - the status line containing " 200 ";
+//   - a status line "HTTP/<version> 200[ <reason>]": 200 is its second field;
 //   - a Content-Type field with boundary=<value> (case-insensitive name;
 //     optional blanks after '='; either a quoted-string "..." with a
 //     closing '"' keeping internal spaces and ';', or an unquoted value

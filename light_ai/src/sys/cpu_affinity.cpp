@@ -82,10 +82,15 @@ void pin_current_thread_rt( const char* who, int cpu, int rt_prio, const Log& lo
 
     bool rt_ok = false;
     int rt_err = 0;
+    int eff_prio = rt_prio;  // clamped to the SCHED_FIFO range of the running kernel
     if ( rt_prio > 0 )
     {
+        const int pmin = sched_get_priority_min( SCHED_FIFO );
+        const int pmax = sched_get_priority_max( SCHED_FIFO );
+        if ( pmin >= 0 && pmax >= pmin )
+            eff_prio = std::clamp( rt_prio, pmin, pmax );
         sched_param sp {};
-        sp.sched_priority = rt_prio;
+        sp.sched_priority = eff_prio;
         rt_ok = sched_setscheduler( 0, SCHED_FIFO | SCHED_RESET_ON_FORK, &sp ) == 0;
         if ( !rt_ok )
             rt_err = errno;
@@ -101,10 +106,10 @@ void pin_current_thread_rt( const char* who, int cpu, int rt_prio, const Log& lo
         {
             if ( rt_ok )
             {
-                log.info() << "rt: " << who << " -> SCHED_FIFO prio " << rt_prio << '\n';
+                log.info() << "rt: " << who << " -> SCHED_FIFO prio " << eff_prio << '\n';
                 return;
             }
-            log.warn() << "rt: " << who << " -> SCHED_FIFO prio " << rt_prio
+            log.warn() << "rt: " << who << " -> SCHED_FIFO prio " << eff_prio
                        << " failed (" << ErrnoText { rt_err } << "), SCHED_OTHER fallback\n";
         }
     }

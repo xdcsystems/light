@@ -33,7 +33,7 @@ namespace glyph_font
         uint8_t adv;
     };
 
-    constexpr uint32_t kCodepoints[kGlyphCount] = {
+    inline constexpr uint32_t kCodepoints[kGlyphCount] = {
         0x0030u, 0x0031u, 0x0032u, 0x0033u, 0x0034u, 0x0035u, 0x0036u, 0x0037u, 0x0038u, 0x0039u,
         0x0041u, 0x0042u, 0x0043u, 0x0044u, 0x0045u, 0x0046u, 0x0047u, 0x0048u, 0x0049u, 0x004Au,
         0x004Bu, 0x004Cu, 0x004Du, 0x004Eu, 0x004Fu, 0x0050u, 0x0051u, 0x0052u, 0x0053u, 0x0054u,
@@ -51,7 +51,7 @@ namespace glyph_font
         0x00ABu, 0x00BBu, 0x2013u, 0x2014u, 0x00D7u, 0x00B7u, 0x00B0u,
     };
 
-    constexpr GlyphMetric kGlyphMetrics[kGlyphCount] = {
+    inline constexpr GlyphMetric kGlyphMetrics[kGlyphCount] = {
         { 79, 57, 18, 22, -2, 1, 14 },  // U+0030
         { 99, 57, 16, 22, -1, 1, 14 },  // U+0031
         { 117, 57, 17, 22, -2, 1, 14 },  // U+0032
@@ -202,7 +202,7 @@ namespace glyph_font
     };
 
     // Row-major, kAtlasW texels a row, each texel (L, A).
-    constexpr uint8_t kAtlas[kAtlasBytes] = {
+    inline constexpr uint8_t kAtlas[kAtlasBytes] = {
         255,0,255,0,255,0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,

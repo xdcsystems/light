@@ -492,6 +492,8 @@ Status MppDecoder::apply_info_change( MppFrame f, MppTask task )
     if ( rg != MPP_OK || !b )
     {
         log_.error() << "dec: alloc " << bs << " bytes FAILED\n";
+        // No INFO_CHANGE_READY follows: the same recovery as the output Timeout / Failed paths.
+        reset_and_strip();
         drop_packet();
         return sdk_status( Errc::NoMemory, "mpp_buffer_get failed", rg );
     }

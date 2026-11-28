@@ -35,8 +35,13 @@ namespace
         const char* ptr = s;
         while ( std::isspace( static_cast<unsigned char>( *ptr ) ) )
             ++ptr;
+        // After an explicit '+' only a digit: from_chars alone would take "+-5" as -5.
         if ( *ptr == '+' )
+        {
             ++ptr;
+            if ( !std::isdigit( static_cast<unsigned char>( *ptr ) ) )
+                return false;
+        }
         const char* const last = s + std::strlen( s );
         int v = 0;
         const auto res = std::from_chars( ptr, last, v );
@@ -67,6 +72,8 @@ namespace
 
     bool set_str( const char* v, std::string& dst )
     {
+        if ( v == nullptr )
+            return false;
         dst = v;
         return true;
     }

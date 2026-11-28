@@ -197,7 +197,12 @@ int MuxSession::mux_write( AVFormatContext* fc, AVPacket* pkt )
     const ByteSpan b = params_.prepare( pkt->data, static_cast<size_t>( pkt->size ) );
     if ( b.data != pkt->data )
     {
-        av_packet_copy_props( dup, pkt );
+        if ( const int cp = av_packet_copy_props( dup, pkt ); cp < 0 )
+        {
+            av_packet_unref( dup );  // a partly copied packet never reaches the muxer
+            av_packet_unref( pkt );
+            return cp;
+        }
         dup->buf = nullptr;
         dup->data = b.data;
         dup->size = static_cast<int>( b.size );

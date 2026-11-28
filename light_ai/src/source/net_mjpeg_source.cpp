@@ -299,11 +299,12 @@ NetMjpegSource::Read NetMjpegSource::read_part( int slot, uint32_t* size )
     return feed_part( slot, size, wait );
 }
 
-void NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )
+int NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )
 {
     const int scratch = pool_.free_slot( slot );
     if ( scratch < 0 )
-        return;
+        return 0;
+    int tail_bad = 0;
     // Pull any bytes already queued in the kernel socket buffer (0 ms poll)
     // so a multi-frame Wi-Fi burst is collapsed to the freshest complete frame.
     pull_queued();
@@ -324,10 +325,16 @@ void NetMjpegSource::skip_buffered_parts( int slot, uint32_t& n )
         {
             pool_.swap( slot, scratch );
             n = next_n;
+            tail_bad = 0;  // only the bad frames behind the newest good one count
+        }
+        else
+        {
+            ++tail_bad;
         }
         ++skip_parts_cnt_;
         pull_queued();
     }
+    return tail_bad;
 }
 
 bool NetMjpegSource::note_bad_part( Read rc )
@@ -342,8 +349,9 @@ bool NetMjpegSource::note_bad_part( Read rc )
     return true;
 }
 
-NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size, int timeout_ms )
+NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size, int timeout_ms, int& tail_bad )
 {
+    tail_bad = 0;
     uint32_t n = 0;
     const bool blocking = timeout_ms < 0;
     Read rc = blocking ? read_part( slot, &n ) : step_nonblocking_part( slot, timeout_ms, &n );
@@ -356,7 +364,7 @@ NetMjpegSource::Read NetMjpegSource::read_latest_part( int slot, uint32_t* size,
     }
     if ( rc != Read::Part )
         return rc;
-    skip_buffered_parts( slot, n );
+    tail_bad = skip_buffered_parts( slot, n );
     *size = n;
     return Read::Part;
 }
@@ -371,7 +379,8 @@ Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms ) noe
         return take_primed( index, size );
     const int slot = acquire_rx_slot();
     uint32_t n = 0;
-    const Read r = read_latest_part( slot, &n, timeout_ms );
+    int tail_bad = 0;
+    const Read r = read_latest_part( slot, &n, timeout_ms, tail_bad );
     if ( r == Read::Pending )
         return dequeue_status( EAGAIN );
     if ( r == Read::Desync || r == Read::Oversized )
@@ -380,11 +389,13 @@ Status NetMjpegSource::dequeue( int& index, uint32_t& size, int timeout_ms ) noe
         return dequeue_status( EIO );  // EOF / watchdog / recv error: recoverable
     if ( !frame_ok( pool_.data( slot ), n, width_, height_ ) )
     {
-        ++err_streak_;
+        // No good frame in the whole burst: the first part and the bad ones after it all count.
+        err_streak_ += 1 + tail_bad;
         log_.warn() << "net-src: corrupt/incomplete JPEG frame (" << n << " bytes, streak " << err_streak_ << ") dropped\n";
         return dequeue_status( ( err_streak_ >= kErrStreakMax ) ? EIO : EAGAIN );
     }
-    err_streak_ = 0;
+    // The delivered frame is good: only the bad parts behind it stay in the streak.
+    err_streak_ = tail_bad;
     last_cap_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
                        std::chrono::steady_clock::now().time_since_epoch() )
                        .count();

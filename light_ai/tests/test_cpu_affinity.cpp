@@ -5,6 +5,9 @@
 #include <fstream>
 #include <ios>
 #include <ostream>
+#include <sched.h>
+#include <sstream>
+#include <string>
 #include <thread>
 
 #include "check.hpp"
@@ -61,4 +64,12 @@ void test_cpu_affinity( TestRun& t )
     static_assert( noexcept( read_thread_page_faults( minflt, majflt ) ), "read_thread_page_faults must be noexcept" );
     prefault_current_thread_stack( 64 * 1024 );
     read_thread_page_faults( minflt, majflt );
+
+    // A priority above the SCHED_FIFO range is clamped, and the log names the clamped value (granted or refused).
+    std::ostringstream rt_log_text;
+    const Log rt_log( rt_log_text, rt_log_text );
+    std::thread rt_worker( [&rt_log]() noexcept { pin_current_thread_rt( "rt clamp", -1, 1000, rt_log ); } );
+    rt_worker.join();
+    const std::string want = "rt: rt clamp -> SCHED_FIFO prio " + std::to_string( sched_get_priority_max( SCHED_FIFO ) );
+    CHECK( t, rt_log_text.str().find( want ) != std::string::npos );
 }

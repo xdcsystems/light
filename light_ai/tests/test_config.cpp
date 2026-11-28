@@ -254,6 +254,30 @@ namespace
                               "--src-rot requires a preceding --device or --net-src (or --config source)\n" ) );
     }
 
+    // Integer front-end: leading whitespace and an explicit '+' are accepted; after the '+' only a digit may follow.
+    void check_int_front_end( TestRun& t )
+    {
+        Cli plus;
+        CHECK( t, parse( plus, { "--frames", "+10" } ) == CliOptions::ParseStatus::Run && plus.config().frames == 10 );
+        Cli space;
+        CHECK( t, parse( space, { "--frames", " 10" } ) == CliOptions::ParseStatus::Run && space.config().frames == 10 );
+        CHECK( t, rejected( { "--frames", "+-5" } ) );
+        CHECK( t, rejected( { "--frames", "+ 5" } ) );
+        CHECK( t, rejected( { "--frames", "++5" } ) );
+    }
+
+    // A command line rejected for its source count leaves the file system alone: --cal-dir is created last.
+    void check_cal_dir_order( TestRun& t )
+    {
+        const char* dir = "light_ai_tests_cal_rejected";
+        std::error_code ec;
+        std::filesystem::remove( dir, ec );
+        CHECK( t, error_text( { "--dump-cal", "--cal-dir", dir, "--device", "a", "--device", "b", "--device", "c", "--device", "d",
+                                "--device", "e" },
+                              "too many video sources (5): at most 4 sources are supported (2x2 grid max)\n" ) );
+        CHECK( t, !std::filesystem::exists( dir ) );
+    }
+
     void check_net_gop( TestRun& t )
     {
         using Status = CliOptions::ParseStatus;
@@ -276,6 +300,8 @@ void test_config( TestRun& t )
     check_log_level( t );
     check_stage6_options( t );
     check_net_gop( t );
+    check_int_front_end( t );
+    check_cal_dir_order( t );
     texts( t );
 
     using Status = CliOptions::ParseStatus;
@@ -317,13 +343,6 @@ void test_config( TestRun& t )
         CHECK( t, c.sources.size() == 2 );
         CHECK( t, c.sources[0].kind == SourceKind::NetMjpeg && c.sources[0].uri == "http://cam:8080/stream" );
         CHECK( t, c.sources[1].kind == SourceKind::V4L2 && c.sources[1].uri == "/dev/video1" );
-    }
-    // Integer front-end: leading whitespace and an explicit '+' are accepted.
-    {
-        Cli plus;
-        CHECK( t, parse( plus, { "--frames", "+10" } ) == Status::Run && plus.config().frames == 10 );
-        Cli space;
-        CHECK( t, parse( space, { "--frames", " 10" } ) == Status::Run && space.config().frames == 10 );
     }
     // Loud rejections: unknown names, missing values, out-of-range and malformed values.
     CHECK( t, rejected( { "--no-such-option" } ) );

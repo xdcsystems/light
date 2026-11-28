@@ -195,20 +195,20 @@ def main():
     w("        uint8_t adv;")
     w("    };")
     w("")
-    w("    constexpr uint32_t kCodepoints[kGlyphCount] = {")
+    w("    inline constexpr uint32_t kCodepoints[kGlyphCount] = {")
     cps = ["0x%04Xu" % ord(g["ch"]) for g in glyphs]
     for i in range(0, len(cps), 10):
         w("        " + ", ".join(cps[i:i + 10]) + ",")
     w("    };")
     w("")
-    w("    constexpr GlyphMetric kGlyphMetrics[kGlyphCount] = {")
+    w("    inline constexpr GlyphMetric kGlyphMetrics[kGlyphCount] = {")
     for g in glyphs:
         w("        { %d, %d, %d, %d, %d, %d, %d },  // U+%04X" % (g["ax"], g["ay"], g["w"], g["h"], g["dx"], g["dy"], g["adv"],
                                                             ord(g["ch"])))
     w("    };")
     w("")
     w("    // Row-major, kAtlasW texels a row, each texel (L, A).")
-    w("    constexpr uint8_t kAtlas[kAtlasBytes] = {")
+    w("    inline constexpr uint8_t kAtlas[kAtlasBytes] = {")
     row_bytes = 2 * ATLAS_W
     for r in range(atlas_h):
         row = px[r * row_bytes:(r + 1) * row_bytes]

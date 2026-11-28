@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdint>
 
 #include "core/geometry.hpp"
 
@@ -12,10 +13,15 @@ LbGeom band_geom( int w_src, int h_src, int w_dst, int h_dst )
     LbGeom g;
     if ( w_src <= 0 || h_src <= 0 || w_dst <= 0 || h_dst <= 0 )
         return g;
-    const bool fit_by_h = ( h_src * w_dst > w_src * h_dst );  // portrait-ish
+    // 64-bit: the products of two sizes overflow int. Each quotient is capped at the destination size.
+    const int64_t ws = w_src;
+    const int64_t hs = h_src;
+    const int64_t wd = w_dst;
+    const int64_t hd = h_dst;
+    const bool fit_by_h = ( hs * wd > ws * hd );  // portrait-ish
     if ( fit_by_h )
     {
-        g.w = std::min( w_src * h_dst / h_src, w_dst );
+        g.w = static_cast<int>( std::min( ws * hd / hs, wd ) );
         g.h = h_dst;
         g.left = ( w_dst - g.w ) / 2;
         g.top = 0;
@@ -23,7 +29,7 @@ LbGeom band_geom( int w_src, int h_src, int w_dst, int h_dst )
     else
     {
         g.w = w_dst;
-        g.h = std::min( h_src * w_dst / w_src, h_dst );
+        g.h = static_cast<int>( std::min( hs * wd / ws, hd ) );
         g.left = 0;
         g.top = ( h_dst - g.h ) / 2;
     }

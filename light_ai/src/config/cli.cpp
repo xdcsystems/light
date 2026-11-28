@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -26,7 +27,8 @@ namespace
             log.error() << "invalid value for --cal-dir: '" << dir << "' (" << ec.message() << ")\n";
             return false;
         }
-        const std::string probe = dir + "/.light_ai_write_test";
+        // Per process: parallel runs on one directory must not remove each other's probe.
+        const std::string probe = dir + "/.light_ai_write_test." + std::to_string( ::getpid() );
         bool ok = false;
         {
             const std::ofstream f( probe );
@@ -79,15 +81,16 @@ int CliOptions::validate() const
                         "    light_ai --cal 5 --cal-interval 60 --cal-dir build/calrun\n";
         return 2;
     }
-    if ( !cfg_.cal.dir.empty() && !ensure_writable_dir( cfg_.cal.dir, log_ ) )
-        return 2;
-
     if ( cfg_.sources.size() > 4 )
     {
         log_.error() << "too many video sources (" << cfg_.sources.size()
                      << "): at most 4 sources are supported (2x2 grid max)\n";
         return 2;
     }
+
+    // Last: it creates the directory, so a rejected command line leaves the file system alone.
+    if ( !cfg_.cal.dir.empty() && !ensure_writable_dir( cfg_.cal.dir, log_ ) )
+        return 2;
 
     return 0;
 }

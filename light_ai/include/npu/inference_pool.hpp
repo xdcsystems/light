@@ -157,9 +157,14 @@ public:
     }
 
     // Queues the frame whose pixels are already in tensor(k). false: the
-    // frame is dropped (logged) -- the FIFO is full or slot k is not Free.
+    // frame is dropped (logged) -- k is outside [0, size()), the FIFO is full or slot k is not Free.
     bool submit( int k, const InferJob& job ) noexcept
     {
+        if ( k < 0 || k >= n_slots_ )
+        {
+            log_.warn() << "pool: invalid slot " << k << ", frame " << job.frame << " dropped\n";
+            return false;
+        }
         if ( full() )
         {
             log_.warn() << "pubfifo: overflow (n=" << fifo_.size() << "), incoming slot " << k << " dropped\n";

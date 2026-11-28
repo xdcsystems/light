@@ -20,6 +20,14 @@ namespace
 
 void test_log( TestRun& t )
 {
+    // A null C string prints nothing and leaves the stream usable (sync mode).
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Log log( out, err );
+        log.info() << static_cast<const char*>( nullptr ) << "after\n";
+        CHECK( t, out.good() && out.str() == "after\n" && err.str().empty() );
+    }
     // Routing: info/debug -> out, warn/error -> err; default threshold drops debug.
     {
         std::ostringstream out;
