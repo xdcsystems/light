@@ -1773,9 +1773,10 @@ On `fix/audit-p1` (`3411069`..`8c6b879`, PRs #74–#79), six focused stages hard
     | `light_ai_tests` compile + link | `155.2 s` | `114.8 s` | `39.0 s` |
     | Unit run + TSan build and run | `53.8 s` (TSan `30 s`) | — (TSan `30 s`) | `37.2 s` (TSan `13 s`) |
     | Tidy, all cache hits | `71.4 s` (passes `66 s`) | passes `33 s` | `18.7 s` (passes `13 s`) |
-    | **Whole gate** | `353.7 s` (sum of the stages) | `279.3 s` (one `build.sh`) | `120.5 s` (sum of the stages) |
+    | **Whole gate** | `353.7 s` (sum of the stages) | `279.3 s` (one `build.sh`) | `119.8 s` (one `build.sh`; stages `120.5 s`) |
 
   - One factor at a time: `-O2` alone takes the test compile from `155.2 s` to `114.8 s` (A55, `-j8`), the A76 slots from there to `39.0 s` (`-j4`); the memo takes the warm tidy passes from `66 s` to `33 s` (7 jobs both).
   - `BUILD_ON_A76=1 ./scripts/build.sh`, incremental with a warm cache: `46.4 s`.
   - Cold tidy (`TIDY_NO_CACHE=1`, so without the memo; 6 `TIDY_FILES` chunks of 22 TUs, summed): `1555 s` (`0`, 7 jobs) → `555 s` (`1`, 4 jobs), `2.8x`. First run on the new key format with `BUILD_ON_A76=1` (same chunks): `575 s` (main `524 s`, rules `51 s`).
+  - Review fix: the CMake cache keeps the launcher, so without `BUILD_ON_A76=1` in the environment `a76_slot.sh` now runs the command unpinned. Checked: a manual build of the tests with the cached launcher ran `cc1plus` on cores `0-3` only. The `119.8 s` run is after this fix, the other figures before it (it does not change what a `BUILD_ON_A76=1` job runs).
   - Full gate in both modes: `light_ai_tests` `72` suites, `10,282/10,282`, `light_ai_tests_tsan` `11` suites, `6,209/6,209`, `rules_lint.sh` PASS (`245` files, `0` findings), 2-pass `clang-tidy` `0` findings, no TU without a cache key. `shellcheck` is not installed on the board. No live camera run.

@@ -95,7 +95,8 @@ their `.pc` files say 1.3.8 / 2.1.0), FFmpeg 4.3 (`so.58`).
   launcher goes through `CMAKE_RULE_LAUNCH_COMPILE` (the `CMakeLists.txt` files forward it to the global property
   of that name), which stays out of `compile_commands.json`, so tidy and its cache see the same commands; never use
   `CMAKE_CXX_COMPILER_LAUNCHER`. The preflight fails if `light_ai` or a `light_ai*.service` runs or the cpuset blocks
-  `4-7` (`isolate_rt.sh on`). It runs only when a script starts: do not start `light_ai` during such a build.
+  `4-7` (`isolate_rt.sh on`). It runs only when a script starts: do not start `light_ai` during such a build. A later manual `cmake --build`
+  still calls the cached launcher, which without `BUILD_ON_A76=1` runs the command unpinned.
   Two-pass tidy gate: self-test + `scripts/rules_lint.sh` first, then `main` = system `clang-tidy-11`
   (`.clang-tidy`, `tests/.clang-tidy`) and `rules` = pinned `clang-tidy==23.1.4` in `venv/`
   (`scripts/tidy_rules.yaml`: cognitive complexity 20 + `misc-const-correctness` (#94) + the `custom-*` project

@@ -7,6 +7,7 @@
 #        a76_slot.sh <cmd> [args...]   wait for a free slot (flock on build/.a76_slot_<cpu>), then exec <cmd> on that
 #                                      core. The command keeps the lock descriptor: the kernel releases the lock when
 #                                      the process (and any child that inherited the descriptor) ends, however it ends.
+#                                      Without BUILD_ON_A76=1 in the environment: exec <cmd> as it is, no slot, no pin.
 if [ $# -eq 0 ]; then
     echo "usage: a76_slot.sh --check | <cmd> [args...]" >&2
     exit 2
@@ -36,6 +37,12 @@ if [ "$1" = "--check" ]; then
         fi
     done
     exit 0
+fi
+
+# The CMake cache of a build tree keeps this launcher after a BUILD_ON_A76=1 run. A later manual cmake --build, make
+# or IDE build runs no preflight, so it must not reach the A76 cores.
+if [ "${BUILD_ON_A76:-0}" != "1" ]; then
+    exec "$@"
 fi
 
 # the lock files stay inside the project (build/), never in /tmp

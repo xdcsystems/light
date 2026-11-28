@@ -23,8 +23,9 @@ The key covers every input of the run:
 
 With TIDY_PP_CACHE_DIR set (tidy_run.sh: emptied at the start of every run, under its run lock) the digest
 of a TU is computed once and reused by the second pass. It is stored with the stat stamps of the files it
-read; a changed stamp (a file edited between the passes) computes it again, so a stale digest never keys the
-result of the new content.
+read; a changed stamp (such a file edited between the passes) computes it again, so the stale digest does not
+key the result of the new content. The stamps cover only the files read: a file created or removed between the
+passes that changes how an include resolves is not seen (do not move headers while the gate runs).
 """
 import hashlib
 import json
