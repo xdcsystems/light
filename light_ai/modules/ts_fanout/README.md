@@ -8,6 +8,7 @@ Lightweight single-file C++17 `epoll` relay that fans out a single upstream MPEG
 - **Sub-millisecond / `< 1–2 ms` relay latency:** Sets `TCP_NODELAY=1`, `SO_SNDBUF=65536`, `TCP_NOTSENT_LOWAT=16384`, and `SOCK_NONBLOCK` on upstream and client sockets; forwards raw chunks up to `16 KiB` immediately with zero demuxing or re-encoding.
 - **188-byte MPEG-TS packet alignment:** New clients joining mid-stream start receiving from the first `0x47` sync byte verified at `buf[i] == 0x47 && buf[i + 188] == 0x47`, avoiding player resynchronization delays.
 - **Zero HoL-blocking:** Each client has a dedicated `256 KiB` ring buffer. Slow consumers that overflow are dropped individually without stalling upstream reads or other viewers.
+- **`accept4` errors:** `ECONNABORTED` / `EPROTO` are skipped; on `EMFILE` / `ENFILE` / `ENOBUFS` / `ENOMEM` the listener leaves `epoll` (no busy-spin) and returns after `100 ms` or as soon as a client is dropped.
 - **CPU isolation:** Intended to run on efficiency cores (`AllowedCPUs=0-3`, `Nice=5`) with no `mlockall` or `SCHED_FIFO`.
 
 ## Build & Install

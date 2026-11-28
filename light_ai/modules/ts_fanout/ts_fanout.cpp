@@ -26,6 +26,7 @@ constexpr uint8_t kTsSyncByte = 0x47;
 constexpr int kSendBufSize = 65536;
 constexpr int kNotsentLowat = 16384;
 constexpr int kRetryIntervalMs = 250;
+constexpr int kAcceptBackoffMs = 100;  // listener parked after fd / buffer exhaustion in accept4()
 constexpr int kMaxEpollEvents = 32;
 constexpr int kMaxReadIters = 8;
 
@@ -328,7 +329,22 @@ struct Relay {
     int64_t next_retry_ms = 0;
     int64_t idle_deadline_ms = 0;
     int64_t last_connect_err_log_ms = 0;
+    bool listen_armed = false;  // listen_fd is registered in epfd
+    int64_t accept_resume_ms = 0;
     std::vector<Client> clients{};
+
+    // Puts a parked listener back into epfd; on failure tries again after the backoff.
+    void try_rearm_listen(int64_t now) noexcept {
+        if (listen_armed || listen_fd < 0) {
+            return;
+        }
+        if (epoll_add(epfd, listen_fd, EPOLLIN, kTokenListen)) {
+            listen_armed = true;
+            accept_resume_ms = 0;
+            return;
+        }
+        accept_resume_ms = now + kAcceptBackoffMs;
+    }
 
     void update_client_epoll(Client& c) noexcept {
         const bool want_out = (c.len > 0);
@@ -350,6 +366,7 @@ struct Relay {
         clients.pop_back();
         std::fprintf(stderr, "[ts_fanout] client fd=%d disconnected (%s), active=%zu\n",
                      fd, reason, clients.size());
+        try_rearm_listen(now_ms());  // a descriptor is free again
         if (clients.empty() && up_state != UpstreamState::Disconnected) {
             idle_deadline_ms = now_ms() + cfg.idle_grace_ms;
         }
@@ -412,19 +429,25 @@ struct Relay {
     }
 
     void handle_accept() noexcept {
-        for (;;) {
+        while (listen_armed) {
             sockaddr_in peer{};
             socklen_t peer_len = sizeof(peer);
             const int cfd = ::accept4(listen_fd, reinterpret_cast<sockaddr*>(&peer), &peer_len,
                                       SOCK_NONBLOCK | SOCK_CLOEXEC);
             if (cfd < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    break;
+                const int err = errno;
+                if (err == EINTR || err == ECONNABORTED || err == EPROTO) {
+                    continue;  // this connection is gone, the queue may hold more (accept(2))
                 }
-                if (errno == EINTR) {
-                    continue;
+                if (err == EMFILE || err == ENFILE || err == ENOBUFS || err == ENOMEM) {
+                    // The connection stays queued: a level-triggered listen_fd left in epfd would busy-spin.
+                    std::fprintf(stderr, "[ts_fanout] accept failed (%s), listener paused for %d ms\n",
+                                 std::strerror(err), kAcceptBackoffMs);
+                    (void)::epoll_ctl(epfd, EPOLL_CTL_DEL, listen_fd, nullptr);
+                    listen_armed = false;
+                    accept_resume_ms = now_ms() + kAcceptBackoffMs;
                 }
-                break;
+                break;  // EAGAIN: the queue is drained; any other error: back to epoll
             }
             if (clients.size() >= cfg.max_clients) {
                 std::fprintf(stderr, "[ts_fanout] max clients (%zu) reached, rejecting fd=%d\n",
@@ -570,6 +593,9 @@ struct Relay {
         } else if (clients.empty() && up_state != UpstreamState::Disconnected && idle_deadline_ms > 0) {
             deadline = idle_deadline_ms;
         }
+        if (!listen_armed && accept_resume_ms > 0) {
+            deadline = (deadline < 0) ? accept_resume_ms : std::min(deadline, accept_resume_ms);
+        }
         if (deadline < 0) {
             return -1;
         }
@@ -609,6 +635,7 @@ struct Relay {
             ::close(epfd);
             return 1;
         }
+        listen_armed = true;
 
         std::fprintf(stderr,
                      "[ts_fanout] listening on %s:%u -> upstream %s:%u (max_clients=%zu, idle_grace=%lldms)\n",
@@ -625,6 +652,9 @@ struct Relay {
             if (clients.empty() && up_state != UpstreamState::Disconnected &&
                 idle_deadline_ms > 0 && now >= idle_deadline_ms) {
                 close_upstream("idle grace expired");
+            }
+            if (!listen_armed && now >= accept_resume_ms) {
+                try_rearm_listen(now);
             }
 
             const int timeout_ms = compute_timeout_ms(now_ms());
